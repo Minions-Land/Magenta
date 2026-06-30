@@ -73,37 +73,54 @@ Magenta3/                      ← 唯一 git 仓
 │   └── core/                  纯 agent loop 内核 + CLI/TUI 应用层
 │                              (= 原 agent 包去掉 harness/ 后的 loop + 原 coding-agent)
 ├── harness/                   ← 【核心】统一 Harness 层(HCP/Magnet 的家)
-│   │                            = 原 agent/src/harness/ 整个文件夹原样提上来(19 文件)
-│   ├── agent-harness.ts       AgentHarness 主类(统管 tools/compact/hook)
-│   ├── compaction/            Compact(已有)
-│   ├── session/               会话持久化(含 memory-repo = 内存型 session 存储,非长期记忆)
-│   ├── skills.ts              Skill(已有,搬迁保留)
-│   ├── system-prompt.ts / prompt-templates.ts / messages.ts / types.ts
-│   ├── env/ utils/
-│   ├── tools/                 【收拢】7 个原生工具实现 + 融入的 LazyPi 工具
-│   ├── memory/                【全新】长期记忆子系统(与 session/memory-* 区分)
-│   └── index.ts               Harness 装配:产出能力集合注入内核
+│   │                            = 原 agent 包里【所有】harness 相关物整体解耦提上来
+│   ├── src/                    原 agent/src/harness/(19 文件)
+│   │   ├── agent-harness.ts   AgentHarness 主类(统管 tools/compact/hook)
+│   │   ├── compaction/        Compact(已有)
+│   │   ├── session/           会话持久化(含 memory-repo = 内存型 session 存储,非长期记忆)
+│   │   ├── skills.ts          Skill(已有,搬迁保留)
+│   │   ├── system-prompt.ts / prompt-templates.ts / messages.ts / types.ts
+│   │   ├── env/ utils/
+│   │   ├── tools/             【收拢】7 个原生工具实现 + 融入的 LazyPi 工具
+│   │   └── memory/            【全新】长期记忆子系统(与 session/memory-* 区分)
+│   ├── test/                  原 agent/test/harness/(13 测试 ~2890 行)
+│   ├── docs/                  原 agent/docs/{agent-harness,durable-harness}.md
+│   ├── vitest.config.ts       原 agent/vitest.harness.config.ts
+│   └── index.ts               Harness 装配 + 对外导出(吸收原 agent/src/index.ts 的 harness 导出行)
 ├── docs/                      specs / plans
 ├── package.json               根 workspace(重组)
 └── README.md
 ```
 
 依赖方向(搬迁后):`ai` ← `harness` ← `core`(内核反向依赖 harness 取得能力)。
-利用已验证的 `ai ← agent ← coding-agent` 干净方向,把 agent 的"loop 部分"留在 core、
-"harness 部分"整体上提,不产生循环。
+**已验证耦合是单向的**:内核候选(`agent-loop.ts`/`agent.ts`/`proxy.ts`/`src/types.ts`)
+**零引用 harness**;只有 harness 引用内核(`../types.ts`/`../agent-loop.ts` 等)。
+故内核可干净留下,harness 整体搬走只需重接它对内核的引用 + 重接 index/node 导出,
+不产生循环。
 
 ## 5. 能力提炼计划(整体提升 + 收拢 + 新建)
 
-核心动作:**`agent/src/harness/` 整个文件夹(19 文件、~5909 行)原样提到顶层 `harness/`。**
-不纠结"哪些能力搬、哪些留"——harness 文件夹整体上提,`agent` 包只留 loop 内核
-(`agent-loop.ts`/`agent.ts`/根 `types.ts` 等)。主要机械工作量 = 重接跨目录 import
-(harness 原本引用 `../types.ts`/`../messages.ts`/`../agent-loop.ts`)。
+核心动作:**把 `packages/agent` 里【所有】harness 相关物整体解耦到顶层 `harness/`**
+——不止 `src/harness/`,而是六处全迁:
+
+| harness 相关物 | 位置 | 动作 |
+|---|---|---|
+| 源码 | `src/harness/`(19 文件 ~5909 行) | 提到 `harness/src/` |
+| 测试 | `test/harness/`(13 测试 ~2890 行) | 提到 `harness/test/` |
+| 测试配置 | `vitest.harness.config.ts` | 提到 `harness/vitest.config.ts` |
+| 文档 | `docs/agent-harness.md` + `docs/durable-harness.md`(698 行) | 提到 `harness/docs/` |
+| 对外导出 | `src/index.ts` 的 16 行 `export ... from "./harness/..."` | 移入 `harness/index.ts` |
+| node env 导出 | `src/node.ts` 的 `NodeExecutionEnv` | 随之重接 |
+
+`agent` 包只留 loop 内核(`agent-loop.ts`/`agent.ts`/`proxy.ts`/`types.ts`)。
+主要机械工作量 = 重接跨目录 import(harness 原本引用 `../types.ts`/`../messages.ts`/
+`../agent-loop.ts`)+ 重接 index/node 导出 + 修正测试相对路径。
 
 | 能力 | 来源 | 动作 |
 |---|---|---|
 | **Compact / Hook / Skill / session / 系统提示** | `agent/src/harness/` 内已有 | 随整个文件夹一并提上,保留现有机制 |
-| **Tool(实现)** | `coding-agent/core/tools/*`(7 个)+ 融入的 LazyPi 工具 | **收拢**进 `harness/tools/`,保留统一 `AgentTool` 接口;内核通过 harness 取工具集 |
-| **Memory(长期记忆)** | 无(全新) | 见 §6;注意与 harness/session/memory-* 区分 |
+| **Tool(实现)** | `coding-agent/core/tools/*`(7 个)+ 融入的 LazyPi 工具 | **收拢**进 `harness/src/tools/`,保留统一 `AgentTool` 接口;内核通过 harness 取工具集 |
+| **Memory(长期记忆)** | 无(全新) | 见 §6;注意与 `harness/src/session/memory-*` 区分 |
 
 `AgentHarness` 类是核心载体:它本就持有 tools/compact/hook,整体提上后内核 loop
 通过它取得一切可插拔能力。
@@ -114,7 +131,7 @@ Magenta3/                      ← 唯一 git 仓
 
 - **职责**:为 agent 提供跨轮/跨会话的可检索长期记忆(区别于 compaction 的"压缩历史",
   也区别于 `harness/session/memory-*` —— 后者是内存型 session 存储,不是长期记忆)。
-- **接口(初版)**:`harness/memory/` 暴露 `MemoryProvider`,提供
+- **接口(初版)**:`harness/src/memory/` 暴露 `MemoryProvider`,提供
   `read(query)` / `write(entry)` 两个原子能力,挂进 Harness 的能力集。
 - **实现(初版)**:文件型最小实现即可(读写本地 memory 目录),复杂检索/向量化留后续。
 - 设计上对齐"原子能力 + LLM 编排"的原则(Bitter Lesson),不在第一版做编排逻辑。
@@ -161,9 +178,10 @@ Magenta3/                      ← 唯一 git 仓
 1. **清理 + 摊平**:删 `Magenta/` 嵌套层,PI 包提到 `packages/`,重组根 workspace,
    构建 + 真实对话验收(此时未提炼,确认基线)。
 2. **LazyPi 融入**:6 个 extension 拆分归位为内置代码,验收。
-3. **整体提升 Harness**:`agent/src/harness/` 整个文件夹(19 文件)原样提到顶层
-   `harness/`,重接跨目录 import,`agent` 包只留 loop 内核;工具实现收拢进 `harness/tools/`,
-   内核反向依赖,验收。
+3. **整体解耦 Harness**:把 `packages/agent` 里所有 harness 相关物(源码 `src/harness/`、
+   测试 `test/harness/`、配置 `vitest.harness.config.ts`、文档两份、index/node 导出)
+   全部提到顶层 `harness/`;`agent` 包只留 loop 内核(已验证内核零引用 harness);
+   工具实现收拢进 `harness/src/tools/`,重接 import/导出/测试路径,内核反向依赖,验收。
 4. **新建 Memory**:最小 `MemoryProvider` 挂进 Harness,验收。
 
 ## 12. 关键决策记录
@@ -171,9 +189,10 @@ Magenta3/                      ← 唯一 git 仓
 - Magenta3 = 新主线,TS 基于 PI,取代 Rust。
 - 最终形态:纯 loop 内核 + 顶层统一 Harness(Tool/Memory/Hook/Compact),= HCP/Magnet 落点。
 - 消除 `Magenta/` 嵌套;PI 包提到根 `packages/`;不单独建 git。
-- 另起顶层 `harness/`:把 PI `agent/src/harness/` **整个文件夹原样提上来**
-  (含 compact/hook/skill/session/系统提示等全部),`agent` 包只留 loop 内核
-  (接受打散 PI 排布的代价)。
+- 另起顶层 `harness/`:把 PI `agent` 包里**所有** harness 相关物**整体解耦**提上来
+  (源码 `src/harness/` + 测试 `test/harness/` + `vitest.harness.config.ts` + 两份 docs
+  + index/node 导出,六处全迁),`agent` 包只留 loop 内核(接受打散 PI 排布的代价)。
+- 已验证耦合单向:内核零引用 harness,仅 harness 引用内核,故解耦无循环风险。
 - LazyPi 全部融入代码,不再 extension 硬加载;按性质分入 harness/tools 或应用层。
 - Compact/Hook/Skill 已存在(在 agent/harness),随文件夹一并提上;Memory 全新最小实现,
   与 harness/session/memory-*(内存型 session 存储)区分。
