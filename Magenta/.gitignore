@@ -1,0 +1,9 @@
+pi/node_modules/
+pi/packages/*/dist/
+pi/packages/*/*.tsbuildinfo
+pi/*.log
+.pi/agent/tmp/
+.pi/agent/sessions/
+.pi/agent/auth.json
+.pi/agent/oauth.json
+.pi/agent/bin/

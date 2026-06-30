@@ -1,0 +1,8 @@
+node_modules/
+engine/**/dist/
+engine/**/node_modules/
+magenta-config/agent/auth.json
+magenta-config/agent/sessions/
+magenta-config/agent/npm/
+magenta-config/agent/bin/
+.DS_Store

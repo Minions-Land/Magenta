@@ -1,0 +1,24 @@
+# Ignore everything by default. This repo is for portable Pi configuration only.
+*
+
+# Keep repo metadata files.
+!.gitignore
+!README.md
+!README_zh.md
+
+# Keep selected Pi agent configuration.
+!agent/
+agent/*
+!agent/settings.json
+!agent/APPEND_SYSTEM.md
+!agent/extensions/
+!agent/extensions/**
+!agent/skills/
+!agent/skills/**
+
+
+# Never sync secrets, local installs, binaries, or conversation history.
+agent/auth.json
+agent/sessions/
+agent/npm/
+agent/bin/

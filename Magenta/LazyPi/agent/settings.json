@@ -1,0 +1,13 @@
+{
+  "lastChangelogVersion": "0.79.10",
+  "theme": "dark",
+  "defaultProvider": "openai",
+  "defaultModel": "gpt-5.5",
+  "quietStartup": true,
+  "enableSkillCommands": true,
+  "transport": "auto",
+  "defaultThinkingLevel": "medium",
+  "hideThinkingBlock": true,
+  "packages": ["npm:pi-web-access"]
+}
+
