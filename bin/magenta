@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -e
+
+# 从 codex 抓 OpenAI key
+if [ -f ~/.codex/auth.json ]; then
+  OPENAI_API_KEY=$(python3 -c "import json; print(json.load(open('$HOME/.codex/auth.json'))['OPENAI_API_KEY'])" 2>/dev/null || echo "")
+  export OPENAI_API_KEY
+fi
+
+# 从环境抓 Anthropic
+if [ -n "$ANTHROPIC_AUTH_TOKEN" ]; then
+  export ANTHROPIC_API_KEY="$ANTHROPIC_AUTH_TOKEN"
+fi
+
+# 调用构建好的 CLI
+exec node "$(dirname "$0")/../pi/coding-agent/dist/cli.js" "$@"

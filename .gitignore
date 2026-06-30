@@ -1,8 +1,58 @@
 node_modules/
-engine/**/dist/
-engine/**/node_modules/
-magenta-config/agent/auth.json
-magenta-config/agent/sessions/
-magenta-config/agent/npm/
-magenta-config/agent/bin/
+dist/
+*.log
 .DS_Store
+*.tsbuildinfo
+pi/*/dist/
+pi/*/dist-chrome/
+pi/*/dist-firefox/
+packages/*/dist/
+packages/*/dist-chrome/
+packages/*/dist-firefox/
+*.cpuprofile
+
+# Local Pi runtime data (sessions, settings, and CREDENTIALS — never commit)
+.pi-source/
+.pi/
+
+# Test artifacts
+test-results/
+playwright-report/
+test-cli/
+test-conversation/
+tests/fixtures/
+test-external-auth.mjs
+
+# Backups
+*.backup
+
+# Environment
+.env
+
+# Editor files
+.vscode/
+.zed/
+.idea/
+.claude/
+*.swp
+*.swo
+*~
+
+# Package specific
+.npm/
+coverage/
+.nyc_output/
+.pi_config/
+tui-debug.log
+compaction-results/
+.opencode/
+syntax.jsonl
+out.jsonl
+pi-*.html
+out.html
+packages/coding-agent/binaries/
+todo.md
+plans/
+.pi/hf-sessions/
+.pi/hf-sessions-backup/
+collect.sh
