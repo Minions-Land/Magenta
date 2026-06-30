@@ -19,6 +19,11 @@ PI 相关说明保留,但 PI 的 monorepo 排布可以打散。Package 机制暂
 本阶段范围(用户定:"一步到位提四块"):一次性把 Tool / Memory / Hook / Compact
 四类能力提炼进顶层 Harness 统一管理,同时跑通真实对话。
 
+> **已知的未来能力:Skill。** Harness 层还会纳入 Skill 作为又一类可插拔能力
+> (PI 的 `agent/harness/skills.ts` 本就在 harness 域内,Skill 天然与
+> Tool/Memory/Hook/Compact 并列)。本阶段不展开 Skill 设计,搬迁 Harness 时
+> 保留其现有机制即可,留待后续子项目细化。
+
 ## 2. 现状(需清理)
 
 之前另一个 Codex 在 `Magenta3/` 搭了一套已"跑通"但不符合规划的结构:
@@ -167,5 +172,6 @@ Magenta3/                      ← 唯一 git 仓
    + Magnet 连接配置 + Schema 注册表(`schema_profile` + `param_mapping`)+ 回退选择器 + Pack
    (草稿:`Reference_Repo/Magenta-main/DRAFT-tool-pluggable-management.md`)。
 2. Memory 子系统进阶(检索/向量化/跨会话策略)。
-3. Package 机制与其他 Harness 接入。
-4. PI 引擎品牌彻底改名(如需要)。
+3. Skill 作为 Harness 可插拔能力的细化(搬迁阶段先保留 PI 现有机制)。
+4. Package 机制与其他 Harness 接入。
+5. PI 引擎品牌彻底改名(如需要)。
