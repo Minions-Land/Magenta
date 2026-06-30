@@ -1,7 +1,7 @@
 import type { ImageContent, Message, Model, Models, SimpleStreamOptions, TextContent, Transport } from "@earendil-works/pi-ai";
 import type { AgentEvent, AgentMessage, AgentTool, QueueMode, ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { Session } from "./session/session.ts";
-import type { CompactionPreparation } from "./compaction/compaction.js";
+import type { Session } from "../session/session.ts";
+import type { CompactionPreparation } from "../compaction/compaction.js";
 
 /** Result of a fallible operation. Expected failures are returned as `ok: false` instead of thrown. */
 export type Result<TValue, TError> = { ok: true; value: TValue } | { ok: false; error: TError };
@@ -454,7 +454,7 @@ export interface SessionStorage<TMetadata extends SessionMetadata = SessionMetad
 	getEntries(): Promise<SessionTreeEntry[]>;
 }
 
-export type { Session } from "./session/session.ts";
+export type { Session } from "../session/session.ts";
 
 export interface SessionCreateOptions {
 	id?: string;
@@ -801,4 +801,4 @@ export interface AgentHarnessOptions<
 	followUpMode?: QueueMode;
 }
 
-export type { AgentHarness } from "./agent-harness.ts";
+export type { AgentHarness } from "../loop/agent-harness.ts";

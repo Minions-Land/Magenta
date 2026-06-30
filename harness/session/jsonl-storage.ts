@@ -1,5 +1,5 @@
-import type { FileSystem, JsonlSessionMetadata, LeafEntry, SessionStorage, SessionTreeEntry } from "../types.js";
-import { SessionError, toError } from "../types.js";
+import type { FileSystem, JsonlSessionMetadata, LeafEntry, SessionStorage, SessionTreeEntry } from "../types/types.js";
+import { SessionError, toError } from "../types/types.js";
 import { getFileSystemResultOrThrow } from "./repo-utils.ts";
 import { uuidv7 } from "./uuid.ts";
 

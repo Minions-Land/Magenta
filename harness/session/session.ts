@@ -1,6 +1,6 @@
 import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import { createBranchSummaryMessage, createCompactionSummaryMessage, createCustomMessage } from "../messages.ts";
+import { createBranchSummaryMessage, createCompactionSummaryMessage, createCustomMessage } from "../messages/messages.ts";
 import type {
 	ActiveToolsChangeEntry,
 	BranchSummaryEntry,
@@ -16,8 +16,8 @@ import type {
 	SessionStorage,
 	SessionTreeEntry,
 	ThinkingLevelChangeEntry,
-} from "../types.js";
-import { SessionError } from "../types.js";
+} from "../types/types.js";
+import { SessionError } from "../types/types.js";
 
 export function buildSessionContext(pathEntries: SessionTreeEntry[]): SessionContext {
 	let thinkingLevel = "off";

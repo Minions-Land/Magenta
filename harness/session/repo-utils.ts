@@ -5,7 +5,7 @@ import {
 	type SessionMetadata,
 	type SessionStorage,
 	type SessionTreeEntry,
-} from "../types.js";
+} from "../types/types.js";
 import { Session } from "./session.ts";
 import { uuidv7 } from "./uuid.ts";
 

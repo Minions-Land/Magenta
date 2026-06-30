@@ -1,4 +1,4 @@
-import { type Session, SessionError, type SessionMetadata, type SessionRepo } from "../types.js";
+import { type Session, SessionError, type SessionMetadata, type SessionRepo } from "../types/types.js";
 import { InMemorySessionStorage } from "./memory-storage.ts";
 import { createSessionId, createTimestamp, getEntriesToFork, toSession } from "./repo-utils.ts";
 

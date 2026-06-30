@@ -5,8 +5,8 @@ import type {
 	JsonlSessionMetadata,
 	JsonlSessionRepoApi,
 	Session,
-} from "../types.js";
-import { SessionError, toError } from "../types.js";
+} from "../types/types.js";
+import { SessionError, toError } from "../types/types.js";
 import { JsonlSessionStorage, loadJsonlSessionMetadata } from "./jsonl-storage.ts";
 import {
 	createSessionId,

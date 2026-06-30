@@ -1,12 +1,12 @@
 import type { AssistantMessage, ImageContent, Model, Models, TextContent, Usage } from "@earendil-works/pi-ai";
 import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
-import { type CompactionEntry, CompactionError, err, ok, type Result, type SessionTreeEntry } from "../types.js";
+import { type CompactionEntry, CompactionError, err, ok, type Result, type SessionTreeEntry } from "../types/types.js";
 import {
 	convertToLlm,
 	createBranchSummaryMessage,
 	createCompactionSummaryMessage,
 	createCustomMessage,
-} from "../messages.ts";
+} from "../messages/messages.ts";
 import { buildSessionContext } from "../session/session.ts";
 import {
 	computeFileLists,

@@ -10,11 +10,11 @@ import type {
 	StreamFn,
 	ThinkingLevel,
 } from "@earendil-works/pi-agent-core";
-import { collectEntriesForBranchSummary, generateBranchSummary } from "./compaction/branch-summarization.ts";
-import { compact, DEFAULT_COMPACTION_SETTINGS, prepareCompaction } from "./compaction/compaction.ts";
-import { convertToLlm } from "./messages.ts";
-import { formatPromptTemplateInvocation } from "./prompt-templates.ts";
-import { formatSkillInvocation } from "./skills.ts";
+import { collectEntriesForBranchSummary, generateBranchSummary } from "../compaction/branch-summarization.ts";
+import { compact, DEFAULT_COMPACTION_SETTINGS, prepareCompaction } from "../compaction/compaction.ts";
+import { convertToLlm } from "../messages/messages.ts";
+import { formatPromptTemplateInvocation } from "../prompt-templates/prompt-templates.ts";
+import { formatSkillInvocation } from "../skills/skills.ts";
 import type {
 	AbortResult,
 	AgentHarnessEvent,
@@ -31,8 +31,8 @@ import type {
 	PromptTemplate,
 	Session,
 	Skill,
-} from "./types.ts";
-import { AgentHarnessError, BranchSummaryError, CompactionError, SessionError, toError } from "./types.ts";
+} from "../types/types.ts";
+import { AgentHarnessError, BranchSummaryError, CompactionError, SessionError, toError } from "../types/types.ts";
 
 function createUserMessage(text: string, images?: ImageContent[]): UserMessage {
 	const content: Array<{ type: "text"; text: string } | ImageContent> = [{ type: "text", text }];
