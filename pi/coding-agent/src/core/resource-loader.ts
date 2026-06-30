@@ -21,7 +21,8 @@ import type { PromptTemplate } from "./prompt-templates.ts";
 import { loadPromptTemplates } from "./prompt-templates.ts";
 import { SettingsManager } from "./settings-manager.ts";
 import type { Skill } from "./skills.ts";
-import { loadSkills } from "./skills.ts";
+import type { Skill as HarnessSkill } from "@magenta/harness";
+import { loadSkills } from "./harness-skills-adapter.ts";
 import { createSourceInfo, type SourceInfo } from "./source-info.ts";
 
 export interface ResourceExtensionPaths {
@@ -139,8 +140,8 @@ export interface DefaultResourceLoaderOptions {
 	systemPrompt?: string;
 	appendSystemPrompt?: string[];
 	extensionsOverride?: (base: LoadExtensionsResult) => LoadExtensionsResult;
-	skillsOverride?: (base: { skills: Skill[]; diagnostics: ResourceDiagnostic[] }) => {
-		skills: Skill[];
+	skillsOverride?: (base: { skills: HarnessSkill[]; diagnostics: ResourceDiagnostic[] }) => {
+		skills: HarnessSkill[];
 		diagnostics: ResourceDiagnostic[];
 	};
 	promptsOverride?: (base: { prompts: PromptTemplate[]; diagnostics: ResourceDiagnostic[] }) => {
@@ -177,8 +178,8 @@ export class DefaultResourceLoader implements ResourceLoader {
 	private systemPromptSource?: string;
 	private appendSystemPromptSource?: string[];
 	private extensionsOverride?: (base: LoadExtensionsResult) => LoadExtensionsResult;
-	private skillsOverride?: (base: { skills: Skill[]; diagnostics: ResourceDiagnostic[] }) => {
-		skills: Skill[];
+	private skillsOverride?: (base: { skills: HarnessSkill[]; diagnostics: ResourceDiagnostic[] }) => {
+		skills: HarnessSkill[];
 		diagnostics: ResourceDiagnostic[];
 	};
 	private promptsOverride?: (base: { prompts: PromptTemplate[]; diagnostics: ResourceDiagnostic[] }) => {
@@ -613,11 +614,11 @@ export class DefaultResourceLoader implements ResourceLoader {
 	}
 
 	private async updateSkillsFromPaths(skillPaths: string[], metadataByPath?: Map<string, PathMetadata>): Promise<void> {
-		let skillsResult: { skills: Skill[]; diagnostics: ResourceDiagnostic[] };
+		let skillsResult: { skills: HarnessSkill[]; diagnostics: ResourceDiagnostic[] };
 		if (this.noSkills && skillPaths.length === 0) {
 			skillsResult = { skills: [], diagnostics: [] };
 		} else {
-			skillsResult = loadSkills({
+			skillsResult = await loadSkills({
 				cwd: this.cwd,
 				agentDir: this.agentDir,
 				skillPaths,
@@ -625,13 +626,13 @@ export class DefaultResourceLoader implements ResourceLoader {
 			});
 		}
 		const resolvedSkills = this.skillsOverride ? this.skillsOverride(skillsResult) : skillsResult;
-		this.skills = resolvedSkills.skills.map((skill) => ({
-			...skill,
-			sourceInfo:
+		this.skills = resolvedSkills.skills.map((skill): Skill => {
+			const baseDir = skill.filePath.split("/").slice(0, -1).join("/") || "/";
+			const sourceInfo =
 				this.findSourceInfoForPath(skill.filePath, this.extensionSkillSourceInfos, metadataByPath) ??
-				skill.sourceInfo ??
-				this.getDefaultSourceInfoForPath(skill.filePath),
-		}));
+				this.getDefaultSourceInfoForPath(skill.filePath);
+			return { ...skill, baseDir, sourceInfo } as Skill;
+		});
 		this.skillDiagnostics = resolvedSkills.diagnostics;
 	}
 

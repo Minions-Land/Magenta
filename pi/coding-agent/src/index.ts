@@ -236,15 +236,11 @@ export {
 	type SettingsManagerCreateOptions,
 } from "./core/settings-manager.ts";
 // Skills
-export {
-	formatSkillsForPrompt,
-	type LoadSkillsFromDirOptions,
-	type LoadSkillsResult,
-	loadSkills,
-	loadSkillsFromDir,
-	type Skill,
-	type SkillFrontmatter,
-} from "./core/skills.ts";
+export { formatSkillsForPrompt, type Skill } from "./core/skills.ts";
+export type { LoadSkillsOptions, LoadSkillsResult } from "./core/harness-skills-adapter.ts";
+export { loadSkills } from "./core/harness-skills-adapter.ts";
+// Re-export harness skills utilities for convenience
+export { loadSkills as loadSkillsFromHarness } from "@magenta/harness";
 export { createSyntheticSourceInfo } from "./core/source-info.ts";
 export { type EditDiffResult, generateDiffString, generateUnifiedPatch } from "./core/tools/edit-diff.ts";
 // Tools
