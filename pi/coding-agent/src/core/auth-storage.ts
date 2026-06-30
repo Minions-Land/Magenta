@@ -20,7 +20,7 @@ import lockfile from "proper-lockfile";
 import { getAgentDir } from "../config.ts";
 import { normalizePath } from "../utils/paths.ts";
 import { resolveConfigValue } from "./resolve-config-value.ts";
-import { getExternalAuth, loadExternalAuth } from "./external-auth-loader.ts";
+import { getExternalAuth } from "./external-auth-loader.ts";
 
 export type ApiKeyCredential = {
 	type: "api_key";
@@ -211,15 +211,6 @@ export class AuthStorage {
 	private constructor(storage: AuthStorageBackend) {
 		this.storage = storage;
 		this.reload();
-
-		// Log external auth sources found
-		if (typeof process !== "undefined" && process.stderr?.write) {
-			const externalCreds = loadExternalAuth();
-			if (externalCreds.length > 0) {
-				const sources = externalCreds.map(c => `${c.provider} (from ${c.source})`).join(", ");
-				process.stderr.write(`Found external credentials: ${sources}\n`);
-			}
-		}
 	}
 
 	static create(authPath?: string): AuthStorage {

@@ -1,238 +1,162 @@
 /**
  * External Auth Loader
  *
- * Automatically loads API keys and credentials from external tools:
- * - Claude Code (~/.claude/)
- * - OpenAI Codex (~/.openai/)
- * - Environment variables (ANTHROPIC_AUTH_TOKEN, etc.)
- *
- * This allows Magenta to reuse existing credentials without manual configuration.
+ * Automatically loads API keys and base URLs from local tools so Magenta works
+ * out of the box without a manual /login. Sources, in priority order:
+ *   1. Environment variables (ANTHROPIC_AUTH_TOKEN/ANTHROPIC_API_KEY, OPENAI_API_KEY, ...)
+ *   2. Claude Code  (~/.claude/settings.json -> env.ANTHROPIC_AUTH_TOKEN / ANTHROPIC_BASE_URL)
+ *   3. Codex        (~/.codex/auth.json -> OPENAI_API_KEY, ~/.codex/config.toml -> base_url)
  */
 
 import { existsSync, readFileSync } from "fs";
-import { join } from "path";
 import { homedir } from "os";
+import { join } from "path";
+
+export type ExternalCredentialSource = "env" | "claude-code" | "codex";
 
 export type ExternalCredential = {
 	provider: string;
 	apiKey?: string;
 	baseUrl?: string;
-	source: "claude-code" | "codex" | "openai" | "env";
+	model?: string;
+	source: ExternalCredentialSource;
 };
 
-/**
- * Load credentials from environment variables
- */
+/** Read credentials from environment variables. */
 export function loadEnvAuth(): ExternalCredential[] {
-	const credentials: ExternalCredential[] = [];
+	const creds: ExternalCredential[] = [];
 
-	// Check for Anthropic credentials
-	const anthropicToken = process.env.ANTHROPIC_AUTH_TOKEN || process.env.ANTHROPIC_API_KEY;
-	if (anthropicToken) {
-		credentials.push({
+	const anthropicKey = process.env.ANTHROPIC_AUTH_TOKEN || process.env.ANTHROPIC_API_KEY;
+	if (anthropicKey) {
+		creds.push({
 			provider: "anthropic",
-			apiKey: anthropicToken,
+			apiKey: anthropicKey,
 			baseUrl: process.env.ANTHROPIC_BASE_URL,
+			model: process.env.ANTHROPIC_MODEL,
 			source: "env",
 		});
 	}
 
-	// Check for OpenAI credentials
-	const openaiKey = process.env.OPENAI_API_KEY;
-	if (openaiKey) {
-		credentials.push({
+	if (process.env.OPENAI_API_KEY) {
+		creds.push({
 			provider: "openai",
-			apiKey: openaiKey,
+			apiKey: process.env.OPENAI_API_KEY,
 			baseUrl: process.env.OPENAI_BASE_URL,
 			source: "env",
 		});
 	}
 
-	// Check for Google/Gemini credentials
 	const geminiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
 	if (geminiKey) {
-		credentials.push({
-			provider: "google",
-			apiKey: geminiKey,
-			baseUrl: process.env.GOOGLE_BASE_URL,
-			source: "env",
-		});
+		creds.push({ provider: "google", apiKey: geminiKey, baseUrl: process.env.GOOGLE_BASE_URL, source: "env" });
 	}
 
-	return credentials;
+	return creds;
 }
 
 /**
- * Attempt to load credentials from Claude Code configuration
+ * Read credentials from Claude Code's settings.json.
+ * Claude Code keeps its provider config under the top-level `env` object,
+ * e.g. { "env": { "ANTHROPIC_AUTH_TOKEN": "...", "ANTHROPIC_BASE_URL": "..." } }.
  */
 export function loadClaudeCodeAuth(): ExternalCredential[] {
-	const credentials: ExternalCredential[] = [];
-	const claudeDir = join(homedir(), ".claude");
+	const creds: ExternalCredential[] = [];
+	const settingsPath = join(homedir(), ".claude", "settings.json");
+	if (!existsSync(settingsPath)) return creds;
 
-	// Try auth.json
-	const authPath = join(claudeDir, "auth.json");
-	if (existsSync(authPath)) {
-		try {
-			const content = readFileSync(authPath, "utf-8");
-			const authData = JSON.parse(content);
-
-			// Claude Code stores Anthropic credentials
-			if (authData.anthropic?.type === "api_key" && authData.anthropic.key) {
-				credentials.push({
-					provider: "anthropic",
-					apiKey: authData.anthropic.key,
-					source: "claude-code",
-				});
-			}
-
-			// May also have other providers
-			for (const [provider, cred] of Object.entries(authData)) {
-				if (typeof cred === "object" && cred !== null && "key" in cred && typeof cred.key === "string") {
-					if (provider !== "anthropic") { // Already added above
-						credentials.push({
-							provider,
-							apiKey: cred.key,
-							source: "claude-code",
-						});
-					}
-				}
-			}
-		} catch (error) {
-			// Silently ignore parsing errors
+	try {
+		const settings = JSON.parse(readFileSync(settingsPath, "utf-8"));
+		const env = (settings.env ?? {}) as Record<string, string>;
+		const key = env.ANTHROPIC_AUTH_TOKEN || env.ANTHROPIC_API_KEY;
+		if (key) {
+			creds.push({
+				provider: "anthropic",
+				apiKey: key,
+				baseUrl: env.ANTHROPIC_BASE_URL,
+				model: env.ANTHROPIC_MODEL || (typeof settings.model === "string" ? settings.model : undefined),
+				source: "claude-code",
+			});
 		}
+	} catch {
+		// Ignore malformed settings.
 	}
 
-	// Try settings.json for custom API endpoints
-	const settingsPath = join(claudeDir, "settings.json");
-	if (existsSync(settingsPath)) {
-		try {
-			const content = readFileSync(settingsPath, "utf-8");
-			const settings = JSON.parse(content);
+	return creds;
+}
 
-			// Check for custom API base URLs
-			if (settings.apiBaseUrl) {
-				// Find matching credential and add baseUrl
-				const existingCred = credentials.find(c => c.provider === "anthropic");
-				if (existingCred) {
-					existingCred.baseUrl = settings.apiBaseUrl;
-				}
-			}
-		} catch (error) {
-			// Silently ignore
-		}
+/** Minimal TOML lookup: find `base_url = "..."` inside the [model_providers.*] table. */
+function parseCodexBaseUrl(toml: string): string | undefined {
+	// Grab the first base_url under any model_providers section.
+	const match = toml.match(/base_url\s*=\s*"([^"]+)"/);
+	return match?.[1];
+}
+
+/** Find a top-level `model = "..."` (outside any [table]) in codex config.toml. */
+function parseCodexModel(toml: string): string | undefined {
+	for (const line of toml.split("\n")) {
+		const trimmed = line.trim();
+		if (trimmed.startsWith("[")) break; // stop at first table header
+		const match = trimmed.match(/^model\s*=\s*"([^"]+)"/);
+		if (match) return match[1];
 	}
-
-	return credentials;
+	return undefined;
 }
 
 /**
- * Attempt to load credentials from OpenAI Codex configuration
+ * Read credentials from Codex.
+ * Key lives in ~/.codex/auth.json ({ "OPENAI_API_KEY": "..." }); the custom
+ * base_url and default model live in ~/.codex/config.toml.
  */
 export function loadCodexAuth(): ExternalCredential[] {
-	const credentials: ExternalCredential[] = [];
-	const openaiDir = join(homedir(), ".openai");
+	const creds: ExternalCredential[] = [];
+	const codexDir = join(homedir(), ".codex");
 
-	// Try auth.json
-	const authPath = join(openaiDir, "auth.json");
-	if (existsSync(authPath)) {
-		try {
-			const content = readFileSync(authPath, "utf-8");
-			const authData = JSON.parse(content);
+	const authPath = join(codexDir, "auth.json");
+	if (!existsSync(authPath)) return creds;
 
-			// Codex stores OpenAI credentials
-			if (authData.openai?.type === "api_key" && authData.openai.key) {
-				credentials.push({
-					provider: "openai",
-					apiKey: authData.openai.key,
-					source: "codex",
-				});
-			}
-
-			// Check for base URL customization
-			if (authData.openai?.env?.OPENAI_BASE_URL) {
-				const existingCred = credentials.find(c => c.provider === "openai");
-				if (existingCred) {
-					existingCred.baseUrl = authData.openai.env.OPENAI_BASE_URL;
-				}
-			}
-		} catch (error) {
-			// Silently ignore
-		}
+	let apiKey: string | undefined;
+	try {
+		const auth = JSON.parse(readFileSync(authPath, "utf-8"));
+		apiKey = auth.OPENAI_API_KEY || auth.openai?.key;
+	} catch {
+		return creds;
 	}
+	if (!apiKey) return creds;
 
-	// Also check ~/.openai/config for older Codex versions
-	const configPath = join(openaiDir, "config");
+	let baseUrl: string | undefined;
+	let model: string | undefined;
+	const configPath = join(codexDir, "config.toml");
 	if (existsSync(configPath)) {
 		try {
-			const content = readFileSync(configPath, "utf-8");
-			const lines = content.split("\n");
-
-			let apiKey: string | undefined;
-			let baseUrl: string | undefined;
-
-			for (const line of lines) {
-				const trimmed = line.trim();
-				if (trimmed.startsWith("api_key=") || trimmed.startsWith("OPENAI_API_KEY=")) {
-					apiKey = trimmed.split("=")[1]?.trim();
-				}
-				if (trimmed.startsWith("base_url=") || trimmed.startsWith("OPENAI_BASE_URL=")) {
-					baseUrl = trimmed.split("=")[1]?.trim();
-				}
-			}
-
-			if (apiKey && !credentials.find(c => c.provider === "openai")) {
-				credentials.push({
-					provider: "openai",
-					apiKey,
-					baseUrl,
-					source: "codex",
-				});
-			}
-		} catch (error) {
-			// Silently ignore
+			const toml = readFileSync(configPath, "utf-8");
+			baseUrl = parseCodexBaseUrl(toml);
+			model = parseCodexModel(toml);
+		} catch {
+			// Ignore malformed config.
 		}
 	}
 
-	return credentials;
+	creds.push({ provider: "openai", apiKey, baseUrl, model, source: "codex" });
+	return creds;
 }
 
-/**
- * Load all available external credentials
- */
+/** Load and merge all external credentials (first source wins per provider). */
 export function loadExternalAuth(): ExternalCredential[] {
-	const credentials: ExternalCredential[] = [];
-
-	// Load from environment variables first (highest priority for external sources)
-	credentials.push(...loadEnvAuth());
-
-	// Load from Claude Code
-	credentials.push(...loadClaudeCodeAuth());
-
-	// Load from Codex
-	credentials.push(...loadCodexAuth());
-
-	// Deduplicate by provider (first one wins)
+	const all = [...loadEnvAuth(), ...loadClaudeCodeAuth(), ...loadCodexAuth()];
 	const seen = new Set<string>();
-	return credentials.filter(cred => {
-		if (seen.has(cred.provider)) {
-			return false;
-		}
+	return all.filter((cred) => {
+		if (seen.has(cred.provider)) return false;
 		seen.add(cred.provider);
 		return true;
 	});
 }
 
-/**
- * Get a specific provider's credentials from external sources
- */
+/** Get credentials for a single provider from external sources. */
 export function getExternalAuth(provider: string): ExternalCredential | undefined {
-	const allCreds = loadExternalAuth();
-	return allCreds.find(cred => cred.provider === provider);
+	return loadExternalAuth().find((cred) => cred.provider === provider);
 }
 
-/**
- * Check if any external credentials are available
- */
+/** True if any external credential is available. */
 export function hasExternalAuth(): boolean {
 	return loadExternalAuth().length > 0;
 }

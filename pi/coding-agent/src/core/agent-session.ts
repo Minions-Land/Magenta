@@ -2134,7 +2134,7 @@ export class AgentSession {
 			themePaths: this.buildExtensionResourcePaths(themePaths),
 		};
 
-		this._resourceLoader.extendResources(extensionPaths);
+		await this._resourceLoader.extendResources(extensionPaths);
 		this._baseSystemPrompt = this._rebuildSystemPrompt(this.getActiveToolNames());
 		this.agent.state.systemPrompt = this._baseSystemPrompt;
 	}

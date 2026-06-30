@@ -289,7 +289,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		return this.appendSystemPrompt;
 	}
 
-	extendResources(paths: ResourceExtensionPaths): void {
+	async extendResources(paths: ResourceExtensionPaths): Promise<void> {
 		const skillPaths = this.normalizeExtensionPaths(paths.skillPaths ?? []);
 		const promptPaths = this.normalizeExtensionPaths(paths.promptPaths ?? []);
 		const themePaths = this.normalizeExtensionPaths(paths.themePaths ?? []);
@@ -309,7 +309,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 				this.lastSkillPaths,
 				skillPaths.map((entry) => entry.path),
 			);
-			this.updateSkillsFromPaths(this.lastSkillPaths);
+			await this.updateSkillsFromPaths(this.lastSkillPaths);
 		}
 
 		if (promptPaths.length > 0) {
@@ -317,7 +317,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 				this.lastPromptPaths,
 				promptPaths.map((entry) => entry.path),
 			);
-			this.updatePromptsFromPaths(this.lastPromptPaths);
+			await this.updatePromptsFromPaths(this.lastPromptPaths);
 		}
 
 		if (themePaths.length > 0) {
@@ -418,7 +418,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 			: this.mergePaths([...cliEnabledSkills, ...enabledSkills], this.additionalSkillPaths);
 
 		this.lastSkillPaths = skillPaths;
-		this.updateSkillsFromPaths(skillPaths, metadataByPath);
+		await this.updateSkillsFromPaths(skillPaths, metadataByPath);
 		for (const p of this.additionalSkillPaths) {
 			if (isLocalPath(p)) {
 				const resolved = this.resolveResourcePath(p);
@@ -433,7 +433,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 			: this.mergePaths([...cliEnabledPrompts, ...enabledPrompts], this.additionalPromptTemplatePaths);
 
 		this.lastPromptPaths = promptPaths;
-		this.updatePromptsFromPaths(promptPaths, metadataByPath);
+		await this.updatePromptsFromPaths(promptPaths, metadataByPath);
 		for (const p of this.additionalPromptTemplatePaths) {
 			if (isLocalPath(p)) {
 				const resolved = this.resolveResourcePath(p);
@@ -612,7 +612,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		});
 	}
 
-	private updateSkillsFromPaths(skillPaths: string[], metadataByPath?: Map<string, PathMetadata>): void {
+	private async updateSkillsFromPaths(skillPaths: string[], metadataByPath?: Map<string, PathMetadata>): Promise<void> {
 		let skillsResult: { skills: Skill[]; diagnostics: ResourceDiagnostic[] };
 		if (this.noSkills && skillPaths.length === 0) {
 			skillsResult = { skills: [], diagnostics: [] };
@@ -635,7 +635,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.skillDiagnostics = resolvedSkills.diagnostics;
 	}
 
-	private updatePromptsFromPaths(promptPaths: string[], metadataByPath?: Map<string, PathMetadata>): void {
+	private async updatePromptsFromPaths(promptPaths: string[], metadataByPath?: Map<string, PathMetadata>): Promise<void> {
 		let promptsResult: { prompts: PromptTemplate[]; diagnostics: ResourceDiagnostic[] };
 		if (this.noPromptTemplates && promptPaths.length === 0) {
 			promptsResult = { prompts: [], diagnostics: [] };
