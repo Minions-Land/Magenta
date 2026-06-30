@@ -1,5 +1,5 @@
 {
-  "lastChangelogVersion": "0.79.10",
+  "lastChangelogVersion": "0.80.2",
   "theme": "dark",
   "defaultProvider": "openai",
   "defaultModel": "gpt-5.5",
@@ -8,6 +8,7 @@
   "transport": "auto",
   "defaultThinkingLevel": "medium",
   "hideThinkingBlock": true,
-  "packages": ["npm:pi-web-access"]
+  "packages": [
+    "npm:pi-web-access"
+  ]
 }
-
