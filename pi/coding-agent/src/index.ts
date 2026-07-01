@@ -293,6 +293,16 @@ export {
 	withFileMutationQueue,
 } from "./core/tools/index.ts";
 export {
+	canonicalToolName,
+	conciseToolErrorSummary,
+	isEditToolName,
+	resolveDisplayToolName,
+	summarizeToolCall,
+	type ToolDisplayCall,
+	toolOutputLooksFailed,
+	truncateMiddleDisplay,
+} from "./core/tools/tool-display.ts";
+export {
 	hasTrustRequiringProjectResources,
 	type ProjectTrustDecision,
 	ProjectTrustStore,
@@ -341,6 +351,8 @@ export {
 	type RenderDiffOptions,
 	rawKeyHint,
 	renderDiff,
+	renderToolCallGallery,
+	renderToolCallStrip,
 	SessionSelectorComponent,
 	type SettingsCallbacks,
 	type SettingsConfig,
@@ -349,8 +361,12 @@ export {
 	SkillInvocationMessageComponent,
 	ThemeSelectorComponent,
 	ThinkingSelectorComponent,
+	type ToolCallTile,
 	ToolExecutionComponent,
+	ToolExecutionGroupComponent,
 	type ToolExecutionOptions,
+	type ToolGalleryConfig,
+	type ToolTileStatus,
 	TreeSelectorComponent,
 	truncateToVisualLines,
 	UserMessageComponent,
