@@ -12,9 +12,10 @@ describe("command links", () => {
 		expect(applyAlias("please exit")).toBe("please exit");
 	});
 
-	it("exposes quit and exit as built-in slash commands", () => {
+	it("exposes harness, quit, and exit as built-in slash commands", () => {
 		const names = new Set(BUILTIN_SLASH_COMMANDS.map((command) => command.name));
 
+		expect(names.has("harness")).toBe(true);
 		expect(names.has("quit")).toBe(true);
 		expect(names.has("exit")).toBe(true);
 	});

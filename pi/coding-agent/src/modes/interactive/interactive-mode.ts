@@ -47,6 +47,7 @@ import {
 	TUI,
 	visibleWidth,
 } from "@earendil-works/pi-tui";
+import { getHarnessRegistryPath, loadRegistry } from "@magenta/harness";
 import chalk from "chalk";
 import { spawn, spawnSync } from "child_process";
 import {
@@ -74,6 +75,15 @@ import type {
 	ProjectTrustContext,
 } from "../../core/extensions/index.ts";
 import { FooterDataProvider, type ReadonlyFooterDataProvider } from "../../core/footer-data-provider.ts";
+import {
+	buildHarnessToolSwitches,
+	formatHarnessRegistrySummary,
+	formatHarnessRuntimeSummary,
+	HARNESS_HOOK_EVENTS,
+	type HarnessRegistryView,
+	type HarnessRuntimeSnapshot,
+	hasRegistryComponent,
+} from "../../core/harness-switches.ts";
 import { configureHttpDispatcher, formatHttpIdleTimeoutMs } from "../../core/http-dispatcher.ts";
 import { type AppKeybinding, KeybindingsManager } from "../../core/keybindings.ts";
 import { createCompactionSummaryMessage } from "../../core/messages.ts";
@@ -113,6 +123,7 @@ import { ExtensionEditorComponent } from "./components/extension-editor.ts";
 import { ExtensionInputComponent } from "./components/extension-input.ts";
 import { ExtensionSelectorComponent } from "./components/extension-selector.ts";
 import { FooterComponent } from "./components/footer.ts";
+import { HarnessSwitcherComponent } from "./components/harness-switcher.ts";
 import { formatKeyText, keyDisplayText, keyHint, keyText, rawKeyHint } from "./components/keybinding-hints.ts";
 import { LoginDialogComponent } from "./components/login-dialog.ts";
 import { ModelSelectorComponent } from "./components/model-selector.ts";
@@ -2550,6 +2561,11 @@ export class InteractiveMode {
 				this.editor.setText("");
 				return;
 			}
+			if (text === "/harness" || text.startsWith("/harness ") || text === "/h" || text.startsWith("/h ")) {
+				this.editor.setText("");
+				await this.handleHarnessCommand(text);
+				return;
+			}
 			if (text === "/scoped-models") {
 				this.editor.setText("");
 				await this.showModelsSelector();
@@ -3974,6 +3990,197 @@ export class InteractiveMode {
 		this.editorContainer.addChild(component);
 		this.ui.setFocus(focus);
 		this.ui.requestRender();
+	}
+
+	private async loadHarnessRegistryView(): Promise<HarnessRegistryView> {
+		try {
+			const path = getHarnessRegistryPath();
+			return { path, registry: await loadRegistry(path) };
+		} catch (error) {
+			return { error: error instanceof Error ? error.message : String(error) };
+		}
+	}
+
+	private getHarnessActiveHookEvents(): string[] {
+		return HARNESS_HOOK_EVENTS.filter((event) => this.session.extensionRunner.hasHandlers(event));
+	}
+
+	private async createHarnessRuntimeSnapshot(): Promise<HarnessRuntimeSnapshot> {
+		const registry = await this.loadHarnessRegistryView();
+		return {
+			autoCompact: this.session.autoCompactionEnabled,
+			skillCommands: this.settingsManager.getEnableSkillCommands(),
+			loadedSkills: this.session.resourceLoader.getSkills().skills.length,
+			loadedExtensions: this.session.extensionRunner.getExtensionPaths().length,
+			tools: buildHarnessToolSwitches(this.session.getAllTools(), this.session.getActiveToolNames()),
+			activeHookEvents: this.getHarnessActiveHookEvents(),
+			registry,
+		};
+	}
+
+	private setHarnessAutoCompact(enabled: boolean): void {
+		this.session.setAutoCompactionEnabled(enabled);
+		this.footer.setAutoCompactEnabled(enabled);
+		this.showStatus(`Harness auto-compact: ${enabled ? "enabled" : "disabled"}`);
+	}
+
+	private setHarnessSkillCommands(enabled: boolean): void {
+		this.settingsManager.setEnableSkillCommands(enabled);
+		this.setupAutocompleteProvider();
+		this.showStatus(`Harness skill commands: ${enabled ? "enabled" : "disabled"}`);
+	}
+
+	private setHarnessToolEnabled(name: string, enabled: boolean): void {
+		const tools = this.session.getAllTools();
+		if (!tools.some((tool) => tool.name === name)) {
+			this.showWarning(`Unknown tool: ${name}`);
+			return;
+		}
+
+		const activeToolNames = new Set(this.session.getActiveToolNames());
+		if (enabled) {
+			activeToolNames.add(name);
+		} else {
+			activeToolNames.delete(name);
+		}
+		const orderedToolNames = tools.map((tool) => tool.name).filter((toolName) => activeToolNames.has(toolName));
+		this.session.setActiveToolsByName(orderedToolNames);
+		this.showStatus(`Harness tool ${name}: ${enabled ? "enabled" : "disabled"}`);
+	}
+
+	private showHarnessHooksSummary(): void {
+		const extensionPaths = this.session.extensionRunner.getExtensionPaths();
+		const activeEvents = this.getHarnessActiveHookEvents();
+		const extensionList =
+			extensionPaths.length > 0
+				? extensionPaths
+						.slice(0, 8)
+						.map((extensionPath) => `  ${extensionPath}`)
+						.join("\n") + (extensionPaths.length > 8 ? `\n  ... ${extensionPaths.length - 8} more` : "")
+				: "  none";
+		this.showStatus(
+			[
+				"Harness hooks",
+				`Extensions loaded: ${extensionPaths.length}`,
+				extensionList,
+				`Active hook events: ${activeEvents.length > 0 ? activeEvents.join(", ") : "none"}`,
+			].join("\n"),
+		);
+	}
+
+	private async showHarnessMemorySummary(): Promise<void> {
+		const registry = await this.loadHarnessRegistryView();
+		const registered = hasRegistryComponent(registry.registry, "memory");
+		const registryLine = registry.error ? `Registry: unavailable (${registry.error})` : "Registry: loaded";
+		this.showStatus(
+			[
+				"Harness memory",
+				`Component: ${registered ? "registered" : "not registered"}`,
+				"Runtime switch: not exposed in AgentSession yet",
+				registryLine,
+			].join("\n"),
+		);
+	}
+
+	private parseHarnessToggle(value: string | undefined): boolean | undefined {
+		switch (value?.toLowerCase()) {
+			case "on":
+			case "true":
+			case "enable":
+			case "enabled":
+				return true;
+			case "off":
+			case "false":
+			case "disable":
+			case "disabled":
+				return false;
+			default:
+				return undefined;
+		}
+	}
+
+	private async handleHarnessCommand(text: string): Promise<void> {
+		const [, ...args] = text.split(/\s+/);
+		const action = args[0]?.toLowerCase();
+
+		if (!action || action === "menu" || action === "switch") {
+			await this.showHarnessSwitcher();
+			return;
+		}
+
+		if (action === "status") {
+			this.showStatus(formatHarnessRuntimeSummary(await this.createHarnessRuntimeSnapshot()));
+			return;
+		}
+
+		if (action === "registry" || action === "components") {
+			this.showStatus(formatHarnessRegistrySummary(await this.loadHarnessRegistryView()));
+			return;
+		}
+
+		if (action === "hooks") {
+			this.showHarnessHooksSummary();
+			return;
+		}
+
+		if (action === "memory") {
+			await this.showHarnessMemorySummary();
+			return;
+		}
+
+		if (action === "compact" || action === "compaction") {
+			const enabled = this.parseHarnessToggle(args[1]);
+			if (enabled === undefined) {
+				this.showWarning("Usage: /harness compact <on|off>");
+				return;
+			}
+			this.setHarnessAutoCompact(enabled);
+			return;
+		}
+
+		if (action === "skills" || action === "skill-commands") {
+			const enabled = this.parseHarnessToggle(args[1]);
+			if (enabled === undefined) {
+				this.showWarning("Usage: /harness skills <on|off>");
+				return;
+			}
+			this.setHarnessSkillCommands(enabled);
+			return;
+		}
+
+		if (action === "tool") {
+			const name = args[1];
+			const enabled = this.parseHarnessToggle(args[2]);
+			if (!name || enabled === undefined) {
+				this.showWarning("Usage: /harness tool <name> <on|off>");
+				return;
+			}
+			this.setHarnessToolEnabled(name, enabled);
+			return;
+		}
+
+		this.showWarning("Usage: /harness [status|registry|hooks|memory|compact|skills|tool]");
+	}
+
+	private async showHarnessSwitcher(): Promise<void> {
+		const snapshot = await this.createHarnessRuntimeSnapshot();
+		this.showSelector((done) => {
+			const selector = new HarnessSwitcherComponent(snapshot, {
+				onAutoCompactChange: (enabled) => this.setHarnessAutoCompact(enabled),
+				onSkillCommandsChange: (enabled) => this.setHarnessSkillCommands(enabled),
+				onToolChange: (name, enabled) => this.setHarnessToolEnabled(name, enabled),
+				onShowRegistry: () => this.showStatus(formatHarnessRegistrySummary(snapshot.registry)),
+				onShowHooks: () => this.showHarnessHooksSummary(),
+				onShowMemory: () => {
+					void this.showHarnessMemorySummary();
+				},
+				onCancel: () => {
+					done();
+					this.ui.requestRender();
+				},
+			});
+			return { component: selector, focus: selector.getSettingsList() };
+		});
 	}
 
 	private showSettingsSelector(): void {

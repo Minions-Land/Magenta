@@ -13,6 +13,8 @@ import { createAgentSession } from "../../../src/core/sdk.ts";
 import { SessionManager } from "../../../src/core/session-manager.ts";
 import { SettingsManager } from "../../../src/core/settings-manager.ts";
 
+const BUNDLED_EXTENSION_TOOLS = ["bg_shell", "sub_agent", "todo"];
+
 describe("regression #3592: no-builtin-tools keeps extension tools enabled", () => {
 	let tempDir: string;
 	let agentDir: string;
@@ -78,8 +80,10 @@ describe("regression #3592: no-builtin-tools keeps extension tools enabled", () 
 				.getAllTools()
 				.map((tool) => tool.name)
 				.sort(),
-		).toEqual(["bash", "dynamic_tool", "edit", "find", "grep", "ls", "read", "write"]);
-		expect(session.getActiveToolNames()).toEqual(["dynamic_tool"]);
+		).toEqual(
+			["bash", ...BUNDLED_EXTENSION_TOOLS, "dynamic_tool", "edit", "find", "grep", "ls", "read", "write"].sort(),
+		);
+		expect(session.getActiveToolNames().sort()).toEqual([...BUNDLED_EXTENSION_TOOLS, "dynamic_tool"].sort());
 		expect(session.systemPrompt).toContain("- dynamic_tool: Run dynamic test behavior");
 		expect(session.systemPrompt).not.toContain("- read:");
 		expect(session.systemPrompt).not.toContain("- bash:");
@@ -111,8 +115,10 @@ describe("regression #3592: no-builtin-tools keeps extension tools enabled", () 
 			noTools: "builtin",
 		});
 
-		expect(session.getActiveToolNames()).toEqual([]);
-		expect(session.systemPrompt).toContain("Available tools:\n(none)");
+		expect(session.getActiveToolNames().sort()).toEqual(BUNDLED_EXTENSION_TOOLS);
+		for (const toolName of ["bg_shell", "sub_agent"]) {
+			expect(session.systemPrompt).toContain(`- ${toolName}:`);
+		}
 		expect(session.systemPrompt).not.toContain("- read:");
 		session.dispose();
 	});

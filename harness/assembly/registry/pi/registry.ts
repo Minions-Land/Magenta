@@ -1,5 +1,7 @@
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 /**
  * Registry loader for the harness component model (spec §3, NO category middle
@@ -45,6 +47,31 @@ export interface Registry {
 	name?: string;
 	description?: string;
 	components: ComponentDescriptor[];
+}
+
+/**
+ * Locate the top-level harness registry file from either source or built output.
+ *
+ * Source builds execute this module from `harness/assembly/registry/pi`; compiled
+ * builds execute it from `harness/dist/assembly/registry/pi`. Package installs
+ * keep `harness.toml` at the package root, so we try both layouts explicitly.
+ */
+export function getHarnessRegistryPath(): string {
+	const here = dirname(fileURLToPath(import.meta.url));
+	const candidates = [
+		resolve(here, "../../../harness.toml"),
+		resolve(here, "../../../../harness.toml"),
+		resolve(process.cwd(), "harness", "harness.toml"),
+		resolve(process.cwd(), "harness.toml"),
+	];
+
+	for (const candidate of candidates) {
+		if (existsSync(candidate)) {
+			return candidate;
+		}
+	}
+
+	throw new Error(`Unable to locate harness.toml. Tried: ${candidates.join(", ")}`);
 }
 
 /** Parse a single scalar TOML value (string, boolean, integer, or inline array). */
