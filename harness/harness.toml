@@ -92,6 +92,12 @@ name = "utils"
 description = "Shared utilities for shell output formatting and text truncation."
 path = "utils/utils.toml"
 
+[[components]]
+kind = "memory"
+name = "memory"
+description = "Embedding-based semantic memory storage and retrieval."
+path = "memory/memory.toml"
+
 # Assembly layer
 [[components]]
 kind = "assembly"

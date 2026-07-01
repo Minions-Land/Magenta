@@ -1,0 +1,4 @@
+kind = "memory"
+name = "memory"
+description = "Embedding-based semantic memory storage and retrieval"
+source = "pi"

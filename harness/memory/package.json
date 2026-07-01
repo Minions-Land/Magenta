@@ -1,14 +1,14 @@
 {
 	"name": "@magenta/memory",
 	"version": "0.0.1",
-	"description": "Memory system with embedding-based retrieval",
+	"description": "Embedding-based semantic memory storage and retrieval",
 	"type": "module",
-	"main": "./dist/index.js",
-	"types": "./dist/index.d.ts",
+	"main": "./dist/pi/index.js",
+	"types": "./dist/pi/index.d.ts",
 	"exports": {
 		".": {
-			"types": "./dist/index.d.ts",
-			"import": "./dist/index.js"
+			"types": "./dist/pi/index.d.ts",
+			"import": "./dist/pi/index.js"
 		}
 	},
 	"scripts": {
