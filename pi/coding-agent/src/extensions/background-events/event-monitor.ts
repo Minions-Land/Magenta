@@ -32,11 +32,15 @@ export function createEventsMonitor(pi: ExtensionAPI) {
 
 	const sourceEntries = () => [...sources.values()];
 	const sourceEvents = (source: EventSource) => source.getEvents().sort((a, b) => b.startedAt - a.startedAt);
-	const allEntries = (): EventEntry[] => sourceEntries()
-		.flatMap((source) => sourceEvents(source).map((event) => ({ source, event, key: eventKey(source.id, event.id) })))
-		.sort((a, b) => b.event.startedAt - a.event.startedAt);
+	const allEntries = (): EventEntry[] =>
+		sourceEntries()
+			.flatMap((source) =>
+				sourceEvents(source).map((event) => ({ source, event, key: eventKey(source.id, event.id) })),
+			)
+			.sort((a, b) => b.event.startedAt - a.event.startedAt);
 	const runningEvents = () => allEntries().filter(({ event }) => event.status === "running");
-	const unacknowledgedFailures = () => allEntries().filter(({ key, event }) => FAILED_STATUSES.has(event.status) && !acknowledgedFailures.has(key));
+	const unacknowledgedFailures = () =>
+		allEntries().filter(({ key, event }) => FAILED_STATUSES.has(event.status) && !acknowledgedFailures.has(key));
 
 	const visibleEntries = (): EventEntry[] => {
 		const entries = allEntries();
@@ -71,7 +75,8 @@ export function createEventsMonitor(pi: ExtensionAPI) {
 		if (running.length > 0) parts.push(`${running.length} running`);
 		if (failed.length > 0) parts.push(`${failed.length} failed`);
 		const icon = failed.length > 0 && running.length === 0 ? "⚠ " : running.length > 0 ? "● " : "⚠ ";
-		const iconColor: Parameters<typeof theme.fg>[0] = failed.length > 0 && running.length === 0 ? "warning" : "accent";
+		const iconColor: Parameters<typeof theme.fg>[0] =
+			failed.length > 0 && running.length === 0 ? "warning" : "accent";
 		statusCtx.ui.setStatus(STATUS_KEY, theme.fg(iconColor, icon) + theme.fg("dim", `bg: ${parts.join(", ")}`));
 		updateOverlay();
 

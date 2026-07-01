@@ -1,7 +1,8 @@
 // Core session management
 
+// Re-export harness skills utilities for convenience
+export { loadSkills as loadSkillsFromHarness } from "@magenta/harness";
 export { type Args, parseArgs } from "./cli/args.ts";
-
 // Config paths
 export {
 	CONFIG_DIR_NAME,
@@ -162,6 +163,8 @@ export {
 } from "./core/extensions/index.ts";
 // Footer data provider (git branch + extension statuses - data not otherwise available to extensions)
 export type { ReadonlyFooterDataProvider } from "./core/footer-data-provider.ts";
+export type { LoadSkillsOptions, LoadSkillsResult } from "./core/harness-skills-adapter.ts";
+export { loadSkills } from "./core/harness-skills-adapter.ts";
 export { convertToLlm } from "./core/messages.ts";
 export { ModelRegistry } from "./core/model-registry.ts";
 export type {
@@ -237,10 +240,6 @@ export {
 } from "./core/settings-manager.ts";
 // Skills
 export { formatSkillsForPrompt, type Skill } from "./core/skills.ts";
-export type { LoadSkillsOptions, LoadSkillsResult } from "./core/harness-skills-adapter.ts";
-export { loadSkills } from "./core/harness-skills-adapter.ts";
-// Re-export harness skills utilities for convenience
-export { loadSkills as loadSkillsFromHarness } from "@magenta/harness";
 export { createSyntheticSourceInfo } from "./core/source-info.ts";
 export { type EditDiffResult, generateDiffString, generateUnifiedPatch } from "./core/tools/edit-diff.ts";
 // Tools

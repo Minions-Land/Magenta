@@ -5,9 +5,23 @@
  * It is intentionally separate from the main conversation and cannot execute tools.
  */
 
-import { complete, type AssistantMessage, type UserMessage } from "@earendil-works/pi-ai";
-import { getMarkdownTheme, type ExtensionAPI, type ExtensionCommandContext, type Theme } from "@earendil-works/pi-coding-agent";
-import { CURSOR_MARKER, Markdown, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component, type Focusable } from "@earendil-works/pi-tui";
+import { type AssistantMessage, complete, type UserMessage } from "@earendil-works/pi-ai";
+import {
+	type ExtensionAPI,
+	type ExtensionCommandContext,
+	getMarkdownTheme,
+	type Theme,
+} from "@earendil-works/pi-coding-agent";
+import {
+	type Component,
+	CURSOR_MARKER,
+	type Focusable,
+	Markdown,
+	matchesKey,
+	truncateToWidth,
+	visibleWidth,
+	wrapTextWithAnsi,
+} from "@earendil-works/pi-tui";
 
 import { CENTER_FLOATING_OVERLAY, FLOATING_WINDOW_BODY_LINES, renderFloatingWindow } from "./shared/floating-window.ts";
 
@@ -51,16 +65,16 @@ function compactValue(value: unknown, maxLength = 1200): string {
 }
 
 function formatMainToolProgress(): string {
-	const entries = [...mainToolProgress.values()]
-		.sort((a, b) => a.startedAt - b.startedAt)
-		.slice(-20);
+	const entries = [...mainToolProgress.values()].sort((a, b) => a.startedAt - b.startedAt).slice(-20);
 	if (!entries.length) return "No main-agent tool executions have been observed yet.";
 
 	const now = Date.now();
 	return entries
 		.map((entry) => {
 			const elapsed = Math.max(0, Math.round(((entry.endedAt ?? now) - entry.startedAt) / 1000));
-			const lines = [`- ${entry.toolName} (${entry.status}${entry.isError ? ", error" : ""}, ${elapsed}s, id=${entry.id})`];
+			const lines = [
+				`- ${entry.toolName} (${entry.status}${entry.isError ? ", error" : ""}, ${elapsed}s, id=${entry.id})`,
+			];
 			const args = compactValue(entry.args, 700);
 			if (args) lines.push(`  args: ${args}`);
 			const partial = compactValue(entry.partialResult, 900);
@@ -305,7 +319,13 @@ class SideChatComponent implements Component, Focusable {
 		}
 
 		if (this.messages.length === 0) {
-			body.push(this.theme.fg("dim", "Ask a quick side question. This chat has no tools and will not touch the main thread."), "");
+			body.push(
+				this.theme.fg(
+					"dim",
+					"Ask a quick side question. This chat has no tools and will not touch the main thread.",
+				),
+				"",
+			);
 		}
 		if (this.busy) body.push(this.theme.fg("dim", "thinking…"), "");
 		return body;
@@ -320,7 +340,10 @@ class SideChatComponent implements Component, Focusable {
 		if (this.followBottom) this.scrollTop = maxTop;
 		this.scrollTop = Math.max(0, Math.min(maxTop, this.scrollTop));
 
-		const range = body.length > viewportLines ? `${this.scrollTop + 1}-${Math.min(body.length, this.scrollTop + viewportLines)}/${body.length}` : "";
+		const range =
+			body.length > viewportLines
+				? `${this.scrollTop + 1}-${Math.min(body.length, this.scrollTop + viewportLines)}/${body.length}`
+				: "";
 		const status = this.busy ? "thinking" : "no tools";
 		const visibleBody = body.slice(this.scrollTop, this.scrollTop + viewportLines);
 		while (visibleBody.length < viewportLines) visibleBody.push("");
@@ -374,7 +397,12 @@ async function openSideChat(args: string, ctx: ExtensionCommandContext): Promise
 		} as UserMessage);
 		messages.push({
 			role: "assistant",
-			content: [{ type: "text", text: "Understood. I will use this only as background context for concise side explanations." }],
+			content: [
+				{
+					type: "text",
+					text: "Understood. I will use this only as background context for concise side explanations.",
+				},
+			],
 			timestamp: Date.now(),
 		} as AssistantMessage);
 	}
@@ -385,7 +413,12 @@ async function openSideChat(args: string, ctx: ExtensionCommandContext): Promise
 				const progress = formatMainToolProgress();
 				const userMessage: UserMessage = {
 					role: "user",
-					content: [{ type: "text", text: `Current main-agent tool progress snapshot:\n\n${progress}\n\nSide-chat question:\n${text}` }],
+					content: [
+						{
+							type: "text",
+							text: `Current main-agent tool progress snapshot:\n\n${progress}\n\nSide-chat question:\n${text}`,
+						},
+					],
 					timestamp: Date.now(),
 				};
 				messages.push(userMessage);

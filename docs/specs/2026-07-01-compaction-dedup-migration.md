@@ -1,6 +1,6 @@
 # Compaction 去重迁移:pi → harness(HCP/Magnet adapter)
 
-- 状态:Design(待单独 session 实施)
+- 状态:Completed(已落地; pi 侧保留 adapter, harness 为实现源)
 - 日期:2026-07-01
 - 仓库:`/Users/mjm/Magenta3`
 - 前置:prompt-templates 与 skills 格式化已完成同类迁移(见 commit `6323a84`、`dd43065`),模式已验证。

@@ -214,8 +214,7 @@ export function createGrepExecute(cwd: string, options?: GrepToolOptions): GrepE
 							const filePath = event.data?.path?.text;
 							const lineNumber = event.data?.line_number;
 							const lineText = event.data?.lines?.text;
-							if (filePath && typeof lineNumber === "number")
-								matches.push({ filePath, lineNumber, lineText });
+							if (filePath && typeof lineNumber === "number") matches.push({ filePath, lineNumber, lineText });
 							if (matchCount >= effectiveLimit) {
 								matchLimitReached = true;
 								stopChild(true);
@@ -249,10 +248,7 @@ export function createGrepExecute(cwd: string, options?: GrepToolOptions): GrepE
 						for (const match of matches) {
 							if (contextValue === 0 && match.lineText !== undefined) {
 								const relativePath = formatPath(match.filePath);
-								const sanitized = match.lineText
-									.replace(/\r\n/g, "\n")
-									.replace(/\r/g, "")
-									.replace(/\n$/, "");
+								const sanitized = match.lineText.replace(/\r\n/g, "\n").replace(/\r/g, "").replace(/\n$/, "");
 								const { text: truncatedText, wasTruncated } = truncateLine(sanitized);
 								if (wasTruncated) linesTruncated = true;
 								outputLines.push(`${relativePath}:${match.lineNumber}: ${truncatedText}`);

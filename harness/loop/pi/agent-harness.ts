@@ -1,5 +1,3 @@
-import type { AssistantMessage, ImageContent, Model, Models, UserMessage } from "@earendil-works/pi-ai";
-import { runAgentLoop } from "@earendil-works/pi-agent-core";
 import type {
 	AgentContext,
 	AgentEvent,
@@ -10,6 +8,8 @@ import type {
 	StreamFn,
 	ThinkingLevel,
 } from "@earendil-works/pi-agent-core";
+import { runAgentLoop } from "@earendil-works/pi-agent-core";
+import type { AssistantMessage, ImageContent, Model, Models, UserMessage } from "@earendil-works/pi-ai";
 import { collectEntriesForBranchSummary, generateBranchSummary } from "../../compaction/pi/branch-summarization.ts";
 import { compact, DEFAULT_COMPACTION_SETTINGS, prepareCompaction } from "../../compaction/pi/compaction.ts";
 import { convertToLlm } from "../../messages/messages.ts";

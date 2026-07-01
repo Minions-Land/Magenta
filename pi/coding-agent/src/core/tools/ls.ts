@@ -3,13 +3,14 @@ import { Text } from "@earendil-works/pi-tui";
 import {
 	createLsExecute,
 	LS_DEFAULT_LIMIT as DEFAULT_LIMIT,
+	DEFAULT_MAX_BYTES,
+	formatSize,
+	type LsOperations,
 	type LsToolDetails,
 	type LsToolInput,
 	type LsToolOptions,
-	type LsOperations,
 	lsSchema,
 } from "@magenta/harness";
-import { DEFAULT_MAX_BYTES, formatSize } from "@magenta/harness";
 import { keyHint } from "../../modes/interactive/components/keybinding-hints.ts";
 import type { Theme } from "../../modes/interactive/theme/theme.ts";
 import type { ToolDefinition, ToolRenderResultOptions } from "../extensions/types.ts";

@@ -1,6 +1,14 @@
-import type { AssistantMessage, Context, ImageContent, Model, Models, SimpleStreamOptions, TextContent, Usage } from "@earendil-works/pi-ai";
 import type { AgentMessage, StreamFn, ThinkingLevel } from "@earendil-works/pi-agent-core";
-import { type CompactionEntry, CompactionError, err, ok, type Result, type SessionTreeEntry } from "../../types/types.ts";
+import type {
+	AssistantMessage,
+	Context,
+	ImageContent,
+	Model,
+	Models,
+	SimpleStreamOptions,
+	TextContent,
+	Usage,
+} from "@earendil-works/pi-ai";
 import {
 	convertToLlm,
 	createBranchSummaryMessage,
@@ -8,6 +16,14 @@ import {
 	createCustomMessage,
 } from "../../messages/messages.ts";
 import { buildSessionContext } from "../../session/pi/session.ts";
+import {
+	type CompactionEntry,
+	CompactionError,
+	err,
+	ok,
+	type Result,
+	type SessionTreeEntry,
+} from "../../types/types.ts";
 import {
 	computeFileLists,
 	createFileOps,

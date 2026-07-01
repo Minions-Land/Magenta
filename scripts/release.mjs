@@ -45,7 +45,7 @@ function run(cmd, options = {}) {
 }
 
 function getVersion() {
-	const pkg = JSON.parse(readFileSync("packages/ai/package.json", "utf-8"));
+	const pkg = JSON.parse(readFileSync("pi/ai/package.json", "utf-8"));
 	return pkg.version;
 }
 
@@ -97,7 +97,7 @@ function bumpOrSetVersion(target) {
 }
 
 function getChangelogs() {
-	const packagesDir = "packages";
+	const packagesDir = "pi";
 	const packages = readdirSync(packagesDir);
 	return packages
 		.map((pkg) => join(packagesDir, pkg, "CHANGELOG.md"))
@@ -166,8 +166,8 @@ console.log();
 
 // 4. Regenerate release artifacts
 console.log("Regenerating release artifacts...");
-run("npm --prefix packages/ai run generate-models");
-run("npm --prefix packages/ai run generate-image-models");
+run("npm --prefix pi/ai run generate-models");
+run("npm --prefix pi/ai run generate-image-models");
 run("npm run shrinkwrap:coding-agent");
 console.log();
 

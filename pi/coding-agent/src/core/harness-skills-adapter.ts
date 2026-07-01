@@ -11,9 +11,9 @@
  * `SKILL.md`), so this adapter classifies each path via `env.fileInfo` and dispatches accordingly,
  * rather than handing everything to the directory-only harness `loadSkills`.
  */
-import { NodeExecutionEnv } from "@magenta/harness";
+
 import type { Skill as HarnessSkill, SkillDiagnostic } from "@magenta/harness";
-import { loadSkillFile, loadSkills as loadSkillsFromHarness } from "@magenta/harness";
+import { loadSkillFile, loadSkills as loadSkillsFromHarness, NodeExecutionEnv } from "@magenta/harness";
 import type { ResourceDiagnostic } from "./diagnostics.ts";
 
 export interface LoadSkillsOptions {

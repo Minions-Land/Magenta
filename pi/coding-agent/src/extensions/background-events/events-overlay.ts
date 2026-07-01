@@ -1,5 +1,5 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
-import { matchesKey, truncateToWidth, type Component, type Focusable } from "@earendil-works/pi-tui";
+import { type Component, type Focusable, matchesKey } from "@earendil-works/pi-tui";
 
 import { FLOATING_WINDOW_BODY_LINES, renderFloatingWindow } from "../shared/floating-window.ts";
 import { formatDuration } from "../shared/shell.ts";
@@ -16,11 +16,16 @@ function compactText(text: string, maxLength = 32): string {
 }
 
 function lastNonEmptyLines(text: string | undefined, maxLines: number): string[] {
-	const lines = (text ?? "").trimEnd().split(/\r?\n/).filter((line) => line.trim().length > 0);
+	const lines = (text ?? "")
+		.trimEnd()
+		.split(/\r?\n/)
+		.filter((line) => line.trim().length > 0);
 	return lines.slice(-maxLines);
 }
 
-function statusColor(theme: Theme, status: string): Parameters<typeof theme.fg>[0] {
+type ThemeColor = Parameters<Theme["fg"]>[0];
+
+function statusColor(status: string): ThemeColor {
 	if (status === "running") return "accent";
 	if (status === "exited") return "success";
 	if (status === "cancelled") return "dim";
@@ -70,28 +75,73 @@ export class EventsOverlay implements Component, Focusable {
 	}
 
 	handleInput(data: string): void {
-		if (matchesAny(data, ["escape", "ctrl+c"]) || data === "q") return this.done();
-		if (data === "?") return this.toggleHelp();
+		if (matchesAny(data, ["escape", "ctrl+c"]) || data === "q") {
+			this.done();
+			return;
+		}
+		if (data === "?") {
+			this.toggleHelp();
+			return;
+		}
 
 		const entries = this.getEntries();
 		this.syncSelection(entries);
 
-		if (matchesAny(data, ["up"]) || data === "k") return this.moveSelection(-1, entries);
-		if (matchesAny(data, ["down"]) || data === "j") return this.moveSelection(1, entries);
-		if (matchesAny(data, ["pageUp", "ctrl+u"])) return this.moveSelection(-8, entries);
-		if (matchesAny(data, ["pageDown", "ctrl+d"])) return this.moveSelection(8, entries);
-		if (matchesAny(data, ["home"]) || data === "g") return this.selectIndex(0, entries);
-		if (matchesAny(data, ["end"]) || data === "G") return this.selectIndex(Number.MAX_SAFE_INTEGER, entries);
+		if (matchesAny(data, ["up"]) || data === "k") {
+			this.moveSelection(-1, entries);
+			return;
+		}
+		if (matchesAny(data, ["down"]) || data === "j") {
+			this.moveSelection(1, entries);
+			return;
+		}
+		if (matchesAny(data, ["pageUp", "ctrl+u"])) {
+			this.moveSelection(-8, entries);
+			return;
+		}
+		if (matchesAny(data, ["pageDown", "ctrl+d"])) {
+			this.moveSelection(8, entries);
+			return;
+		}
+		if (matchesAny(data, ["home"]) || data === "g") {
+			this.selectIndex(0, entries);
+			return;
+		}
+		if (matchesAny(data, ["end"]) || data === "G") {
+			this.selectIndex(Number.MAX_SAFE_INTEGER, entries);
+			return;
+		}
 
-		if (matchesAny(data, ["enter", "space"]) || data === "o") return this.toggleSelected(entries);
-		if (data === "O") return this.toggleAllVisible(entries);
-		if (data === "x") return this.cancelSelected(entries);
-		if (data === "l") return this.showSelectedLog(entries);
-		if (data === "c") return this.clearFailedWarnings();
-		if (data === "R") return this.tui.requestRender();
+		if (matchesAny(data, ["enter", "space"]) || data === "o") {
+			this.toggleSelected(entries);
+			return;
+		}
+		if (data === "O") {
+			this.toggleAllVisible(entries);
+			return;
+		}
+		if (data === "x") {
+			this.cancelSelected(entries);
+			return;
+		}
+		if (data === "l") {
+			this.showSelectedLog(entries);
+			return;
+		}
+		if (data === "c") {
+			this.clearFailedWarnings();
+			return;
+		}
+		if (data === "R") {
+			this.tui.requestRender();
+			return;
+		}
 
 		const nextFilter = this.filterForKey(data);
-		if (nextFilter) return this.applyFilter(nextFilter);
+		if (nextFilter) {
+			this.applyFilter(nextFilter);
+			return;
+		}
 	}
 
 	render(width: number): string[] {
@@ -99,7 +149,8 @@ export class EventsOverlay implements Component, Focusable {
 		this.syncSelection(entries);
 
 		const filter = this.getFilter();
-		const range = entries.length > 0 ? `${Math.min(entries.length, this.selectedIndex + 1)}/${entries.length}` : "0/0";
+		const range =
+			entries.length > 0 ? `${Math.min(entries.length, this.selectedIndex + 1)}/${entries.length}` : "0/0";
 		const bodyWidth = Math.max(20, width - 4);
 		const body: string[] = [];
 
@@ -128,7 +179,9 @@ export class EventsOverlay implements Component, Focusable {
 			title: "events",
 			subtitle: `${filter} · ${range}`,
 			body,
-			footer: this.showHelp ? "q/esc close · ? hide help" : "j/k move · o expand · x cancel · a/s/n/r/e/f filter · ? help · q close",
+			footer: this.showHelp
+				? "q/esc close · ? hide help"
+				: "j/k move · o expand · x cancel · a/s/n/r/e/f filter · ? help · q close",
 		});
 	}
 
@@ -159,7 +212,7 @@ export class EventsOverlay implements Component, Focusable {
 		const elapsedUntil = event.endedAt ?? Date.now();
 		const elapsed = formatDuration(elapsedUntil - event.startedAt).padStart(6);
 		const marker = selected ? this.theme.fg("accent", "›") : " ";
-		const state = this.theme.fg(statusColor(this.theme, event.status), event.status.padEnd(9));
+		const state = this.theme.fg(statusColor(event.status), event.status.padEnd(9));
 		const cancelHint = event.canCancel ? this.theme.fg("dim", " x") : "";
 		const title = `${marker} ${state} ${source.id.padEnd(6)} ${event.id.padEnd(9)} ${this.theme.fg("dim", elapsed)} ${compactText(event.label, Math.max(24, width - 38))}${cancelHint}`;
 		const lines = [title];
@@ -171,7 +224,8 @@ export class EventsOverlay implements Component, Focusable {
 			const tail = lastNonEmptyLines(event.tail, EXPANDED_TAIL_LINES);
 			if (tail.length > 0) {
 				lines.push(this.theme.fg("muted", "  output:"));
-				for (const tailLine of tail) lines.push(this.theme.fg("dim", `  │ ${compactText(tailLine, Math.max(20, width - 6))}`));
+				for (const tailLine of tail)
+					lines.push(this.theme.fg("dim", `  │ ${compactText(tailLine, Math.max(20, width - 6))}`));
 			}
 			return lines;
 		}
@@ -246,7 +300,10 @@ export class EventsOverlay implements Component, Focusable {
 			return;
 		}
 		const cancelled = entry.source.cancelEvent(entry.event.id);
-		this.notify(cancelled ? `Cancelled ${entry.event.id}` : `Could not cancel ${entry.event.id}`, cancelled ? "info" : "warning");
+		this.notify(
+			cancelled ? `Cancelled ${entry.event.id}` : `Could not cancel ${entry.event.id}`,
+			cancelled ? "info" : "warning",
+		);
 		this.tui.requestRender();
 	}
 

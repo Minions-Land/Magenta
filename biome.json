@@ -25,14 +25,16 @@
 	},
 	"files": {
 		"includes": [
-			"packages/*/src/**/*.ts",
-			"packages/*/test/**/*.ts",
-			"packages/coding-agent/examples/**/*.ts",
+			"pi/*/src/**/*.ts",
+			"pi/*/test/**/*.ts",
+			"pi/coding-agent/examples/**/*.ts",
+			"harness/**/*.ts",
 			"!**/node_modules/**/*",
+			"!**/dist/**/*",
 			"!**/test-sessions.ts",
 			"!**/models.generated.ts",
+			"!**/image-models.generated.ts",
 			"!**/*.models.ts",
-			"!packages/mom/data/**/*",
 			"!!**/node_modules"
 		]
 	}

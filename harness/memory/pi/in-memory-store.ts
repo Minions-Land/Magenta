@@ -6,8 +6,8 @@ import type {
 	SearchOptions,
 	SearchResult,
 	UpdateMemoryOptions,
-} from "./types.js";
-import { cosineSimilarity } from "./vector-utils.js";
+} from "./types.ts";
+import { cosineSimilarity } from "./vector-utils.ts";
 
 /**
  * In-memory implementation of MemoryStore

@@ -1,4 +1,9 @@
 // Core types
+
+export { ClaudeEmbeddingProvider, SimpleHashEmbedding } from "./embedding-provider.ts";
+
+// Implementations
+export { InMemoryStore } from "./in-memory-store.ts";
 export type {
 	CreateMemoryOptions,
 	EmbeddingProvider,
@@ -7,11 +12,7 @@ export type {
 	SearchOptions,
 	SearchResult,
 	UpdateMemoryOptions,
-} from "./types.js";
-
-// Implementations
-export { InMemoryStore } from "./in-memory-store.js";
-export { ClaudeEmbeddingProvider, SimpleHashEmbedding } from "./embedding-provider.js";
+} from "./types.ts";
 
 // Utilities
-export { cosineSimilarity, euclideanDistance, normalize } from "./vector-utils.js";
+export { cosineSimilarity, euclideanDistance, normalize } from "./vector-utils.ts";

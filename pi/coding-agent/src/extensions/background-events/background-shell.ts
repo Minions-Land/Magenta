@@ -5,7 +5,7 @@
  * poll, wait for completion, or cancel them without blocking a tool call forever.
  */
 
-import { spawn, type ChildProcess } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import { createWriteStream, type WriteStream } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -13,7 +13,14 @@ import { join, resolve } from "node:path";
 import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { appendTail as appendTailText, formatDuration, RESULT_LIMIT_BYTES, shellQuote, timestampForFile, truncateTail } from "../shared/shell.ts";
+import {
+	appendTail as appendTailText,
+	formatDuration,
+	RESULT_LIMIT_BYTES,
+	shellQuote,
+	timestampForFile,
+	truncateTail,
+} from "../shared/shell.ts";
 import type { createEventsMonitor } from "./event-monitor.ts";
 
 const LOG_DIR = join(homedir(), ".pi", "agent", "tmp", "background-shell");
@@ -86,7 +93,13 @@ function killProcessGroup(event: BackgroundEvent, signal: NodeJS.Signals): void 
 	}
 }
 
-function finishEvent(event: BackgroundEvent, status: EventStatus, exitCode: number | null, signal: NodeJS.Signals | null, error?: string): void {
+function finishEvent(
+	event: BackgroundEvent,
+	status: EventStatus,
+	exitCode: number | null,
+	signal: NodeJS.Signals | null,
+	error?: string,
+): void {
 	if (event.status !== "running") return;
 
 	event.status = status;
@@ -116,12 +129,20 @@ function summarizeEvent(event: BackgroundEvent, includeOutput = true): string {
 	];
 	if (event.error) lines.push(`Error: ${event.error}`);
 	if (includeOutput) {
-		lines.push("", output.truncated ? `[Output truncated to last ${RESULT_LIMIT_BYTES} bytes]` : "Output:", output.text || "(no output yet)");
+		lines.push(
+			"",
+			output.truncated ? `[Output truncated to last ${RESULT_LIMIT_BYTES} bytes]` : "Output:",
+			output.text || "(no output yet)",
+		);
 	}
 	return lines.join("\n");
 }
 
-function waitForEvent(event: BackgroundEvent, timeoutSeconds: number | undefined, signal: AbortSignal | undefined): Promise<"done" | "timeout" | "aborted"> {
+function waitForEvent(
+	event: BackgroundEvent,
+	timeoutSeconds: number | undefined,
+	signal: AbortSignal | undefined,
+): Promise<"done" | "timeout" | "aborted"> {
 	if (event.status !== "running") return Promise.resolve("done");
 	if (signal?.aborted) return Promise.resolve("aborted");
 
@@ -170,17 +191,18 @@ export function installBackgroundShell(pi: ExtensionAPI, eventsMonitor: EventsMo
 	const monitor = eventsMonitor.registerSource({
 		id: "shell",
 		title: "shell",
-		getEvents: () => [...events.values()].map((event) => ({
-			id: event.id,
-			status: event.status,
-			startedAt: event.startedAt,
-			endedAt: event.endedAt,
-			label: event.label ?? event.command,
-			cwd: event.cwd,
-			logPath: event.logPath,
-			tail: event.tail,
-			canCancel: event.status === "running",
-		})),
+		getEvents: () =>
+			[...events.values()].map((event) => ({
+				id: event.id,
+				status: event.status,
+				startedAt: event.startedAt,
+				endedAt: event.endedAt,
+				label: event.label ?? event.command,
+				cwd: event.cwd,
+				logPath: event.logPath,
+				tail: event.tail,
+				canCancel: event.status === "running",
+			})),
 		getEventDetails: (id) => {
 			const event = events.get(id);
 			if (!event) return [`unknown shell event: ${id}`];
@@ -220,7 +242,8 @@ export function installBackgroundShell(pi: ExtensionAPI, eventsMonitor: EventsMo
 	pi.registerTool({
 		name: "bg_shell",
 		label: "Background Shell",
-		description: "Manage non-interactive shell commands as background events. Use action=start for long-running commands; set returnToMain=true to automatically send the completed result back to the main agent. Use action=status to inspect events, action=wait to wait, action=cancel to terminate a running event, and action=config to inspect or update session defaults.",
+		description:
+			"Manage non-interactive shell commands as background events. Use action=start for long-running commands; set returnToMain=true to automatically send the completed result back to the main agent. Use action=status to inspect events, action=wait to wait, action=cancel to terminate a running event, and action=config to inspect or update session defaults.",
 		promptSnippet: "Start, inspect, wait for, or cancel long-running shell commands as background events",
 		promptGuidelines: [
 			"Use bg_shell action=start for long-running commands such as builds, tests, dev servers, migrations, downloads, or commands expected to take more than about 10 seconds.",
@@ -231,18 +254,63 @@ export function installBackgroundShell(pi: ExtensionAPI, eventsMonitor: EventsMo
 		parameters: Type.Object({
 			action: StringEnum(["start", "status", "wait", "cancel", "config"] as const),
 			command: Type.Optional(Type.String({ description: "Shell command to run for action=start." })),
-			cwd: Type.Optional(Type.String({ description: "Working directory for action=start. Relative paths are resolved against the current cwd." })),
-			timeoutSeconds: Type.Optional(Type.Number({ description: "Optional maximum runtime for action=start. If exceeded, the event is terminated and marked timed_out." })),
+			cwd: Type.Optional(
+				Type.String({
+					description: "Working directory for action=start. Relative paths are resolved against the current cwd.",
+				}),
+			),
+			timeoutSeconds: Type.Optional(
+				Type.Number({
+					description:
+						"Optional maximum runtime for action=start. If exceeded, the event is terminated and marked timed_out.",
+				}),
+			),
 			label: Type.Optional(Type.String({ description: "Optional human-readable label for action=start." })),
-			returnToMain: Type.Optional(Type.Boolean({ description: "For action=start, automatically send the completed event result back to the main agent and trigger continuation. Default: false." })),
-			returnDelivery: Type.Optional(StringEnum(["steer", "followUp", "nextTurn"] as const, { description: "Delivery mode when returnToMain=true. Default: followUp." })),
-			returnInstruction: Type.Optional(Type.String({ description: "Optional instruction prepended to the automatic return message for the parent agent." })),
-			eventId: Type.Optional(Type.String({ description: "Event id for action=status/wait/cancel. Omit for action=status to list all events." })),
-			waitTimeoutSeconds: Type.Optional(Type.Number({ description: "Maximum time to wait for action=wait. If omitted, uses configured default or waits until completion/tool cancellation." })),
-			defaultTimeoutSeconds: Type.Optional(Type.Number({ description: "For action=config: set default maximum runtime for future start calls. Use <=0 to clear." })),
-			defaultWaitTimeoutSeconds: Type.Optional(Type.Number({ description: "For action=config: set default maximum wait time for future wait calls. Use <=0 to clear." })),
-			defaultReturnToMain: Type.Optional(Type.Boolean({ description: "For action=config: default returnToMain for future start calls." })),
-			defaultReturnDelivery: Type.Optional(StringEnum(["steer", "followUp", "nextTurn"] as const, { description: "For action=config: default delivery mode when automatic return is enabled." })),
+			returnToMain: Type.Optional(
+				Type.Boolean({
+					description:
+						"For action=start, automatically send the completed event result back to the main agent and trigger continuation. Default: false.",
+				}),
+			),
+			returnDelivery: Type.Optional(
+				StringEnum(["steer", "followUp", "nextTurn"] as const, {
+					description: "Delivery mode when returnToMain=true. Default: followUp.",
+				}),
+			),
+			returnInstruction: Type.Optional(
+				Type.String({
+					description: "Optional instruction prepended to the automatic return message for the parent agent.",
+				}),
+			),
+			eventId: Type.Optional(
+				Type.String({
+					description: "Event id for action=status/wait/cancel. Omit for action=status to list all events.",
+				}),
+			),
+			waitTimeoutSeconds: Type.Optional(
+				Type.Number({
+					description:
+						"Maximum time to wait for action=wait. If omitted, uses configured default or waits until completion/tool cancellation.",
+				}),
+			),
+			defaultTimeoutSeconds: Type.Optional(
+				Type.Number({
+					description: "For action=config: set default maximum runtime for future start calls. Use <=0 to clear.",
+				}),
+			),
+			defaultWaitTimeoutSeconds: Type.Optional(
+				Type.Number({
+					description: "For action=config: set default maximum wait time for future wait calls. Use <=0 to clear.",
+				}),
+			),
+			defaultReturnToMain: Type.Optional(
+				Type.Boolean({ description: "For action=config: default returnToMain for future start calls." }),
+			),
+			defaultReturnDelivery: Type.Optional(
+				StringEnum(["steer", "followUp", "nextTurn"] as const, {
+					description: "For action=config: default delivery mode when automatic return is enabled.",
+				}),
+			),
 		}),
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
 			const action = params.action;
@@ -251,10 +319,14 @@ export function installBackgroundShell(pi: ExtensionAPI, eventsMonitor: EventsMo
 			const returnInstruction = params.returnInstruction as string | undefined;
 
 			if (action === "config") {
-				if ("defaultTimeoutSeconds" in params) shellConfig.defaultTimeoutSeconds = positiveNumber(params.defaultTimeoutSeconds);
-				if ("defaultWaitTimeoutSeconds" in params) shellConfig.defaultWaitTimeoutSeconds = positiveNumber(params.defaultWaitTimeoutSeconds);
-				if (typeof params.defaultReturnToMain === "boolean") shellConfig.defaultReturnToMain = params.defaultReturnToMain;
-				if (params.defaultReturnDelivery) shellConfig.defaultReturnDelivery = params.defaultReturnDelivery as ReturnDelivery;
+				if ("defaultTimeoutSeconds" in params)
+					shellConfig.defaultTimeoutSeconds = positiveNumber(params.defaultTimeoutSeconds);
+				if ("defaultWaitTimeoutSeconds" in params)
+					shellConfig.defaultWaitTimeoutSeconds = positiveNumber(params.defaultWaitTimeoutSeconds);
+				if (typeof params.defaultReturnToMain === "boolean")
+					shellConfig.defaultReturnToMain = params.defaultReturnToMain;
+				if (params.defaultReturnDelivery)
+					shellConfig.defaultReturnDelivery = params.defaultReturnDelivery as ReturnDelivery;
 				return { content: [{ type: "text", text: formatConfig(shellConfig) }], details: { ...shellConfig } };
 			}
 
@@ -314,7 +386,10 @@ export function installBackgroundShell(pi: ExtensionAPI, eventsMonitor: EventsMo
 					finishEvent(event, code === 0 ? "exited" : "failed", code, closeSignal);
 					monitor.update(ctx);
 					try {
-						ctx.ui.notify(`Background event ${id} finished: ${event.status}${code === null ? "" : ` (${code})`}`, code === 0 ? "info" : "warning");
+						ctx.ui.notify(
+							`Background event ${id} finished: ${event.status}${code === null ? "" : ` (${code})`}`,
+							code === 0 ? "info" : "warning",
+						);
 					} catch {
 						// UI may no longer be available.
 					}
@@ -333,8 +408,21 @@ export function installBackgroundShell(pi: ExtensionAPI, eventsMonitor: EventsMo
 				if (returnToMain) scheduleReturnToMain(event, returnDelivery, returnInstruction);
 
 				return {
-					content: [{ type: "text", text: `Started background event ${id}${returnToMain ? " with automatic return to main agent" : ""}\nCommand: ${params.command}\nCWD: ${cwd}\nLog: ${logPath}${timeoutSeconds ? `\nTimeout: ${timeoutSeconds}s` : ""}` }],
-					details: { id, command: params.command, cwd, logPath, status: "running", returnsToMain: returnToMain, timeoutSeconds },
+					content: [
+						{
+							type: "text",
+							text: `Started background event ${id}${returnToMain ? " with automatic return to main agent" : ""}\nCommand: ${params.command}\nCWD: ${cwd}\nLog: ${logPath}${timeoutSeconds ? `\nTimeout: ${timeoutSeconds}s` : ""}`,
+						},
+					],
+					details: {
+						id,
+						command: params.command,
+						cwd,
+						logPath,
+						status: "running",
+						returnsToMain: returnToMain,
+						timeoutSeconds,
+					},
 				};
 			}
 
@@ -344,12 +432,18 @@ export function installBackgroundShell(pi: ExtensionAPI, eventsMonitor: EventsMo
 						const elapsedUntil = event.endedAt ?? Date.now();
 						return `${event.id}\t${event.status}\t${formatDuration(elapsedUntil - event.startedAt)}\t${event.label ?? event.command}`;
 					});
-					return { content: [{ type: "text", text: lines.length ? lines.join("\n") : "No background events." }], details: { events: lines.length } };
+					return {
+						content: [{ type: "text", text: lines.length ? lines.join("\n") : "No background events." }],
+						details: { events: lines.length },
+					};
 				}
 
 				const event = events.get(params.eventId);
 				if (!event) throw new Error(`Unknown background event: ${params.eventId}`);
-				return { content: [{ type: "text", text: summarizeEvent(event) }], details: { id: event.id, status: event.status, exitCode: event.exitCode, logPath: event.logPath } };
+				return {
+					content: [{ type: "text", text: summarizeEvent(event) }],
+					details: { id: event.id, status: event.status, exitCode: event.exitCode, logPath: event.logPath },
+				};
 			}
 
 			if (action === "wait") {
@@ -357,22 +451,51 @@ export function installBackgroundShell(pi: ExtensionAPI, eventsMonitor: EventsMo
 				const event = events.get(params.eventId);
 				if (!event) throw new Error(`Unknown background event: ${params.eventId}`);
 
-				const waitTimeoutSeconds = positiveNumber(params.waitTimeoutSeconds) ?? shellConfig.defaultWaitTimeoutSeconds;
+				const waitTimeoutSeconds =
+					positiveNumber(params.waitTimeoutSeconds) ?? shellConfig.defaultWaitTimeoutSeconds;
 				const result = await waitForEvent(event, waitTimeoutSeconds, signal);
-				if (result === "aborted") return { content: [{ type: "text", text: `Wait cancelled. Event ${event.id} is still ${event.status}.\nLog: ${event.logPath}` }], details: { id: event.id, status: event.status } };
-				if (result === "timeout") return { content: [{ type: "text", text: `Wait timed out. Event ${event.id} is still running.\n\n${summarizeEvent(event)}` }], details: { id: event.id, status: event.status, logPath: event.logPath } };
+				if (result === "aborted")
+					return {
+						content: [
+							{
+								type: "text",
+								text: `Wait cancelled. Event ${event.id} is still ${event.status}.\nLog: ${event.logPath}`,
+							},
+						],
+						details: { id: event.id, status: event.status },
+					};
+				if (result === "timeout")
+					return {
+						content: [
+							{
+								type: "text",
+								text: `Wait timed out. Event ${event.id} is still running.\n\n${summarizeEvent(event)}`,
+							},
+						],
+						details: { id: event.id, status: event.status, logPath: event.logPath },
+					};
 
-				return { content: [{ type: "text", text: summarizeEvent(event) }], details: { id: event.id, status: event.status, exitCode: event.exitCode, logPath: event.logPath } };
+				return {
+					content: [{ type: "text", text: summarizeEvent(event) }],
+					details: { id: event.id, status: event.status, exitCode: event.exitCode, logPath: event.logPath },
+				};
 			}
 
 			if (action === "cancel") {
 				if (!params.eventId) throw new Error("bg_shell action=cancel requires eventId");
 				const event = events.get(params.eventId);
 				if (!event) throw new Error(`Unknown background event: ${params.eventId}`);
-				if (event.status !== "running") return { content: [{ type: "text", text: `Event ${event.id} is already ${event.status}.` }], details: { id: event.id, status: event.status } };
+				if (event.status !== "running")
+					return {
+						content: [{ type: "text", text: `Event ${event.id} is already ${event.status}.` }],
+						details: { id: event.id, status: event.status },
+					};
 
 				cancelEvent(event.id, ctx);
-				return { content: [{ type: "text", text: `Cancelled background event ${event.id}.\nLog: ${event.logPath}` }], details: { id: event.id, status: event.status, logPath: event.logPath } };
+				return {
+					content: [{ type: "text", text: `Cancelled background event ${event.id}.\nLog: ${event.logPath}` }],
+					details: { id: event.id, status: event.status, logPath: event.logPath },
+				};
 			}
 
 			throw new Error(`Unsupported bg_shell action: ${action}`);

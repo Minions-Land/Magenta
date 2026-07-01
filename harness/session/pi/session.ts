@@ -1,6 +1,10 @@
-import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import { createBranchSummaryMessage, createCompactionSummaryMessage, createCustomMessage } from "../../messages/messages.ts";
+import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
+import {
+	createBranchSummaryMessage,
+	createCompactionSummaryMessage,
+	createCustomMessage,
+} from "../../messages/messages.ts";
 import type {
 	ActiveToolsChangeEntry,
 	BranchSummaryEntry,

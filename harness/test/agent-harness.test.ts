@@ -1,3 +1,4 @@
+import type { AgentMessage, AgentTool } from "@earendil-works/pi-agent-core";
 import {
 	createModels,
 	type FauxProviderHandle,
@@ -8,12 +9,11 @@ import {
 } from "@earendil-works/pi-ai";
 import { getModel } from "@earendil-works/pi-ai/compat";
 import { describe, expect, it } from "vitest";
-import { AgentHarness } from "../loop/pi/agent-harness.ts";
 import { NodeExecutionEnv } from "../env/pi/nodejs.ts";
+import { AgentHarness } from "../loop/pi/agent-harness.ts";
 import { InMemorySessionStorage } from "../session/pi/memory-storage.ts";
 import { Session } from "../session/pi/session.ts";
 import type { PromptTemplate, Skill } from "../types/types.ts";
-import type { AgentMessage, AgentTool } from "@earendil-works/pi-agent-core";
 import { calculateTool } from "./utils/calculate.ts";
 import { getCurrentTimeTool } from "./utils/get-current-time.ts";
 

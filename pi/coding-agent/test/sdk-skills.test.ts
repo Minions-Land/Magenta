@@ -59,7 +59,7 @@ This is a test skill.
 			getAgentsFiles: () => ({ agentsFiles: [] }),
 			getSystemPrompt: () => undefined,
 			getAppendSystemPrompt: () => [],
-			extendResources: () => {},
+			extendResources: async () => {},
 			reload: async () => {},
 		};
 
@@ -78,6 +78,7 @@ This is a test skill.
 		const customSkill = {
 			name: "custom-skill",
 			description: "A custom skill",
+			content: "A custom skill",
 			filePath: "/fake/path/SKILL.md",
 			baseDir: "/fake/path",
 			sourceInfo: createSyntheticSourceInfo("/fake/path/SKILL.md", { source: "sdk" }),
@@ -92,7 +93,7 @@ This is a test skill.
 			getAgentsFiles: () => ({ agentsFiles: [] }),
 			getSystemPrompt: () => undefined,
 			getAppendSystemPrompt: () => [],
-			extendResources: () => {},
+			extendResources: async () => {},
 			reload: async () => {},
 		};
 

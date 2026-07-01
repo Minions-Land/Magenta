@@ -430,7 +430,6 @@ describe("expandPromptTemplate", () => {
 				name: "arg-test",
 				description: "test",
 				content: `- arg1: $1\n- rest: \${@:2}`,
-				sourceInfo: { path: "/tmp/arg-test.md", source: "local", scope: "temporary", origin: "top-level" },
 				filePath: "/tmp/arg-test.md",
 			},
 		]);
@@ -444,7 +443,6 @@ describe("expandPromptTemplate", () => {
 				name: "arg-test",
 				description: "test",
 				content: "arg1: $1",
-				sourceInfo: { path: "/tmp/arg-test.md", source: "local", scope: "temporary", origin: "top-level" },
 				filePath: "/tmp/arg-test.md",
 			},
 		]);

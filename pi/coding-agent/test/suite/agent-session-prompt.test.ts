@@ -158,6 +158,7 @@ describe("AgentSession prompt characterization", () => {
 					{
 						name: "test",
 						description: "Test skill",
+						content: "Use the skill body.",
 						filePath: skillPath,
 						disableModelInvocation: false,
 						baseDir: tempDir,

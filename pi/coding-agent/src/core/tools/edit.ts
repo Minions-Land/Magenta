@@ -7,10 +7,10 @@ import {
 	type EditDiffError,
 	type EditDiffResult,
 	type EditOperations,
-	editSchema,
 	type EditToolDetails,
 	type EditToolInput,
 	type EditToolOptions,
+	editSchema,
 	prepareEditArguments,
 } from "@magenta/harness";
 import { renderDiff } from "../../modes/interactive/components/diff.ts";

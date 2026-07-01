@@ -8,12 +8,12 @@
  * compaction-serialization.test.ts keep working through this path.
  */
 
+export type { FileOperations } from "@magenta/harness";
 export {
 	computeFileLists,
 	createFileOps,
 	extractFileOpsFromMessage,
 	formatFileOperations,
-	serializeConversation,
 	SUMMARIZATION_SYSTEM_PROMPT,
+	serializeConversation,
 } from "@magenta/harness";
-export type { FileOperations } from "@magenta/harness";

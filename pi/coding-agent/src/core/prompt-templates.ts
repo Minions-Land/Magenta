@@ -108,4 +108,3 @@ export async function loadPromptTemplates(options: LoadPromptTemplatesOptions): 
 		await env.cleanup();
 	}
 }
-

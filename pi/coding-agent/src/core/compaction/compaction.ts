@@ -20,10 +20,10 @@ import {
 import type { SessionEntry } from "../session-manager.ts";
 import { createCompactionModels } from "./harness-models-adapter.ts";
 
+export type { CompactionErrorCode } from "@magenta/harness";
 // Re-export the harness error type + its stable code union so callers can branch
 // on `error.code` (backend-independent) instead of matching on message text.
 export { CompactionError } from "@magenta/harness";
-export type { CompactionErrorCode } from "@magenta/harness";
 
 /**
  * Unwrap a harness `Result`, preserving pi's historical throw semantics.

@@ -7,6 +7,7 @@ import type { ResourceDiagnostic } from "./diagnostics.ts";
 
 export type { ResourceCollision, ResourceDiagnostic } from "./diagnostics.ts";
 
+import type { Skill as HarnessSkill } from "@magenta/harness";
 import { canonicalizePath, isLocalPath, resolvePath } from "../utils/paths.ts";
 import { createEventBus, type EventBus } from "./event-bus.ts";
 import {
@@ -16,13 +17,12 @@ import {
 	loadExtensionsCached,
 } from "./extensions/loader.ts";
 import type { Extension, ExtensionFactory, ExtensionRuntime, LoadExtensionsResult } from "./extensions/types.ts";
+import { loadSkills } from "./harness-skills-adapter.ts";
 import { DefaultPackageManager, type PathMetadata, type ResolvedResource } from "./package-manager.ts";
 import type { PromptTemplate } from "./prompt-templates.ts";
 import { loadPromptTemplates } from "./prompt-templates.ts";
 import { SettingsManager } from "./settings-manager.ts";
 import type { Skill } from "./skills.ts";
-import type { Skill as HarnessSkill } from "@magenta/harness";
-import { loadSkills } from "./harness-skills-adapter.ts";
 import { createSourceInfo, type SourceInfo } from "./source-info.ts";
 
 export interface ResourceExtensionPaths {
@@ -613,7 +613,10 @@ export class DefaultResourceLoader implements ResourceLoader {
 		});
 	}
 
-	private async updateSkillsFromPaths(skillPaths: string[], metadataByPath?: Map<string, PathMetadata>): Promise<void> {
+	private async updateSkillsFromPaths(
+		skillPaths: string[],
+		metadataByPath?: Map<string, PathMetadata>,
+	): Promise<void> {
 		let skillsResult: { skills: HarnessSkill[]; diagnostics: ResourceDiagnostic[] };
 		if (this.noSkills && skillPaths.length === 0) {
 			skillsResult = { skills: [], diagnostics: [] };
@@ -640,7 +643,10 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.skillDiagnostics = resolvedSkills.diagnostics;
 	}
 
-	private async updatePromptsFromPaths(promptPaths: string[], metadataByPath?: Map<string, PathMetadata>): Promise<void> {
+	private async updatePromptsFromPaths(
+		promptPaths: string[],
+		metadataByPath?: Map<string, PathMetadata>,
+	): Promise<void> {
 		let promptsResult: { prompts: PromptTemplate[]; diagnostics: ResourceDiagnostic[] };
 		if (this.noPromptTemplates && promptPaths.length === 0) {
 			promptsResult = { prompts: [], diagnostics: [] };

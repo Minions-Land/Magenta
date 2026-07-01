@@ -12,7 +12,7 @@ Magenta3 采用分层的模块化架构,将核心功能拆分为独立的包,提
 - **职责**: LLM API 抽象层
 - **包含**: Models, Message, Tool 等基础类型
 - **依赖**: 无
-- **位置**: `packages/ai/`
+- **位置**: `pi/ai/`
 
 #### @earendil-works/pi-agent-core
 - **职责**: Agent 核心逻辑
@@ -21,7 +21,7 @@ Magenta3 采用分层的模块化架构,将核心功能拆分为独立的包,提
   - `AgentMessage`, `AgentTool`, `AgentEvent` 等核心类型
   - `CustomAgentMessages` 扩展机制
 - **依赖**: `@earendil-works/pi-ai`
-- **位置**: `packages/agent/`
+- **位置**: `pi/agent/`
 
 ### 实现层 (Implementation Layer)
 
@@ -46,7 +46,7 @@ Magenta3 采用分层的模块化架构,将核心功能拆分为独立的包,提
   - `SimpleHashEmbedding` - 简单哈希实现
   - 向量相似度计算工具
 - **依赖**: `@earendil-works/pi-ai`
-- **位置**: `packages/memory/`
+- **位置**: `harness/memory/`
 
 ### 应用层 (Application Layer)
 
@@ -62,12 +62,12 @@ Magenta3 采用分层的模块化架构,将核心功能拆分为独立的包,提
   - `@earendil-works/pi-agent-core`
   - `@earendil-works/pi-ai`
   - `@earendil-works/pi-tui`
-- **位置**: `packages/coding-agent/`
+- **位置**: `pi/coding-agent/`
 
 #### @earendil-works/pi-tui
 - **职责**: 终端 UI 组件
 - **依赖**: `@earendil-works/pi-ai`
-- **位置**: `packages/tui/`
+- **位置**: `pi/tui/`
 
 ## 依赖关系图
 
@@ -156,7 +156,7 @@ export class BrowserExecutionEnv implements ExecutionEnv {
 
 ### 添加新的记忆后端
 
-实现 `memory/src/types.ts` 中的 `MemoryStore` 接口:
+实现 `harness/memory/pi/types.ts` 中的 `MemoryStore` 接口:
 
 ```typescript
 export class RedisMemoryStore implements MemoryStore {

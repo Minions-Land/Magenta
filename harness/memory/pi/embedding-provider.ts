@@ -1,5 +1,5 @@
 import type { Models } from "@earendil-works/pi-ai";
-import type { EmbeddingProvider } from "./types.js";
+import type { EmbeddingProvider } from "./types.ts";
 
 /**
  * Embedding provider using Claude's text embedding API

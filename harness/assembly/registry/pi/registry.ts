@@ -55,10 +55,7 @@ function parseScalar(raw: string): TomlValue {
 		if (inner === "") return [];
 		return splitTopLevel(inner).map((item) => parseScalar(item));
 	}
-	if (
-		(value.startsWith('"') && value.endsWith('"')) ||
-		(value.startsWith("'") && value.endsWith("'"))
-	) {
+	if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
 		return unescapeString(value.slice(1, -1), value[0] === '"');
 	}
 	if (value === "true") return true;
@@ -158,10 +155,17 @@ export function parseToml(source: string): TomlTable {
 
 		// [[array-of-tables]]
 		if (line.startsWith("[[") && line.endsWith("]]")) {
-			const path = line.slice(2, -2).trim().split(".").map((s) => s.trim());
+			const path = line
+				.slice(2, -2)
+				.trim()
+				.split(".")
+				.map((s) => s.trim());
 			const key = path[path.length - 1];
 			const parent = descend(path.slice(0, -1));
-			const arr = (parent[key] ??= []) as TomlValue[];
+			if (!parent[key]) {
+				parent[key] = [];
+			}
+			const arr = parent[key] as TomlValue[];
 			const entry: TomlTable = {};
 			arr.push(entry);
 			current = entry;
@@ -170,7 +174,11 @@ export function parseToml(source: string): TomlTable {
 
 		// [section]
 		if (line.startsWith("[") && line.endsWith("]")) {
-			const path = line.slice(1, -1).trim().split(".").map((s) => s.trim());
+			const path = line
+				.slice(1, -1)
+				.trim()
+				.split(".")
+				.map((s) => s.trim());
 			current = descend(path);
 			continue;
 		}

@@ -6,10 +6,11 @@ import { fileURLToPath } from "node:url";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, "..");
-const codingAgentDir = join(repoRoot, "packages/coding-agent");
+const codingAgentDir = join(repoRoot, "pi/coding-agent");
 const rootLockfilePath = join(repoRoot, "package-lock.json");
 const shrinkwrapPath = join(codingAgentDir, "npm-shrinkwrap.json");
 const internalPackagePrefix = "@earendil-works/pi-";
+const internalPackageNames = new Set(["@magenta/harness"]);
 const allowedInstallScriptPackages = new Map([
 	["@google/genai@1.52.0", "preinstall is a no-op in the published package"],
 	["protobufjs@7.6.4", "postinstall only warns about protobufjs version scheme mismatches"],
@@ -133,10 +134,11 @@ function getInternalWorkspaces(lockPackages) {
 	const workspaces = new Map();
 
 	for (const [lockPath, entry] of Object.entries(lockPackages)) {
-		if (!lockPath.startsWith("packages/") || lockPath.includes("/node_modules/") || !entry.name || !entry.version) {
+		const isWorkspacePath = lockPath.startsWith("pi/") || lockPath === "harness" || lockPath.startsWith("harness/");
+		if (!isWorkspacePath || lockPath.includes("/node_modules/") || !entry.name || !entry.version) {
 			continue;
 		}
-		if (!entry.name.startsWith(internalPackagePrefix)) {
+		if (!entry.name.startsWith(internalPackagePrefix) && !internalPackageNames.has(entry.name)) {
 			continue;
 		}
 
@@ -340,23 +342,23 @@ try {
 
 	if (checkOnly) {
 		if (!existsSync(shrinkwrapPath)) {
-			console.error("packages/coding-agent/npm-shrinkwrap.json is missing.");
+			console.error("pi/coding-agent/npm-shrinkwrap.json is missing.");
 			console.error("Run: npm run shrinkwrap:coding-agent");
 			process.exit(1);
 		}
 		const current = readFileSync(shrinkwrapPath, "utf8");
 		if (current !== content) {
-			console.error("packages/coding-agent/npm-shrinkwrap.json is out of date.");
+			console.error("pi/coding-agent/npm-shrinkwrap.json is out of date.");
 			console.error("Run: npm run shrinkwrap:coding-agent");
 			process.exit(1);
 		}
-		console.log("packages/coding-agent/npm-shrinkwrap.json is up to date.");
+		console.log("pi/coding-agent/npm-shrinkwrap.json is up to date.");
 	} else {
 		writeFileSync(shrinkwrapPath, content);
 		const packageCount = Object.keys(shrinkwrap.packages).length - 1;
 		const platformPackageCount = Object.values(shrinkwrap.packages).filter((entry) => entry.os || entry.cpu || entry.libc).length;
 		console.log(
-			`Wrote packages/coding-agent/npm-shrinkwrap.json (${packageCount} packages, ${platformPackageCount} platform-specific).`,
+			`Wrote pi/coding-agent/npm-shrinkwrap.json (${packageCount} packages, ${platformPackageCount} platform-specific).`,
 		);
 	}
 } catch (error) {

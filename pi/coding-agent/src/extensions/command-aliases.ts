@@ -13,9 +13,9 @@
  * so it composes with ui-optimize's image-token editor instead of replacing it.
  */
 
-import { CustomEditor, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { matchesKey, type EditorComponent, type EditorTheme, type TUI } from "@earendil-works/pi-tui";
 import type { KeybindingsManager } from "@earendil-works/pi-coding-agent";
+import { CustomEditor, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { type EditorComponent, type EditorTheme, matchesKey, type TUI } from "@earendil-works/pi-tui";
 
 import { EditorComponentWrapper } from "./shared/editor-wrapper.ts";
 

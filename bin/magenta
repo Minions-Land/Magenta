@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+set -e
+
+# Auth loading priority:
+# 1. Existing environment variables
+# 2. ~/.codex/auth.json + config.toml (OpenAI)
+# 3. ~/.claude/settings.json (Anthropic)
+
+# --- OpenAI from Codex ---
+if [ -z "$OPENAI_API_KEY" ] && [ -f ~/.codex/auth.json ]; then
+  OPENAI_API_KEY=$(python3 -c "import json; print(json.load(open('$HOME/.codex/auth.json'))['OPENAI_API_KEY'])" 2>/dev/null || echo "")
+  export OPENAI_API_KEY
+fi
+
+if [ -z "$OPENAI_BASE_URL" ] && [ -f ~/.codex/config.toml ]; then
+  OPENAI_BASE_URL=$(grep 'base_url' ~/.codex/config.toml | head -1 | sed -E 's/.*"(.*)".*/\1/' 2>/dev/null || echo "")
+  export OPENAI_BASE_URL
+fi
+
+# --- Anthropic from Claude Code ---
+if [ -z "$ANTHROPIC_API_KEY" ] && [ -z "$ANTHROPIC_AUTH_TOKEN" ] && [ -f ~/.claude/settings.json ]; then
+  ANTHROPIC_AUTH_TOKEN=$(python3 -c "import json; env=json.load(open('$HOME/.claude/settings.json')).get('env',{}); print(env.get('ANTHROPIC_AUTH_TOKEN') or env.get('ANTHROPIC_API_KEY') or '')" 2>/dev/null || echo "")
+  export ANTHROPIC_AUTH_TOKEN
+
+  ANTHROPIC_BASE_URL=$(python3 -c "import json; env=json.load(open('$HOME/.claude/settings.json')).get('env',{}); print(env.get('ANTHROPIC_BASE_URL') or '')" 2>/dev/null || echo "")
+  export ANTHROPIC_BASE_URL
+fi
+
+exec node "$(dirname "$0")/../pi/coding-agent/dist/cli.js" "$@"

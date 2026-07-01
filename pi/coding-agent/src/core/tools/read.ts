@@ -11,12 +11,12 @@ import {
 	type ReadToolDetails,
 	type ReadToolInput,
 	type ReadToolOptions,
-	readSchema,
 	type ResizedImageResult,
+	readSchema,
 } from "@magenta/harness";
 import { constants } from "fs";
 import { access as fsAccess, readFile as fsReadFile } from "fs/promises";
-import { type Static } from "typebox";
+import type { Static } from "typebox";
 import { getReadmePath } from "../../config.ts";
 import { keyHint, keyText } from "../../modes/interactive/components/keybinding-hints.ts";
 import { getLanguageFromPath, highlightCode, type Theme } from "../../modes/interactive/theme/theme.ts";

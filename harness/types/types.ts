@@ -1,7 +1,7 @@
-import type { ImageContent, Message, Model, Models, SimpleStreamOptions, TextContent, Transport } from "@earendil-works/pi-ai";
 import type { AgentEvent, AgentMessage, AgentTool, QueueMode, ThinkingLevel } from "@earendil-works/pi-agent-core";
+import type { ImageContent, Model, Models, SimpleStreamOptions, TextContent, Transport } from "@earendil-works/pi-ai";
+import type { CompactionPreparation } from "../compaction/pi/compaction.ts";
 import type { Session } from "../session/pi/session.ts";
-import type { CompactionPreparation } from "../compaction/pi/compaction.js";
 
 /** Result of a fallible operation. Expected failures are returned as `ok: false` instead of thrown. */
 export type Result<TValue, TError> = { ok: true; value: TValue } | { ok: false; error: TError };

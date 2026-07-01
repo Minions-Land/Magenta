@@ -377,6 +377,11 @@ export class FooterDataProvider {
 					}
 				});
 			}
+
+			// Reftable updates can happen before fs.watch/watchFile has established
+			// its first baseline. Schedule one refresh after registration so the
+			// cached branch does not depend on catching the first file event.
+			this.scheduleRefresh();
 		}
 	}
 }

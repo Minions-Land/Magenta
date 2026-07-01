@@ -4,16 +4,16 @@ import {
 	createFindExecute,
 	FIND_DEFAULT_LIMIT as DEFAULT_LIMIT,
 	DEFAULT_MAX_BYTES,
+	type FindOperations,
 	type FindToolDetails,
 	type FindToolInput,
 	type FindToolOptions,
-	type FindOperations,
 	findSchema,
 	formatSize,
 } from "@magenta/harness";
-import { ensureTool } from "../../utils/tools-manager.ts";
 import { keyHint } from "../../modes/interactive/components/keybinding-hints.ts";
 import type { Theme } from "../../modes/interactive/theme/theme.ts";
+import { ensureTool } from "../../utils/tools-manager.ts";
 import type { ToolDefinition, ToolRenderResultOptions } from "../extensions/types.ts";
 import { getTextOutput, invalidArgText, shortenPath, str } from "./render-utils.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";

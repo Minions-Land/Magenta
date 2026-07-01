@@ -21,9 +21,10 @@
  * fields are merged INTO the options object the harness passes (the test asserts
  * `call[2]` carries both `reasoning` and `apiKey`).
  */
+
+import type { StreamFn } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, Context, Model, Models, SimpleStreamOptions } from "@earendil-works/pi-ai/compat";
 import { completeSimple } from "@earendil-works/pi-ai/compat";
-import type { StreamFn } from "@earendil-works/pi-agent-core";
 
 /** Request auth + optional streaming transport injected by pi into every completion. */
 export interface CompactionModelsAuth {

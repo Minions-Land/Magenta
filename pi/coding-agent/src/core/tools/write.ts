@@ -8,7 +8,7 @@ import {
 	type WriteToolOptions,
 	writeSchema,
 } from "@magenta/harness";
-import { type Static } from "typebox";
+import type { Static } from "typebox";
 import { keyHint } from "../../modes/interactive/components/keybinding-hints.ts";
 import { getLanguageFromPath, highlightCode, type Theme } from "../../modes/interactive/theme/theme.ts";
 import type { ToolDefinition, ToolRenderResultOptions } from "../extensions/types.ts";

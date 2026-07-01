@@ -158,7 +158,8 @@ The sync script updates:
 
 ## Two-Layer Versioning
 
-- **Product layer** (`@magenta/harness`, `@magenta/memory`) → Uses `BRAND_CONFIG.version`
+- **Product layer** (`@magenta/memory` and other Magenta-specific packages) → Uses `BRAND_CONFIG.version`
+- **Harness layer** (`@magenta/harness`) → Uses `BRAND_CONFIG.infra.harnessVersion`
 - **Infrastructure layer** (`pi/*` packages) → Uses `BRAND_CONFIG.infra.piVersion`
 
 This allows:

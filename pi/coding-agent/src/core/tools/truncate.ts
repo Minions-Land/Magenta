@@ -6,13 +6,13 @@
  * internals here — everything comes through the package surface.
  */
 export {
-	DEFAULT_MAX_LINES,
 	DEFAULT_MAX_BYTES,
-	GREP_MAX_LINE_LENGTH,
-	type TruncationResult,
-	type TruncationOptions,
+	DEFAULT_MAX_LINES,
 	formatSize,
+	GREP_MAX_LINE_LENGTH,
+	type TruncationOptions,
+	type TruncationResult,
 	truncateHead,
-	truncateTail,
 	truncateLine,
+	truncateTail,
 } from "@magenta/harness";

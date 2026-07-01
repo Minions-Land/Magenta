@@ -52,9 +52,9 @@ Magenta3/
 │   ├── ai/                # LLM API abstraction
 │   ├── agent/             # Agent core
 │   ├── coding-agent/      # Full app + LazyPi extensions
-│   ├── memory/            # Memory system
 │   └── tui/               # Terminal UI
-├── harness/               # Agent runtime
+├── harness/               # Agent runtime + pure execution components
+│   └── memory/            # Semantic memory package
 ├── tests/                 # E2E test suite
 └── bin/magenta            # CLI entry point
 ```
@@ -143,7 +143,7 @@ npm run dev -w @earendil-works/pi-coding-agent
 | pi/ai | LLM API abstraction | 145 |
 | pi/agent | Agent core | 6 |
 | pi/coding-agent | Full application | 182 |
-| pi/memory | Memory system | 5 |
+| harness/memory | Memory system | 5 |
 | pi/tui | Terminal UI | 28 |
 | harness | Runtime environment | 20 |
 

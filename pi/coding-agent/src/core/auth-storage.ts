@@ -19,8 +19,8 @@ import { dirname, join } from "path";
 import lockfile from "proper-lockfile";
 import { getAgentDir } from "../config.ts";
 import { normalizePath } from "../utils/paths.ts";
-import { resolveConfigValue } from "./resolve-config-value.ts";
 import { getExternalAuth } from "./external-auth-loader.ts";
+import { resolveConfigValue } from "./resolve-config-value.ts";
 
 export type ApiKeyCredential = {
 	type: "api_key";

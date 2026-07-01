@@ -56,7 +56,7 @@ The system maintains separate versions for infrastructure and product:
 
 **Infrastructure Layer** (foundation packages)
 - `@earendil-works/pi-ai`, `pi-tui`, `pi-agent-core`, `pi-coding-agent` → **0.80.2**
-- `@magenta/harness` → **0.1.0**
+- `@magenta/harness` → **0.0.1**
 - Track upstream evolution, easier to pull updates
 
 **Product Layer** (brand-specific)

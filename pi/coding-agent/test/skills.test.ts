@@ -25,6 +25,7 @@ function createTestSkill(options: {
 	return {
 		name: options.name,
 		description: options.description,
+		content: options.description,
 		filePath: options.filePath,
 		baseDir: options.baseDir,
 		sourceInfo: createSyntheticSourceInfo(options.filePath, { source: options.source ?? "test" }),
@@ -263,8 +264,18 @@ describe("skills", () => {
 
 		it("should format multiple skills", () => {
 			const skills: Skill[] = [
-				createTestSkill({ name: "skill-one", description: "First skill.", filePath: "/path/one/SKILL.md", baseDir: "/path/one" }),
-				createTestSkill({ name: "skill-two", description: "Second skill.", filePath: "/path/two/SKILL.md", baseDir: "/path/two" }),
+				createTestSkill({
+					name: "skill-one",
+					description: "First skill.",
+					filePath: "/path/one/SKILL.md",
+					baseDir: "/path/one",
+				}),
+				createTestSkill({
+					name: "skill-two",
+					description: "Second skill.",
+					filePath: "/path/two/SKILL.md",
+					baseDir: "/path/two",
+				}),
 			];
 			const result = formatSkillsForPrompt(skills);
 			expect(result).toContain("<name>skill-one</name>");
@@ -274,8 +285,19 @@ describe("skills", () => {
 
 		it("should exclude skills with disableModelInvocation from prompt", () => {
 			const skills: Skill[] = [
-				createTestSkill({ name: "visible-skill", description: "A visible skill.", filePath: "/path/visible/SKILL.md", baseDir: "/path/visible" }),
-				createTestSkill({ name: "hidden-skill", description: "A hidden skill.", filePath: "/path/hidden/SKILL.md", baseDir: "/path/hidden", disableModelInvocation: true }),
+				createTestSkill({
+					name: "visible-skill",
+					description: "A visible skill.",
+					filePath: "/path/visible/SKILL.md",
+					baseDir: "/path/visible",
+				}),
+				createTestSkill({
+					name: "hidden-skill",
+					description: "A hidden skill.",
+					filePath: "/path/hidden/SKILL.md",
+					baseDir: "/path/hidden",
+					disableModelInvocation: true,
+				}),
 			];
 			const result = formatSkillsForPrompt(skills);
 			expect(result).toContain("<name>visible-skill</name>");
@@ -285,10 +307,15 @@ describe("skills", () => {
 
 		it("should return empty string when all skills have disableModelInvocation", () => {
 			const skills: Skill[] = [
-				createTestSkill({ name: "hidden-skill", description: "A hidden skill.", filePath: "/path/hidden/SKILL.md", baseDir: "/path/hidden", disableModelInvocation: true }),
+				createTestSkill({
+					name: "hidden-skill",
+					description: "A hidden skill.",
+					filePath: "/path/hidden/SKILL.md",
+					baseDir: "/path/hidden",
+					disableModelInvocation: true,
+				}),
 			];
 			expect(formatSkillsForPrompt(skills)).toBe("");
 		});
 	});
 });
-

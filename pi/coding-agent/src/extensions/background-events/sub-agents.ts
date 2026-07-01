@@ -6,7 +6,7 @@
  * default; the main agent should synthesize results and perform final edits.
  */
 
-import { spawn, type ChildProcess } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import { createWriteStream, type WriteStream } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -14,7 +14,13 @@ import { join, resolve } from "node:path";
 import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { appendTail as appendTailText, formatDuration, RESULT_LIMIT_BYTES, timestampForFile, truncateTail } from "../shared/shell.ts";
+import {
+	appendTail as appendTailText,
+	formatDuration,
+	RESULT_LIMIT_BYTES,
+	timestampForFile,
+	truncateTail,
+} from "../shared/shell.ts";
 import type { createEventsMonitor } from "./event-monitor.ts";
 
 const WORK_DIR = join(homedir(), ".pi", "agent", "tmp", "sub-agents");
@@ -110,14 +116,24 @@ type SubAgentEvent = {
 
 const TaskSchema = Type.Object({
 	task: Type.String({ description: "Independent task for the sub-agent." }),
-	role: Type.Optional(Type.String({ description: "Optional role, e.g. frontend reviewer, test analyst, security reviewer." })),
+	role: Type.Optional(
+		Type.String({ description: "Optional role, e.g. frontend reviewer, test analyst, security reviewer." }),
+	),
 	label: Type.Optional(Type.String({ description: "Short label for status listings." })),
-	cwd: Type.Optional(Type.String({ description: "Working directory. Relative paths are resolved against the current cwd." })),
-	tools: Type.Optional(Type.Array(Type.String(), { description: `Allowed tools for the sub-agent. Defaults to read-only: ${DEFAULT_TOOLS.join(",")}.` })),
+	cwd: Type.Optional(
+		Type.String({ description: "Working directory. Relative paths are resolved against the current cwd." }),
+	),
+	tools: Type.Optional(
+		Type.Array(Type.String(), {
+			description: `Allowed tools for the sub-agent. Defaults to read-only: ${DEFAULT_TOOLS.join(",")}.`,
+		}),
+	),
 	model: Type.Optional(Type.String({ description: "Optional pi model pattern or provider/model id." })),
 	provider: Type.Optional(Type.String({ description: "Optional pi provider name." })),
 	thinking: Type.Optional(StringEnum(["off", "minimal", "low", "medium", "high", "xhigh"] as const)),
-	timeoutSeconds: Type.Optional(Type.Number({ description: "Optional maximum runtime before the sub-agent is terminated." })),
+	timeoutSeconds: Type.Optional(
+		Type.Number({ description: "Optional maximum runtime before the sub-agent is terminated." }),
+	),
 });
 
 const mainToolProgress = new Map<string, MainToolProgress>();
@@ -136,9 +152,7 @@ function compactValue(value: unknown, maxLength = 1200): string {
 }
 
 function formatMainToolProgress(): string {
-	const entries = [...mainToolProgress.values()]
-		.sort((a, b) => a.startedAt - b.startedAt)
-		.slice(-30);
+	const entries = [...mainToolProgress.values()].sort((a, b) => a.startedAt - b.startedAt).slice(-30);
 	const lines = ["# Parent main-agent tool progress", "", `Updated: ${new Date().toISOString()}`, ""];
 	if (!entries.length) {
 		lines.push("No main-agent tool executions have been observed yet.");
@@ -189,7 +203,13 @@ function killProcessGroup(event: SubAgentEvent, signal: NodeJS.Signals): void {
 	}
 }
 
-function finishEvent(event: SubAgentEvent, status: AgentStatus, exitCode: number | null, signal: NodeJS.Signals | null, error?: string): void {
+function finishEvent(
+	event: SubAgentEvent,
+	status: AgentStatus,
+	exitCode: number | null,
+	signal: NodeJS.Signals | null,
+	error?: string,
+): void {
 	if (event.status !== "running") return;
 
 	event.status = status;
@@ -224,12 +244,20 @@ function summarizeEvent(event: SubAgentEvent, includeOutput = true): string {
 	];
 	if (event.error) lines.push(`Error: ${event.error}`);
 	if (includeOutput) {
-		lines.push("", output.truncated ? `[Output truncated to last ${RESULT_LIMIT_BYTES} bytes]` : "Output:", output.text || "(no output yet)");
+		lines.push(
+			"",
+			output.truncated ? `[Output truncated to last ${RESULT_LIMIT_BYTES} bytes]` : "Output:",
+			output.text || "(no output yet)",
+		);
 	}
 	return lines.join("\n");
 }
 
-function waitForEvent(event: SubAgentEvent, timeoutSeconds: number | undefined, signal: AbortSignal | undefined): Promise<"done" | "timeout" | "aborted"> {
+function waitForEvent(
+	event: SubAgentEvent,
+	timeoutSeconds: number | undefined,
+	signal: AbortSignal | undefined,
+): Promise<"done" | "timeout" | "aborted"> {
 	if (event.status !== "running") return Promise.resolve("done");
 	if (signal?.aborted) return Promise.resolve("aborted");
 
@@ -319,17 +347,18 @@ export function installSubAgents(pi: ExtensionAPI, eventsMonitor: EventsMonitor)
 	const monitor = eventsMonitor.registerSource({
 		id: "agents",
 		title: "agents",
-		getEvents: () => [...events.values()].map((event) => ({
-			id: event.id,
-			status: event.status,
-			startedAt: event.startedAt,
-			endedAt: event.endedAt,
-			label: event.label ?? event.role ?? event.task,
-			cwd: event.cwd,
-			logPath: event.logPath,
-			tail: event.tail,
-			canCancel: event.status === "running",
-		})),
+		getEvents: () =>
+			[...events.values()].map((event) => ({
+				id: event.id,
+				status: event.status,
+				startedAt: event.startedAt,
+				endedAt: event.endedAt,
+				label: event.label ?? event.role ?? event.task,
+				cwd: event.cwd,
+				logPath: event.logPath,
+				tail: event.tail,
+				canCancel: event.status === "running",
+			})),
 		getEventDetails: (id) => {
 			const event = events.get(id);
 			if (!event) return [`unknown agent event: ${id}`];
@@ -414,7 +443,8 @@ export function installSubAgents(pi: ExtensionAPI, eventsMonitor: EventsMonitor)
 		await mkdir(WORK_DIR, { recursive: true });
 
 		const running = [...events.values()].filter((event) => event.status === "running").length;
-		if (running >= MAX_START_MANY) throw new Error(`Too many running sub-agents (${running}). Wait or cancel some before starting more.`);
+		if (running >= MAX_START_MANY)
+			throw new Error(`Too many running sub-agents (${running}). Wait or cancel some before starting more.`);
 
 		const id = `agent_${String(nextAgentNumber++).padStart(3, "0")}`;
 		const cwd = resolve(parentCwd, input.cwd ?? ".");
@@ -501,7 +531,11 @@ export function installSubAgents(pi: ExtensionAPI, eventsMonitor: EventsMonitor)
 		return ids.length ? ids : [...events.keys()];
 	}
 
-	function returnSubAgentResultsToMain(completedEvents: SubAgentEvent[], delivery: ReturnDelivery, instruction?: string): void {
+	function returnSubAgentResultsToMain(
+		completedEvents: SubAgentEvent[],
+		delivery: ReturnDelivery,
+		instruction?: string,
+	): void {
 		if (shuttingDown || completedEvents.length === 0) return;
 
 		const summaries = completedEvents.map((event) => summarizeEvent(event)).join("\n\n---\n\n");
@@ -512,13 +546,20 @@ export function installSubAgents(pi: ExtensionAPI, eventsMonitor: EventsMonitor)
 				customType: "sub-agent-return",
 				content: `${instruction?.trim() || defaultInstruction}\n\n${summaries}`,
 				display: true,
-				details: { ids: completedEvents.map((event) => event.id), statuses: completedEvents.map((event) => event.status) },
+				details: {
+					ids: completedEvents.map((event) => event.id),
+					statuses: completedEvents.map((event) => event.status),
+				},
 			},
 			{ deliverAs: delivery, triggerTurn: delivery !== "nextTurn" },
 		);
 	}
 
-	function scheduleReturnToMain(completedEvents: SubAgentEvent[], delivery: ReturnDelivery, instruction?: string): void {
+	function scheduleReturnToMain(
+		completedEvents: SubAgentEvent[],
+		delivery: ReturnDelivery,
+		instruction?: string,
+	): void {
 		void (async () => {
 			for (const event of completedEvents) await waitForEvent(event, undefined, undefined);
 			returnSubAgentResultsToMain(completedEvents, delivery, instruction);
@@ -528,7 +569,8 @@ export function installSubAgents(pi: ExtensionAPI, eventsMonitor: EventsMonitor)
 	pi.registerTool({
 		name: "sub_agent",
 		label: "Sub Agent",
-		description: "Start, inspect, wait for, or cancel headless pi sub-agents. action=start accepts either one task or a tasks array for parallel work; set returnToMain=true to automatically send completed results back to the main agent. Sub-agents are read-only by default, run with --no-session --no-extensions, and receive parent progress.",
+		description:
+			"Start, inspect, wait for, or cancel headless pi sub-agents. action=start accepts either one task or a tasks array for parallel work; set returnToMain=true to automatically send completed results back to the main agent. Sub-agents are read-only by default, run with --no-session --no-extensions, and receive parent progress.",
 		promptSnippet: "Run one or more headless pi sub-agents for delegated analysis",
 		promptGuidelines: [
 			"Use sub_agent action=start with tasks:[...] when a task can be decomposed into independent research, code review, test analysis, or planning subtasks that benefit from concurrent agents.",
@@ -540,27 +582,75 @@ export function installSubAgents(pi: ExtensionAPI, eventsMonitor: EventsMonitor)
 		],
 		parameters: Type.Object({
 			action: StringEnum(["start", "status", "wait", "cancel", "config"] as const),
-			task: Type.Optional(Type.String({ description: "Single task for action=start. Mutually exclusive with tasks." })),
+			task: Type.Optional(
+				Type.String({ description: "Single task for action=start. Mutually exclusive with tasks." }),
+			),
 			role: Type.Optional(Type.String({ description: "Optional role for action=start." })),
 			label: Type.Optional(Type.String({ description: "Optional label for action=start." })),
 			cwd: Type.Optional(Type.String({ description: "Working directory for action=start." })),
-			tools: Type.Optional(Type.Array(Type.String(), { description: `Allowed tools. Defaults to ${DEFAULT_TOOLS.join(",")}.` })),
+			tools: Type.Optional(
+				Type.Array(Type.String(), { description: `Allowed tools. Defaults to ${DEFAULT_TOOLS.join(",")}.` }),
+			),
 			model: Type.Optional(Type.String({ description: "Optional model for action=start." })),
 			provider: Type.Optional(Type.String({ description: "Optional provider for action=start." })),
 			thinking: Type.Optional(StringEnum(["off", "minimal", "low", "medium", "high", "xhigh"] as const)),
 			timeoutSeconds: Type.Optional(Type.Number({ description: "Maximum runtime for action=start." })),
-			tasks: Type.Optional(Type.Array(TaskSchema, { description: `Parallel tasks for action=start. Mutually exclusive with task. Maximum ${MAX_START_MANY}.` })),
-			returnToMain: Type.Optional(Type.Boolean({ description: "For action=start, automatically send completed sub-agent results back to the main agent and trigger continuation. Default: false." })),
-			returnDelivery: Type.Optional(StringEnum(["steer", "followUp", "nextTurn"] as const, { description: "Delivery mode when returnToMain=true. Default: followUp." })),
-			returnInstruction: Type.Optional(Type.String({ description: "Optional instruction prepended to the automatic return message for the parent agent." })),
+			tasks: Type.Optional(
+				Type.Array(TaskSchema, {
+					description: `Parallel tasks for action=start. Mutually exclusive with task. Maximum ${MAX_START_MANY}.`,
+				}),
+			),
+			returnToMain: Type.Optional(
+				Type.Boolean({
+					description:
+						"For action=start, automatically send completed sub-agent results back to the main agent and trigger continuation. Default: false.",
+				}),
+			),
+			returnDelivery: Type.Optional(
+				StringEnum(["steer", "followUp", "nextTurn"] as const, {
+					description: "Delivery mode when returnToMain=true. Default: followUp.",
+				}),
+			),
+			returnInstruction: Type.Optional(
+				Type.String({
+					description: "Optional instruction prepended to the automatic return message for the parent agent.",
+				}),
+			),
 			eventId: Type.Optional(Type.String({ description: "Single sub-agent id for status/wait/cancel." })),
-			eventIds: Type.Optional(Type.Array(Type.String(), { description: "Multiple sub-agent ids for status/wait/cancel. Omit eventId/eventIds to target all events." })),
-			waitTimeoutSeconds: Type.Optional(Type.Number({ description: "Maximum time to wait for action=wait. If it expires, running sub-agents continue." })),
-			defaultTimeoutSeconds: Type.Optional(Type.Number({ description: "For action=config: set default maximum runtime for future sub-agents. Use <=0 to clear." })),
-			defaultWaitTimeoutSeconds: Type.Optional(Type.Number({ description: "For action=config: set default maximum wait time for future wait calls. Use <=0 to clear." })),
-			defaultReturnToMain: Type.Optional(Type.Boolean({ description: "For action=config: default returnToMain for future start calls." })),
-			defaultReturnDelivery: Type.Optional(StringEnum(["steer", "followUp", "nextTurn"] as const, { description: "For action=config: default delivery mode when automatic return is enabled." })),
-			defaultThinking: Type.Optional(StringEnum(["off", "minimal", "low", "medium", "high", "xhigh"] as const, { description: "For action=config: default sub-agent thinking level." })),
+			eventIds: Type.Optional(
+				Type.Array(Type.String(), {
+					description:
+						"Multiple sub-agent ids for status/wait/cancel. Omit eventId/eventIds to target all events.",
+				}),
+			),
+			waitTimeoutSeconds: Type.Optional(
+				Type.Number({
+					description: "Maximum time to wait for action=wait. If it expires, running sub-agents continue.",
+				}),
+			),
+			defaultTimeoutSeconds: Type.Optional(
+				Type.Number({
+					description: "For action=config: set default maximum runtime for future sub-agents. Use <=0 to clear.",
+				}),
+			),
+			defaultWaitTimeoutSeconds: Type.Optional(
+				Type.Number({
+					description: "For action=config: set default maximum wait time for future wait calls. Use <=0 to clear.",
+				}),
+			),
+			defaultReturnToMain: Type.Optional(
+				Type.Boolean({ description: "For action=config: default returnToMain for future start calls." }),
+			),
+			defaultReturnDelivery: Type.Optional(
+				StringEnum(["steer", "followUp", "nextTurn"] as const, {
+					description: "For action=config: default delivery mode when automatic return is enabled.",
+				}),
+			),
+			defaultThinking: Type.Optional(
+				StringEnum(["off", "minimal", "low", "medium", "high", "xhigh"] as const, {
+					description: "For action=config: default sub-agent thinking level.",
+				}),
+			),
 		}),
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
 			const action = params.action as Action;
@@ -569,10 +659,14 @@ export function installSubAgents(pi: ExtensionAPI, eventsMonitor: EventsMonitor)
 			const returnInstruction = params.returnInstruction as string | undefined;
 
 			if (action === "config") {
-				if ("defaultTimeoutSeconds" in params) subAgentConfig.defaultTimeoutSeconds = positiveNumber(params.defaultTimeoutSeconds);
-				if ("defaultWaitTimeoutSeconds" in params) subAgentConfig.defaultWaitTimeoutSeconds = positiveNumber(params.defaultWaitTimeoutSeconds);
-				if (typeof params.defaultReturnToMain === "boolean") subAgentConfig.defaultReturnToMain = params.defaultReturnToMain;
-				if (params.defaultReturnDelivery) subAgentConfig.defaultReturnDelivery = params.defaultReturnDelivery as ReturnDelivery;
+				if ("defaultTimeoutSeconds" in params)
+					subAgentConfig.defaultTimeoutSeconds = positiveNumber(params.defaultTimeoutSeconds);
+				if ("defaultWaitTimeoutSeconds" in params)
+					subAgentConfig.defaultWaitTimeoutSeconds = positiveNumber(params.defaultWaitTimeoutSeconds);
+				if (typeof params.defaultReturnToMain === "boolean")
+					subAgentConfig.defaultReturnToMain = params.defaultReturnToMain;
+				if (params.defaultReturnDelivery)
+					subAgentConfig.defaultReturnDelivery = params.defaultReturnDelivery as ReturnDelivery;
 				if (params.defaultThinking) subAgentConfig.defaultThinking = params.defaultThinking as ThinkingLevel;
 				return { content: [{ type: "text", text: formatConfig(subAgentConfig) }], details: { ...subAgentConfig } };
 			}
@@ -590,10 +684,13 @@ export function installSubAgents(pi: ExtensionAPI, eventsMonitor: EventsMonitor)
 					thinking: task.thinking ?? commonThinking,
 					timeoutSeconds: positiveNumber(task.timeoutSeconds) ?? commonTimeoutSeconds,
 				}));
-				if (tasks.length > MAX_START_MANY) throw new Error(`sub_agent action=start supports at most ${MAX_START_MANY} tasks`);
+				if (tasks.length > MAX_START_MANY)
+					throw new Error(`sub_agent action=start supports at most ${MAX_START_MANY} tasks`);
 				const running = [...events.values()].filter((event) => event.status === "running").length;
 				if (running + tasks.length > MAX_START_MANY) {
-					throw new Error(`Cannot start ${tasks.length} sub-agent(s): ${running} already running and the limit is ${MAX_START_MANY}. Wait or cancel some before starting more.`);
+					throw new Error(
+						`Cannot start ${tasks.length} sub-agent(s): ${running} already running and the limit is ${MAX_START_MANY}. Wait or cancel some before starting more.`,
+					);
 				}
 
 				const started: SubAgentEvent[] = [];
@@ -604,13 +701,39 @@ export function installSubAgents(pi: ExtensionAPI, eventsMonitor: EventsMonitor)
 				if (started.length === 1) {
 					const event = started[0];
 					return {
-						content: [{ type: "text", text: `Started sub-agent ${event.id}${event.label ? ` (${event.label})` : ""}${returnToMain ? " with automatic return to main agent" : ""}\nRole: ${event.role ?? "general"}\nCWD: ${event.cwd}\nTools: ${event.tools.join(",")}\nPrompt: ${event.promptPath}\nLog: ${event.logPath}\nParent progress: ${MAIN_PROGRESS_PATH}` }],
-						details: { id: event.id, status: event.status, promptPath: event.promptPath, logPath: event.logPath, parentProgressPath: MAIN_PROGRESS_PATH, returnsToMain: returnToMain },
+						content: [
+							{
+								type: "text",
+								text: `Started sub-agent ${event.id}${event.label ? ` (${event.label})` : ""}${returnToMain ? " with automatic return to main agent" : ""}\nRole: ${event.role ?? "general"}\nCWD: ${event.cwd}\nTools: ${event.tools.join(",")}\nPrompt: ${event.promptPath}\nLog: ${event.logPath}\nParent progress: ${MAIN_PROGRESS_PATH}`,
+							},
+						],
+						details: {
+							id: event.id,
+							status: event.status,
+							promptPath: event.promptPath,
+							logPath: event.logPath,
+							parentProgressPath: MAIN_PROGRESS_PATH,
+							returnsToMain: returnToMain,
+						},
 					};
 				}
 
-				const lines = started.map((event) => `${event.id}\t${event.status}\t${event.label ?? event.role ?? "sub-agent"}\t${event.logPath}`);
-				return { content: [{ type: "text", text: `Started ${started.length} sub-agents concurrently${returnToMain ? " with automatic return to main agent" : ""}:\n${lines.join("\n")}\nParent progress: ${MAIN_PROGRESS_PATH}` }], details: { ids: started.map((event) => event.id), parentProgressPath: MAIN_PROGRESS_PATH, returnsToMain: returnToMain } };
+				const lines = started.map(
+					(event) => `${event.id}\t${event.status}\t${event.label ?? event.role ?? "sub-agent"}\t${event.logPath}`,
+				);
+				return {
+					content: [
+						{
+							type: "text",
+							text: `Started ${started.length} sub-agents concurrently${returnToMain ? " with automatic return to main agent" : ""}:\n${lines.join("\n")}\nParent progress: ${MAIN_PROGRESS_PATH}`,
+						},
+					],
+					details: {
+						ids: started.map((event) => event.id),
+						parentProgressPath: MAIN_PROGRESS_PATH,
+						returnsToMain: returnToMain,
+					},
+				};
 			}
 
 			if (action === "status") {
@@ -626,11 +749,15 @@ export function installSubAgents(pi: ExtensionAPI, eventsMonitor: EventsMonitor)
 
 			if (action === "wait") {
 				const ids = resolveEventIds(params.eventId, params.eventIds);
-				if (!ids.length) return { content: [{ type: "text", text: "No sub-agents to wait for." }], details: { events: 0 } };
-				const knownEvents = ids.map((id) => events.get(id)).filter((event): event is SubAgentEvent => Boolean(event));
+				if (!ids.length)
+					return { content: [{ type: "text", text: "No sub-agents to wait for." }], details: { events: 0 } };
+				const knownEvents = ids
+					.map((id) => events.get(id))
+					.filter((event): event is SubAgentEvent => Boolean(event));
 				if (!knownEvents.length) throw new Error(`No known sub-agents found: ${ids.join(", ")}`);
 
-				const waitTimeoutSeconds = positiveNumber(params.waitTimeoutSeconds) ?? subAgentConfig.defaultWaitTimeoutSeconds;
+				const waitTimeoutSeconds =
+					positiveNumber(params.waitTimeoutSeconds) ?? subAgentConfig.defaultWaitTimeoutSeconds;
 				const deadline = waitTimeoutSeconds ? Date.now() + waitTimeoutSeconds * 1000 : undefined;
 				for (const event of knownEvents) {
 					const remaining = deadline ? Math.max(0.001, (deadline - Date.now()) / 1000) : undefined;
@@ -640,12 +767,19 @@ export function installSubAgents(pi: ExtensionAPI, eventsMonitor: EventsMonitor)
 				}
 
 				const summaries = knownEvents.map((event) => summarizeEvent(event));
-				return { content: [{ type: "text", text: summaries.join("\n\n---\n\n") }], details: { ids: knownEvents.map((event) => event.id), statuses: knownEvents.map((event) => event.status) } };
+				return {
+					content: [{ type: "text", text: summaries.join("\n\n---\n\n") }],
+					details: {
+						ids: knownEvents.map((event) => event.id),
+						statuses: knownEvents.map((event) => event.status),
+					},
+				};
 			}
 
 			if (action === "cancel") {
 				const ids = resolveEventIds(params.eventId, params.eventIds);
-				if (!ids.length) return { content: [{ type: "text", text: "No sub-agents to cancel." }], details: { events: 0 } };
+				if (!ids.length)
+					return { content: [{ type: "text", text: "No sub-agents to cancel." }], details: { events: 0 } };
 				const lines: string[] = [];
 				for (const id of ids) {
 					const event = events.get(id);

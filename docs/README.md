@@ -2,7 +2,7 @@
 
 ## Overview
 
-Magenta3 is an AI coding assistant forked from Pi, with enhanced modular architecture and brand system.
+Magenta3 is an AI coding assistant forked from Pi, with enhanced modular architecture, a harness execution layer, and a brand system.
 
 ## Documentation Structure
 
@@ -25,7 +25,7 @@ Magenta3 is an AI coding assistant forked from Pi, with enhanced modular archite
 Magenta uses a neutral brand registry allowing multiple brands (Magenta, Pi, custom) to coexist. See [BRANDING.md](./BRANDING.md).
 
 ### Harness Architecture
-Modular component system with source separation (pi/, rust/, mcp/). See [harness/README.md](../harness/README.md).
+Modular component system with source separation (pi/, rust/, mcp/) plus the Magenta memory package. See [harness/README.md](../harness/README.md).
 
 ### Assembly Layer
 Component discovery, adaptation, and management at startup. See [harness/assembly/README.md](../harness/assembly/README.md).

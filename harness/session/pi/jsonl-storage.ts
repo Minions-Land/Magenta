@@ -1,4 +1,10 @@
-import type { FileSystem, JsonlSessionMetadata, LeafEntry, SessionStorage, SessionTreeEntry } from "../../types/types.ts";
+import type {
+	FileSystem,
+	JsonlSessionMetadata,
+	LeafEntry,
+	SessionStorage,
+	SessionTreeEntry,
+} from "../../types/types.ts";
 import { SessionError, toError } from "../../types/types.ts";
 import { getFileSystemResultOrThrow } from "./repo-utils.ts";
 import { uuidv7 } from "./uuid.ts";

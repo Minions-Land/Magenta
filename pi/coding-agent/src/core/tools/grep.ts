@@ -2,13 +2,13 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Text } from "@earendil-works/pi-tui";
 import {
 	createGrepExecute,
-	type GrepOperations,
 	GREP_DESCRIPTION,
 	GREP_PROMPT_SNIPPET,
-	grepSchema,
+	type GrepOperations,
 	type GrepToolDetails,
 	type GrepToolInput,
 	type GrepToolOptions,
+	grepSchema,
 } from "@magenta/harness";
 import { keyHint } from "../../modes/interactive/components/keybinding-hints.ts";
 import type { Theme } from "../../modes/interactive/theme/theme.ts";

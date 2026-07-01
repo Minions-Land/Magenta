@@ -19,7 +19,10 @@
 import type { AgentMessage, StreamFn } from "@earendil-works/pi-agent-core";
 import type { Model } from "@earendil-works/pi-ai/compat";
 import type { SessionTreeEntry } from "@magenta/harness";
-import { generateBranchSummary as harnessGenerateBranchSummary, prepareBranchEntries as harnessPrepareBranchEntries } from "@magenta/harness";
+import {
+	generateBranchSummary as harnessGenerateBranchSummary,
+	prepareBranchEntries as harnessPrepareBranchEntries,
+} from "@magenta/harness";
 import type { ReadonlySessionManager, SessionEntry } from "../session-manager.ts";
 import { createCompactionModels } from "./harness-models-adapter.ts";
 
@@ -42,6 +45,7 @@ export interface BranchSummaryDetails {
 }
 
 export type { FileOperations } from "@magenta/harness";
+
 import type { FileOperations } from "@magenta/harness";
 
 export interface BranchPreparation {

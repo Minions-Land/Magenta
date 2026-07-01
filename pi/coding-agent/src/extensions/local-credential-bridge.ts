@@ -41,10 +41,9 @@ function readTomlStringValue(text: string, key: string): string | undefined {
 
 function readCodexProviderSection(text: string, providerName: string): string | undefined {
 	const sectionName = escapeRegExp(providerName);
-	const match = new RegExp(
-		`^\\s*\\[model_providers\\.${sectionName}\\]\\s*$([\\s\\S]*?)(?=^\\s*\\[|\\s*$)`,
-		"m",
-	).exec(text);
+	const match = new RegExp(`^\\s*\\[model_providers\\.${sectionName}\\]\\s*$([\\s\\S]*?)(?=^\\s*\\[|\\s*$)`, "m").exec(
+		text,
+	);
 	return match?.[1];
 }
 

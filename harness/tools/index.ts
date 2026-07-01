@@ -10,61 +10,56 @@
  * `FIND_DEFAULT_LIMIT`, `LS_DEFAULT_LIMIT`) to avoid a name clash at this barrel.
  */
 
-// Tool abstraction surface (AgentTool contract + ToolFactory).
-export * from "./tool.ts";
-
 // Tools with no colliding export names.
 export * from "./bash/pi/bash.ts";
 export * from "./edit/pi/edit.ts";
-export * from "./read/pi/read.ts";
-export * from "./write/pi/write.ts";
-
-// grep — DEFAULT_LIMIT namespaced to avoid collision with find/ls.
-export {
-	grepSchema,
-	type GrepToolInput,
-	DEFAULT_LIMIT as GREP_DEFAULT_LIMIT,
-	type GrepToolDetails,
-	type GrepOperations,
-	defaultGrepOperations,
-	type ResolveRipgrep,
-	type GrepToolOptions,
-	GREP_DESCRIPTION,
-	GREP_PROMPT_SNIPPET,
-	createGrepExecute,
-} from "./grep/pi/grep.ts";
-
 // find — DEFAULT_LIMIT namespaced to avoid collision with grep/ls.
 export {
-	findSchema,
-	type FindToolInput,
-	DEFAULT_LIMIT as FIND_DEFAULT_LIMIT,
-	type FindToolDetails,
-	type FindOperations,
-	defaultFindOperations,
-	type FindToolOptions,
-	type FindExecuteDeps,
 	createFindExecute,
+	DEFAULT_LIMIT as FIND_DEFAULT_LIMIT,
+	defaultFindOperations,
+	type FindExecuteDeps,
+	type FindOperations,
+	type FindToolDetails,
+	type FindToolInput,
+	type FindToolOptions,
+	findSchema,
 } from "./find/pi/find.ts";
-
+// grep — DEFAULT_LIMIT namespaced to avoid collision with find/ls.
+export {
+	createGrepExecute,
+	DEFAULT_LIMIT as GREP_DEFAULT_LIMIT,
+	defaultGrepOperations,
+	GREP_DESCRIPTION,
+	GREP_PROMPT_SNIPPET,
+	type GrepOperations,
+	type GrepToolDetails,
+	type GrepToolInput,
+	type GrepToolOptions,
+	grepSchema,
+	type ResolveRipgrep,
+} from "./grep/pi/grep.ts";
 // ls — DEFAULT_LIMIT namespaced to avoid collision with grep/find.
 export {
-	lsSchema,
-	type LsToolInput,
-	DEFAULT_LIMIT as LS_DEFAULT_LIMIT,
-	type LsToolDetails,
-	type LsOperations,
-	defaultLsOperations,
-	type LsToolOptions,
 	createLsExecute,
+	DEFAULT_LIMIT as LS_DEFAULT_LIMIT,
+	defaultLsOperations,
+	type LsOperations,
+	type LsToolDetails,
+	type LsToolInput,
+	type LsToolOptions,
+	lsSchema,
 } from "./ls/pi/ls.ts";
-
+export * from "./read/pi/read.ts";
 // Shared support modules. These are pure (no TUI) and are surfaced at the
 // package level so pi can source them from "@magenta/harness" instead of
 // keeping its own duplicate copies. truncate is intentionally NOT re-exported
 // here — its symbols already reach the package surface via harness/utils/truncate,
 // and re-exporting again would create an ambiguous duplicate barrel.
 export * from "./support/edit-diff.ts";
-export * from "./support/path-utils.ts";
 export * from "./support/file-mutation-queue.ts";
 export * from "./support/output-accumulator.ts";
+export * from "./support/path-utils.ts";
+// Tool abstraction surface (AgentTool contract + ToolFactory).
+export * from "./tool.ts";
+export * from "./write/pi/write.ts";

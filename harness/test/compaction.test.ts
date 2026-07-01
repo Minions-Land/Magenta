@@ -1,3 +1,4 @@
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import {
 	type AssistantMessage,
 	createModels,
@@ -36,7 +37,6 @@ import type {
 	ThinkingLevelChangeEntry,
 } from "../types/types.ts";
 import { getOrThrow } from "../types/types.ts";
-import type { AgentMessage } from "@earendil-works/pi-agent-core";
 
 let nextId = 0;
 function createId(): string {

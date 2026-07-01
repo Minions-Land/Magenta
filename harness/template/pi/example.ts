@@ -17,7 +17,7 @@ export interface ExampleOptions {
 /**
  * Example function - the main export of this module
  */
-export function exampleFunction(input: string, options?: ExampleOptions): string {
+export function exampleFunction(input: string, _options?: ExampleOptions): string {
 	return `Processed: ${input}`;
 }
 

@@ -1,5 +1,5 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import type { HcpTarget } from "../../hcp/pi/hcp.js";
+import type { HcpTarget } from "../../hcp/pi/hcp.ts";
 
 /**
  * A Magnet is a connector that adapts one kind of implementation (native TS

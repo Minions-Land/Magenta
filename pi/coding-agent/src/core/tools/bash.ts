@@ -1,15 +1,15 @@
 import { constants } from "node:fs";
 import { access as fsAccess } from "node:fs/promises";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
+import { Container, Text, truncateToWidth } from "@earendil-works/pi-tui";
 import {
 	BASH_TOOL_DESCRIPTION,
-	bashSchema,
 	type BashToolDetails,
 	type BashToolOptions,
+	bashSchema,
 	createBashExecute,
 	type BashOperations as HarnessBashOperations,
 } from "@magenta/harness";
-import { Container, Text, truncateToWidth } from "@earendil-works/pi-tui";
 import { spawn } from "child_process";
 import { keyHint } from "../../modes/interactive/components/keybinding-hints.ts";
 import { truncateToVisualLines } from "../../modes/interactive/components/visual-truncate.ts";
@@ -29,13 +29,13 @@ import { DEFAULT_MAX_BYTES, formatSize } from "./truncate.ts";
 
 // Re-export the pure tool surface from harness so downstream pi consumers keep
 // importing these names from the pi tools module unchanged.
-export {
-	type BashToolInput,
-	type BashToolDetails,
-	type BashOperations,
-	type BashSpawnContext,
-	type BashSpawnHook,
-	type BashToolOptions,
+export type {
+	BashOperations,
+	BashSpawnContext,
+	BashSpawnHook,
+	BashToolDetails,
+	BashToolInput,
+	BashToolOptions,
 } from "@magenta/harness";
 
 /**
@@ -288,5 +288,3 @@ export function createBashToolDefinition(
 export function createBashTool(cwd: string, options?: BashToolOptions): AgentTool<typeof bashSchema> {
 	return wrapToolDefinition(createBashToolDefinition(cwd, options));
 }
-
-

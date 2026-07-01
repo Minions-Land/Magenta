@@ -11,11 +11,16 @@ export async function loadInteractiveRuntime(): Promise<{
 	theme?: RuntimeTheme;
 }> {
 	const root = getCodingAgentRoot();
-	const interactivePath = (...segments: string[]) => pathToFileURL(join(root, "dist/modes/interactive", ...segments)).href;
+	const interactivePath = (...segments: string[]) =>
+		pathToFileURL(join(root, "dist/modes/interactive", ...segments)).href;
 
 	const [{ ToolExecutionComponent }, { AssistantMessageComponent }, themeModule] = await Promise.all([
-		import(interactivePath("components/tool-execution.js")) as Promise<{ ToolExecutionComponent?: { prototype: Record<PropertyKey, unknown> } }>,
-		import(interactivePath("components/assistant-message.js")) as Promise<{ AssistantMessageComponent?: { prototype: Record<PropertyKey, unknown> } }>,
+		import(interactivePath("components/tool-execution.js")) as Promise<{
+			ToolExecutionComponent?: { prototype: Record<PropertyKey, unknown> };
+		}>,
+		import(interactivePath("components/assistant-message.js")) as Promise<{
+			AssistantMessageComponent?: { prototype: Record<PropertyKey, unknown> };
+		}>,
 		import(interactivePath("theme/theme.js")).catch(() => undefined) as Promise<{ theme?: RuntimeTheme } | undefined>,
 	]);
 
