@@ -1,0 +1,13 @@
+kind = "process-tool-pack"
+name = "magenta-process-tools"
+description = "Rust process-tool binary and TOML manifests migrated from Magenta1 general-harness."
+source = "magenta-native"
+origin = "magenta1-general-harness"
+origin_rel = "migrated/adapted"
+impl = ["process-tools/src/main.rs"]
+manifests = ["tools/process/*.toml"]
+
+[build]
+crate = "process-tools"
+binary = "process-tools/target/release/magenta-process-tools"
+command = "cargo build --release --manifest-path process-tools/Cargo.toml"

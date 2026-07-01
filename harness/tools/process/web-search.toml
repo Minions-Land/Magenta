@@ -1,0 +1,30 @@
+kind = "process"
+name = "WebSearch"
+description = "Search the web and return an LLM-readable answer plus source URLs. Uses no-key DuckDuckGo first, then Bing HTML fallback."
+command = "process-tools/target/release/magenta-process-tools"
+args = ["web-search"]
+operation = "read"
+read_only = true
+destructive = false
+version = "1.0.0"
+tags = ["web", "search", "network", "network-read", "fetch"]
+capabilities = ["web-search", "source-urls", "duckduckgo-instant-answer", "bing-html-fallback"]
+requires = []
+
+[parameters]
+type = "object"
+required = ["query"]
+
+[parameters.properties.query]
+type = "string"
+description = "Search query"
+
+[parameters.properties.limit]
+type = "integer"
+description = "Maximum result sources to return"
+default = 10
+
+[parameters.properties.recency]
+type = "string"
+description = "Optional recency hint. Bing fallback maps it best-effort; DuckDuckGo Instant Answer cannot honor it."
+enum = ["day", "week", "month", "year"]

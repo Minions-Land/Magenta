@@ -1,0 +1,13 @@
+kind = "process"
+name = "echo_json"
+description = "Echo JSON tool arguments back to stdout. Useful as a pack-tool smoke test."
+command = "cat"
+args = []
+operation = "read"
+read_only = true
+destructive = false
+
+[parameters]
+type = "object"
+properties = {}
+required = []

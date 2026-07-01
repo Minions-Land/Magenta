@@ -47,7 +47,8 @@ import {
 	TUI,
 	visibleWidth,
 } from "@earendil-works/pi-tui";
-import { getHarnessRegistryPath, loadRegistry } from "@magenta/harness";
+import type { HarnessSelectionItem } from "@magenta/harness";
+import { getHarnessRegistryPath, listHarnessSelectionItems, loadRegistry } from "@magenta/harness";
 import chalk from "chalk";
 import { spawn, spawnSync } from "child_process";
 import {
@@ -122,8 +123,14 @@ import { EarendilAnnouncementComponent } from "./components/earendil-announcemen
 import { ExtensionEditorComponent } from "./components/extension-editor.ts";
 import { ExtensionInputComponent } from "./components/extension-input.ts";
 import { ExtensionSelectorComponent } from "./components/extension-selector.ts";
+import {
+	CENTER_FLOATING_MENU_OVERLAY,
+	COMMAND_DOCK_OVERLAY,
+	FloatingMenuBody,
+	type FloatingMenuItem,
+	FloatingOverlayContainer,
+} from "./components/floating-menu.ts";
 import { FooterComponent } from "./components/footer.ts";
-import { HarnessSwitcherComponent } from "./components/harness-switcher.ts";
 import { formatKeyText, keyDisplayText, keyHint, keyText, rawKeyHint } from "./components/keybinding-hints.ts";
 import { LoginDialogComponent } from "./components/login-dialog.ts";
 import { ModelSelectorComponent } from "./components/model-selector.ts";
@@ -214,6 +221,19 @@ function quoteIfNeeded(value: string): string {
 		return value;
 	}
 	return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+function encodeMenuValuePart(value: string): string {
+	return encodeURIComponent(value);
+}
+
+function decodeMenuValuePart(value: string | undefined): string {
+	if (!value) return "";
+	try {
+		return decodeURIComponent(value);
+	} catch {
+		return value;
+	}
 }
 
 export function formatResumeCommand(sessionManager: SessionManager): string | undefined {
@@ -329,6 +349,13 @@ export class InteractiveMode {
 	// Skill commands: command name -> skill file path
 	private skillCommands = new Map<string, string>();
 
+	// Center command dock, used for slash palette and nested model/harness menus.
+	private commandDockHandle: OverlayHandle | undefined = undefined;
+	private commandDockBody: FloatingMenuBody | undefined = undefined;
+	private suppressCommandDockSync = false;
+	private commandDockInputUnsubscribe: (() => void) | undefined = undefined;
+	private commandDockRequestId = 0;
+
 	// Agent subscription unsubscribe function
 	private unsubscribe?: () => void;
 	private signalCleanupHandlers: Array<() => void> = [];
@@ -426,6 +453,7 @@ export class InteractiveMode {
 		this.defaultEditor = new CustomEditor(this.ui, getEditorTheme(), this.keybindings, {
 			paddingX: editorPaddingX,
 			autocompleteMaxVisible,
+			slashAutocomplete: false,
 		});
 		this.editor = this.defaultEditor;
 		this.editorContainer = new Container();
@@ -2463,6 +2491,9 @@ export class InteractiveMode {
 	// =========================================================================
 
 	private setupKeyHandlers(): void {
+		this.commandDockInputUnsubscribe?.();
+		this.commandDockInputUnsubscribe = this.ui.addInputListener((data) => this.handleCommandDockInput(data));
+
 		// Set up handlers on defaultEditor - they use this.editor for text access
 		// so they work correctly regardless of which editor is active
 		this.defaultEditor.onEscape = () => {
@@ -2520,6 +2551,7 @@ export class InteractiveMode {
 			if (wasBashMode !== this.isBashMode) {
 				this.updateEditorBorderColor();
 			}
+			this.syncCommandDockFromEditorText(text);
 		};
 
 		// Handle clipboard image paste (triggered on Ctrl+V)
@@ -4048,6 +4080,25 @@ export class InteractiveMode {
 		this.showStatus(`Harness tool ${name}: ${enabled ? "enabled" : "disabled"}`);
 	}
 
+	private setAllHarnessToolsEnabled(enabled: boolean): void {
+		const tools = this.session.getAllTools();
+		this.session.setActiveToolsByName(enabled ? tools.map((tool) => tool.name) : []);
+		this.showStatus(`Harness tools: ${enabled ? "all enabled" : "all disabled"}`);
+	}
+
+	private async setSelectedModel(model: Model<any>): Promise<void> {
+		try {
+			await this.session.setModel(model);
+			this.footer.invalidate();
+			this.updateEditorBorderColor();
+			this.showStatus(`Model: ${model.id}`);
+			void this.maybeWarnAboutAnthropicSubscriptionAuth(model);
+			this.checkDaxnutsEasterEgg(model);
+		} catch (error) {
+			this.showError(error instanceof Error ? error.message : String(error));
+		}
+	}
+
 	private showHarnessHooksSummary(): void {
 		const extensionPaths = this.session.extensionRunner.getExtensionPaths();
 		const activeEvents = this.getHarnessActiveHookEvents();
@@ -4104,7 +4155,7 @@ export class InteractiveMode {
 		const action = args[0]?.toLowerCase();
 
 		if (!action || action === "menu" || action === "switch") {
-			await this.showHarnessSwitcher();
+			await this.openHarnessMenu();
 			return;
 		}
 
@@ -4159,28 +4210,563 @@ export class InteractiveMode {
 			return;
 		}
 
+		if (action === "tools") {
+			const allEnabled = this.parseHarnessToggle(args[1]);
+			if (allEnabled !== undefined && args[2] === undefined) {
+				this.setAllHarnessToolsEnabled(allEnabled);
+				return;
+			}
+			const name = args[1];
+			const enabled = this.parseHarnessToggle(args[2]);
+			if (!name || enabled === undefined) {
+				await this.openHarnessMenu();
+				return;
+			}
+			this.setHarnessToolEnabled(name, enabled);
+			return;
+		}
+
 		this.showWarning("Usage: /harness [status|registry|hooks|memory|compact|skills|tool]");
 	}
 
-	private async showHarnessSwitcher(): Promise<void> {
-		const snapshot = await this.createHarnessRuntimeSnapshot();
-		this.showSelector((done) => {
-			const selector = new HarnessSwitcherComponent(snapshot, {
-				onAutoCompactChange: (enabled) => this.setHarnessAutoCompact(enabled),
-				onSkillCommandsChange: (enabled) => this.setHarnessSkillCommands(enabled),
-				onToolChange: (name, enabled) => this.setHarnessToolEnabled(name, enabled),
-				onShowRegistry: () => this.showStatus(formatHarnessRegistrySummary(snapshot.registry)),
-				onShowHooks: () => this.showHarnessHooksSummary(),
-				onShowMemory: () => {
-					void this.showHarnessMemorySummary();
-				},
-				onCancel: () => {
-					done();
-					this.ui.requestRender();
-				},
+	private commandDockShouldRouteInput(data: string): boolean {
+		return (
+			matchesKey(data, "up") ||
+			matchesKey(data, "down") ||
+			matchesKey(data, "pageUp") ||
+			matchesKey(data, "pageDown") ||
+			matchesKey(data, "home") ||
+			matchesKey(data, "end") ||
+			matchesKey(data, "enter") ||
+			matchesKey(data, "right") ||
+			matchesKey(data, "escape") ||
+			matchesKey(data, "left")
+		);
+	}
+
+	private handleCommandDockInput(data: string): { consume?: boolean; data?: string } | undefined {
+		if (!this.commandDockHandle || this.commandDockHandle.isHidden() || !this.commandDockBody) {
+			return undefined;
+		}
+		if (!this.commandDockShouldRouteInput(data)) {
+			return undefined;
+		}
+		if (matchesKey(data, "escape") || matchesKey(data, "left")) {
+			if (!this.commandDockBody.handleInput(data)) {
+				this.closeCommandDock();
+				this.setEditorTextWithoutCommandDockSync("");
+			}
+			return { consume: true };
+		}
+		this.commandDockBody.handleInput(data);
+		this.ui.requestRender();
+		return { consume: true };
+	}
+
+	private syncCommandDockFromEditorText(text: string): void {
+		if (this.suppressCommandDockSync) return;
+		if (text.startsWith("/") && !text.includes("\n") && !text.includes(" ")) {
+			void this.openCommandDock(text.slice(1));
+			return;
+		}
+		this.closeCommandDock();
+	}
+
+	private setEditorTextWithoutCommandDockSync(value: string): void {
+		this.suppressCommandDockSync = true;
+		try {
+			this.editor.setText(value);
+		} finally {
+			this.suppressCommandDockSync = false;
+		}
+	}
+
+	private async openCommandDock(filter = ""): Promise<void> {
+		const requestId = ++this.commandDockRequestId;
+		if (this.commandDockHandle && !this.commandDockHandle.isHidden() && this.commandDockBody) {
+			this.commandDockBody.setFilter(filter);
+			return;
+		}
+
+		const items = await this.commandDockItems();
+		if (requestId !== this.commandDockRequestId) return;
+		if (this.editor.getText() !== `/${filter}`) return;
+		this.commandDockHandle = this.showFloatingMenu(
+			"command dock",
+			"keep typing to filter",
+			items,
+			(item) => {
+				this.handleCommandDockItem(item);
+				return undefined;
+			},
+			COMMAND_DOCK_OVERLAY,
+		);
+		this.commandDockBody?.setFilter(filter);
+	}
+
+	private closeCommandDock(): void {
+		this.commandDockRequestId++;
+		const handle = this.commandDockHandle;
+		this.commandDockHandle = undefined;
+		this.commandDockBody = undefined;
+		handle?.hide();
+	}
+
+	private async commandDockItems(): Promise<FloatingMenuItem[]> {
+		const items: FloatingMenuItem[] = [
+			{
+				value: "command:model",
+				label: "Model",
+				aliases: ["m", "model"],
+				description: this.session.model
+					? `current: ${this.session.model.provider}/${this.session.model.id}`
+					: "/model",
+				children: this.modelMenuItems(),
+			},
+			{
+				value: "command:harness",
+				label: "Harness",
+				aliases: ["h", "harness"],
+				description: "Tools, compaction, skills, hooks, memory",
+				children: (await this.harnessMenuItems()).children,
+			},
+			{ value: "slash:settings", label: "Settings", aliases: ["settings"], description: "/settings" },
+			{
+				value: "slash:scoped-models",
+				label: "Scoped Models",
+				aliases: ["scoped-models"],
+				description: "/scoped-models",
+			},
+			{ value: "slash:compact", label: "Compact", aliases: ["compact"], description: "/compact" },
+			{ value: "slash:tree", label: "Tree", aliases: ["tree"], description: "/tree" },
+			{ value: "slash:resume", label: "Resume", aliases: ["resume"], description: "/resume" },
+			{ value: "slash:trust", label: "Trust", aliases: ["trust"], description: "/trust" },
+			{ value: "slash:login", label: "Login", aliases: ["login"], description: "/login" },
+			{ value: "slash:new", label: "New Session", aliases: ["new", "clear"], description: "/new" },
+			{ value: "slash:hotkeys", label: "Hotkeys", aliases: ["hotkeys"], description: "/hotkeys" },
+			{ value: "slash:quit", label: "Quit", aliases: ["quit", "exit"], description: "/quit" },
+		];
+
+		for (const command of this.session.extensionRunner.getRegisteredCommands()) {
+			if (items.some((item) => item.aliases?.includes(command.name) || item.label === command.name)) continue;
+			items.push({
+				value: `insert-command:${command.invocationName}`,
+				label: command.invocationName,
+				aliases: [command.name, command.invocationName],
+				description: this.prefixAutocompleteDescription(command.description, command.sourceInfo),
 			});
-			return { component: selector, focus: selector.getSettingsList() };
+		}
+
+		return items;
+	}
+
+	private handleCommandDockItem(item: FloatingMenuItem): void {
+		if (item.value.startsWith("model:")) {
+			const [, rawProvider, rawId] = item.value.split(":");
+			const model = this.session.modelRegistry.find(decodeMenuValuePart(rawProvider), decodeMenuValuePart(rawId));
+			if (model) void this.setSelectedModel(model);
+			return;
+		}
+		if (this.handleHarnessMenuItem(item)) {
+			return;
+		}
+		if (item.value.startsWith("slash:")) {
+			const command = item.value.slice("slash:".length);
+			void this.handleDockSlashCommand(command);
+			return;
+		}
+		if (item.value.startsWith("insert-command:")) {
+			this.setEditorTextWithoutCommandDockSync(`/${item.value.slice("insert-command:".length)} `);
+			this.closeCommandDock();
+			this.ui.setFocus(this.editor);
+			this.ui.requestRender();
+		}
+	}
+
+	private async handleDockSlashCommand(command: string): Promise<void> {
+		this.closeCommandDock();
+		this.setEditorTextWithoutCommandDockSync("");
+		switch (command) {
+			case "settings":
+				this.showSettingsSelector();
+				return;
+			case "scoped-models":
+				await this.showModelsSelector();
+				return;
+			case "compact":
+				await this.handleCompactCommand();
+				return;
+			case "tree":
+				this.showTreeSelector();
+				return;
+			case "resume":
+				this.showSessionSelector();
+				return;
+			case "trust":
+				this.showTrustSelector();
+				return;
+			case "login":
+				this.showOAuthSelector("login");
+				return;
+			case "new":
+				await this.handleClearCommand();
+				return;
+			case "hotkeys":
+				this.handleHotkeysCommand();
+				return;
+			case "quit":
+				await this.shutdown();
+				return;
+		}
+	}
+
+	private modelMenuItems(): FloatingMenuItem[] {
+		const models =
+			this.session.scopedModels.length > 0
+				? this.session.scopedModels.map((scoped) => scoped.model)
+				: this.session.modelRegistry.getAvailable();
+		const byProvider = new Map<string, Model<any>[]>();
+		for (const model of models) {
+			const providerModels = byProvider.get(model.provider) ?? [];
+			providerModels.push(model);
+			byProvider.set(model.provider, providerModels);
+		}
+		return [...byProvider.entries()]
+			.sort(([left], [right]) => left.localeCompare(right))
+			.map(([provider, providerModels]) => ({
+				value: `provider:${provider}`,
+				label: provider,
+				description: `${providerModels.length} models`,
+				children: providerModels
+					.sort((left, right) => left.id.localeCompare(right.id))
+					.map((model) => ({
+						value: `model:${encodeMenuValuePart(model.provider)}:${encodeMenuValuePart(model.id)}`,
+						label: model.id,
+						description: model.name ?? model.provider,
+						active: this.session.model?.provider === model.provider && this.session.model?.id === model.id,
+					})),
+			}));
+	}
+
+	private async openModelMenu(): Promise<void> {
+		this.session.modelRegistry.refresh();
+		const items = this.modelMenuItems();
+		if (items.length === 0) {
+			this.showStatus("No models available");
+			return;
+		}
+		this.showFloatingMenu("model", "provider / model", items, (item) => {
+			this.handleCommandDockItem(item);
+			return undefined;
 		});
+	}
+
+	private async harnessMenuItems(): Promise<FloatingMenuItem> {
+		const snapshot = await this.createHarnessRuntimeSnapshot();
+		const activeToolCount = snapshot.tools.filter((tool) => tool.active).length;
+		const toolItems = snapshot.tools.map((tool) => ({
+			value: `harness:tool:${encodeMenuValuePart(tool.name)}`,
+			label: tool.name,
+			description: `${tool.active ? "enabled" : "disabled"} · implementation: Pi`,
+			children: [
+				{
+					value: `harness:tool:${encodeMenuValuePart(tool.name)}:on`,
+					label: "Enabled",
+					description: "Expose this tool to the agent",
+					active: tool.active,
+				},
+				{
+					value: `harness:tool:${encodeMenuValuePart(tool.name)}:off`,
+					label: "Disabled",
+					description: "Remove this tool from the active tool list",
+					active: !tool.active,
+				},
+				{
+					value: `harness:tool:${encodeMenuValuePart(tool.name)}:impl:pi`,
+					label: "Pi",
+					description: "Current in-process Harness implementation",
+					active: true,
+				},
+			],
+		}));
+		const catalogItems = this.harnessCatalogMenuItems(snapshot);
+
+		return {
+			value: "harness",
+			label: "Harness",
+			description: "Magenta3 runtime harness",
+			children: [
+				{
+					value: "harness:tools",
+					label: "Tools",
+					description: `${activeToolCount}/${snapshot.tools.length} active`,
+					children: [
+						{
+							value: "harness:tools:on",
+							label: "Enable all tools",
+							description: "Expose every current AgentSession tool",
+							active: activeToolCount === snapshot.tools.length && snapshot.tools.length > 0,
+						},
+						{
+							value: "harness:tools:off",
+							label: "Disable all tools",
+							description: "Remove every tool from the active tool list",
+							active: activeToolCount === 0,
+						},
+						...toolItems,
+					],
+				},
+				{
+					value: "harness:compaction",
+					label: "Compaction",
+					description: snapshot.autoCompact ? "enabled · implementation: Pi" : "disabled · implementation: Pi",
+					children: [
+						{ value: "harness:compact:on", label: "Enabled", active: snapshot.autoCompact },
+						{ value: "harness:compact:off", label: "Disabled", active: !snapshot.autoCompact },
+						{
+							value: "harness:compact:impl:pi",
+							label: "Pi",
+							description: "Harness compaction implementation",
+							active: true,
+						},
+					],
+				},
+				{
+					value: "harness:skills",
+					label: "Skills",
+					description: `${snapshot.loadedSkills} loaded · slash commands ${snapshot.skillCommands ? "enabled" : "disabled"}`,
+					children: [
+						{ value: "harness:skills:on", label: "Slash commands enabled", active: snapshot.skillCommands },
+						{ value: "harness:skills:off", label: "Slash commands disabled", active: !snapshot.skillCommands },
+						{
+							value: "harness:skills:impl:pi",
+							label: "Pi loader",
+							description: "Harness skills loader",
+							active: true,
+						},
+					],
+				},
+				{
+					value: "harness:hooks",
+					label: "Hooks",
+					description: `${snapshot.loadedExtensions} extensions · ${snapshot.activeHookEvents.length} active events`,
+					children: [
+						{
+							value: "harness:hooks:inspect",
+							label: "Inspect active hooks",
+							description: "Print extension event wiring",
+						},
+						{
+							value: "harness:hooks:impl:pi",
+							label: "Pi extension events",
+							description: "Current hook substrate",
+							active: true,
+						},
+					],
+				},
+				{
+					value: "harness:memory",
+					label: "Memory",
+					description: "Registered component; no AgentSession switch yet",
+					children: [
+						{ value: "harness:memory:inspect", label: "Inspect memory status" },
+						{
+							value: "harness:memory:impl:registered",
+							label: "Registered",
+							description: "Registry component only for now",
+							active: true,
+						},
+					],
+				},
+				{
+					value: "harness:registry",
+					label: "Registry",
+					description: snapshot.registry.error
+						? "unavailable"
+						: `${snapshot.registry.registry?.components.length ?? 0} components`,
+					children: [{ value: "harness:registry:inspect", label: "Inspect registry" }],
+				},
+				...catalogItems,
+			],
+		};
+	}
+
+	private harnessCatalogMenuItems(snapshot: HarnessRuntimeSnapshot): FloatingMenuItem[] {
+		const registry = snapshot.registry.registry;
+		if (!registry || registry.catalogs.length === 0) return [];
+
+		const selectionItems = listHarnessSelectionItems(registry);
+		if (selectionItems.length === 0) return [];
+
+		const stateOrder = ["integrated", "available", "metadata-only", "external-boundary", "deferred-domain-pack"];
+		const stateLabels = new Map([
+			["integrated", "Integrated"],
+			["available", "Available"],
+			["metadata-only", "Metadata only"],
+			["external-boundary", "External boundary"],
+			["deferred-domain-pack", "Deferred domain pack"],
+		]);
+		const byState = new Map<string, HarnessSelectionItem[]>();
+		for (const item of selectionItems) {
+			const items = byState.get(item.migrationState) ?? [];
+			items.push(item);
+			byState.set(item.migrationState, items);
+		}
+
+		const stateItems = [...byState.entries()]
+			.sort(([left], [right]) => stateOrder.indexOf(left) - stateOrder.indexOf(right))
+			.map(([state, items]) => ({
+				value: `harness:catalog:${state}`,
+				label: stateLabels.get(state) ?? state,
+				description: `${items.length} entries`,
+				children: items
+					.sort((left, right) => left.label.localeCompare(right.label))
+					.map((item) => ({
+						value: `harness:catalog:item:${encodeMenuValuePart(item.id)}`,
+						label: item.label,
+						description: this.harnessCatalogItemDescription(item),
+						active: item.migrationState === "integrated",
+					})),
+			}));
+
+		return [
+			{
+				value: "harness:catalog",
+				label: "Catalog",
+				description: `${selectionItems.length} migrated/candidate entries`,
+				children: stateItems,
+			},
+		];
+	}
+
+	private harnessCatalogItemDescription(item: HarnessSelectionItem): string {
+		const component = item.component ? ` -> ${item.component.kind}/${item.component.name}` : "";
+		return `${item.kind} · ${item.origin} · ${item.readiness}${component}`;
+	}
+
+	private async showHarnessCatalogItem(id: string): Promise<void> {
+		const registry = await this.loadHarnessRegistryView();
+		if (!registry.registry) {
+			this.showStatus(formatHarnessRegistrySummary(registry));
+			return;
+		}
+		const item = listHarnessSelectionItems(registry.registry).find((candidate) => candidate.id === id);
+		if (!item) {
+			this.showWarning(`Unknown harness catalog item: ${id}`);
+			return;
+		}
+		this.showStatus(
+			[
+				`Harness catalog: ${item.label}`,
+				`ID: ${item.id}`,
+				`Kind: ${item.kind} (${item.type})`,
+				`Origin: ${item.origin} / ${item.originRel}`,
+				`Migration: ${item.migrationState} (${item.readiness})`,
+				item.component
+					? `Mapped component: ${item.component.kind}/${item.component.name}`
+					: "Mapped component: none",
+				item.sourcePath ? `Source path: ${item.sourcePath}` : "Source path: none",
+				item.notes ? `Notes: ${item.notes}` : undefined,
+			]
+				.filter((line): line is string => Boolean(line))
+				.join("\n"),
+		);
+	}
+
+	private async openHarnessMenu(): Promise<void> {
+		const root = await this.harnessMenuItems();
+		this.showFloatingMenu("harness", "category / capability / implementation", root.children ?? [], (item) =>
+			this.handleHarnessMenuItem(item),
+		);
+	}
+
+	private handleHarnessMenuItem(item: FloatingMenuItem): boolean {
+		const parts = item.value.split(":");
+		if (parts[0] !== "harness") return false;
+		if (parts[1] === "tools" && (parts[2] === "on" || parts[2] === "off")) {
+			this.setAllHarnessToolsEnabled(parts[2] === "on");
+			return true;
+		}
+		if (parts[1] === "tool" && parts[2] && (parts[3] === "on" || parts[3] === "off")) {
+			this.setHarnessToolEnabled(decodeMenuValuePart(parts[2]), parts[3] === "on");
+			return true;
+		}
+		if (parts[1] === "compact" && (parts[2] === "on" || parts[2] === "off")) {
+			this.setHarnessAutoCompact(parts[2] === "on");
+			return true;
+		}
+		if (parts[1] === "skills" && (parts[2] === "on" || parts[2] === "off")) {
+			this.setHarnessSkillCommands(parts[2] === "on");
+			return true;
+		}
+		if (item.value === "harness:hooks:inspect") {
+			this.showHarnessHooksSummary();
+			return true;
+		}
+		if (item.value === "harness:memory:inspect") {
+			void this.showHarnessMemorySummary();
+			return true;
+		}
+		if (item.value === "harness:registry:inspect") {
+			void this.loadHarnessRegistryView().then((registry) =>
+				this.showStatus(formatHarnessRegistrySummary(registry)),
+			);
+			return true;
+		}
+		if (parts[1] === "catalog" && parts[2] === "item" && parts[3]) {
+			void this.showHarnessCatalogItem(decodeMenuValuePart(parts[3]));
+			return true;
+		}
+		if (item.value.includes(":impl:")) {
+			this.showStatus(`${item.label} is the current implementation; alternate providers are not wired yet.`);
+			return true;
+		}
+		return false;
+	}
+
+	private showFloatingMenu(
+		title: string,
+		subtitle: string,
+		items: FloatingMenuItem[],
+		onSelect: (item: FloatingMenuItem) => undefined | boolean,
+		overlayOptions: OverlayOptions = CENTER_FLOATING_MENU_OVERLAY,
+	): OverlayHandle {
+		let handle: OverlayHandle | undefined;
+		const body = new FloatingMenuBody({
+			title,
+			subtitle,
+			items,
+			onSelect: (item) => {
+				const result = onSelect(item);
+				if (item.keepOpen || item.closeOnSelect === false || result === false) {
+					this.ui.requestRender();
+					return false;
+				}
+				if (handle === this.commandDockHandle) {
+					this.commandDockHandle = undefined;
+					this.commandDockBody = undefined;
+					this.setEditorTextWithoutCommandDockSync("");
+				}
+				handle?.hide();
+				this.ui.setFocus(this.editor);
+				return true;
+			},
+			requestRender: () => this.ui.requestRender(),
+		});
+		if (overlayOptions.nonCapturing) {
+			this.commandDockBody = body;
+		}
+		const overlay = new FloatingOverlayContainer(body, () => {
+			handle?.hide();
+			if (handle === this.commandDockHandle) {
+				this.commandDockHandle = undefined;
+				this.commandDockBody = undefined;
+			}
+			this.ui.setFocus(this.editor);
+		});
+		handle = this.ui.showOverlay(overlay, overlayOptions);
+		if (!overlayOptions.nonCapturing) handle.focus();
+		return handle;
 	}
 
 	private showSettingsSelector(): void {
@@ -4341,7 +4927,7 @@ export class InteractiveMode {
 
 	private async handleModelCommand(searchTerm?: string): Promise<void> {
 		if (!searchTerm) {
-			this.showModelSelector();
+			await this.openModelMenu();
 			return;
 		}
 
@@ -5953,6 +6539,8 @@ export class InteractiveMode {
 		}
 		this.themeController.disableAutoSync();
 		this.clearExtensionTerminalInputListeners();
+		this.commandDockInputUnsubscribe?.();
+		this.commandDockInputUnsubscribe = undefined;
 		this.footer.dispose();
 		this.footerDataProvider.dispose();
 		if (this.unsubscribe) {

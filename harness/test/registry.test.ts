@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { getHarnessRegistryPath, loadRegistry } from "../assembly/registry/pi/registry.ts";
+import { getHarnessRegistryPath, listHarnessSelectionItems, loadRegistry } from "../assembly/registry/pi/registry.ts";
+import { filterHarnessCatalogEntries, summarizeHarnessCatalogEntries } from "../catalog/pi/catalog.ts";
 
 describe("harness registry", () => {
 	it("locates and loads the package registry", async () => {
@@ -15,5 +16,74 @@ describe("harness registry", () => {
 		expect(registry.components.some((component) => component.kind === "tool" && component.name === "bash")).toBe(
 			true,
 		);
+		expect(
+			registry.components.some(
+				(component) => component.kind === "catalog" && component.name === "magenta1-harness-components",
+			),
+		).toBe(true);
+	});
+
+	it("loads the migrated Magenta1 harness catalog with provenance intact", async () => {
+		const registry = await loadRegistry(getHarnessRegistryPath());
+		const descriptor = registry.catalogs.find((catalog) => catalog.name === "magenta1-harness-components");
+
+		expect(descriptor).toBeDefined();
+		expect(descriptor?.catalog.summary.component_count).toBe(111);
+		expect(descriptor?.catalog.summary.module_count).toBe(13);
+		expect(descriptor?.catalog.entries).toHaveLength(111);
+		expect(descriptor?.catalog.summary.by_source).toMatchObject({
+			"magenta-native": 72,
+			"domain-pack": 17,
+			"oh-my-pi": 12,
+			lazypi: 4,
+			"external-upstream": 4,
+			pi: 1,
+			opencode: 1,
+		});
+		expect(descriptor?.catalog.sourceReferences["oh-my-pi"]?.reference_paths).toContain(
+			"Reference_Repo/oh-my-pi-main/packages/hashline",
+		);
+	});
+
+	it("exposes selector-ready catalog items and integration states", async () => {
+		const registry = await loadRegistry(getHarnessRegistryPath());
+		const catalog = registry.catalogs[0]?.catalog;
+		expect(catalog).toBeDefined();
+
+		const summary = summarizeHarnessCatalogEntries(catalog.entries);
+		expect(summary.byMigrationState.integrated).toBeGreaterThan(0);
+		expect(summary.byMigrationState["deferred-domain-pack"]).toBe(17);
+
+		const ohMyPiItems = listHarnessSelectionItems(registry, { origins: ["oh-my-pi"] });
+		expect(ohMyPiItems).toHaveLength(12);
+		expect(ohMyPiItems.some((item) => item.label === "Lsp" && item.originRel.includes("reference"))).toBe(true);
+
+		const integratedTools = listHarnessSelectionItems(registry, {
+			kinds: ["mcp"],
+			migrationStates: ["integrated"],
+		});
+		expect(integratedTools.some((item) => item.id === "general-harness:mcp:Read")).toBe(true);
+		expect(integratedTools.find((item) => item.id === "general-harness:mcp:Read")?.component).toMatchObject({
+			kind: "tool",
+			name: "read",
+		});
+
+		const availableProcessTools = listHarnessSelectionItems(registry, {
+			kinds: ["mcp", "hcp-process"],
+			migrationStates: ["available"],
+		});
+		expect(availableProcessTools.find((item) => item.id === "general-harness:mcp:AstGrep")?.component).toMatchObject({
+			kind: "process-tool",
+			path: "tools/process/ast-grep.toml",
+		});
+		expect(
+			availableProcessTools.find((item) => item.id === "general-harness:hcp-process:echo-jsonl")?.component,
+		).toMatchObject({
+			kind: "hcp-process",
+			path: "assembly/hcp-process/echo-jsonl.toml",
+		});
+
+		const domainEntries = filterHarnessCatalogEntries(catalog.entries, { origins: ["domain-pack"] });
+		expect(domainEntries).toHaveLength(17);
 	});
 });

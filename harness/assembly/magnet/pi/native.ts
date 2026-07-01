@@ -3,6 +3,7 @@ import type { TSchema } from "typebox";
 import { createReadExecute, type ReadToolOptions, readSchema } from "../../../tools/index.ts";
 import type { HcpCall, HcpTarget, HcpTargetDescription } from "../../hcp/pi/hcp.ts";
 import type { Magnet } from "./magnet.ts";
+import type { UniversalMagnetState } from "./universal.ts";
 
 /**
  * Declarative spec for a native TS tool: the pure pieces a
@@ -32,6 +33,8 @@ export class NativeToolMagnet<TParameters extends TSchema = TSchema, TDetails = 
 	readonly kind = "native";
 	private readonly spec: NativeToolSpec<TParameters, TDetails>;
 	private readonly cwd: string;
+	private enabled = true;
+	private config: Record<string, unknown> = {};
 
 	constructor(spec: NativeToolSpec<TParameters, TDetails>, cwd: string) {
 		this.spec = spec;
@@ -40,6 +43,9 @@ export class NativeToolMagnet<TParameters extends TSchema = TSchema, TDetails = 
 
 	/** Produce the loop-ready AgentTool. */
 	toTool(): AgentTool<TParameters, TDetails> {
+		if (!this.enabled) {
+			throw new Error(`native tool magnet "${this.spec.name}" is disabled`);
+		}
 		const { name, label, description, parameters, createExecute } = this.spec;
 		return {
 			name,
@@ -50,23 +56,56 @@ export class NativeToolMagnet<TParameters extends TSchema = TSchema, TDetails = 
 		};
 	}
 
+	private state(): UniversalMagnetState {
+		return {
+			enabled: this.enabled,
+			config: { ...this.config },
+		};
+	}
+
 	/** Produce an HCP management endpoint describing/dispatching this tool. */
 	toHcpTarget(): HcpTarget {
 		const spec = this.spec;
+		const self = this;
 		const buildTool = () => this.toTool();
 		return {
 			describe(): HcpTargetDescription {
 				return {
 					target: `tool:${spec.name}`,
 					kind: "tool",
-					ops: ["describe", "toTool"],
+					ops: ["describe", "configure", "enable", "disable", "health", "state", "toTool"],
 					description: spec.description,
+					metadata: {
+						name: spec.name,
+						implementation: "native",
+						enabled: self.enabled,
+					},
 				};
 			},
 			call(call: HcpCall): unknown {
 				switch (call.op) {
 					case "describe":
 						return this.describe();
+					case "configure":
+						if (!call.input || typeof call.input !== "object" || Array.isArray(call.input)) {
+							throw new Error(`native tool magnet "${spec.name}": configure expects an object`);
+						}
+						self.config = { ...self.config, ...(call.input as Record<string, unknown>) };
+						return self.state();
+					case "enable":
+						self.enabled = true;
+						return self.state();
+					case "disable":
+						self.enabled = false;
+						return self.state();
+					case "state":
+						return self.state();
+					case "health":
+						return {
+							status: self.enabled ? "ok" : "disabled",
+							target: `tool:${spec.name}`,
+							implementation: "native",
+						};
 					case "toTool":
 						return buildTool();
 					default:

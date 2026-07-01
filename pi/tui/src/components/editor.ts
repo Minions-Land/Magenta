@@ -226,6 +226,7 @@ export interface EditorTheme {
 export interface EditorOptions {
 	paddingX?: number;
 	autocompleteMaxVisible?: number;
+	slashAutocomplete?: boolean;
 }
 
 const SLASH_COMMAND_SELECT_LIST_LAYOUT: SelectListLayoutOptions = {
@@ -281,6 +282,7 @@ export class Editor implements Component, Focusable {
 	private autocompleteState: "regular" | "force" | null = null;
 	private autocompletePrefix: string = "";
 	private autocompleteMaxVisible: number = 5;
+	private slashAutocomplete: boolean = true;
 	private autocompleteAbort?: AbortController;
 	private autocompleteDebounceTimer?: ReturnType<typeof setTimeout>;
 	private autocompleteRequestTask: Promise<void> = Promise.resolve();
@@ -332,6 +334,7 @@ export class Editor implements Component, Focusable {
 		this.paddingX = Number.isFinite(paddingX) ? Math.max(0, Math.floor(paddingX)) : 0;
 		const maxVisible = options.autocompleteMaxVisible ?? 5;
 		this.autocompleteMaxVisible = Number.isFinite(maxVisible) ? Math.max(3, Math.min(20, Math.floor(maxVisible))) : 5;
+		this.slashAutocomplete = options.slashAutocomplete ?? true;
 	}
 
 	/** Set of currently valid paste IDs, for marker-aware segmentation. */
@@ -1109,7 +1112,7 @@ export class Editor implements Component, Focusable {
 		// Check if we should trigger or update autocomplete
 		if (!this.autocompleteState) {
 			// Auto-trigger for "/" at the start of a line (slash commands)
-			if (char === "/" && this.isAtStartOfMessage()) {
+			if (this.slashAutocomplete && char === "/" && this.isAtStartOfMessage()) {
 				this.tryTriggerAutocomplete();
 			}
 			// Auto-trigger for symbol-based completion like @, #, or provider triggers at token boundaries
@@ -2052,7 +2055,7 @@ export class Editor implements Component, Focusable {
 	}
 
 	private isInSlashCommandContext(textBeforeCursor: string): boolean {
-		return this.isSlashMenuAllowed() && textBeforeCursor.trimStart().startsWith("/");
+		return this.slashAutocomplete && this.isSlashMenuAllowed() && textBeforeCursor.trimStart().startsWith("/");
 	}
 
 	// Autocomplete methods

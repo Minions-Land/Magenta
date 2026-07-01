@@ -1,0 +1,14 @@
+kind = "catalog"
+name = "magenta1-harness-components"
+description = "Magenta 1 general-harness component inventory migrated as Magenta3 selectable harness metadata."
+source = "magenta-native"
+origin = "magenta1-general-harness"
+origin_rel = "inventory-migrated"
+format = "magenta-harness-inventory"
+schema = "catalog/component-catalog.schema.json"
+
+[inventory]
+path = "magenta1-components-inventory.json"
+
+[integration]
+path = "magenta1-integration-map.json"

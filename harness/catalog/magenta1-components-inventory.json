@@ -1,0 +1,2949 @@
+{
+  "schema_version": "1.0",
+  "generated_at": "2026-07-01",
+  "repository_root": "/Users/mjm/Magenta",
+  "scope": "Current Magenta Harness component inventory: general-harness runtime providers and declarations, TUI harness-facing interface modules, and AutOmicScience domain pack components. crates/magenta-hcp remains protocol-only and is not categorized as a Harness component.",
+  "architecture_boundary": [
+    "HCP is Harness Call Protocol/backplane, not a component category.",
+    "Magnet is the connector layer for existing implementations mounted under HCP targets.",
+    "General Harness is domain-free; packs are domain-specific.",
+    "LLM-facing surface should stay light; this JSON is operator/debugging inventory, not prompt vocabulary."
+  ],
+  "summary": {
+    "component_count": 111,
+    "module_count": 13,
+    "by_layer": {
+      "general-harness": 74,
+      "general-harness/kernel": 18,
+      "crates/magenta-interface/tui": 2,
+      "packs/AutOmicScience": 17
+    },
+    "by_kind": {
+      "system-prompt": 1,
+      "loop": 2,
+      "event": 1,
+      "event-tool": 2,
+      "multiagent": 1,
+      "adapter": 3,
+      "hcp-process": 1,
+      "recipe": 1,
+      "agent-provider": 3,
+      "hook": 9,
+      "memory": 1,
+      "sandbox": 5,
+      "runtime": 7,
+      "mcp": 18,
+      "api": 1,
+      "mcp-server": 1,
+      "declared": 17,
+      "skill": 12,
+      "scaffold": 1,
+      "session": 1,
+      "trace": 1,
+      "context": 1,
+      "approval": 1,
+      "shell": 2,
+      "advisor": 1,
+      "llm": 2,
+      "eval": 1,
+      "conflict": 1,
+      "resolve": 1,
+      "capability": 1,
+      "surface": 1,
+      "governance": 1,
+      "tui": 2,
+      "harness": 1,
+      "process-tool": 2,
+      "task-harness": 4
+    },
+    "by_source": {
+      "magenta-native": 72,
+      "lazypi": 4,
+      "external-upstream": 4,
+      "opencode": 1,
+      "oh-my-pi": 12,
+      "pi": 1,
+      "domain-pack": 17
+    },
+    "by_language": {
+      "Markdown": 34,
+      "Rust": 94,
+      "TOML": 60,
+      "JSON": 2,
+      "TypeScript": 2,
+      "C": 1,
+      "Python": 11
+    }
+  },
+  "origin_relationship_legend": {
+    "native": "Authored in Magenta for the current HCP/Magnet/Eventful Harness architecture.",
+    "vendored/adapted": "Code package or substantial implementation is copied/adapted into this repo; evidence should include a local Reference_Repo path.",
+    "reference/reimplemented": "Capability or design is clearly referenced, but implementation here is separate Magenta code.",
+    "adapter-boundary/reference": "Only a boundary or compatibility target is declared; upstream is not copied into General Harness.",
+    "external runtime boundary": "External runtime/SDK is named as an adapter boundary or dependency direction.",
+    "domain-specific native pack": "Domain pack material under packs/, outside domain-free General Harness."
+  },
+  "source_references": {
+    "magenta-native": {
+      "label": "Magenta native",
+      "relationship": "native",
+      "reference_paths": [],
+      "description": "Code and declarations authored in this repo for HCP, Magnet, and the native Eventful Harness Kernel."
+    },
+    "pi": {
+      "label": "PI",
+      "relationship": "vendored/adapted where explicitly noted",
+      "reference_paths": [
+        "Reference_Repo/pi-main/packages/tui",
+        "Reference_Repo/pi-main/packages/ai",
+        "Reference_Repo/pi-main/packages/coding-agent"
+      ],
+      "description": "PI is the clear source for the vendored TypeScript TUI package and a design reference for model/tool/session concepts."
+    },
+    "oh-my-pi": {
+      "label": "oh-my-pi",
+      "relationship": "reference/inspiration unless exact vendoring is listed",
+      "reference_paths": [
+        "Reference_Repo/oh-my-pi-main/packages/hashline",
+        "Reference_Repo/oh-my-pi-main/packages/natives",
+        "Reference_Repo/oh-my-pi-main/packages/ai",
+        "Reference_Repo/oh-my-pi-main/packages/coding-agent"
+      ],
+      "description": "Reference for hashline, native tool concepts, richer model catalog/auth, snapcompact/session ideas, and agent runtime patterns."
+    },
+    "opencode": {
+      "label": "OpenCode",
+      "relationship": "adapter boundary/reference",
+      "reference_paths": [
+        "Reference_Repo/opencode-dev/packages/llm",
+        "Reference_Repo/opencode-dev/packages/opencode/src/provider",
+        "Reference_Repo/opencode-dev/packages/opencode/src/tool",
+        "Reference_Repo/opencode-dev/packages/opencode/src/mcp"
+      ],
+      "description": "Referenced for provider routing/gateway/catalog separation and external comparison, not mounted as General Harness code."
+    },
+    "lazypi": {
+      "label": "LazyPi",
+      "relationship": "adapted UX concepts",
+      "reference_paths": [
+        "Reference_Repo/LazyPi-main/agent/extensions/background-jobs",
+        "Reference_Repo/LazyPi-main/agent/extensions/shared",
+        "Reference_Repo/LazyPi-main/agent/extensions/side-chat.ts"
+      ],
+      "description": "Reference for background job monitor, sub-agent/background shell UX, floating overlays, and side-chat concepts; Magenta renames Jobs to Events."
+    },
+    "mix-pi": {
+      "label": "mix_pi",
+      "relationship": "local reference snapshot",
+      "reference_paths": [
+        "Reference_Repo/mix_pi/.pi",
+        "Reference_Repo/mix_pi/LAZYPI_README.md"
+      ],
+      "description": "Local mixed PI/LazyPi reference snapshot. Used as contextual reference only in the current inventory."
+    },
+    "external-upstream": {
+      "label": "External upstream",
+      "relationship": "external dependency/boundary",
+      "reference_paths": [
+        "https://github.com/modelcontextprotocol/rust-sdk",
+        "https://github.com/bytecodealliance/wasmtime"
+      ],
+      "description": "External systems named by manifests as adapter or execution boundaries."
+    },
+    "domain-pack": {
+      "label": "AutOmicScience pack",
+      "relationship": "domain-specific pack code",
+      "reference_paths": [
+        "packs/AutOmicScience"
+      ],
+      "description": "Domain-specific omics harness pack under packs/, not Magenta core/general-harness."
+    }
+  },
+  "modules": {
+    "scaffold-posture": {
+      "category": "native-provider",
+      "layer": "general-harness/kernel",
+      "summary": "Default posture and component registry loaded from general-harness/harness.toml.",
+      "roots": [
+        "general-harness/harness.toml",
+        "general-harness/kernel/src/scaffold.rs"
+      ],
+      "primary_languages": [
+        "Rust",
+        "TOML"
+      ],
+      "source": "magenta-native",
+      "components": [
+        {
+          "id": "runtime-provider:scaffold:default",
+          "name": "default",
+          "kind": "scaffold",
+          "type": "native-provider",
+          "status": "working",
+          "targets": [
+            "scaffold://default",
+            "scaffold://general",
+            "scaffold://magenta"
+          ],
+          "path": "general-harness/harness.toml",
+          "impl": [
+            "general-harness/kernel/src/scaffold.rs"
+          ],
+          "lang": [
+            "TOML",
+            "Rust"
+          ],
+          "origin": "magenta-native",
+          "origin_rel": "native",
+          "origin_confidence": "high",
+          "refs": []
+        }
+      ]
+    },
+    "native-kernel-providers": {
+      "category": "native-provider",
+      "layer": "general-harness/kernel",
+      "summary": "Rust HCP providers for sessions, trace, context, hooks, events, loops, governance, approval, resolve/conflict/eval, model surface, capability catalog, and routing.",
+      "roots": [
+        "general-harness/kernel/src"
+      ],
+      "primary_languages": [
+        "Rust"
+      ],
+      "source": "magenta-native",
+      "components": [
+        {
+          "id": "general-harness:multiagent:local",
+          "name": "local",
+          "kind": "multiagent",
+          "type": "native-provider",
+          "status": "working",
+          "targets": [
+            "multiagent://local"
+          ],
+          "path": "general-harness/components/providers/multiagent/local.md",
+          "impl": [
+            "general-harness/kernel/src/multiagent_provider.rs"
+          ],
+          "lang": [
+            "Markdown",
+            "Rust"
+          ],
+          "origin": "magenta-native",
+          "origin_rel": "native",
+          "origin_confidence": "high",
+          "refs": []
+        },
+        {
+          "id": "general-harness:hook:init",
+          "name": "init",
+          "kind": "hook",
+          "type": "native-provider",
+          "status": "working",
+          "targets": [
+            "hook://init"
+          ],
+          "path": "general-harness/components/providers/hooks/init/init.md",
+          "impl": [
+            "general-harness/kernel/src/hook_provider.rs"
+          ],
+          "lang": [
+            "Markdown",
+            "Rust"
+          ],
+          "origin": "magenta-native",
+          "origin_rel": "native",
+          "origin_confidence": "high",
+          "refs": []
+        },
+        {
+          "id": "general-harness:hook:pre-turn",
+          "name": "pre-turn",
+          "kind": "hook",
+          "type": "native-provider",
+          "status": "working",
+          "targets": [
+            "hook://pre-turn"
+          ],
+          "path": "general-harness/components/providers/hooks/pre-turn/pre-turn.md",
+          "impl": [
+            "general-harness/kernel/src/hook_provider.rs"
+          ],
+          "lang": [
+            "Markdown",
+            "Rust"
+          ],
+          "origin": "magenta-native",
+          "origin_rel": "native",
+          "origin_confidence": "high",
+          "refs": []
+        },
+        {
+          "id": "general-harness:hook:pre-llm",
+          "name": "pre-llm",
+          "kind": "hook",
+          "type": "native-provider",
+          "status": "working",
+          "targets": [
+            "hook://pre-llm"
+          ],
+          "path": "general-harness/components/providers/hooks/pre-llm/.gitkeep",
+          "impl": [
+            "general-harness/kernel/src/hook_provider.rs"
+          ],
+          "lang": [
+            "Rust"
+          ],
+          "origin": "magenta-native",
+          "origin_rel": "native",
+          "origin_confidence": "high",
+          "refs": []
+        },
+        {
+          "id": "general-harness:hook:post-llm",
+          "name": "post-llm",
+          "kind": "hook",
+          "type": "native-provider",
+          "status": "working",
+          "targets": [
+            "hook://post-llm"
+          ],
+          "path": "general-harness/components/providers/hooks/post-llm/post-response.md",
+          "impl": [
+            "general-harness/kernel/src/hook_provider.rs"
+          ],
+          "lang": [
+            "Markdown",
+            "Rust"
+          ],
+          "origin": "magenta-native",
+          "origin_rel": "native",
+          "origin_confidence": "high",
+          "refs": []
+        },
+        {
+          "id": "general-harness:hook:pre-tool",
+          "name": "pre-tool",
+          "kind": "hook",
+          "type": "native-provider",
+          "status": "working",
+          "targets": [
+            "hook://pre-tool"
+          ],
+          "path": "general-harness/components/providers/hooks/pre-tool/tool-intercept.md",
+          "impl": [
+            "general-harness/kernel/src/hook_provider.rs"
+          ],
+          "lang": [
+            "Markdown",
+            "Rust"
+          ],
+          "origin": "magenta-native",
+          "origin_rel": "native",
+          "origin_confidence": "high",
+          "refs": []
+        },
+        {
+          "id": "general-harness:hook:post-tool",
+          "name": "post-tool",
+          "kind": "hook",
+          "type": "native-provider",
+          "status": "working",
+          "targets": [
+            "hook://post-tool"
+          ],
+          "path": "general-harness/components/providers/hooks/post-tool/.gitkeep",
+          "impl": [
+            "general-harness/kernel/src/hook_provider.rs"
+          ],
+          "lang": [
+            "Rust"
+          ],
+          "origin": "magenta-native",
+          "origin_rel": "native",
+          "origin_confidence": "high",
+          "refs": []
+        },
+        {
+          "id": "general-harness:hook:compact",
+          "name": "compact",
+          "kind": "hook",
+          "type": "native-provider",
+          "status": "working",
+          "targets": [
+            "hook://compact"
+          ],
+          "path": "general-harness/components/providers/hooks/compact/.gitkeep",
+          "impl": [
+            "general-harness/kernel/src/hook_provider.rs"
+          ],
+          "lang": [
+            "Rust"
+          ],
+          "origin": "magenta-native",
+          "origin_rel": "native",
+          "origin_confidence": "high",
+          "refs": []
+        },
+        {
+          "id": "general-harness:hook:sandbox-select",
+          "name": "sandbox-select",
+          "kind": "hook",
+          "type": "native-provider",
+          "status": "working",
+          "targets": [
+            "hook://sandbox-select"
+          ],
+          "path": "general-harness/components/providers/hooks/pre-tool/sandbox-select.md",
+          "impl": [
+            "general-harness/kernel/src/hook_provider.rs"
+          ],
+          "lang": [
+            "Markdown",
+            "Rust"
+          ],
+          "origin": "magenta-native",
+          "origin_rel": "native",
+          "origin_confidence": "high",
+          "refs": []
+        },
+        {
+          "id": "general-harness:hook:workflow",
+          "name": "workflow",
+          "kind": "hook",
+          "type": "native-provider",
+          "status": "working",
+          "targets": [
+            "hook://workflow"
+          ],
+          "path": "general-harness/components/providers/hooks/workflow/workflow.md",
+          "impl": [
+            "general-harness/kernel/src/hook_provider.rs"
+          ],
+          "lang": [
+            "Markdown",
+            "Rust"
+          ],
+          "origin": "magenta-native",
+          "origin_rel": "native",
+          "origin_confidence": "high",
+          "refs": []
+        },
+        {
+          "id": "general-harness:sandbox:readonly-fs",
+          "name": "readonly-fs",
+          "kind": "sandbox",
+          "type": "native-provider",
+          "status": "working",
+          "targets": [
+            "sandbox://readonly-fs"
+          ],
+          "path": "general-harness/components/providers/sandbox/readonly-fs.toml",
+          "impl": [
+            "general-harness/kernel/src/sandbox_provider.rs",
+            "general-harness/kernel/src/runtime_provider.rs"
+          ],
+          "lang": [
+            "TOML",
+            "Rust"
+          ],
+          "origin": "magenta-native",
+          "origin_rel": "native",
+          "origin_confidence": "high",
+          "refs": []
+        },
+        {
+          "id": "general-harness:sandbox:restricted",
+          "name": "restricted",
+          "kind": "sandbox",
+          "type": "native-provider",
+          "status": "working",
+          "targets": [
+            "sandbox://restricted"
+          ],
+          "path": "general-harness/components/providers/sandbox/restricted.toml",
+          "impl": [
+            "general-harness/kernel/src/sandbox_provider.rs",
+            "general-harness/kernel/src/runtime_provider.rs"
+          ],
+          "lang": [
+            "TOML",
+            "Rust"
+          ],
+          "origin": "magenta-native",
+          "origin_rel": "native",
+          "origin_confidence": "high",
+          "refs": []
+        },
+        {
+          "id": "general-harness:sandbox:workspace-write",
+          "name": "workspace-write",
+          "kind": "sandbox",
+          "type": "native-provider",
+          "status": "working",
+          "targets": [
+            "sandbox://workspace-write"
+          ],
+          "path": "general-harness/components/providers/sandbox/workspace-write.toml",
+          "impl": [
+            "general-harness/kernel/src/sandbox_provider.rs",
+            "general-harness/kernel/src/runtime_provider.rs"
+          ],
+          "lang": [
+            "TOML",
+            "Rust"
+          ],
+          "origin": "magenta-native",
+          "origin_rel": "native",
+          "origin_confidence": "high",
+          "refs": []
+        },
+        {
+          "id": "general-harness:sandbox:network-read",
+          "name": "network-read",
+          "kind": "sandbox",
+          "type": "native-provider",
+          "status": "working",
+          "targets": [
+            "sandbox://network-read"
+          ],
+          "path": "general-harness/components/providers/sandbox/network-read.toml",
+          "impl": [
+            "general-harness/kernel/src/sandbox_provider.rs",
+            "general-harness/kernel/src/runtime_provider.rs"
+          ],
+          "lang": [
+            "TOML",
+            "Rust"
+          ],
+          "origin": "magenta-native",
+          "origin_rel": "native",
+          "origin_confidence": "high",
+          "refs": []
+        },
+        {
+          "id": "general-harness:sandbox:trusted",
+          "name": "trusted",
+          "kind": "sandbox",
+          "type": "native-provider",
+          "status": "working",
+          "targets": [
+            "sandbox://trusted"
+          ],
+          "path": "general-harness/components/providers/sandbox/trusted.toml",
+          "impl": [
+            "general-harness/kernel/src/sandbox_provider.rs",
+            "general-harness/kernel/src/runtime_provider.rs"
+          ],
+          "lang": [
+            "TOML",
+            "Rust"
+          ],
+          "origin": "magenta-native",
+          "origin_rel": "native",
+          "origin_confidence": "high",
+          "refs": []
+        },
+        {
+          "id": "runtime-provider:session:current",
+          "name": "current",
+          "kind": "session",
+          "type": "native-provider",
+          "status": "working",
+          "targets": [
+            "session://current",
+            "session://<id>"
+          ],
+          "path": null,
+          "impl": [
+            "general-harness/kernel/src/session_provider.rs"
+          ],
+          "lang": [
+            "Rust"
+          ],
+          "origin": "magenta-native",
+          "origin_rel": "native",
+          "origin_confidence": "high",
+          "refs": []
+        },
+        {
+          "id": "runtime-provider:trace:session",
+          "name": "session",
+          "kind": "trace",
+          "type": "native-provider",
+          "status": "working",
+          "targets": [
+            "trace://session",
+            "trace://<session-id>"
+          ],
+          "path": null,
+          "impl": [
+            "general-harness/kernel/src/trace_provider.rs"
+          ],
+          "lang": [
+            "Rust"
+          ],
+          "origin": "magenta-native",
+          "origin_rel": "native",
+          "origin_confidence": "high",
+          "refs": []
+        },
+        {
+          "id": "runtime-provider:context:workspace",
+          "name": "workspace",
+          "kind": "context",
+          "type": "native-provider",
+          "status": "working",
+          "targets": [
+            "context://workspace"
+          ],
+          "path": null,
+          "impl": [
+            "general-harness/kernel/src/context_provider.rs"
+          ],
+          "lang": [
+            "Rust"
+          ],
+          "origin": "magenta-native",
+          "origin_rel": "native",
+          "origin_confidence": "high",
+          "refs": []
+        },
+        {
+          "id": "runtime-provider:approval:policy",
+          "name": "policy",
+          "kind": "approval",
+          "type": "native-provider",
+          "status": "working",
+          "targets": [
+            "approval://policy"
+          ],
+          "path": null,
+          "impl": [
+            "general-harness/kernel/src/approval_provider.rs"
+          ],
+          "lang": [
+            "Rust"
+          ],
+          "origin": "magenta-native",
+          "origin_rel": "native",
+          "origin_confidence": "high",
+          "refs": []
+        },
+        {
+          "id": "runtime-provider:shell:policy",
+          "name": "policy",
+          "kind": "shell",
+          "type": "native-provider",
+          "status": "working",
+          "targets": [
+            "shell://policy"
+          ],
+          "path": null,
+          "impl": [
+            "general-harness/kernel/src/shell_policy_provider.rs"
+          ],
+          "lang": [
+            "Rust"
+          ],
+          "origin": "magenta-native",
+          "origin_rel": "native",
+          "origin_confidence": "high",
+          "refs": []
+        },
+        {
+          "id": "runtime-provider:shell:session",
+          "name": "session",
+          "kind": "shell",
+          "type": "native-provider",
+          "status": "working",
+          "targets": [
+            "shell://session"
+          ],
+          "path": null,
+          "impl": [
+            "general-harness/kernel/src/shell_session_provider.rs"
+          ],
+          "lang": [
+            "Rust"
+          ],
+          "origin": "magenta-native",
+          "origin_rel": "native",
+          "origin_confidence": "high",
+          "refs": []
+        },
+        {
+          "id": "runtime-provider:advisor:watchdog",
+          "name": "watchdog",
+          "kind": "advisor",
+          "type": "native-provider",
+          "status": "working",
+          "targets": [
+            "advisor://watchdog"
+          ],
+          "path": null,
+          "impl": [
+            "general-harness/kernel/src/advisor_provider.rs"
+          ],
+          "lang": [
+            "Rust"
+          ],
+          "origin": "magenta-native",
+          "origin_rel": "native",
+          "origin_confidence": "high",
+          "refs": []
+        },
+        {
+          "id": "runtime-provider:eval:tool",
+          "name": "tool",
+          "kind": "eval",
+          "type": "native-provider",
+          "status": "working",
+          "targets": [
+            "tool://Eval"
+          ],
+          "path": null,
+          "impl": [
+            "general-harness/kernel/src/eval_provider.rs"
+          ],
+          "lang": [
+            "Rust"
+          ],
+          "origin": "magenta-native",
+          "origin_rel": "native",
+          "origin_confidence": "high",
+          "refs": []
+        },
+        {
+          "id": "runtime-provider:conflict:workspace",
+          "name": "workspace",
+          "kind": "conflict",
+          "type": "native-provider",
+          "status": "working",
+          "targets": [
+            "conflict://workspace"
+          ],
+          "path": null,
+          "impl": [
+            "general-harness/kernel/src/conflict_provider.rs"
+          ],
+          "lang": [
+            "Rust"
+          ],
+          "origin": "magenta-native",
+          "origin_rel": "native",
+          "origin_confidence": "high",
+          "refs": []
+        },
+        {
+          "id": "runtime-provider:resolve:pending",
+          "name": "pending",
+          "kind": "resolve",
+          "type": "native-provider",
+          "status": "working",
+          "targets": [
+            "resolve://pending"
+          ],
+          "path": null,
+          "impl": [
+            "general-harness/kernel/src/resolve_provider.rs"
+          ],
+          "lang": [
+            "Rust"
+          ],
+          "origin": "magenta-native",
+          "origin_rel": "native",
+          "origin_confidence": "high",
+          "refs": []
+        },
+        {
+          "id": "runtime-provider:capability:catalog",
+          "name": "catalog",
+          "kind": "capability",
+          "type": "native-provider",
+          "status": "working",
+          "targets": [
+            "capability://catalog"
+          ],
+          "path": null,
+          "impl": [
+            "general-harness/kernel/src/capability_catalog.rs",
+            "general-harness/kernel/src/route_resolver.rs"
+          ],
+          "lang": [
+            "Rust"
+          ],
+          "origin": "magenta-native",
+          "origin_rel": "native",
+          "origin_confidence": "high",
+          "refs": []
+        },
+        {
+          "id": "runtime-provider:governance:status",
+          "name": "status",
+          "kind": "governance",
+          "type": "native-provider",
+          "status": "working",
+          "targets": [
+            "governance://status"
+          ],
+          "path": null,
+          "impl": [
+            "general-harness/kernel/src/governance_provider.rs"
+          ],
+          "lang": [
+            "Rust"
+          ],
+          "origin": "magenta-native",
+          "origin_rel": "native",
+          "origin_confidence": "high",
+          "refs": []
+        }
+      ]
+    },
+    "process-tool-magnets": {
+      "category": "magnet",
+      "layer": "general-harness/components/magnets/process-tool",
+      "summary": "Executable tool manifests mounted as tool://* through the Rust process-tool provider and helper binary.",
+      "roots": [
+        "general-harness/components/magnets/process-tool",
+        "general-harness/bins/process-tools/src/main.rs",
+        "general-harness/kernel/src/process_tool.rs"
+      ],
+      "primary_languages": [
+        "TOML",
+        "Rust"
+      ],
+      "source": "magenta-native/oh-my-pi-reference",
+      "components": [
+        {
+          "id": "general-harness:mcp:echo-json",
+          "name": "echo-json",
+          "kind": "mcp",
+          "type": "magnet",
+          "status": "working",
+          "targets": [
+            "tool://echo_json"
+          ],
+          "path": "general-harness/components/magnets/process-tool/echo-json.toml",
+          "impl": [
+            "general-harness/kernel/src/process_tool.rs",
+            "general-harness/kernel/src/runtime_provider.rs",
+            "general-harness/bins/process-tools/src/main.rs"
+          ],
+          "lang": [
+            "TOML",
+            "Rust"
+          ],
+          "origin": "magenta-native",
+          "origin_rel": "native",
+          "origin_confidence": "high",
+          "refs": []
+        },
+        {
+          "id": "general-harness:mcp:Read",
+          "name": "Read",
+          "kind": "mcp",
+          "type": "magnet",
+          "status": "working",
+          "targets": [
+            "tool://Read"
+          ],
+          "path": "general-harness/components/magnets/process-tool/read.toml",
+          "impl": [
+            "general-harness/kernel/src/process_tool.rs",
+            "general-harness/kernel/src/runtime_provider.rs",
+            "general-harness/bins/process-tools/src/main.rs"
+          ],
+          "lang": [
+            "TOML",
+            "Rust"
+          ],
+          "origin": "magenta-native",
+          "origin_rel": "native",
+          "origin_confidence": "high",
+          "refs": []
+        },
+        {
+          "id": "general-harness:mcp:ReadAnchored",
+          "name": "ReadAnchored",
+          "kind": "mcp",
+          "type": "magnet",
+          "status": "working",
+          "targets": [
+            "tool://ReadAnchored"
+          ],
+          "path": "general-harness/components/magnets/process-tool/read-anchored.toml",
+          "impl": [
+            "general-harness/kernel/src/process_tool.rs",
+            "general-harness/kernel/src/runtime_provider.rs",
+            "general-harness/bins/process-tools/src/main.rs"
+          ],
+          "lang": [
+            "TOML",
+            "Rust"
+          ],
+          "origin": "oh-my-pi",
+          "origin_rel": "reference/reimplemented",
+          "origin_confidence": "medium",
+          "refs": [
+            "Reference_Repo/oh-my-pi-main/packages/hashline",
+            "Reference_Repo/oh-my-pi-main/packages/natives"
+          ]
+        },
+        {
+          "id": "general-harness:mcp:Write",
+          "name": "Write",
+          "kind": "mcp",
+          "type": "magnet",
+          "status": "working",
+          "targets": [
+            "tool://Write"
+          ],
+          "path": "general-harness/components/magnets/process-tool/write.toml",
+          "impl": [
+            "general-harness/kernel/src/process_tool.rs",
+            "general-harness/kernel/src/runtime_provider.rs",
+            "general-harness/bins/process-tools/src/main.rs"
+          ],
+          "lang": [
+            "TOML",
+            "Rust"
+          ],
+          "origin": "magenta-native",
+          "origin_rel": "native",
+          "origin_confidence": "high",
+          "refs": []
+        },
+        {
+          "id": "general-harness:mcp:Edit",
+          "name": "Edit",
+          "kind": "mcp",
+          "type": "magnet",
+          "status": "working",
+          "targets": [
+            "tool://Edit"
+          ],
+          "path": "general-harness/components/magnets/process-tool/edit.toml",
+          "impl": [
+            "general-harness/kernel/src/process_tool.rs",
+            "general-harness/kernel/src/runtime_provider.rs",
+            "general-harness/bins/process-tools/src/main.rs"
+          ],
+          "lang": [
+            "TOML",
+            "Rust"
+          ],
+          "origin": "magenta-native",
+          "origin_rel": "native",
+          "origin_confidence": "high",
+          "refs": []
+        },
+        {
+          "id": "general-harness:mcp:EditHashline",
+          "name": "EditHashline",
+          "kind": "mcp",
+          "type": "magnet",
+          "status": "working",
+          "targets": [
+            "tool://EditHashline"
+          ],
+          "path": "general-harness/components/magnets/process-tool/edit-hashline.toml",
+          "impl": [
+            "general-harness/kernel/src/process_tool.rs",
+            "general-harness/kernel/src/runtime_provider.rs",
+            "general-harness/bins/process-tools/src/main.rs"
+          ],
+          "lang": [
+            "TOML",
+            "Rust"
+          ],
+          "origin": "oh-my-pi",
+          "origin_rel": "reference/reimplemented",
+          "origin_confidence": "medium",
+          "refs": [
+            "Reference_Repo/oh-my-pi-main/packages/hashline",
+            "Reference_Repo/oh-my-pi-main/packages/natives"
+          ]
+        },
+        {
+          "id": "general-harness:mcp:Bash",
+          "name": "Bash",
+          "kind": "mcp",
+          "type": "magnet",
+          "status": "working",
+          "targets": [
+            "tool://Bash"
+          ],
+          "path": "general-harness/components/magnets/process-tool/bash.toml",
+          "impl": [
+            "general-harness/kernel/src/process_tool.rs",
+            "general-harness/kernel/src/runtime_provider.rs",
+            "general-harness/bins/process-tools/src/main.rs"
+          ],
+          "lang": [
+            "TOML",
+            "Rust"
+          ],
+          "origin": "magenta-native",
+          "origin_rel": "native",
+          "origin_confidence": "high",
+          "refs": []
+        },
+        {
+          "id": "general-harness:mcp:Grep",
+          "name": "Grep",
+          "kind": "mcp",
+          "type": "magnet",
+          "status": "working",
+          "targets": [
+            "tool://Grep"
+          ],
+          "path": "general-harness/components/magnets/process-tool/grep.toml",
+          "impl": [
+            "general-harness/kernel/src/process_tool.rs",
+            "general-harness/kernel/src/runtime_provider.rs",
+            "general-harness/bins/process-tools/src/main.rs"
+          ],
+          "lang": [
+            "TOML",
+            "Rust"
+          ],
+          "origin": "magenta-native",
+          "origin_rel": "native",
+          "origin_confidence": "high",
+          "refs": []
+        },
+        {
+          "id": "general-harness:mcp:Find",
+          "name": "Find",
+          "kind": "mcp",
+          "type": "magnet",
+          "status": "working",
+          "targets": [
+            "tool://Find"
+          ],
+          "path": "general-harness/components/magnets/process-tool/find.toml",
+          "impl": [
+            "general-harness/kernel/src/process_tool.rs",
+            "general-harness/kernel/src/runtime_provider.rs",
+            "general-harness/bins/process-tools/src/main.rs"
+          ],
+          "lang": [
+            "TOML",
+            "Rust"
+          ],
+          "origin": "magenta-native",
+          "origin_rel": "native",
+          "origin_confidence": "high",
+          "refs": []
+        },
+        {
+          "id": "general-harness:mcp:Glob",
+          "name": "Glob",
+          "kind": "mcp",
+          "type": "magnet",
+          "status": "working",
+          "targets": [
+            "tool://Glob"
+          ],
+          "path": "general-harness/components/magnets/process-tool/glob.toml",
+          "impl": [
+            "general-harness/kernel/src/process_tool.rs",
+            "general-harness/kernel/src/runtime_provider.rs",
+            "general-harness/bins/process-tools/src/main.rs"
+          ],
+          "lang": [
+            "TOML",
+            "Rust"
+          ],
+          "origin": "magenta-native",
+          "origin_rel": "native",
+          "origin_confidence": "high",
+          "refs": []
+        },
+        {
+          "id": "general-harness:mcp:FuzzyFind",
+          "name": "FuzzyFind",
+          "kind": "mcp",
+          "type": "magnet",
+          "status": "working",
+          "targets": [
+            "tool://FuzzyFind"
+          ],
+          "path": "general-harness/components/magnets/process-tool/fuzzy-find.toml",
+          "impl": [
+            "general-harness/kernel/src/process_tool.rs",
+            "general-harness/kernel/src/runtime_provider.rs",
+            "general-harness/bins/process-tools/src/main.rs"
+          ],
+          "lang": [
+            "TOML",
+            "Rust"
+          ],
+          "origin": "oh-my-pi",
+          "origin_rel": "reference/reimplemented",
+          "origin_confidence": "medium",
+          "refs": [
+            "Reference_Repo/oh-my-pi-main/packages/hashline",
+            "Reference_Repo/oh-my-pi-main/packages/natives"
+          ]
+        },
+        {
+          "id": "general-harness:mcp:AstGrep",
+          "name": "AstGrep",
+          "kind": "mcp",
+          "type": "magnet",
+          "status": "working",
+          "targets": [
+            "tool://AstGrep"
+          ],
+          "path": "general-harness/components/magnets/process-tool/ast-grep.toml",
+          "impl": [
+            "general-harness/kernel/src/process_tool.rs",
+            "general-harness/kernel/src/runtime_provider.rs",
+            "general-harness/bins/process-tools/src/main.rs"
+          ],
+          "lang": [
+            "TOML",
+            "Rust"
+          ],
+          "origin": "oh-my-pi",
+          "origin_rel": "reference/reimplemented",
+          "origin_confidence": "medium",
+          "refs": [
+            "Reference_Repo/oh-my-pi-main/packages/hashline",
+            "Reference_Repo/oh-my-pi-main/packages/natives"
+          ]
+        },
+        {
+          "id": "general-harness:mcp:AstEditPlan",
+          "name": "AstEditPlan",
+          "kind": "mcp",
+          "type": "magnet",
+          "status": "working",
+          "targets": [
+            "tool://AstEditPlan"
+          ],
+          "path": "general-harness/components/magnets/process-tool/ast-edit-plan.toml",
+          "impl": [
+            "general-harness/kernel/src/process_tool.rs",
+            "general-harness/kernel/src/runtime_provider.rs",
+            "general-harness/bins/process-tools/src/main.rs"
+          ],
+          "lang": [
+            "TOML",
+            "Rust"
+          ],
+          "origin": "oh-my-pi",
+          "origin_rel": "reference/reimplemented",
+          "origin_confidence": "medium",
+          "refs": [
+            "Reference_Repo/oh-my-pi-main/packages/hashline",
+            "Reference_Repo/oh-my-pi-main/packages/natives"
+          ]
+        },
+        {
+          "id": "general-harness:mcp:Lsp",
+          "name": "Lsp",
+          "kind": "mcp",
+          "type": "magnet",
+          "status": "working",
+          "targets": [
+            "tool://Lsp"
+          ],
+          "path": "general-harness/components/magnets/process-tool/lsp.toml",
+          "impl": [
+            "general-harness/kernel/src/process_tool.rs",
+            "general-harness/kernel/src/runtime_provider.rs",
+            "general-harness/bins/process-tools/src/main.rs"
+          ],
+          "lang": [
+            "TOML",
+            "Rust"
+          ],
+          "origin": "oh-my-pi",
+          "origin_rel": "reference/reimplemented",
+          "origin_confidence": "medium",
+          "refs": [
+            "Reference_Repo/oh-my-pi-main/packages/hashline",
+            "Reference_Repo/oh-my-pi-main/packages/natives"
+          ]
+        },
+        {
+          "id": "general-harness:mcp:WebSearch",
+          "name": "WebSearch",
+          "kind": "mcp",
+          "type": "magnet",
+          "status": "working",
+          "targets": [
+            "tool://WebSearch"
+          ],
+          "path": "general-harness/components/magnets/process-tool/web-search.toml",
+          "impl": [
+            "general-harness/kernel/src/process_tool.rs",
+            "general-harness/kernel/src/runtime_provider.rs",
+            "general-harness/bins/process-tools/src/main.rs"
+          ],
+          "lang": [
+            "TOML",
+            "Rust"
+          ],
+          "origin": "magenta-native",
+          "origin_rel": "native",
+          "origin_confidence": "high",
+          "refs": []
+        },
+        {
+          "id": "general-harness:mcp:ReadUrl",
+          "name": "ReadUrl",
+          "kind": "mcp",
+          "type": "magnet",
+          "status": "working",
+          "targets": [
+            "tool://ReadUrl"
+          ],
+          "path": "general-harness/components/magnets/process-tool/read-url.toml",
+          "impl": [
+            "general-harness/kernel/src/process_tool.rs",
+            "general-harness/kernel/src/runtime_provider.rs",
+            "general-harness/bins/process-tools/src/main.rs"
+          ],
+          "lang": [
+            "TOML",
+            "Rust"
+          ],
+          "origin": "magenta-native",
+          "origin_rel": "native",
+          "origin_confidence": "high",
+          "refs": []
+        },
+        {
+          "id": "general-harness:mcp:Ls",
+          "name": "Ls",
+          "kind": "mcp",
+          "type": "magnet",
+          "status": "working",
+          "targets": [
+            "tool://Ls"
+          ],
+          "path": "general-harness/components/magnets/process-tool/ls.toml",
+          "impl": [
+            "general-harness/kernel/src/process_tool.rs",
+            "general-harness/kernel/src/runtime_provider.rs",
+            "general-harness/bins/process-tools/src/main.rs"
+          ],
+          "lang": [
+            "TOML",
+            "Rust"
+          ],
+          "origin": "magenta-native",
+          "origin_rel": "native",
+          "origin_confidence": "high",
+          "refs": []
+        }
+      ]
+    },
+    "declared-tool-metadata": {
+      "category": "metadata",
+      "layer": "general-harness/components/magnets/declared-tool",
+      "summary": "Metadata-only tool declarations exposed as declared://* and used for catalog/surface descriptions.",
+      "roots": [
+        "general-harness/components/magnets/declared-tool",
+        "general-harness/kernel/src/declared_tool_provider.rs"
+      ],
+      "primary_languages": [
+        "TOML",
+        "Rust"
+      ],
+      "source": "magenta-native/oh-my-pi-reference",
+      "components": [
+        {
+          "id": "general-harness:declared:Read",
+          "name": "Read",
+          "kind": "declared",
+          "type": "metadata",
+          "status": "metadata-only",
+          "targets": [
+            "declared://Read"
+          ],
+          "path": "general-harness/components/magnets/declared-tool/read.toml",
+          "impl": [
+            "general-harness/kernel/src/declared_tool_provider.rs"
+          ],
+          "lang": [
+            "TOML",
+            "Rust"
+          ],
+          "origin": "magenta-native",
+          "origin_rel": "native",
+          "origin_confidence": "high",
+          "refs": []
+        },
+        {
+          "id": "general-harness:declared:ReadAnchored",
+          "name": "ReadAnchored",
+          "kind": "declared",
+          "type": "metadata",
+          "status": "metadata-only",
+          "targets": [
+            "declared://ReadAnchored"
+          ],
+          "path": "general-harness/components/magnets/declared-tool/read-anchored.toml",
+          "impl": [
+            "general-harness/kernel/src/declared_tool_provider.rs"
+          ],
+          "lang": [
+            "TOML",
+            "Rust"
+          ],
+          "origin": "oh-my-pi",
+          "origin_rel": "reference metadata/reimplemented",
+          "origin_confidence": "medium",
+          "refs": [
+            "Reference_Repo/oh-my-pi-main/packages/hashline",
+            "Reference_Repo/oh-my-pi-main/packages/natives"
+          ]
+        },
+        {
+          "id": "general-harness:declared:Write",
+          "name": "Write",
+          "kind": "declared",
+          "type": "metadata",
+          "status": "metadata-only",
+          "targets": [
+            "declared://Write"
+          ],
+          "path": "general-harness/components/magnets/declared-tool/write.toml",
+          "impl": [
+            "general-harness/kernel/src/declared_tool_provider.rs"
+          ],
+          "lang": [
+            "TOML",
+            "Rust"
+          ],
+          "origin": "magenta-native",
+          "origin_rel": "native",
+          "origin_confidence": "high",
+          "refs": []
+        },
+        {
+          "id": "general-harness:declared:Edit",
+          "name": "Edit",
+          "kind": "declared",
+          "type": "metadata",
+          "status": "metadata-only",
+          "targets": [
+            "declared://Edit"
+          ],
+          "path": "general-harness/components/magnets/declared-tool/edit.toml",
+          "impl": [
+            "general-harness/kernel/src/declared_tool_provider.rs"
+          ],
+          "lang": [
+            "TOML",
+            "Rust"
+          ],
+          "origin": "magenta-native",
+          "origin_rel": "native",
+          "origin_confidence": "high",
+          "refs": []
+        },
+        {
+          "id": "general-harness:declared:EditHashline",
+          "name": "EditHashline",
+          "kind": "declared",
+          "type": "metadata",
+          "status": "metadata-only",
+          "targets": [
+            "declared://EditHashline"
+          ],
+          "path": "general-harness/components/magnets/declared-tool/edit-hashline.toml",
+          "impl": [
+            "general-harness/kernel/src/declared_tool_provider.rs"
+          ],
+          "lang": [
+            "TOML",
+            "Rust"
+          ],
+          "origin": "oh-my-pi",
+          "origin_rel": "reference metadata/reimplemented",
+          "origin_confidence": "medium",
+          "refs": [
+            "Reference_Repo/oh-my-pi-main/packages/hashline",
+            "Reference_Repo/oh-my-pi-main/packages/natives"
+          ]
+        },
+        {
+          "id": "general-harness:declared:Bash",
+          "name": "Bash",
+          "kind": "declared",
+          "type": "metadata",
+          "status": "metadata-only",
+          "targets": [
+            "declared://Bash"
+          ],
+          "path": "general-harness/components/magnets/declared-tool/bash.toml",
+          "impl": [
+            "general-harness/kernel/src/declared_tool_provider.rs"
+          ],
+          "lang": [
+            "TOML",
+            "Rust"
+          ],
+          "origin": "magenta-native",
+          "origin_rel": "native",
+          "origin_confidence": "high",
+          "refs": []
+        },
+        {
+          "id": "general-harness:declared:Grep",
+          "name": "Grep",
+          "kind": "declared",
+          "type": "metadata",
+          "status": "metadata-only",
+          "targets": [
+            "declared://Grep"
+          ],
+          "path": "general-harness/components/magnets/declared-tool/grep.toml",
+          "impl": [
+            "general-harness/kernel/src/declared_tool_provider.rs"
+          ],
+          "lang": [
+            "TOML",
+            "Rust"
+          ],
+          "origin": "magenta-native",
+          "origin_rel": "native",
+          "origin_confidence": "high",
+          "refs": []
+        },
+        {
+          "id": "general-harness:declared:Find",
+          "name": "Find",
+          "kind": "declared",
+          "type": "metadata",
+          "status": "metadata-only",
+          "targets": [
+            "declared://Find"
+          ],
+          "path": "general-harness/components/magnets/declared-tool/find.toml",
+          "impl": [
+            "general-harness/kernel/src/declared_tool_provider.rs"
+          ],
+          "lang": [
+            "TOML",
+            "Rust"
+          ],
+          "origin": "magenta-native",
+          "origin_rel": "native",
+          "origin_confidence": "high",
+          "refs": []
+        },
+        {
+          "id": "general-harness:declared:Glob",
+          "name": "Glob",
+          "kind": "declared",
+          "type": "metadata",
+          "status": "metadata-only",
+          "targets": [
+            "declared://Glob"
+          ],
+          "path": "general-harness/components/magnets/declared-tool/glob.toml",
+          "impl": [
+            "general-harness/kernel/src/declared_tool_provider.rs"
+          ],
+          "lang": [
+            "TOML",
+            "Rust"
+          ],
+          "origin": "magenta-native",
+          "origin_rel": "native",
+          "origin_confidence": "high",
+          "refs": []
+        },
+        {
+          "id": "general-harness:declared:FuzzyFind",
+          "name": "FuzzyFind",
+          "kind": "declared",
+          "type": "metadata",
+          "status": "metadata-only",
+          "targets": [
+            "declared://FuzzyFind"
+          ],
+          "path": "general-harness/components/magnets/declared-tool/fuzzy-find.toml",
+          "impl": [
+            "general-harness/kernel/src/declared_tool_provider.rs"
+          ],
+          "lang": [
+            "TOML",
+            "Rust"
+          ],
+          "origin": "oh-my-pi",
+          "origin_rel": "reference metadata/reimplemented",
+          "origin_confidence": "medium",
+          "refs": [
+            "Reference_Repo/oh-my-pi-main/packages/hashline",
+            "Reference_Repo/oh-my-pi-main/packages/natives"
+          ]
+        },
+        {
+          "id": "general-harness:declared:AstGrep",
+          "name": "AstGrep",
+          "kind": "declared",
+          "type": "metadata",
+          "status": "metadata-only",
+          "targets": [
+            "declared://AstGrep"
+          ],
+          "path": "general-harness/components/magnets/declared-tool/ast-grep.toml",
+          "impl": [
+            "general-harness/kernel/src/declared_tool_provider.rs"
+          ],
+          "lang": [
+            "TOML",
+            "Rust"
+          ],
+          "origin": "oh-my-pi",
+          "origin_rel": "reference metadata/reimplemented",
+          "origin_confidence": "medium",
+          "refs": [
+            "Reference_Repo/oh-my-pi-main/packages/hashline",
+            "Reference_Repo/oh-my-pi-main/packages/natives"
+          ]
+        },
+        {
+          "id": "general-harness:declared:AstEdit",
+          "name": "AstEdit",
+          "kind": "declared",
+          "type": "metadata",
+          "status": "metadata-only",
+          "targets": [
+            "declared://AstEdit"
+          ],
+          "path": "general-harness/components/magnets/declared-tool/ast-edit.toml",
+          "impl": [
+            "general-harness/kernel/src/declared_tool_provider.rs"
+          ],
+          "lang": [
+            "TOML",
+            "Rust"
+          ],
+          "origin": "oh-my-pi",
+          "origin_rel": "reference metadata/reimplemented",
+          "origin_confidence": "medium",
+          "refs": [
+            "Reference_Repo/oh-my-pi-main/packages/hashline",
+            "Reference_Repo/oh-my-pi-main/packages/natives"
+          ]
+        },
+        {
+          "id": "general-harness:declared:Lsp",
+          "name": "Lsp",
+          "kind": "declared",
+          "type": "metadata",
+          "status": "metadata-only",
+          "targets": [
+            "declared://Lsp"
+          ],
+          "path": "general-harness/components/magnets/declared-tool/lsp.toml",
+          "impl": [
+            "general-harness/kernel/src/declared_tool_provider.rs"
+          ],
+          "lang": [
+            "TOML",
+            "Rust"
+          ],
+          "origin": "oh-my-pi",
+          "origin_rel": "reference metadata/reimplemented",
+          "origin_confidence": "medium",
+          "refs": [
+            "Reference_Repo/oh-my-pi-main/packages/hashline",
+            "Reference_Repo/oh-my-pi-main/packages/natives"
+          ]
+        },
+        {
+          "id": "general-harness:declared:WebSearch",
+          "name": "WebSearch",
+          "kind": "declared",
+          "type": "metadata",
+          "status": "metadata-only",
+          "targets": [
+            "declared://WebSearch"
+          ],
+          "path": "general-harness/components/magnets/declared-tool/web-search.toml",
+          "impl": [
+            "general-harness/kernel/src/declared_tool_provider.rs"
+          ],
+          "lang": [
+            "TOML",
+            "Rust"
+          ],
+          "origin": "magenta-native",
+          "origin_rel": "native",
+          "origin_confidence": "high",
+          "refs": []
+        },
+        {
+          "id": "general-harness:declared:ReadUrl",
+          "name": "ReadUrl",
+          "kind": "declared",
+          "type": "metadata",
+          "status": "metadata-only",
+          "targets": [
+            "declared://ReadUrl"
+          ],
+          "path": "general-harness/components/magnets/declared-tool/read-url.toml",
+          "impl": [
+            "general-harness/kernel/src/declared_tool_provider.rs"
+          ],
+          "lang": [
+            "TOML",
+            "Rust"
+          ],
+          "origin": "magenta-native",
+          "origin_rel": "native",
+          "origin_confidence": "high",
+          "refs": []
+        },
+        {
+          "id": "general-harness:declared:Ls",
+          "name": "Ls",
+          "kind": "declared",
+          "type": "metadata",
+          "status": "metadata-only",
+          "targets": [
+            "declared://Ls"
+          ],
+          "path": "general-harness/components/magnets/declared-tool/ls.toml",
+          "impl": [
+            "general-harness/kernel/src/declared_tool_provider.rs"
+          ],
+          "lang": [
+            "TOML",
+            "Rust"
+          ],
+          "origin": "magenta-native",
+          "origin_rel": "native",
+          "origin_confidence": "high",
+          "refs": []
+        },
+        {
+          "id": "general-harness:declared:InspectEnvironment",
+          "name": "InspectEnvironment",
+          "kind": "declared",
+          "type": "metadata",
+          "status": "metadata-only",
+          "targets": [
+            "declared://InspectEnvironment"
+          ],
+          "path": "general-harness/components/magnets/declared-tool/inspect-environment.toml",
+          "impl": [
+            "general-harness/kernel/src/declared_tool_provider.rs"
+          ],
+          "lang": [
+            "TOML",
+            "Rust"
+          ],
+          "origin": "magenta-native",
+          "origin_rel": "native",
+          "origin_confidence": "high",
+          "refs": []
+        }
+      ]
+    },
+    "external-magnets": {
+      "category": "magnet",
+      "layer": "general-harness/components/magnets",
+      "summary": "API, MCP server, HCP-process, agent-provider, and adapter boundary manifests.",
+      "roots": [
+        "general-harness/components/magnets/api",
+        "general-harness/components/magnets/mcp-server",
+        "general-harness/components/magnets/hcp-process",
+        "general-harness/components/magnets/agent-providers",
+        "general-harness/components/magnets/adapters"
+      ],
+      "primary_languages": [
+        "TOML",
+        "Rust"
+      ],
+      "source": "magenta-native/opencode-reference/external-upstream",
+      "components": [
+        {
+          "id": "general-harness:adapter:rmcp",
+          "name": "rmcp",
+          "kind": "adapter",
+          "type": "magnet",
+          "status": "working/declared",
+          "targets": [
+            "adapter://rmcp"
+          ],
+          "path": "general-harness/components/magnets/adapters/rmcp.toml",
+          "impl": [
+            "general-harness/kernel/src/adapter_catalog_provider.rs"
+          ],
+          "lang": [
+            "TOML",
+            "Rust"
+          ],
+          "origin": "external-upstream",
+          "origin_rel": "replacement-boundary",
+          "origin_confidence": "high",
+          "refs": [
+            "https://github.com/modelcontextprotocol/rust-sdk"
+          ]
+        },
+        {
+          "id": "general-harness:adapter:llm-gateway",
+          "name": "llm-gateway",
+          "kind": "adapter",
+          "type": "magnet",
+          "status": "working/declared",
+          "targets": [
+            "adapter://llm-gateway"
+          ],
+          "path": "general-harness/components/magnets/adapters/llm-gateway.toml",
+          "impl": [
+            "general-harness/kernel/src/adapter_catalog_provider.rs"
+          ],
+          "lang": [
+            "TOML",
+            "Rust"
+          ],
+          "origin": "opencode",
+          "origin_rel": "adapter-boundary/reference",
+          "origin_confidence": "high",
+          "refs": [
+            "Reference_Repo/opencode-dev/packages/llm",
+            "Reference_Repo/opencode-dev/packages/opencode/src/provider"
+          ]
+        },
+        {
+          "id": "general-harness:adapter:wasmtime",
+          "name": "wasmtime",
+          "kind": "adapter",
+          "type": "magnet",
+          "status": "working/declared",
+          "targets": [
+            "adapter://wasmtime"
+          ],
+          "path": "general-harness/components/magnets/adapters/wasmtime.toml",
+          "impl": [
+            "general-harness/kernel/src/adapter_catalog_provider.rs"
+          ],
+          "lang": [
+            "TOML",
+            "Rust"
+          ],
+          "origin": "external-upstream",
+          "origin_rel": "external runtime boundary",
+          "origin_confidence": "high",
+          "refs": [
+            "https://github.com/bytecodealliance/wasmtime"
+          ]
+        },
+        {
+          "id": "general-harness:hcp-process:echo-jsonl",
+          "name": "echo-jsonl",
+          "kind": "hcp-process",
+          "type": "magnet",
+          "status": "working/declared",
+          "targets": [
+            "hcp-process://echo-jsonl"
+          ],
+          "path": "general-harness/components/magnets/hcp-process/echo-jsonl.toml",
+          "impl": [
+            "general-harness/kernel/src/hcp_process_provider.rs"
+          ],
+          "lang": [
+            "TOML",
+            "Rust"
+          ],
+          "origin": "magenta-native",
+          "origin_rel": "native",
+          "origin_confidence": "high",
+          "refs": []
+        },
+        {
+          "id": "general-harness:agent-provider:local-loop",
+          "name": "local-loop",
+          "kind": "agent-provider",
+          "type": "magnet",
+          "status": "working/declared",
+          "targets": [
+            "agent-provider://local-loop"
+          ],
+          "path": "general-harness/components/magnets/agent-providers/local-loop.toml",
+          "impl": [
+            "general-harness/kernel/src/agent_provider.rs"
+          ],
+          "lang": [
+            "TOML",
+            "Rust"
+          ],
+          "origin": "magenta-native",
+          "origin_rel": "native",
+          "origin_confidence": "high",
+          "refs": []
+        },
+        {
+          "id": "general-harness:agent-provider:command-echo",
+          "name": "command-echo",
+          "kind": "agent-provider",
+          "type": "magnet",
+          "status": "working/declared",
+          "targets": [
+            "agent-provider://command-echo"
+          ],
+          "path": "general-harness/components/magnets/agent-providers/command-echo.toml",
+          "impl": [
+            "general-harness/kernel/src/agent_provider.rs"
+          ],
+          "lang": [
+            "TOML",
+            "Rust"
+          ],
+          "origin": "magenta-native",
+          "origin_rel": "native",
+          "origin_confidence": "high",
+          "refs": []
+        },
+        {
+          "id": "general-harness:agent-provider:claude-code",
+          "name": "claude-code",
+          "kind": "agent-provider",
+          "type": "magnet",
+          "status": "working/declared",
+          "targets": [
+            "agent-provider://claude-code"
+          ],
+          "path": "general-harness/components/magnets/agent-providers/claude-code.toml",
+          "impl": [
+            "general-harness/kernel/src/agent_provider.rs"
+          ],
+          "lang": [
+            "TOML",
+            "Rust"
+          ],
+          "origin": "external-upstream",
+          "origin_rel": "declared external command boundary",
+          "origin_confidence": "high",
+          "refs": []
+        },
+        {
+          "id": "general-harness:api:httpbin-get",
+          "name": "httpbin-get",
+          "kind": "api",
+          "type": "magnet",
+          "status": "working",
+          "targets": [
+            "api://httpbin-get"
+          ],
+          "path": "general-harness/components/magnets/api/httpbin-get.toml",
+          "impl": [
+            "general-harness/kernel/src/api_tool_provider.rs"
+          ],
+          "lang": [
+            "TOML",
+            "Rust"
+          ],
+          "origin": "magenta-native",
+          "origin_rel": "native",
+          "origin_confidence": "high",
+          "refs": []
+        },
+        {
+          "id": "general-harness:mcp-server:filesystem",
+          "name": "filesystem",
+          "kind": "mcp-server",
+          "type": "magnet",
+          "status": "working/declared",
+          "targets": [
+            "mcp-server://filesystem"
+          ],
+          "path": "general-harness/components/magnets/mcp-server/filesystem.toml",
+          "impl": [
+            "general-harness/kernel/src/mcp_server_provider.rs"
+          ],
+          "lang": [
+            "TOML",
+            "Rust"
+          ],
+          "origin": "magenta-native",
+          "origin_rel": "native",
+          "origin_confidence": "high",
+          "refs": []
+        }
+      ]
+    },
+    "runtime-wrappers": {
+      "category": "runtime",
+      "layer": "general-harness/components/runtimes",
+      "summary": "Shell/Python/Node/R/Julia wrappers compiled to runtime://process plus wasm/plugin boundary.",
+      "roots": [
+        "general-harness/components/runtimes",
+        "general-harness/kernel/src/script_runtime_provider.rs",
+        "general-harness/kernel/src/runtime_provider.rs",
+        "general-harness/kernel/src/wasm_runtime_provider.rs"
+      ],
+      "primary_languages": [
+        "Markdown",
+        "Rust",
+        "TOML"
+      ],
+      "source": "magenta-native/external-upstream",
+      "components": [
+        {
+          "id": "general-harness:runtime:shell",
+          "name": "shell",
+          "kind": "runtime",
+          "type": "runtime-wrapper",
+          "status": "working",
+          "targets": [
+            "runtime://shell"
+          ],
+          "path": "general-harness/components/runtimes/shell/README.md",
+          "impl": [
+            "general-harness/kernel/src/script_runtime_provider.rs",
+            "general-harness/kernel/src/runtime_provider.rs"
+          ],
+          "lang": [
+            "Markdown",
+            "Rust"
+          ],
+          "origin": "magenta-native",
+          "origin_rel": "native",
+          "origin_confidence": "high",
+          "refs": []
+        },
+        {
+          "id": "general-harness:runtime:python",
+          "name": "python",
+          "kind": "runtime",
+          "type": "runtime-wrapper",
+          "status": "working",
+          "targets": [
+            "runtime://python"
+          ],
+          "path": "general-harness/components/runtimes/python/README.md",
+          "impl": [
+            "general-harness/kernel/src/script_runtime_provider.rs",
+            "general-harness/kernel/src/runtime_provider.rs"
+          ],
+          "lang": [
+            "Markdown",
+            "Rust"
+          ],
+          "origin": "magenta-native",
+          "origin_rel": "native",
+          "origin_confidence": "high",
+          "refs": []
+        },
+        {
+          "id": "general-harness:runtime:node",
+          "name": "node",
+          "kind": "runtime",
+          "type": "runtime-wrapper",
+          "status": "working",
+          "targets": [
+            "runtime://node"
+          ],
+          "path": "general-harness/components/runtimes/node/README.md",
+          "impl": [
+            "general-harness/kernel/src/script_runtime_provider.rs",
+            "general-harness/kernel/src/runtime_provider.rs"
+          ],
+          "lang": [
+            "Markdown",
+            "Rust"
+          ],
+          "origin": "magenta-native",
+          "origin_rel": "native",
+          "origin_confidence": "high",
+          "refs": []
+        },
+        {
+          "id": "general-harness:runtime:r",
+          "name": "r",
+          "kind": "runtime",
+          "type": "runtime-wrapper",
+          "status": "working",
+          "targets": [
+            "runtime://r"
+          ],
+          "path": "general-harness/components/runtimes/r/README.md",
+          "impl": [
+            "general-harness/kernel/src/script_runtime_provider.rs",
+            "general-harness/kernel/src/runtime_provider.rs"
+          ],
+          "lang": [
+            "Markdown",
+            "Rust"
+          ],
+          "origin": "magenta-native",
+          "origin_rel": "native",
+          "origin_confidence": "high",
+          "refs": []
+        },
+        {
+          "id": "general-harness:runtime:julia",
+          "name": "julia",
+          "kind": "runtime",
+          "type": "runtime-wrapper",
+          "status": "working",
+          "targets": [
+            "runtime://julia"
+          ],
+          "path": "general-harness/components/runtimes/julia/README.md",
+          "impl": [
+            "general-harness/kernel/src/script_runtime_provider.rs",
+            "general-harness/kernel/src/runtime_provider.rs"
+          ],
+          "lang": [
+            "Markdown",
+            "Rust"
+          ],
+          "origin": "magenta-native",
+          "origin_rel": "native",
+          "origin_confidence": "high",
+          "refs": []
+        },
+        {
+          "id": "general-harness:runtime:wasm",
+          "name": "wasm",
+          "kind": "runtime",
+          "type": "runtime-wrapper",
+          "status": "working",
+          "targets": [
+            "runtime://wasm",
+            "plugin://wasm"
+          ],
+          "path": "general-harness/components/magnets/adapters/wasmtime.toml",
+          "impl": [
+            "general-harness/kernel/src/wasm_runtime_provider.rs"
+          ],
+          "lang": [
+            "TOML",
+            "Rust"
+          ],
+          "origin": "external-upstream",
+          "origin_rel": "external runtime boundary",
+          "origin_confidence": "high",
+          "refs": [
+            "https://github.com/bytecodealliance/wasmtime"
+          ]
+        },
+        {
+          "id": "runtime-provider:runtime:process",
+          "name": "process",
+          "kind": "runtime",
+          "type": "native-provider",
+          "status": "working",
+          "targets": [
+            "runtime://process"
+          ],
+          "path": null,
+          "impl": [
+            "general-harness/kernel/src/runtime_provider.rs"
+          ],
+          "lang": [
+            "Rust"
+          ],
+          "origin": "magenta-native",
+          "origin_rel": "native",
+          "origin_confidence": "high",
+          "refs": []
+        }
+      ]
+    },
+    "events-and-event-tools": {
+      "category": "native-event-kernel",
+      "layer": "general-harness/components/providers/events",
+      "summary": "Magenta-native long-running Event manager plus background shell and sub-agent event tools. LazyPi job-monitor UX is a reference, but state is Event-first.",
+      "roots": [
+        "general-harness/components/providers/events",
+        "general-harness/components/providers/event-tools",
+        "general-harness/kernel/src/event_manager_provider.rs",
+        "general-harness/kernel/src/event_tool_provider.rs"
+      ],
+      "primary_languages": [
+        "Markdown",
+        "TOML",
+        "Rust"
+      ],
+      "source": "magenta-native/lazypi-reference",
+      "components": [
+        {
+          "id": "general-harness:event:manager",
+          "name": "manager",
+          "kind": "event",
+          "type": "native-provider",
+          "status": "working",
+          "targets": [
+            "event://manager",
+            "event://events"
+          ],
+          "path": "general-harness/components/providers/events/manager.md",
+          "impl": [
+            "general-harness/kernel/src/event_manager_provider.rs"
+          ],
+          "lang": [
+            "Markdown",
+            "Rust"
+          ],
+          "origin": "lazypi",
+          "origin_rel": "UX concept adapted into native Event kernel",
+          "origin_confidence": "medium",
+          "refs": [
+            "Reference_Repo/LazyPi-main/agent/extensions/background-jobs"
+          ]
+        },
+        {
+          "id": "general-harness:event-tool:bg_shell",
+          "name": "bg_shell",
+          "kind": "event-tool",
+          "type": "surface-resource",
+          "status": "working",
+          "targets": [
+            "tool://bg_shell"
+          ],
+          "path": "general-harness/components/providers/event-tools/bg-shell.toml",
+          "impl": [
+            "general-harness/kernel/src/event_tool_provider.rs"
+          ],
+          "lang": [
+            "TOML",
+            "Rust"
+          ],
+          "origin": "lazypi",
+          "origin_rel": "UX concept adapted into native Event kernel",
+          "origin_confidence": "medium",
+          "refs": [
+            "Reference_Repo/LazyPi-main/agent/extensions/background-jobs"
+          ]
+        },
+        {
+          "id": "general-harness:event-tool:sub_agent",
+          "name": "sub_agent",
+          "kind": "event-tool",
+          "type": "surface-resource",
+          "status": "working",
+          "targets": [
+            "tool://sub_agent"
+          ],
+          "path": "general-harness/components/providers/event-tools/sub-agent.toml",
+          "impl": [
+            "general-harness/kernel/src/event_tool_provider.rs"
+          ],
+          "lang": [
+            "TOML",
+            "Rust"
+          ],
+          "origin": "lazypi",
+          "origin_rel": "UX concept adapted into native Event kernel",
+          "origin_confidence": "medium",
+          "refs": [
+            "Reference_Repo/LazyPi-main/agent/extensions/background-jobs"
+          ]
+        }
+      ]
+    },
+    "loops": {
+      "category": "native-provider",
+      "layer": "general-harness/components/providers/loops",
+      "summary": "ReAct, plan-execute, and async-event loop providers.",
+      "roots": [
+        "general-harness/components/providers/loops",
+        "general-harness/kernel/src/loop_provider.rs",
+        "general-harness/kernel/src/plan_execute_provider.rs",
+        "general-harness/kernel/src/async_event_provider.rs"
+      ],
+      "primary_languages": [
+        "Markdown",
+        "Rust"
+      ],
+      "source": "magenta-native/pi-oh-my-pi-reference",
+      "components": [
+        {
+          "id": "general-harness:loop:react-loop",
+          "name": "react-loop",
+          "kind": "loop",
+          "type": "native-provider",
+          "status": "working",
+          "targets": [
+            "loop://react",
+            "loop://react-loop"
+          ],
+          "path": "general-harness/components/providers/loops/react-loop.md",
+          "impl": [
+            "general-harness/kernel/src/loop_provider.rs"
+          ],
+          "lang": [
+            "Markdown",
+            "Rust"
+          ],
+          "origin": "magenta-native",
+          "origin_rel": "native",
+          "origin_confidence": "high",
+          "refs": []
+        },
+        {
+          "id": "general-harness:loop:async-event-loop",
+          "name": "async-event-loop",
+          "kind": "loop",
+          "type": "native-provider",
+          "status": "working",
+          "targets": [
+            "loop://async-event",
+            "loop://async-event-loop"
+          ],
+          "path": "general-harness/components/providers/loops/async-event-loop.md",
+          "impl": [
+            "general-harness/kernel/src/async_event_provider.rs"
+          ],
+          "lang": [
+            "Markdown",
+            "Rust"
+          ],
+          "origin": "magenta-native",
+          "origin_rel": "native",
+          "origin_confidence": "high",
+          "refs": []
+        }
+      ]
+    },
+    "skills-memories-recipes": {
+      "category": "knowledge-and-workflow",
+      "layer": "general-harness/components/providers",
+      "summary": "Domain-free skill, memory, and recipe material exposed through HCP providers.",
+      "roots": [
+        "general-harness/components/providers/skills",
+        "general-harness/components/providers/memories",
+        "general-harness/components/providers/recipes",
+        "general-harness/kernel/src/skill_provider.rs",
+        "general-harness/kernel/src/memory_provider.rs",
+        "general-harness/kernel/src/recipe_provider.rs"
+      ],
+      "primary_languages": [
+        "Markdown",
+        "TOML",
+        "Rust"
+      ],
+      "source": "magenta-native",
+      "components": [
+        {
+          "id": "general-harness:recipe:echo-plan",
+          "name": "echo-plan",
+          "kind": "recipe",
+          "type": "native-provider",
+          "status": "working",
+          "targets": [
+            "recipe://echo-plan"
+          ],
+          "path": "general-harness/components/providers/recipes/echo-plan.toml",
+          "impl": [
+            "general-harness/kernel/src/recipe_provider.rs"
+          ],
+          "lang": [
+            "TOML",
+            "Rust"
+          ],
+          "origin": "magenta-native",
+          "origin_rel": "native",
+          "origin_confidence": "high",
+          "refs": []
+        },
+        {
+          "id": "general-harness:memory:session-grounding",
+          "name": "session-grounding",
+          "kind": "memory",
+          "type": "native-provider",
+          "status": "working",
+          "targets": [
+            "memory://session-grounding"
+          ],
+          "path": "general-harness/components/providers/memories/session-grounding/MEMORY.md",
+          "impl": [
+            "general-harness/kernel/src/memory_provider.rs"
+          ],
+          "lang": [
+            "Markdown",
+            "Rust"
+          ],
+          "origin": "magenta-native",
+          "origin_rel": "native",
+          "origin_confidence": "high",
+          "refs": []
+        },
+        {
+          "id": "general-harness:skill:test-skill",
+          "name": "test-skill",
+          "kind": "skill",
+          "type": "native-provider",
+          "status": "working",
+          "targets": [
+            "skill://test-skill"
+          ],
+          "path": "general-harness/components/providers/skills/test-skill/SKILL.md",
+          "impl": [
+            "general-harness/kernel/src/skill_provider.rs"
+          ],
+          "lang": [
+            "Markdown",
+            "Rust"
+          ],
+          "origin": "magenta-native",
+          "origin_rel": "native",
+          "origin_confidence": "high",
+          "refs": []
+        },
+        {
+          "id": "general-harness:skill:research-orchestration",
+          "name": "research-orchestration",
+          "kind": "skill",
+          "type": "native-provider",
+          "status": "working",
+          "targets": [
+            "skill://research-orchestration"
+          ],
+          "path": "general-harness/components/providers/skills/research-orchestration/SKILL.md",
+          "impl": [
+            "general-harness/kernel/src/skill_provider.rs"
+          ],
+          "lang": [
+            "Markdown",
+            "Rust"
+          ],
+          "origin": "magenta-native",
+          "origin_rel": "native",
+          "origin_confidence": "high",
+          "refs": []
+        }
+      ]
+    },
+    "llm-surface-gateway": {
+      "category": "surface/gateway",
+      "layer": "crates/magenta-llm + general-harness/kernel",
+      "summary": "LLM provider abstraction, route/catalog/readiness, gateway normalization, effort metadata, and model-facing surface.",
+      "roots": [
+        "crates/magenta-llm",
+        "general-harness/kernel/src/llm_catalog.rs",
+        "general-harness/kernel/src/llm_gateway_provider.rs",
+        "general-harness/kernel/src/model_surface_provider.rs",
+        "general-harness/components/magnets/adapters/llm-gateway.toml"
+      ],
+      "primary_languages": [
+        "Rust",
+        "TOML"
+      ],
+      "source": "magenta-native/opencode-reference/pi-reference",
+      "components": [
+        {
+          "id": "general-harness:system-prompt:magenta-default",
+          "name": "magenta-default",
+          "kind": "system-prompt",
+          "type": "surface-resource",
+          "status": "working",
+          "targets": [],
+          "path": "general-harness/components/surfaces/system-prompts/magenta-default.md",
+          "impl": [
+            "general-harness/kernel/src/system_prompt.rs"
+          ],
+          "lang": [
+            "Markdown",
+            "Rust"
+          ],
+          "origin": "magenta-native",
+          "origin_rel": "native",
+          "origin_confidence": "high",
+          "refs": []
+        },
+        {
+          "id": "runtime-provider:llm:providers",
+          "name": "providers",
+          "kind": "llm",
+          "type": "native-provider",
+          "status": "working",
+          "targets": [
+            "llm://providers",
+            "llm://models",
+            "llm://router"
+          ],
+          "path": null,
+          "impl": [
+            "general-harness/kernel/src/llm_catalog.rs",
+            "crates/magenta-llm/src/lib.rs"
+          ],
+          "lang": [
+            "Rust"
+          ],
+          "origin": "magenta-native",
+          "origin_rel": "native",
+          "origin_confidence": "high",
+          "refs": []
+        },
+        {
+          "id": "runtime-provider:llm:gateway",
+          "name": "gateway",
+          "kind": "llm",
+          "type": "native-provider",
+          "status": "working",
+          "targets": [
+            "llm://gateway"
+          ],
+          "path": null,
+          "impl": [
+            "general-harness/kernel/src/llm_gateway_provider.rs",
+            "general-harness/kernel/src/llm_catalog.rs",
+            "crates/magenta-llm/src/provider"
+          ],
+          "lang": [
+            "Rust"
+          ],
+          "origin": "magenta-native",
+          "origin_rel": "native",
+          "origin_confidence": "high",
+          "refs": []
+        },
+        {
+          "id": "runtime-provider:surface:model",
+          "name": "model",
+          "kind": "surface",
+          "type": "model-facing-surface",
+          "status": "working",
+          "targets": [
+            "surface://model"
+          ],
+          "path": null,
+          "impl": [
+            "general-harness/kernel/src/model_surface_provider.rs",
+            "general-harness/kernel/src/model_text.rs"
+          ],
+          "lang": [
+            "Rust"
+          ],
+          "origin": "magenta-native",
+          "origin_rel": "native",
+          "origin_confidence": "high",
+          "refs": []
+        }
+      ]
+    },
+    "mcp-compat": {
+      "category": "compatibility-surface",
+      "layer": "general-harness/kernel",
+      "summary": "MCP-style tools/list and tools/call facade plus stdio bridge backed by HCP.",
+      "roots": [
+        "general-harness/kernel/src/mcp_compat_provider.rs",
+        "general-harness/kernel/src/mcp_server_provider.rs",
+        "general-harness/kernel/src/mcp_stdio.rs",
+        "general-harness/components/magnets/mcp-server"
+      ],
+      "primary_languages": [
+        "Rust",
+        "TOML"
+      ],
+      "source": "magenta-native/external-upstream",
+      "components": [
+        {
+          "id": "runtime-provider:mcp:tools",
+          "name": "tools",
+          "kind": "mcp",
+          "type": "compatibility-facade",
+          "status": "working",
+          "targets": [
+            "mcp://tools",
+            "mcp://compat"
+          ],
+          "path": null,
+          "impl": [
+            "general-harness/kernel/src/mcp_compat_provider.rs"
+          ],
+          "lang": [
+            "Rust"
+          ],
+          "origin": "magenta-native",
+          "origin_rel": "native",
+          "origin_confidence": "high",
+          "refs": []
+        }
+      ]
+    },
+    "tui": {
+      "category": "interface",
+      "layer": "crates/magenta-interface/tui",
+      "summary": "TypeScript TUI: pi-tui is vendored from PI; magenta-tui is Magenta-specific and adapts LazyPi event monitor/overlay ideas.",
+      "roots": [
+        "crates/magenta-interface/tui/pi-tui",
+        "crates/magenta-interface/tui/magenta-tui"
+      ],
+      "primary_languages": [
+        "TypeScript",
+        "C",
+        "JSON"
+      ],
+      "source": "pi-vendored/lazypi-adapted/magenta-native",
+      "components": [
+        {
+          "id": "tui:pi-tui",
+          "name": "pi-tui",
+          "kind": "tui",
+          "type": "interface-library",
+          "status": "working",
+          "targets": [],
+          "path": "crates/magenta-interface/tui/pi-tui",
+          "impl": [
+            "crates/magenta-interface/tui/pi-tui/src",
+            "crates/magenta-interface/tui/pi-tui/native"
+          ],
+          "lang": [
+            "Markdown",
+            "JSON",
+            "TypeScript",
+            "C"
+          ],
+          "origin": "pi",
+          "origin_rel": "vendored/adapted",
+          "origin_confidence": "high",
+          "refs": [
+            "Reference_Repo/pi-main/packages/tui"
+          ]
+        },
+        {
+          "id": "tui:magenta-tui",
+          "name": "magenta-tui",
+          "kind": "tui",
+          "type": "interface-app",
+          "status": "working",
+          "targets": [],
+          "path": "crates/magenta-interface/tui/magenta-tui",
+          "impl": [
+            "crates/magenta-interface/tui/magenta-tui/src"
+          ],
+          "lang": [
+            "JSON",
+            "TypeScript"
+          ],
+          "origin": "lazypi",
+          "origin_rel": "adapted UX concepts + Magenta-native client",
+          "origin_confidence": "medium",
+          "refs": [
+            "Reference_Repo/LazyPi-main/agent/extensions/background-jobs",
+            "Reference_Repo/LazyPi-main/agent/extensions/shared/floating-window.ts",
+            "Reference_Repo/LazyPi-main/agent/extensions/side-chat.ts"
+          ]
+        }
+      ]
+    },
+    "automic-science-pack": {
+      "category": "domain-pack",
+      "layer": "packs/AutOmicScience",
+      "summary": "Domain-specific bioinformatics/omics pack with process tools, Rust dispatcher, Python runtime module, and skill bundles.",
+      "roots": [
+        "packs/AutOmicScience/domain-harness"
+      ],
+      "primary_languages": [
+        "Markdown",
+        "TOML",
+        "Python",
+        "Rust"
+      ],
+      "source": "domain-pack",
+      "components": [
+        {
+          "id": "pack:AutOmicScience:harness:AutOmicScience-general",
+          "name": "AutOmicScience-general",
+          "kind": "harness",
+          "type": "domain-pack-component",
+          "status": "deferred/domain-pack present",
+          "targets": [],
+          "path": "packs/AutOmicScience/domain-harness/general/harness.toml",
+          "impl": [],
+          "lang": [
+            "TOML"
+          ],
+          "origin": "domain-pack",
+          "origin_rel": "domain-specific native pack",
+          "origin_confidence": "high",
+          "refs": [
+            "packs/AutOmicScience"
+          ]
+        },
+        {
+          "id": "pack:AutOmicScience:process-tool:omics_preflight",
+          "name": "omics_preflight",
+          "kind": "process-tool",
+          "type": "domain-process-magnet",
+          "status": "deferred/domain-pack present",
+          "targets": [
+            "tool://omics_preflight"
+          ],
+          "path": "packs/AutOmicScience/domain-harness/general/mcp/process/omics-preflight.toml",
+          "impl": [
+            "packs/AutOmicScience/domain-harness/general/mcp/runtime/omics-tools/src/main.rs",
+            "packs/AutOmicScience/domain-harness/general/mcp/runtime/aose_omics_runtime"
+          ],
+          "lang": [
+            "TOML",
+            "Rust",
+            "Python"
+          ],
+          "origin": "domain-pack",
+          "origin_rel": "domain-specific native pack",
+          "origin_confidence": "high",
+          "refs": [
+            "packs/AutOmicScience"
+          ]
+        },
+        {
+          "id": "pack:AutOmicScience:process-tool:omics_runtime",
+          "name": "omics_runtime",
+          "kind": "process-tool",
+          "type": "domain-process-magnet",
+          "status": "deferred/domain-pack present",
+          "targets": [
+            "tool://omics_runtime"
+          ],
+          "path": "packs/AutOmicScience/domain-harness/general/mcp/process/omics-runtime.toml",
+          "impl": [
+            "packs/AutOmicScience/domain-harness/general/mcp/runtime/omics-tools/src/main.rs",
+            "packs/AutOmicScience/domain-harness/general/mcp/runtime/aose_omics_runtime"
+          ],
+          "lang": [
+            "TOML",
+            "Rust",
+            "Python"
+          ],
+          "origin": "domain-pack",
+          "origin_rel": "domain-specific native pack",
+          "origin_confidence": "high",
+          "refs": [
+            "packs/AutOmicScience"
+          ]
+        },
+        {
+          "id": "pack:AutOmicScience:skill:genomic-retrieval",
+          "name": "genomic-retrieval",
+          "kind": "skill",
+          "type": "domain-skill",
+          "status": "deferred/domain-pack present",
+          "targets": [
+            "skill://genomic-retrieval"
+          ],
+          "path": "packs/AutOmicScience/domain-harness/general/skills/genomic-retrieval/SKILL.md",
+          "impl": [],
+          "lang": [
+            "Markdown"
+          ],
+          "origin": "domain-pack",
+          "origin_rel": "domain-specific native pack",
+          "origin_confidence": "high",
+          "refs": [
+            "packs/AutOmicScience"
+          ]
+        },
+        {
+          "id": "pack:AutOmicScience:skill:literature-synthesis",
+          "name": "literature-synthesis",
+          "kind": "skill",
+          "type": "domain-skill",
+          "status": "deferred/domain-pack present",
+          "targets": [
+            "skill://literature-synthesis"
+          ],
+          "path": "packs/AutOmicScience/domain-harness/general/skills/literature-synthesis/skills/literature-synthesis/SKILL.md",
+          "impl": [],
+          "lang": [
+            "Markdown"
+          ],
+          "origin": "domain-pack",
+          "origin_rel": "domain-specific native pack",
+          "origin_confidence": "high",
+          "refs": [
+            "packs/AutOmicScience"
+          ]
+        },
+        {
+          "id": "pack:AutOmicScience:skill:multi-omics-analysis",
+          "name": "multi-omics-analysis",
+          "kind": "skill",
+          "type": "domain-skill",
+          "status": "deferred/domain-pack present",
+          "targets": [
+            "skill://multi-omics-analysis"
+          ],
+          "path": "packs/AutOmicScience/domain-harness/general/skills/multi-omics-analysis/skills/multi-omics-analysis/SKILL.md",
+          "impl": [],
+          "lang": [
+            "Markdown"
+          ],
+          "origin": "domain-pack",
+          "origin_rel": "domain-specific native pack",
+          "origin_confidence": "high",
+          "refs": [
+            "packs/AutOmicScience"
+          ]
+        },
+        {
+          "id": "pack:AutOmicScience:skill:omics-shared",
+          "name": "omics-shared",
+          "kind": "skill",
+          "type": "domain-skill",
+          "status": "deferred/domain-pack present",
+          "targets": [
+            "skill://omics-shared"
+          ],
+          "path": "packs/AutOmicScience/domain-harness/general/skills/omics-shared/SKILL.md",
+          "impl": [
+            "packs/AutOmicScience/domain-harness/general/skills/omics-shared/scripts",
+            "packs/AutOmicScience/domain-harness/general/skills/omics-shared/method"
+          ],
+          "lang": [
+            "Markdown",
+            "Python"
+          ],
+          "origin": "domain-pack",
+          "origin_rel": "domain-specific native pack",
+          "origin_confidence": "high",
+          "refs": [
+            "packs/AutOmicScience"
+          ]
+        },
+        {
+          "id": "pack:AutOmicScience:skill:target-assessment",
+          "name": "target-assessment",
+          "kind": "skill",
+          "type": "domain-skill",
+          "status": "deferred/domain-pack present",
+          "targets": [
+            "skill://target-assessment"
+          ],
+          "path": "packs/AutOmicScience/domain-harness/general/skills/target-assessment/skills/target-assessment/SKILL.md",
+          "impl": [],
+          "lang": [
+            "Markdown"
+          ],
+          "origin": "domain-pack",
+          "origin_rel": "domain-specific native pack",
+          "origin_confidence": "high",
+          "refs": [
+            "packs/AutOmicScience"
+          ]
+        },
+        {
+          "id": "pack:AutOmicScience:skill:variant-interpretation",
+          "name": "variant-interpretation",
+          "kind": "skill",
+          "type": "domain-skill",
+          "status": "deferred/domain-pack present",
+          "targets": [
+            "skill://variant-interpretation"
+          ],
+          "path": "packs/AutOmicScience/domain-harness/general/skills/variant-interpretation/skills/variant-interpretation/SKILL.md",
+          "impl": [],
+          "lang": [
+            "Markdown"
+          ],
+          "origin": "domain-pack",
+          "origin_rel": "domain-specific native pack",
+          "origin_confidence": "high",
+          "refs": [
+            "packs/AutOmicScience"
+          ]
+        },
+        {
+          "id": "pack:AutOmicScience:skill:omics-multiome",
+          "name": "omics-multiome",
+          "kind": "skill",
+          "type": "domain-skill",
+          "status": "deferred/domain-pack present",
+          "targets": [
+            "skill://omics-multiome"
+          ],
+          "path": "packs/AutOmicScience/domain-harness/task/multiome/skills/omics-multiome/SKILL.md",
+          "impl": [
+            "packs/AutOmicScience/domain-harness/task/multiome/skills/omics-multiome/scripts",
+            "packs/AutOmicScience/domain-harness/task/multiome/skills/omics-multiome/method"
+          ],
+          "lang": [
+            "Markdown",
+            "Python"
+          ],
+          "origin": "domain-pack",
+          "origin_rel": "domain-specific native pack",
+          "origin_confidence": "high",
+          "refs": [
+            "packs/AutOmicScience"
+          ]
+        },
+        {
+          "id": "pack:AutOmicScience:skill:omics-scatac",
+          "name": "omics-scatac",
+          "kind": "skill",
+          "type": "domain-skill",
+          "status": "deferred/domain-pack present",
+          "targets": [
+            "skill://omics-scatac"
+          ],
+          "path": "packs/AutOmicScience/domain-harness/task/scatac/skills/omics-scatac/SKILL.md",
+          "impl": [
+            "packs/AutOmicScience/domain-harness/task/scatac/skills/omics-scatac/scripts",
+            "packs/AutOmicScience/domain-harness/task/scatac/skills/omics-scatac/method"
+          ],
+          "lang": [
+            "Markdown",
+            "Python"
+          ],
+          "origin": "domain-pack",
+          "origin_rel": "domain-specific native pack",
+          "origin_confidence": "high",
+          "refs": [
+            "packs/AutOmicScience"
+          ]
+        },
+        {
+          "id": "pack:AutOmicScience:skill:omics-scrna",
+          "name": "omics-scrna",
+          "kind": "skill",
+          "type": "domain-skill",
+          "status": "deferred/domain-pack present",
+          "targets": [
+            "skill://omics-scrna"
+          ],
+          "path": "packs/AutOmicScience/domain-harness/task/scrna/skills/omics-scrna/SKILL.md",
+          "impl": [
+            "packs/AutOmicScience/domain-harness/task/scrna/skills/omics-scrna/scripts",
+            "packs/AutOmicScience/domain-harness/task/scrna/skills/omics-scrna/method"
+          ],
+          "lang": [
+            "Markdown",
+            "Python"
+          ],
+          "origin": "domain-pack",
+          "origin_rel": "domain-specific native pack",
+          "origin_confidence": "high",
+          "refs": [
+            "packs/AutOmicScience"
+          ]
+        },
+        {
+          "id": "pack:AutOmicScience:skill:omics-spatial",
+          "name": "omics-spatial",
+          "kind": "skill",
+          "type": "domain-skill",
+          "status": "deferred/domain-pack present",
+          "targets": [
+            "skill://omics-spatial"
+          ],
+          "path": "packs/AutOmicScience/domain-harness/task/spatial/skills/omics-spatial/SKILL.md",
+          "impl": [
+            "packs/AutOmicScience/domain-harness/task/spatial/skills/omics-spatial/scripts",
+            "packs/AutOmicScience/domain-harness/task/spatial/skills/omics-spatial/method"
+          ],
+          "lang": [
+            "Markdown",
+            "Python"
+          ],
+          "origin": "domain-pack",
+          "origin_rel": "domain-specific native pack",
+          "origin_confidence": "high",
+          "refs": [
+            "packs/AutOmicScience"
+          ]
+        },
+        {
+          "id": "pack:AutOmicScience:task-harness:omics-multiome",
+          "name": "omics-multiome",
+          "kind": "task-harness",
+          "type": "domain-task-harness",
+          "status": "deferred/domain-pack present",
+          "targets": [],
+          "path": "packs/AutOmicScience/domain-harness/task/multiome/harness.toml",
+          "impl": [
+            "packs/AutOmicScience/domain-harness/task/multiome/skills"
+          ],
+          "lang": [
+            "TOML",
+            "Markdown",
+            "Python"
+          ],
+          "origin": "domain-pack",
+          "origin_rel": "domain-specific native pack",
+          "origin_confidence": "high",
+          "refs": [
+            "packs/AutOmicScience"
+          ]
+        },
+        {
+          "id": "pack:AutOmicScience:task-harness:omics-scatac",
+          "name": "omics-scatac",
+          "kind": "task-harness",
+          "type": "domain-task-harness",
+          "status": "deferred/domain-pack present",
+          "targets": [],
+          "path": "packs/AutOmicScience/domain-harness/task/scatac/harness.toml",
+          "impl": [
+            "packs/AutOmicScience/domain-harness/task/scatac/skills"
+          ],
+          "lang": [
+            "TOML",
+            "Markdown",
+            "Python"
+          ],
+          "origin": "domain-pack",
+          "origin_rel": "domain-specific native pack",
+          "origin_confidence": "high",
+          "refs": [
+            "packs/AutOmicScience"
+          ]
+        },
+        {
+          "id": "pack:AutOmicScience:task-harness:omics-scrna",
+          "name": "omics-scrna",
+          "kind": "task-harness",
+          "type": "domain-task-harness",
+          "status": "deferred/domain-pack present",
+          "targets": [],
+          "path": "packs/AutOmicScience/domain-harness/task/scrna/harness.toml",
+          "impl": [
+            "packs/AutOmicScience/domain-harness/task/scrna/skills"
+          ],
+          "lang": [
+            "TOML",
+            "Markdown",
+            "Python"
+          ],
+          "origin": "domain-pack",
+          "origin_rel": "domain-specific native pack",
+          "origin_confidence": "high",
+          "refs": [
+            "packs/AutOmicScience"
+          ]
+        },
+        {
+          "id": "pack:AutOmicScience:task-harness:omics-spatial",
+          "name": "omics-spatial",
+          "kind": "task-harness",
+          "type": "domain-task-harness",
+          "status": "deferred/domain-pack present",
+          "targets": [],
+          "path": "packs/AutOmicScience/domain-harness/task/spatial/harness.toml",
+          "impl": [
+            "packs/AutOmicScience/domain-harness/task/spatial/skills"
+          ],
+          "lang": [
+            "TOML",
+            "Markdown",
+            "Python"
+          ],
+          "origin": "domain-pack",
+          "origin_rel": "domain-specific native pack",
+          "origin_confidence": "high",
+          "refs": [
+            "packs/AutOmicScience"
+          ]
+        }
+      ]
+    }
+  }
+}

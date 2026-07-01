@@ -9,7 +9,9 @@ The **magnet** module provides connectors that adapt implementations into harnes
 
 ## Key Concept
 
-A **Magnet** is a connector that adapts one kind of implementation (native TypeScript today; MCP/API/process later) into the shapes the harness assembly layer consumes:
+A **Magnet** is a connector that adapts one kind of implementation (native
+TypeScript, Rust process tools, HCP JSONL processes, MCP/API later) into the
+shapes the harness assembly layer consumes:
 
 1. **AgentTool** — Loop-ready tool for direct execution
 2. **HcpTarget** — Management endpoint for discovery/configuration
@@ -52,11 +54,67 @@ const hcpTarget = magnet.toHcpTarget();
 ## Current Implementations
 
 - **NativeMagnet** (`magnet/pi/native.ts`) — Wraps native TypeScript tools
+- **ProcessToolMagnet** (`magnet/pi/process.ts`) — Wraps Magenta1-style
+  Rust/process tools. Protocol: spawn `command args...`, write tool arguments as
+  JSON to stdin, read stdout as the model-facing tool result.
+- **HcpProcessMagnet** (`magnet/pi/hcp-process.ts`) — Wraps external processes
+  that speak Magenta HCP over JSONL stdio. This is a management/proxy boundary;
+  it does not become an `AgentTool` unless the remote side exposes a tool target.
+- **UniversalMagnet** (`magnet/pi/universal.ts`) — Base management surface shared
+  by non-native magnets.
 
 Future magnets will support:
 - **McpMagnet** — MCP-based tools
 - **RemoteMagnet** — HTTP/RPC tools
-- **ProcessMagnet** — Subprocess-based tools
+
+## Common Management Surface
+
+Every Magnet that exposes HCP should support the same baseline operations:
+
+- `describe` — Stable metadata for selectors and assembly.
+- `configure` — Merge runtime configuration.
+- `enable` / `disable` — Toggle availability without deleting the component.
+- `state` — Current enabled/config state.
+- `health` — Cheap readiness check.
+- `toTool` — Return a loop-ready `AgentTool` when the Magnet yields one.
+
+Rust-based harness components use this same surface. The loop still receives a
+plain `AgentTool`; only the implementation behind `execute()` changes.
+
+```typescript
+const magnet = new ProcessToolMagnet({
+  cwd,
+  manifestRoot: "/Users/mjm/Magenta/general-harness",
+  manifest: {
+    kind: "process",
+    name: "AstGrep",
+    description: "AST-aware structural search",
+    command: "bins/process-tools/target/release/magenta-process-tools",
+    args: ["ast-grep"],
+    parameters: { type: "object", required: ["pattern"], properties: { pattern: { type: "string" } } }
+  }
+});
+
+const tool = magnet.toTool();          // Agent loop hot path
+const hcp = magnet.toHcpTarget();      // Assembly/control path
+```
+
+Selectors do not need to hand-code adapter selection. Use the catalog factory
+once the user picks an entry:
+
+```typescript
+const magnet = await createMagnetFromCatalogEntry(catalog, selectedEntry, { cwd });
+const target = magnet.toHcpTarget?.();
+const tool = magnet.toTool?.();
+```
+
+Currently generic catalog assembly supports:
+
+- `kind = "mcp", type = "magnet"` entries backed by Magenta1 process-tool TOML.
+- `kind = "hcp-process"` entries backed by JSONL HCP process TOML.
+
+Other catalog entries remain visible to the selector with provenance and
+migration state, but need a specific Magnet before they become executable.
 
 ## Registration
 

@@ -2090,6 +2090,32 @@ describe("Editor component", () => {
 	});
 
 	describe("Autocomplete", () => {
+		it("can disable slash autocomplete while preserving editor text", async () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme, { slashAutocomplete: false });
+
+			const mockProvider: AutocompleteProvider = {
+				getSuggestions: async (lines, _cursorLine, cursorCol) => {
+					const text = lines[0] || "";
+					const prefix = text.slice(0, cursorCol);
+					if (prefix.startsWith("/")) {
+						return {
+							items: [{ value: "/model", label: "model" }],
+							prefix,
+						};
+					}
+					return null;
+				},
+				applyCompletion,
+			};
+
+			editor.setAutocompleteProvider(mockProvider);
+			editor.handleInput("/");
+			await flushAutocomplete();
+
+			assert.strictEqual(editor.getText(), "/");
+			assert.strictEqual(editor.isShowingAutocomplete(), false);
+		});
+
 		it("auto-applies single force-file suggestion without showing menu", async () => {
 			const editor = new Editor(createTestTUI(), defaultEditorTheme);
 

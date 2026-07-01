@@ -1,0 +1,43 @@
+kind = "process"
+name = "Glob"
+description = "Find paths under a directory using a glob pattern. Respects hidden and node_modules filters by default."
+command = "process-tools/target/release/magenta-process-tools"
+args = ["glob"]
+operation = "read"
+read_only = true
+destructive = false
+version = "1.0.0"
+tags = ["filesystem", "discovery", "glob", "path-search"]
+capabilities = ["glob-pattern", "path-discovery", "file-type-filter"]
+requires = []
+
+[parameters]
+type = "object"
+required = ["path", "pattern"]
+
+[parameters.properties.path]
+type = "string"
+description = "Directory to search"
+
+[parameters.properties.pattern]
+type = "string"
+description = "Glob pattern. Simple names are treated as recursive patterns."
+
+[parameters.properties.file_type]
+type = "string"
+description = "Optional type filter: file, dir, or link"
+
+[parameters.properties.include_hidden]
+type = "boolean"
+description = "Include hidden files/directories"
+default = false
+
+[parameters.properties.include_node_modules]
+type = "boolean"
+description = "Include node_modules directories"
+default = false
+
+[parameters.properties.limit]
+type = "integer"
+description = "Maximum results"
+default = 1000

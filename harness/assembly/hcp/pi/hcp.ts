@@ -54,6 +54,8 @@ export interface HcpTargetDescription {
 	ops: string[];
 	/** Optional human-readable summary. */
 	description?: string;
+	/** Optional component metadata for selectors and management UIs. */
+	metadata?: Record<string, unknown>;
 }
 
 /**
@@ -92,8 +94,38 @@ export class HcpRegistry {
 		return [...this.byPrefix.keys()];
 	}
 
+	/** All exact target addresses (for diagnostics / listing). */
+	addresses(): string[] {
+		return [...this.byExact.keys()];
+	}
+
+	/** Describe all exact and prefix targets currently registered. */
+	describeAll(): HcpTargetDescription[] {
+		const described = new Map<string, HcpTargetDescription>();
+		for (const [address, target] of this.byExact) {
+			described.set(address, target.describe());
+		}
+		for (const [prefix, target] of this.byPrefix) {
+			described.set(`${prefix}:*`, target.describe());
+		}
+		return [...described.values()];
+	}
+
 	/** Dispatch a call to its resolved target. Throws if none is registered. */
 	async dispatch(call: HcpCall): Promise<unknown> {
+		if (call.target === "hcp:registry") {
+			switch (call.op) {
+				case "list":
+				case "discover":
+					return this.describeAll();
+				case "prefixes":
+					return this.prefixes();
+				case "addresses":
+					return this.addresses();
+				default:
+					throw new Error(`HCP registry: unsupported op "${call.op}"`);
+			}
+		}
 		const target = this.resolve(call.target);
 		if (!target) {
 			throw new Error(`HCP: no target registered for "${call.target}"`);

@@ -56,6 +56,13 @@ path = "tools/bash/bash.toml"
 
 The registry loader (`registry/pi/registry.ts`) parses these declarations at startup.
 
+Catalog inventories use a separate `[[catalogs]]` section. A catalog is not a
+loop-ready implementation; it is selector metadata for migrated or candidate
+components. The Magenta1 `general-harness` inventory is registered this way so
+selection UI can display all 111 historical components with provenance while
+Magenta3 only registers currently assembled implementations under
+`[[components]]`.
+
 ## Available Modules
 
 ### Implementation Modules (have pi/ subdirectory)
@@ -68,6 +75,7 @@ The registry loader (`registry/pi/registry.ts`) parses these declarations at sta
 - **session** — Session management (jsonl/memory storage backends)
 - **env** — Environment adapters (Node.js runtime integration)
 - **utils** — Shared utilities (shell output formatting, truncation)
+- **catalog** — Component inventories and integration maps for selector UIs
 
 ### Assembly Layer
 

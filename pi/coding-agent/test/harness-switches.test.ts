@@ -38,6 +38,7 @@ describe("harness switches", () => {
 				{ kind: "tool", name: "read", path: "/tmp/read.toml", spec: {} },
 				{ kind: "memory", name: "memory", path: "/tmp/memory.toml", spec: {} },
 			],
+			catalogs: [],
 		};
 
 		expect(formatHarnessRegistrySummary({ path: "/tmp/harness.toml", registry })).toContain(

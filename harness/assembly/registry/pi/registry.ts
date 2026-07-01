@@ -2,6 +2,13 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+	type HarnessCatalogFilter,
+	type HarnessComponentCatalog,
+	type HarnessSelectionItem,
+	loadHarnessComponentCatalog,
+	toHarnessSelectionItems,
+} from "../../../catalog/pi/catalog.ts";
 
 /**
  * Registry loader for the harness component model (spec §3, NO category middle
@@ -31,6 +38,14 @@ export interface ComponentRef {
 	path: string;
 }
 
+/** A catalog entry as declared in `harness.toml`'s `[[catalogs]]` array. */
+export interface CatalogRef {
+	name: string;
+	description?: string;
+	/** Path to the per-catalog TOML, relative to the index file or absolute. */
+	path: string;
+}
+
 /** A fully loaded component descriptor (index entry + parsed component TOML). */
 export interface ComponentDescriptor {
 	kind: string;
@@ -42,11 +57,24 @@ export interface ComponentDescriptor {
 	spec: TomlTable;
 }
 
+/** A loaded catalog descriptor (index entry + parsed catalog TOML + JSON inventory). */
+export interface CatalogDescriptor {
+	name: string;
+	description?: string;
+	/** Absolute path to the per-catalog TOML file. */
+	path: string;
+	/** The parsed per-catalog TOML table. */
+	spec: TomlTable;
+	/** Loaded and validated catalog inventory. */
+	catalog: HarnessComponentCatalog;
+}
+
 /** Top-level registry: the index metadata plus all loaded components. */
 export interface Registry {
 	name?: string;
 	description?: string;
 	components: ComponentDescriptor[];
+	catalogs: CatalogDescriptor[];
 }
 
 /**
@@ -225,17 +253,13 @@ function asString(value: TomlValue | undefined): string | undefined {
 	return typeof value === "string" ? value : undefined;
 }
 
-/**
- * Load the harness registry: parse `rootTomlPath` (the `harness.toml` index),
- * then load each referenced per-component TOML and return typed descriptors.
- */
-export async function loadRegistry(rootTomlPath: string): Promise<Registry> {
-	const indexAbs = isAbsolute(rootTomlPath) ? rootTomlPath : resolve(rootTomlPath);
-	const indexDir = dirname(indexAbs);
-	const indexTable = parseToml(await readFile(indexAbs, "utf-8"));
+function asTable(value: TomlValue | undefined): TomlTable | undefined {
+	return value && typeof value === "object" && !Array.isArray(value) ? value : undefined;
+}
 
+function parseComponentRefs(indexTable: TomlTable): ComponentRef[] {
 	const rawComponents = indexTable.components;
-	const refs: ComponentRef[] = Array.isArray(rawComponents)
+	return Array.isArray(rawComponents)
 		? rawComponents
 				.filter((c): c is TomlTable => typeof c === "object" && !Array.isArray(c))
 				.map((c) => ({
@@ -245,6 +269,31 @@ export async function loadRegistry(rootTomlPath: string): Promise<Registry> {
 					path: asString(c.path) ?? "",
 				}))
 		: [];
+}
+
+function parseCatalogRefs(indexTable: TomlTable): CatalogRef[] {
+	const rawCatalogs = indexTable.catalogs;
+	return Array.isArray(rawCatalogs)
+		? rawCatalogs
+				.filter((c): c is TomlTable => typeof c === "object" && !Array.isArray(c))
+				.map((c) => ({
+					name: asString(c.name) ?? "",
+					description: asString(c.description),
+					path: asString(c.path) ?? "",
+				}))
+		: [];
+}
+
+/**
+ * Load the harness registry: parse `rootTomlPath` (the `harness.toml` index),
+ * then load each referenced per-component TOML and return typed descriptors.
+ */
+export async function loadRegistry(rootTomlPath: string): Promise<Registry> {
+	const indexAbs = isAbsolute(rootTomlPath) ? rootTomlPath : resolve(rootTomlPath);
+	const indexDir = dirname(indexAbs);
+	const indexTable = parseToml(await readFile(indexAbs, "utf-8"));
+
+	const refs = parseComponentRefs(indexTable);
 
 	const components: ComponentDescriptor[] = [];
 	for (const ref of refs) {
@@ -260,9 +309,57 @@ export async function loadRegistry(rootTomlPath: string): Promise<Registry> {
 		});
 	}
 
+	const catalogRefs = parseCatalogRefs(indexTable);
+	const catalogs: CatalogDescriptor[] = [];
+	for (const ref of catalogRefs) {
+		if (!ref.path) continue;
+		const catalogTomlAbs = isAbsolute(ref.path) ? ref.path : resolve(indexDir, ref.path);
+		const catalogDir = dirname(catalogTomlAbs);
+		const spec = parseToml(await readFile(catalogTomlAbs, "utf-8"));
+		const inventory = asTable(spec.inventory);
+		const integration = asTable(spec.integration);
+		const inventoryPath = asString(inventory?.path);
+		if (!inventoryPath) {
+			throw new Error(`Catalog "${ref.name || catalogTomlAbs}" is missing [inventory].path`);
+		}
+		const integrationPath = asString(integration?.path);
+		const catalog = await loadHarnessComponentCatalog(
+			asString(spec.name) ?? ref.name,
+			resolve(catalogDir, inventoryPath),
+			{
+				integrationMapPath: integrationPath ? resolve(catalogDir, integrationPath) : undefined,
+			},
+		);
+		catalogs.push({
+			name: asString(spec.name) ?? ref.name,
+			description: asString(spec.description) ?? ref.description,
+			path: catalogTomlAbs,
+			spec,
+			catalog,
+		});
+	}
+
 	return {
 		name: asString(indexTable.name),
 		description: asString(indexTable.description),
 		components,
+		catalogs,
 	};
+}
+
+/** Return selector-ready catalog items across every loaded registry catalog. */
+export function listHarnessSelectionItems(
+	registry: Registry,
+	filter: HarnessCatalogFilter = {},
+): HarnessSelectionItem[] {
+	return registry.catalogs.flatMap((descriptor) => {
+		const entries = descriptor.catalog.entries.filter((entry) => {
+			if (filter.kinds && !filter.kinds.includes(entry.kind)) return false;
+			if (filter.origins && !filter.origins.includes(entry.origin)) return false;
+			if (filter.statuses && !filter.statuses.includes(entry.status)) return false;
+			if (filter.migrationStates && !filter.migrationStates.includes(entry.migration.state)) return false;
+			return true;
+		});
+		return toHarnessSelectionItems(descriptor.catalog, entries);
+	});
 }

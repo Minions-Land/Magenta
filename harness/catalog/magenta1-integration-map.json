@@ -1,0 +1,199 @@
+{
+  "schema_version": "magenta3.harness.catalog.integration-map.v1",
+  "source_catalog": "magenta1-harness-components",
+  "entries": {
+    "general-harness:mcp:Read": {
+      "state": "integrated",
+      "component": { "kind": "tool", "name": "read", "path": "tools/read/read.toml" },
+      "relation": "superseded-by-native-ts-tool",
+      "notes": "Magenta3 uses the pi-sourced native TypeScript read tool instead of the Magenta1 process-tool magnet."
+    },
+    "general-harness:mcp:Write": {
+      "state": "integrated",
+      "component": { "kind": "tool", "name": "write", "path": "tools/write/write.toml" },
+      "relation": "superseded-by-native-ts-tool",
+      "notes": "Magenta3 uses the pi-sourced native TypeScript write tool instead of the Magenta1 process-tool magnet."
+    },
+    "general-harness:mcp:Edit": {
+      "state": "integrated",
+      "component": { "kind": "tool", "name": "edit", "path": "tools/edit/edit.toml" },
+      "relation": "superseded-by-native-ts-tool",
+      "notes": "Magenta3 uses the pi-sourced native TypeScript edit tool instead of the Magenta1 process-tool magnet."
+    },
+    "general-harness:mcp:Bash": {
+      "state": "integrated",
+      "component": { "kind": "tool", "name": "bash", "path": "tools/bash/bash.toml" },
+      "relation": "superseded-by-native-ts-tool",
+      "notes": "Magenta3 keeps bash execution in harness and injects host process operations from the assembly layer."
+    },
+    "general-harness:mcp:Grep": {
+      "state": "integrated",
+      "component": { "kind": "tool", "name": "grep", "path": "tools/grep/grep.toml" },
+      "relation": "superseded-by-native-ts-tool",
+      "notes": "Magenta3 uses the native TypeScript grep tool."
+    },
+    "general-harness:mcp:Find": {
+      "state": "integrated",
+      "component": { "kind": "tool", "name": "find", "path": "tools/find/find.toml" },
+      "relation": "superseded-by-native-ts-tool",
+      "notes": "Magenta3 uses the native TypeScript find tool."
+    },
+    "general-harness:mcp:Glob": {
+      "state": "integrated",
+      "component": { "kind": "tool", "name": "find", "path": "tools/find/find.toml" },
+      "relation": "covered-by-native-ts-tool",
+      "notes": "Magenta3's find tool accepts glob patterns, so the separate Magenta1 Glob process tool is not duplicated."
+    },
+    "general-harness:mcp:Ls": {
+      "state": "integrated",
+      "component": { "kind": "tool", "name": "ls", "path": "tools/ls/ls.toml" },
+      "relation": "superseded-by-native-ts-tool",
+      "notes": "Magenta3 uses the native TypeScript ls tool."
+    },
+    "general-harness:mcp:echo-json": {
+      "state": "available",
+      "component": { "kind": "process-tool", "name": "echo_json", "path": "tools/process/echo-json.toml" },
+      "relation": "migrated-process-tool",
+      "notes": "Magenta1 process-tool manifest migrated under harness/tools/process for Magnet smoke testing."
+    },
+    "general-harness:mcp:ReadAnchored": {
+      "state": "available",
+      "component": { "kind": "process-tool", "name": "ReadAnchored", "path": "tools/process/read-anchored.toml" },
+      "relation": "migrated-rust-process-tool",
+      "notes": "Hashline anchored read is provided by the migrated Rust process-tools binary through ProcessToolMagnet."
+    },
+    "general-harness:mcp:EditHashline": {
+      "state": "available",
+      "component": { "kind": "process-tool", "name": "EditHashline", "path": "tools/process/edit-hashline.toml" },
+      "relation": "migrated-rust-process-tool",
+      "notes": "Hashline edit is provided by the migrated Rust process-tools binary through ProcessToolMagnet."
+    },
+    "general-harness:mcp:FuzzyFind": {
+      "state": "available",
+      "component": { "kind": "process-tool", "name": "FuzzyFind", "path": "tools/process/fuzzy-find.toml" },
+      "relation": "migrated-rust-process-tool",
+      "notes": "Fuzzy path search is provided by the migrated Rust process-tools binary through ProcessToolMagnet."
+    },
+    "general-harness:mcp:AstGrep": {
+      "state": "available",
+      "component": { "kind": "process-tool", "name": "AstGrep", "path": "tools/process/ast-grep.toml" },
+      "relation": "migrated-rust-process-tool",
+      "notes": "AST structural search is provided by the migrated Rust process-tools binary through ProcessToolMagnet."
+    },
+    "general-harness:mcp:AstEditPlan": {
+      "state": "available",
+      "component": { "kind": "process-tool", "name": "AstEditPlan", "path": "tools/process/ast-edit-plan.toml" },
+      "relation": "migrated-rust-process-tool",
+      "notes": "AST edit planning remains internal but is migrated for Resolve/EditHashline flows."
+    },
+    "general-harness:mcp:Lsp": {
+      "state": "available",
+      "component": { "kind": "process-tool", "name": "Lsp", "path": "tools/process/lsp.toml" },
+      "relation": "migrated-rust-process-tool",
+      "notes": "LSP-style queries are provided by the migrated Rust process-tools binary through ProcessToolMagnet."
+    },
+    "general-harness:mcp:WebSearch": {
+      "state": "available",
+      "component": { "kind": "process-tool", "name": "WebSearch", "path": "tools/process/web-search.toml" },
+      "relation": "migrated-rust-process-tool",
+      "notes": "WebSearch is provided by the migrated Rust process-tools binary through ProcessToolMagnet."
+    },
+    "general-harness:mcp:ReadUrl": {
+      "state": "available",
+      "component": { "kind": "process-tool", "name": "ReadUrl", "path": "tools/process/read-url.toml" },
+      "relation": "migrated-rust-process-tool",
+      "notes": "ReadUrl is provided by the migrated Rust process-tools binary through ProcessToolMagnet."
+    },
+    "general-harness:declared:Read": {
+      "state": "integrated",
+      "component": { "kind": "tool", "name": "read", "path": "tools/read/read.toml" },
+      "relation": "metadata-covered-by-native-ts-tool",
+      "notes": "The Magenta1 declared metadata is covered by the registered Magenta3 read tool."
+    },
+    "general-harness:declared:Write": {
+      "state": "integrated",
+      "component": { "kind": "tool", "name": "write", "path": "tools/write/write.toml" },
+      "relation": "metadata-covered-by-native-ts-tool",
+      "notes": "The Magenta1 declared metadata is covered by the registered Magenta3 write tool."
+    },
+    "general-harness:declared:Edit": {
+      "state": "integrated",
+      "component": { "kind": "tool", "name": "edit", "path": "tools/edit/edit.toml" },
+      "relation": "metadata-covered-by-native-ts-tool",
+      "notes": "The Magenta1 declared metadata is covered by the registered Magenta3 edit tool."
+    },
+    "general-harness:declared:Bash": {
+      "state": "integrated",
+      "component": { "kind": "tool", "name": "bash", "path": "tools/bash/bash.toml" },
+      "relation": "metadata-covered-by-native-ts-tool",
+      "notes": "The Magenta1 declared metadata is covered by the registered Magenta3 bash tool."
+    },
+    "general-harness:declared:Grep": {
+      "state": "integrated",
+      "component": { "kind": "tool", "name": "grep", "path": "tools/grep/grep.toml" },
+      "relation": "metadata-covered-by-native-ts-tool",
+      "notes": "The Magenta1 declared metadata is covered by the registered Magenta3 grep tool."
+    },
+    "general-harness:declared:Find": {
+      "state": "integrated",
+      "component": { "kind": "tool", "name": "find", "path": "tools/find/find.toml" },
+      "relation": "metadata-covered-by-native-ts-tool",
+      "notes": "The Magenta1 declared metadata is covered by the registered Magenta3 find tool."
+    },
+    "general-harness:declared:Glob": {
+      "state": "integrated",
+      "component": { "kind": "tool", "name": "find", "path": "tools/find/find.toml" },
+      "relation": "metadata-covered-by-native-ts-tool",
+      "notes": "The Magenta1 declared Glob metadata is covered by the registered Magenta3 find tool."
+    },
+    "general-harness:declared:Ls": {
+      "state": "integrated",
+      "component": { "kind": "tool", "name": "ls", "path": "tools/ls/ls.toml" },
+      "relation": "metadata-covered-by-native-ts-tool",
+      "notes": "The Magenta1 declared metadata is covered by the registered Magenta3 ls tool."
+    },
+    "runtime-provider:session:current": {
+      "state": "integrated",
+      "component": { "kind": "session", "name": "session", "path": "session/session.toml" },
+      "relation": "covered-by-magenta3-module",
+      "notes": "Magenta3 has a TS session module with jsonl and memory storage backends."
+    },
+    "general-harness:loop:react-loop": {
+      "state": "integrated",
+      "component": { "kind": "loop", "name": "loop", "path": "loop/loop.toml" },
+      "relation": "covered-by-magenta3-module",
+      "notes": "Magenta3 uses the pi-style agent harness loop; HCP remains outside the hot path."
+    },
+    "general-harness:system-prompt:magenta-default": {
+      "state": "integrated",
+      "component": {
+        "kind": "system-prompt",
+        "name": "system-prompt",
+        "path": "system-prompt/system-prompt.toml"
+      },
+      "relation": "covered-by-magenta3-module",
+      "notes": "Magenta3 owns system prompt construction as a harness module."
+    },
+    "general-harness:hcp-process:echo-jsonl": {
+      "state": "available",
+      "component": { "kind": "hcp-process", "name": "echo-jsonl", "path": "assembly/hcp-process/echo-jsonl.toml" },
+      "relation": "migrated-hcp-jsonl-process",
+      "notes": "HCP JSONL process manifest is available locally through HcpProcessMagnet, but not mounted into the default AgentSession."
+    },
+    "runtime-provider:llm:gateway": {
+      "state": "external-boundary",
+      "relation": "opencode-boundary-reference",
+      "notes": "Kept as an OpenCode boundary/reference; no Magenta3 runtime implementation is registered here."
+    },
+    "tui:pi-tui": {
+      "state": "external-boundary",
+      "relation": "outside-harness-interface",
+      "notes": "PI TUI is vendored/adapted outside harness; it is tracked here for provenance only."
+    },
+    "tui:magenta-tui": {
+      "state": "external-boundary",
+      "relation": "outside-harness-interface",
+      "notes": "Magenta TUI and Events overlay UX are outside the harness execution catalog."
+    }
+  }
+}

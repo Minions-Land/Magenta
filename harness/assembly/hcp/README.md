@@ -13,6 +13,7 @@ The **HCP** (Harness Component Protocol) module provides the management and disc
 - `HcpTarget` — Interface for components exposing management endpoints
 - `HcpCall` — Structure for management operations
 - `HcpContext` — Ambient context for assembly-time operations
+- `HcpRegistry.describeAll()` — Describe registered exact/prefix targets
 
 ## Design Principle
 
@@ -42,6 +43,11 @@ const result = await registry.dispatch({
   op: "describe",
   context: { cwd: "/path/to/project" }
 });
+
+const targets = await registry.dispatch({
+  target: "hcp:registry",
+  op: "list"
+});
 ```
 
 ## Target Addressing
@@ -64,7 +70,17 @@ interface HcpTarget {
 }
 ```
 
-Supported operations are component-specific (e.g., `"describe"`, `"configure"`, `"enable"`).
+Supported operations are component-specific, but Magnets should expose a common
+baseline: `"describe"`, `"configure"`, `"enable"`, `"disable"`, `"state"`,
+`"health"`, and optionally `"toTool"`.
+
+## Registry Management Target
+
+`HcpRegistry` reserves `hcp:registry` as a local management target:
+
+- `list` / `discover` — Return all target descriptions
+- `prefixes` — Return registered prefixes
+- `addresses` — Return exact registered addresses
 
 ## Registration
 
@@ -81,4 +97,6 @@ path = "hcp/hcp.toml"
 
 ## Architecture Notes
 
-HCP provides **in-process dispatch only**. There is no transport layer or serialization boundary. All calls resolve to direct method invocations during assembly.
+HCP provides **in-process dispatch** for local targets. Process-based components
+can still speak HCP over JSONL through `HcpProcessMagnet`; that transport is a
+Magnet implementation detail, not the agent loop hot path.

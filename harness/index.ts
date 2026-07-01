@@ -2,9 +2,14 @@
 
 // HCP / Magnet / Registry: the management + assembly layer (not the loop hot path).
 export * from "./assembly/hcp/pi/hcp.ts";
+export * from "./assembly/magnet/pi/factory.ts";
+export * from "./assembly/magnet/pi/hcp-process.ts";
 export * from "./assembly/magnet/pi/magnet.ts";
 export * from "./assembly/magnet/pi/native.ts";
+export * from "./assembly/magnet/pi/process.ts";
+export * from "./assembly/magnet/pi/universal.ts";
 export * from "./assembly/registry/pi/registry.ts";
+export * from "./catalog/pi/catalog.ts";
 export * from "./compaction/pi/branch-summarization.ts";
 export * from "./compaction/pi/compaction.ts";
 export {

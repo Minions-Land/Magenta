@@ -1,0 +1,139 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://magenta.local/schemas/harness/component-catalog.schema.json",
+  "title": "Magenta Harness Component Catalog",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "generated_at",
+    "repository_root",
+    "scope",
+    "summary",
+    "source_references",
+    "modules"
+  ],
+  "properties": {
+    "schema_version": { "type": "string" },
+    "generated_at": { "type": "string" },
+    "repository_root": { "type": "string" },
+    "scope": { "type": "string" },
+    "architecture_boundary": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "summary": {
+      "type": "object",
+      "required": ["component_count", "module_count", "by_kind", "by_source"],
+      "properties": {
+        "component_count": { "type": "integer", "minimum": 0 },
+        "module_count": { "type": "integer", "minimum": 0 },
+        "by_layer": { "$ref": "#/$defs/countMap" },
+        "by_kind": { "$ref": "#/$defs/countMap" },
+        "by_source": { "$ref": "#/$defs/countMap" },
+        "by_language": { "$ref": "#/$defs/countMap" }
+      },
+      "additionalProperties": true
+    },
+    "origin_relationship_legend": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "source_references": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/sourceReference" }
+    },
+    "modules": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/module" }
+    }
+  },
+  "$defs": {
+    "countMap": {
+      "type": "object",
+      "additionalProperties": { "type": "integer", "minimum": 0 }
+    },
+    "sourceReference": {
+      "type": "object",
+      "required": ["label", "relationship", "description"],
+      "properties": {
+        "label": { "type": "string" },
+        "relationship": { "type": "string" },
+        "reference_paths": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "description": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "module": {
+      "type": "object",
+      "required": ["category", "layer", "summary", "roots", "primary_languages", "components"],
+      "properties": {
+        "category": { "type": "string" },
+        "layer": { "type": "string" },
+        "summary": { "type": "string" },
+        "roots": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "primary_languages": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "source": { "type": "string" },
+        "components": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/component" }
+        }
+      },
+      "additionalProperties": true
+    },
+    "component": {
+      "type": "object",
+      "required": [
+        "id",
+        "name",
+        "kind",
+        "type",
+        "status",
+        "targets",
+        "impl",
+        "lang",
+        "origin",
+        "origin_rel",
+        "refs"
+      ],
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "kind": { "type": "string" },
+        "type": { "type": "string" },
+        "status": { "type": "string" },
+        "targets": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "path": {
+          "type": ["string", "null"]
+        },
+        "impl": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "lang": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "origin": { "type": "string" },
+        "origin_rel": { "type": "string" },
+        "origin_confidence": { "type": "string" },
+        "refs": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": true
+    }
+  }
+}

@@ -43,6 +43,18 @@ name = "ls"
 description = "List directory entries."
 path = "tools/ls/ls.toml"
 
+[[components]]
+kind = "process-tool-pack"
+name = "magenta-process-tools"
+description = "Rust process-tool binary and migrated process-tool manifests from Magenta1 general-harness."
+path = "tools/process/process-tools.toml"
+
+[[components]]
+kind = "hcp-process-pack"
+name = "hcp-process"
+description = "HCP JSONL process manifests migrated from Magenta1 general-harness."
+path = "assembly/hcp-process/hcp-process.toml"
+
 # Core modules
 [[components]]
 kind = "compaction"
@@ -98,6 +110,12 @@ name = "memory"
 description = "Embedding-based semantic memory storage and retrieval."
 path = "memory/memory.toml"
 
+[[components]]
+kind = "catalog"
+name = "magenta1-harness-components"
+description = "Magenta 1 general-harness component inventory migrated as selectable harness metadata."
+path = "catalog/catalog.toml"
+
 # Assembly layer
 [[components]]
 kind = "assembly"
@@ -116,3 +134,10 @@ kind = "assembly"
 name = "registry"
 description = "TOML registry loader and component discovery."
 path = "assembly/registry/registry.toml"
+
+# Selectable component catalogs. These are inventories, not automatically
+# loop-ready implementations.
+[[catalogs]]
+name = "magenta1-harness-components"
+description = "111 Magenta 1 general-harness components with provenance and Magenta3 integration mapping."
+path = "catalog/catalog.toml"
