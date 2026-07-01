@@ -2,7 +2,7 @@
  * Command aliases and small editor conveniences.
  *
  * Current aliases:
- * - `exit`  -> `/quit`
+ * - `exit`/`quit` -> `/quit`
  * - `clear` -> `/new`
  *
  * Autocomplete confirmation:
@@ -21,9 +21,9 @@ import { EditorComponentWrapper } from "./shared/editor-wrapper.ts";
 
 type EditorFactory = (tui: TUI, theme: EditorTheme, keybindings: KeybindingsManager) => EditorComponent;
 
-function applyAlias(text: string): string {
+export function applyAlias(text: string): string {
 	const trimmed = text.trim();
-	if (trimmed === "exit") return "/quit";
+	if (trimmed === "exit" || trimmed === "quit") return "/quit";
 	if (trimmed === "clear") return "/new";
 	return text;
 }

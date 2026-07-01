@@ -72,6 +72,7 @@ Integrated into `pi/coding-agent/src/extensions/`:
 - **todo** - TODO management
 - **ssh** - SSH integration
 - **command-aliases** - Shell aliases
+- **side-chat** - `/side`, `/btw`, and `/s` no-tools side chat
 - **ui-optimize** - Image tokens, markdown
 
 ### Local Skills

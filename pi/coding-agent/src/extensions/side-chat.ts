@@ -1,11 +1,12 @@
 /**
  * Side chat commands.
  *
- * /btw and /side open a temporary no-tools explanatory agent in an overlay.
+ * /side, /btw, and /s open a temporary no-tools explanatory agent in an overlay.
  * It is intentionally separate from the main conversation and cannot execute tools.
  */
 
-import { type AssistantMessage, complete, type UserMessage } from "@earendil-works/pi-ai";
+import type { Message, TextContent, UserMessage } from "@earendil-works/pi-ai";
+import { completeSimple } from "@earendil-works/pi-ai/compat";
 import {
 	type ExtensionAPI,
 	type ExtensionCommandContext,
@@ -50,6 +51,7 @@ type TuiLike = {
 };
 
 const mainToolProgress = new Map<string, MainToolProgress>();
+export const SIDE_CHAT_COMMAND_NAMES = ["side", "btw", "s"] as const;
 
 function compactValue(value: unknown, maxLength = 1200): string {
 	let text: string;
@@ -322,7 +324,7 @@ class SideChatComponent implements Component, Focusable {
 			body.push(
 				this.theme.fg(
 					"dim",
-					"Ask a quick side question. This chat has no tools and will not touch the main thread.",
+					"Ask a quick side/btw question. This chat has no tools and will not touch the main thread.",
 				),
 				"",
 			);
@@ -358,7 +360,7 @@ class SideChatComponent implements Component, Focusable {
 		return renderFloatingWindow({
 			theme: this.theme,
 			width,
-			title: "side chat",
+			title: "side · btw",
 			subtitle: range ? `${status} · ${range}` : status,
 			body: visibleBody,
 			footer,
@@ -388,23 +390,13 @@ async function openSideChat(args: string, ctx: ExtensionCommandContext): Promise
 	}
 
 	const context = recentConversationContext(ctx);
-	const messages: Array<UserMessage | AssistantMessage> = [];
+	const messages: Message[] = [];
 	if (context) {
 		messages.push({
 			role: "user",
 			content: [{ type: "text", text: `Recent main conversation context for background only:\n\n${context}` }],
 			timestamp: Date.now(),
 		} as UserMessage);
-		messages.push({
-			role: "assistant",
-			content: [
-				{
-					type: "text",
-					text: "Understood. I will use this only as background context for concise side explanations.",
-				},
-			],
-			timestamp: Date.now(),
-		} as AssistantMessage);
 	}
 
 	await ctx.ui.custom<void>(
@@ -423,22 +415,18 @@ async function openSideChat(args: string, ctx: ExtensionCommandContext): Promise
 				};
 				messages.push(userMessage);
 
-				const response = await complete(
+				const response = await completeSimple(
 					model,
 					{ systemPrompt: SYSTEM_PROMPT, messages },
-					{ apiKey: auth.apiKey, headers: auth.headers, signal },
+					{ apiKey: auth.apiKey, headers: auth.headers, env: auth.env, signal },
 				);
 
 				const answer = response.content
-					.filter((part): part is { type: "text"; text: string } => part.type === "text")
+					.filter((part): part is TextContent => part.type === "text")
 					.map((part) => part.text)
 					.join("\n");
 
-				messages.push({
-					role: "assistant",
-					content: [{ type: "text", text: answer }],
-					timestamp: Date.now(),
-				} as AssistantMessage);
+				messages.push(response);
 				return answer;
 			};
 
@@ -507,10 +495,11 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	const command = {
-		description: "Open a temporary no-tools side chat for explanations",
+		description: "Open a temporary no-tools side/btw chat for explanations",
 		handler: async (args: string, ctx: ExtensionCommandContext) => openSideChat(args, ctx),
 	};
 
-	pi.registerCommand("side", command);
-	pi.registerCommand("btw", command);
+	for (const name of SIDE_CHAT_COMMAND_NAMES) {
+		pi.registerCommand(name, command);
+	}
 }

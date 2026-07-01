@@ -99,6 +99,13 @@ test.describe('LazyPi: Command Aliases Extension', () => {
   });
 });
 
+test.describe('LazyPi: Side Chat Extension', () => {
+  test('should compile side-chat extension', async () => {
+    const { stdout } = await execAsync(`find ${join(__dirname, '../../pi/coding-agent/dist/extensions')} -name "side-chat.js" -type f`);
+    expect(stdout.trim().length).toBeGreaterThan(0);
+  });
+});
+
 test.describe('LazyPi: UI Optimization Extensions', () => {
   test('should compile ui-optimize extension directory', async () => {
     const { stdout } = await execAsync(`find ${join(__dirname, '../../pi/coding-agent/dist/extensions')} -name "ui-optimize" -type d`);
@@ -175,6 +182,7 @@ test.describe('LazyPi: Integration Verification', () => {
 
     expect(stdout).toContain('background-events');
     expect(stdout).toContain('command-aliases.ts');
+    expect(stdout).toContain('side-chat.ts');
     expect(stdout).toContain('todo.ts');
     expect(stdout).toContain('ssh.ts');
     expect(stdout).toContain('ui-optimize');
