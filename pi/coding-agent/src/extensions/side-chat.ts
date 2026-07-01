@@ -156,6 +156,7 @@ class SideChatComponent implements Component, Focusable {
 	scrollTop = 0;
 	followBottom = true;
 	lastBodyLength = 0;
+	modelLabel: string;
 
 	closed = false;
 	currentAbortController?: AbortController;
@@ -170,11 +171,13 @@ class SideChatComponent implements Component, Focusable {
 		done: () => void,
 		onSend: (text: string, signal: AbortSignal) => Promise<string>,
 		initialQuestion?: string,
+		modelLabel = "model unknown",
 	) {
 		this.tui = tui;
 		this.theme = theme;
 		this.done = done;
 		this.onSend = onSend;
+		this.modelLabel = modelLabel;
 		if (initialQuestion?.trim()) {
 			queueMicrotask(() => void this.send(initialQuestion.trim()));
 		}
@@ -346,7 +349,7 @@ class SideChatComponent implements Component, Focusable {
 			body.length > viewportLines
 				? `${this.scrollTop + 1}-${Math.min(body.length, this.scrollTop + viewportLines)}/${body.length}`
 				: "";
-		const status = this.busy ? "thinking" : "no tools";
+		const status = this.busy ? "thinking" : `no tools · ${this.modelLabel}`;
 		const visibleBody = body.slice(this.scrollTop, this.scrollTop + viewportLines);
 		while (visibleBody.length < viewportLines) visibleBody.push("");
 
@@ -383,6 +386,7 @@ async function openSideChat(args: string, ctx: ExtensionCommandContext): Promise
 	}
 
 	const model = ctx.model;
+	const modelLabel = `${model.provider}/${model.id}`;
 	const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
 	if (!auth.ok || !auth.apiKey) {
 		ctx.ui.notify(auth.ok ? `No API key for ${model.provider}` : auth.error, "error");
@@ -430,7 +434,7 @@ async function openSideChat(args: string, ctx: ExtensionCommandContext): Promise
 				return answer;
 			};
 
-			return new SideChatComponent(tui, theme, done, send, args);
+			return new SideChatComponent(tui, theme, done, send, args, modelLabel);
 		},
 		{
 			overlay: true,

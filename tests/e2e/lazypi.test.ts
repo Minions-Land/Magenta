@@ -156,20 +156,20 @@ test.describe('LazyPi: Shared Utilities', () => {
   });
 });
 
-test.describe('LazyPi: Local Skills', () => {
-  test('should have local-skills directory', async () => {
-    const { stdout } = await execAsync(`find ${join(__dirname, '../../pi/coding-agent')} -name "local-skills" -type d 2>/dev/null || echo "NONE"`);
+test.describe('LazyPi: Harness Skills', () => {
+  test('should have Harness bundled skills directory', async () => {
+    const { stdout } = await execAsync(`find ${join(__dirname, '../../harness/skills')} -path "*/bundled" -type d 2>/dev/null || echo "NONE"`);
     expect(stdout).not.toBe('NONE');
   });
 
   test('should include paper-analysis skill', async () => {
-    const skillPath = join(__dirname, '../../pi/coding-agent/local-skills/paper-analysis');
+    const skillPath = join(__dirname, '../../harness/skills/bundled/paper-analysis');
     const { stdout } = await execAsync(`[ -d "${skillPath}" ] && echo "EXISTS" || echo "NONE"`);
     expect(stdout.trim()).toBe('EXISTS');
   });
 
   test('should include pptx skill', async () => {
-    const skillPath = join(__dirname, '../../pi/coding-agent/local-skills/pptx');
+    const skillPath = join(__dirname, '../../harness/skills/bundled/pptx');
     const { stdout } = await execAsync(`[ -d "${skillPath}" ] && echo "EXISTS" || echo "NONE"`);
     expect(stdout.trim()).toBe('EXISTS');
   });

@@ -1,3 +1,5 @@
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import ignore from "ignore";
 import { parse } from "yaml";
 import { type ExecutionEnv, type FileInfo, type Result, type Skill, toError } from "../../types/types.ts";
@@ -5,6 +7,9 @@ import { type ExecutionEnv, type FileInfo, type Result, type Skill, toError } fr
 const MAX_NAME_LENGTH = 64;
 const MAX_DESCRIPTION_LENGTH = 1024;
 const IGNORE_FILE_NAMES = [".gitignore", ".ignore", ".fdignore"];
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const isBunBinary =
+	import.meta.url.includes("$bunfs") || import.meta.url.includes("~BUN") || import.meta.url.includes("%7EBUN");
 
 type IgnoreMatcher = ReturnType<typeof ignore>;
 
@@ -38,6 +43,14 @@ interface SkillFrontmatter {
 export function formatSkillInvocation(skill: Skill, additionalInstructions?: string): string {
 	const skillBlock = `<skill name="${skill.name}" location="${skill.filePath}">\nReferences are relative to ${dirnameEnvPath(skill.filePath)}.\n\n${skill.content}\n</skill>`;
 	return additionalInstructions ? `${skillBlock}\n\n${additionalInstructions}` : skillBlock;
+}
+
+/** Return the Harness-owned bundled skills directory for source and built packages. */
+export function getBundledSkillsDir(): string {
+	if (isBunBinary) {
+		return join(dirname(process.execPath), "skills", "bundled");
+	}
+	return join(__dirname, "..", "bundled");
 }
 
 /**

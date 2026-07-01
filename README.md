@@ -75,7 +75,7 @@ Integrated into `pi/coding-agent/src/extensions/`:
 - **side-chat** - `/side`, `/btw`, and `/s` no-tools side chat
 - **ui-optimize** - Image tokens, markdown
 
-### Local Skills
+### Harness Skills
 - **paper-analysis** - Academic paper processing
 - **pptx** - PowerPoint generation
 

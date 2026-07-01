@@ -138,64 +138,62 @@ export default function (pi: ExtensionAPI) {
 
 	// Resolved lazily on session_start (CLI flags not available during factory)
 	let resolvedSsh: { remote: string; remoteCwd: string } | null = null;
+	let remoteToolsRegistered = false;
 
 	const getSsh = () => resolvedSsh;
 
-	pi.registerTool({
-		...localRead,
-		async execute(id, params, signal, onUpdate, _ctx) {
-			const ssh = getSsh();
-			if (ssh) {
+	const registerRemoteTools = () => {
+		if (remoteToolsRegistered) return;
+		remoteToolsRegistered = true;
+
+		pi.registerTool({
+			...localRead,
+			async execute(id, params, signal, onUpdate, _ctx) {
+				const ssh = getSsh();
+				if (!ssh) return localRead.execute(id, params, signal, onUpdate);
 				const tool = createReadTool(localCwd, {
 					operations: createRemoteReadOps(ssh.remote, ssh.remoteCwd, localCwd),
 				});
 				return tool.execute(id, params, signal, onUpdate);
-			}
-			return localRead.execute(id, params, signal, onUpdate);
-		},
-	});
+			},
+		});
 
-	pi.registerTool({
-		...localWrite,
-		async execute(id, params, signal, onUpdate, _ctx) {
-			const ssh = getSsh();
-			if (ssh) {
+		pi.registerTool({
+			...localWrite,
+			async execute(id, params, signal, onUpdate, _ctx) {
+				const ssh = getSsh();
+				if (!ssh) return localWrite.execute(id, params, signal, onUpdate);
 				const tool = createWriteTool(localCwd, {
 					operations: createRemoteWriteOps(ssh.remote, ssh.remoteCwd, localCwd),
 				});
 				return tool.execute(id, params, signal, onUpdate);
-			}
-			return localWrite.execute(id, params, signal, onUpdate);
-		},
-	});
+			},
+		});
 
-	pi.registerTool({
-		...localEdit,
-		async execute(id, params, signal, onUpdate, _ctx) {
-			const ssh = getSsh();
-			if (ssh) {
+		pi.registerTool({
+			...localEdit,
+			async execute(id, params, signal, onUpdate, _ctx) {
+				const ssh = getSsh();
+				if (!ssh) return localEdit.execute(id, params, signal, onUpdate);
 				const tool = createEditTool(localCwd, {
 					operations: createRemoteEditOps(ssh.remote, ssh.remoteCwd, localCwd),
 				});
 				return tool.execute(id, params, signal, onUpdate);
-			}
-			return localEdit.execute(id, params, signal, onUpdate);
-		},
-	});
+			},
+		});
 
-	pi.registerTool({
-		...localBash,
-		async execute(id, params, signal, onUpdate, _ctx) {
-			const ssh = getSsh();
-			if (ssh) {
+		pi.registerTool({
+			...localBash,
+			async execute(id, params, signal, onUpdate, _ctx) {
+				const ssh = getSsh();
+				if (!ssh) return localBash.execute(id, params, signal, onUpdate);
 				const tool = createBashTool(localCwd, {
 					operations: createRemoteBashOps(ssh.remote, ssh.remoteCwd, localCwd),
 				});
 				return tool.execute(id, params, signal, onUpdate);
-			}
-			return localBash.execute(id, params, signal, onUpdate);
-		},
-	});
+			},
+		});
+	};
 
 	pi.on("session_start", async (_event, ctx) => {
 		// Resolve SSH config now that CLI flags are available
@@ -212,6 +210,7 @@ export default function (pi: ExtensionAPI) {
 				const pwd = (await sshExec(remote, "pwd")).toString().trim();
 				resolvedSsh = { remote, remoteCwd: pwd };
 			}
+			registerRemoteTools();
 			if (ctx.hasUI) {
 				ctx.ui.setStatus("ssh", ctx.ui.theme.fg("accent", `SSH: ${resolvedSsh.remote}:${resolvedSsh.remoteCwd}`));
 				ctx.ui.notify(`SSH mode: ${resolvedSsh.remote}:${resolvedSsh.remoteCwd}`, "info");

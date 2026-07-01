@@ -1,13 +1,13 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 import chalk from "chalk";
-import { CONFIG_DIR_NAME } from "../config.ts";
+import { CONFIG_DIR_NAME, getBundledExtensionsDir } from "../config.ts";
 import { loadThemeFromPath, type Theme } from "../modes/interactive/theme/theme.ts";
 import type { ResourceDiagnostic } from "./diagnostics.ts";
 
 export type { ResourceCollision, ResourceDiagnostic } from "./diagnostics.ts";
 
-import type { Skill as HarnessSkill } from "@magenta/harness";
+import { getBundledSkillsDir, type Skill as HarnessSkill } from "@magenta/harness";
 import { canonicalizePath, isLocalPath, resolvePath } from "../utils/paths.ts";
 import { createEventBus, type EventBus } from "./event-bus.ts";
 import {
@@ -122,6 +122,56 @@ export function loadProjectContextFiles(options: {
 	return contextFiles;
 }
 
+const BUNDLED_EXTENSION_ENTRIES = [
+	"local-credential-bridge.ts",
+	"background-events/index.ts",
+	"todo.ts",
+	"ssh.ts",
+	"ui-optimize/index.ts",
+	"side-chat.ts",
+	"command-aliases.ts",
+] as const;
+
+const BUNDLED_BACKGROUND_WORK_PROMPT = `# Background Work
+
+Treat background shell events and sub-agents as built-in Magenta agent-loop infrastructure.
+
+- Use bg_shell action=start for long-running non-interactive commands such as builds, tests, dev servers, migrations, downloads, or commands expected to take more than about 10 seconds.
+- Use the regular bash tool for short one-off shell commands.
+- After starting background shell work, either wait/check status before relying on the result, or set returnToMain=true so completed results return to the main agent automatically.
+- Use sub_agent for independent parallel analysis, review, research, or planning subtasks; synthesize the results yourself before reporting to the user.
+- User-visible event controls live under /events. Do not ask the user to manually manage event ids unless direct intervention is actually required.`;
+
+function discoverBundledExtensionPaths(baseDir: string): string[] {
+	return BUNDLED_EXTENSION_ENTRIES.map((entry) => join(baseDir, entry)).filter((path) => existsSync(path));
+}
+
+function discoverBundledSkillPaths(baseDir: string): string[] {
+	if (!existsSync(baseDir)) {
+		return [];
+	}
+	const paths: string[] = [];
+	try {
+		for (const entry of readdirSync(baseDir, { withFileTypes: true })) {
+			if (entry.name.startsWith(".")) {
+				continue;
+			}
+			const fullPath = join(baseDir, entry.name);
+			if (entry.isDirectory()) {
+				const skillFile = join(fullPath, "SKILL.md");
+				if (existsSync(skillFile)) {
+					paths.push(fullPath);
+				}
+			} else if (entry.isFile() && entry.name.endsWith(".md")) {
+				paths.push(fullPath);
+			}
+		}
+	} catch {
+		return [];
+	}
+	return paths.sort((a, b) => a.localeCompare(b));
+}
+
 export interface DefaultResourceLoaderOptions {
 	cwd: string;
 	agentDir: string;
@@ -137,6 +187,7 @@ export interface DefaultResourceLoaderOptions {
 	noPromptTemplates?: boolean;
 	noThemes?: boolean;
 	noContextFiles?: boolean;
+	includeBundledResources?: boolean;
 	systemPrompt?: string;
 	appendSystemPrompt?: string[];
 	extensionsOverride?: (base: LoadExtensionsResult) => LoadExtensionsResult;
@@ -175,6 +226,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 	private noPromptTemplates: boolean;
 	private noThemes: boolean;
 	private noContextFiles: boolean;
+	private includeBundledResources: boolean;
 	private systemPromptSource?: string;
 	private appendSystemPromptSource?: string[];
 	private extensionsOverride?: (base: LoadExtensionsResult) => LoadExtensionsResult;
@@ -234,6 +286,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.noPromptTemplates = options.noPromptTemplates ?? false;
 		this.noThemes = options.noThemes ?? false;
 		this.noContextFiles = options.noContextFiles ?? false;
+		this.includeBundledResources = options.includeBundledResources ?? true;
 		this.systemPromptSource = options.systemPrompt;
 		this.appendSystemPromptSource = options.appendSystemPrompt;
 		this.extensionsOverride = options.extensionsOverride;
@@ -397,10 +450,19 @@ export class DefaultResourceLoader implements ResourceLoader {
 		const cliEnabledSkills = getEnabledPaths(cliExtensionPaths.skills);
 		const cliEnabledPrompts = getEnabledPaths(cliExtensionPaths.prompts);
 		const cliEnabledThemes = getEnabledPaths(cliExtensionPaths.themes);
+		const bundledExtensionResources = this.noExtensions ? [] : this.getBundledExtensionResources();
+		const bundledSkillResources = this.noSkills ? [] : this.getBundledSkillResources();
+		for (const r of [...bundledExtensionResources, ...bundledSkillResources]) {
+			if (!metadataByPath.has(r.path)) {
+				metadataByPath.set(r.path, r.metadata);
+			}
+		}
+		const bundledExtensions = bundledExtensionResources.map((r) => r.path);
+		const bundledSkills = bundledSkillResources.map((r) => this.mapSkillPath(r, metadataByPath));
 
 		const extensionPaths = this.noExtensions
 			? cliEnabledExtensions
-			: this.mergePaths(cliEnabledExtensions, enabledExtensions);
+			: this.mergePaths([...cliEnabledExtensions, ...bundledExtensions], enabledExtensions);
 
 		const extensionsResult = await this.loadFinalExtensionSet(extensionPaths, preTrustExtensions);
 		for (const p of this.additionalExtensionPaths) {
@@ -416,7 +478,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 
 		const skillPaths = this.noSkills
 			? this.mergePaths(cliEnabledSkills, this.additionalSkillPaths)
-			: this.mergePaths([...cliEnabledSkills, ...enabledSkills], this.additionalSkillPaths);
+			: this.mergePaths([...cliEnabledSkills, ...bundledSkills, ...enabledSkills], this.additionalSkillPaths);
 
 		this.lastSkillPaths = skillPaths;
 		await this.updateSkillsFromPaths(skillPaths, metadataByPath);
@@ -484,6 +546,9 @@ export class DefaultResourceLoader implements ResourceLoader {
 		const baseAppend = appendSources
 			.map((s) => resolvePromptInput(s, "append system prompt"))
 			.filter((s): s is string => s !== undefined);
+		if (this.includeBundledResources && !this.noExtensions) {
+			baseAppend.unshift(BUNDLED_BACKGROUND_WORK_PROMPT);
+		}
 		this.appendSystemPrompt = this.appendSystemPromptOverride
 			? this.appendSystemPromptOverride(baseAppend)
 			: baseAppend;
@@ -497,9 +562,10 @@ export class DefaultResourceLoader implements ResourceLoader {
 		});
 		const enabledExtensions = resolvedPaths.extensions.filter((r) => r.enabled).map((r) => r.path);
 		const cliEnabledExtensions = cliExtensionPaths.extensions.filter((r) => r.enabled).map((r) => r.path);
+		const bundledExtensions = this.noExtensions ? [] : this.getBundledExtensionResources().map((r) => r.path);
 		const extensionPaths = this.noExtensions
 			? cliEnabledExtensions
-			: this.mergePaths(cliEnabledExtensions, enabledExtensions);
+			: this.mergePaths([...cliEnabledExtensions, ...bundledExtensions], enabledExtensions);
 		const extensionsResult = await loadExtensionsCached(extensionPaths, this.cwd, this.eventBus);
 		if (!options.includeInlineFactories) {
 			return extensionsResult;
@@ -577,8 +643,47 @@ export class DefaultResourceLoader implements ResourceLoader {
 		}
 	}
 
+	private getBundledExtensionResources(): ResolvedResource[] {
+		if (!this.includeBundledResources) {
+			return [];
+		}
+		const baseDir = getBundledExtensionsDir();
+		if (!existsSync(baseDir)) {
+			return [];
+		}
+		const metadata: PathMetadata = {
+			source: "bundled",
+			scope: "temporary",
+			origin: "top-level",
+			baseDir,
+		};
+		return discoverBundledExtensionPaths(baseDir).map((path) => ({ path, enabled: true, metadata }));
+	}
+
+	private getBundledSkillResources(): ResolvedResource[] {
+		if (!this.includeBundledResources) {
+			return [];
+		}
+		const baseDir = getBundledSkillsDir();
+		if (!existsSync(baseDir)) {
+			return [];
+		}
+		const metadata: PathMetadata = {
+			source: "harness",
+			scope: "temporary",
+			origin: "top-level",
+			baseDir,
+		};
+		return discoverBundledSkillPaths(baseDir).map((path) => ({ path, enabled: true, metadata }));
+	}
+
 	private mapSkillPath(resource: ResolvedResource, metadataByPath: Map<string, PathMetadata>): string {
-		if (resource.metadata.source !== "auto" && resource.metadata.origin !== "package") {
+		if (
+			resource.metadata.source !== "auto" &&
+			resource.metadata.source !== "bundled" &&
+			resource.metadata.source !== "harness" &&
+			resource.metadata.origin !== "package"
+		) {
 			return resource.path;
 		}
 		try {
