@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatSkillsForSystemPrompt } from "../../src/harness/system-prompt.ts";
+import { formatSkillsForSystemPrompt } from "../system-prompt/pi/system-prompt.ts";
 
 const visibleSkill = {
 	name: "visible",

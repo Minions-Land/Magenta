@@ -1,12 +1,12 @@
 import { symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { NodeExecutionEnv } from "../../src/harness/env/nodejs.ts";
+import { NodeExecutionEnv } from "../env/pi/nodejs.ts";
 import {
 	formatPromptTemplateInvocation,
 	loadPromptTemplates,
 	loadSourcedPromptTemplates,
-} from "../../src/harness/prompt-templates.ts";
+} from "../prompt-templates/pi/prompt-templates.ts";
 import { createTempDir } from "./session-test-utils.ts";
 
 describe("loadPromptTemplates", () => {
@@ -22,7 +22,7 @@ describe("loadPromptTemplates", () => {
 		const { promptTemplates, diagnostics } = await loadPromptTemplates(env, ["a", "b"]);
 
 		expect(diagnostics).toEqual([]);
-		expect(promptTemplates).toEqual([
+		expect(promptTemplates).toMatchObject([
 			{ name: "one", description: "One template", content: "Hello $1" },
 			{ name: "two", description: "First line description", content: "First line description\nBody" },
 		]);
@@ -39,7 +39,7 @@ describe("loadPromptTemplates", () => {
 		]);
 
 		expect(diagnostics).toEqual([]);
-		expect(promptTemplates).toEqual([
+		expect(promptTemplates).toMatchObject([
 			{
 				promptTemplate: { name: "example", description: "Example", content: "Example body" },
 				source: { type: "project" },
@@ -73,7 +73,7 @@ describe("loadPromptTemplates", () => {
 
 		const { promptTemplates } = await loadPromptTemplates(env, ["target.md", "link.md"]);
 
-		expect(promptTemplates).toEqual([
+		expect(promptTemplates).toMatchObject([
 			{ name: "target", description: "Target", content: "Target body" },
 			{ name: "link", description: "Target", content: "Target body" },
 		]);

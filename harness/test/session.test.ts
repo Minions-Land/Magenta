@@ -1,11 +1,11 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { NodeExecutionEnv } from "../../src/harness/env/nodejs.ts";
-import { JsonlSessionStorage } from "../../src/harness/session/jsonl-storage.ts";
-import { InMemorySessionStorage } from "../../src/harness/session/memory-storage.ts";
-import { Session } from "../../src/harness/session/session.ts";
-import type { SessionStorage } from "../../src/harness/types.ts";
+import { NodeExecutionEnv } from "../env/pi/nodejs.ts";
+import { JsonlSessionStorage } from "../session/pi/jsonl-storage.ts";
+import { InMemorySessionStorage } from "../session/pi/memory-storage.ts";
+import { Session } from "../session/pi/session.ts";
+import type { SessionStorage } from "../types/types.ts";
 import { createAssistantMessage, createTempDir, createUserMessage, getLatestTempDir } from "./session-test-utils.ts";
 
 async function runSessionSuite(

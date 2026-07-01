@@ -11,6 +11,7 @@ import {
 import { beforeEach, describe, expect, it } from "vitest";
 import {
 	type CompactionPreparation,
+	type CompactionSettings,
 	calculateContextTokens,
 	compact,
 	DEFAULT_COMPACTION_SETTINGS,
@@ -23,20 +24,19 @@ import {
 	prepareCompaction,
 	serializeConversation,
 	shouldCompact,
-} from "../../src/harness/compaction/compaction.ts";
-import { buildSessionContext } from "../../src/harness/session/session.ts";
+} from "../compaction/pi/compaction.ts";
+import { buildSessionContext } from "../session/pi/session.ts";
 import type {
 	BranchSummaryEntry,
 	CompactionEntry,
-	CompactionSettings,
 	CustomMessageEntry,
 	MessageEntry,
 	ModelChangeEntry,
 	SessionTreeEntry,
 	ThinkingLevelChangeEntry,
-} from "../../src/harness/types.ts";
-import { getOrThrow } from "../../src/harness/types.ts";
-import type { AgentMessage } from "../../src/types.ts";
+} from "../types/types.ts";
+import { getOrThrow } from "../types/types.ts";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
 
 let nextId = 0;
 function createId(): string {
