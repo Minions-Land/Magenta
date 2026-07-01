@@ -1,16 +1,25 @@
 import type { Skill } from "../../types/types.ts";
 
-export function formatSkillsForSystemPrompt(skills: Skill[]): string {
+/** Options to customize the skills system-prompt block wording without changing its XML structure. */
+export interface FormatSkillsOptions {
+	/** Text prepended before the intro block. Default: "" (no prefix). */
+	prefix?: string;
+	/** Intro lines describing how to use skills. Default: the standard Agent-Skills wording. */
+	introLines?: string[];
+}
+
+const DEFAULT_SKILLS_INTRO_LINES = [
+	"The following skills provide specialized instructions for specific tasks.",
+	"Read the full skill file when the task matches its description.",
+	"When a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.",
+];
+
+export function formatSkillsForSystemPrompt(skills: Skill[], options?: FormatSkillsOptions): string {
 	const visibleSkills = skills.filter((skill) => !skill.disableModelInvocation);
 	if (visibleSkills.length === 0) return "";
 
-	const lines = [
-		"The following skills provide specialized instructions for specific tasks.",
-		"Read the full skill file when the task matches its description.",
-		"When a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.",
-		"",
-		"<available_skills>",
-	];
+	const introLines = options?.introLines ?? DEFAULT_SKILLS_INTRO_LINES;
+	const lines = [...introLines, "", "<available_skills>"];
 
 	for (const skill of visibleSkills) {
 		lines.push("  <skill>");
@@ -21,7 +30,7 @@ export function formatSkillsForSystemPrompt(skills: Skill[]): string {
 	}
 
 	lines.push("</available_skills>");
-	return lines.join("\n");
+	return (options?.prefix ?? "") + lines.join("\n");
 }
 
 function escapeXml(value: string): string {
