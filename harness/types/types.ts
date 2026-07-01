@@ -63,8 +63,12 @@ export interface PromptTemplate {
 	name: string;
 	/** Optional description for command lists or autocomplete. */
 	description?: string;
+	/** Optional argument hint shown in command lists or autocomplete (from the `argument-hint` frontmatter key). */
+	argumentHint?: string;
 	/** Template content. Argument placeholders are formatted by `formatPromptTemplateInvocation`. */
 	content: string;
+	/** Absolute path to the source `.md` file, when loaded from disk. */
+	filePath?: string;
 }
 
 /** Resources made available to explicit invocation methods and system-prompt callbacks. */

@@ -496,7 +496,7 @@ describe("loadPromptTemplates - argument-hint", () => {
 		writeFileSync(join(testDir, `${name}.md`), content);
 	}
 
-	test("should parse required argument-hint from frontmatter", () => {
+	test("should parse required argument-hint from frontmatter", async () => {
 		writeTemplate(
 			"pr",
 			`---
@@ -506,7 +506,7 @@ argument-hint: "<PR-URL>"
 You are given one or more GitHub PR URLs: $@`,
 		);
 
-		const templates = loadPromptTemplates({
+		const templates = await loadPromptTemplates({
 			cwd: process.cwd(),
 			agentDir: getAgentDir(),
 			promptPaths: [testDir],
@@ -519,7 +519,7 @@ You are given one or more GitHub PR URLs: $@`,
 		expect(pr!.description).toBe("Review PRs from URLs with structured issue and code analysis");
 	});
 
-	test("should parse optional argument-hint from frontmatter", () => {
+	test("should parse optional argument-hint from frontmatter", async () => {
 		writeTemplate(
 			"wr",
 			`---
@@ -529,7 +529,7 @@ argument-hint: "[instructions]"
 Wrap it. Additional instructions: $ARGUMENTS`,
 		);
 
-		const templates = loadPromptTemplates({
+		const templates = await loadPromptTemplates({
 			cwd: process.cwd(),
 			agentDir: getAgentDir(),
 			promptPaths: [testDir],
@@ -542,7 +542,7 @@ Wrap it. Additional instructions: $ARGUMENTS`,
 		expect(wr!.description).toBe("Finish the current task end-to-end with changelog, commit, and push");
 	});
 
-	test("should leave argumentHint undefined when not specified", () => {
+	test("should leave argumentHint undefined when not specified", async () => {
 		writeTemplate(
 			"cl",
 			`---
@@ -551,7 +551,7 @@ description: Audit changelog entries before release
 Audit changelog entries for all commits since the last release.`,
 		);
 
-		const templates = loadPromptTemplates({
+		const templates = await loadPromptTemplates({
 			cwd: process.cwd(),
 			agentDir: getAgentDir(),
 			promptPaths: [testDir],
@@ -563,7 +563,7 @@ Audit changelog entries for all commits since the last release.`,
 		expect(cl!.argumentHint).toBeUndefined();
 	});
 
-	test("should ignore empty argument-hint", () => {
+	test("should ignore empty argument-hint", async () => {
 		writeTemplate(
 			"empty-hint",
 			`---
@@ -573,7 +573,7 @@ argument-hint: ""
 Do something`,
 		);
 
-		const templates = loadPromptTemplates({
+		const templates = await loadPromptTemplates({
 			cwd: process.cwd(),
 			agentDir: getAgentDir(),
 			promptPaths: [testDir],
@@ -585,7 +585,7 @@ Do something`,
 		expect(tmpl!.argumentHint).toBeUndefined();
 	});
 
-	test("should preserve argument-hint with special characters", () => {
+	test("should preserve argument-hint with special characters", async () => {
 		writeTemplate(
 			"is",
 			`---
@@ -595,7 +595,7 @@ argument-hint: "<issue>"
 Analyze GitHub issue(s): $ARGUMENTS`,
 		);
 
-		const templates = loadPromptTemplates({
+		const templates = await loadPromptTemplates({
 			cwd: process.cwd(),
 			agentDir: getAgentDir(),
 			promptPaths: [testDir],

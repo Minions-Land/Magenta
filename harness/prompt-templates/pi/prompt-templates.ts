@@ -154,11 +154,14 @@ async function loadTemplateFromFile(
 		description = firstLine.slice(0, 60);
 		if (firstLine.length > 60) description += "...";
 	}
+	const argumentHint = typeof frontmatter["argument-hint"] === "string" ? frontmatter["argument-hint"] : undefined;
 	return {
 		promptTemplate: {
 			name: basenameEnvPath(filePath).replace(/\.md$/i, ""),
 			description,
+			...(argumentHint ? { argumentHint } : {}),
 			content: body,
+			filePath,
 		},
 		diagnostics,
 	};
@@ -232,7 +235,7 @@ export function parseCommandArgs(argsString: string): string[] {
 			else current += char;
 		} else if (char === '"' || char === "'") {
 			inQuote = char;
-		} else if (char === " " || char === "\t") {
+		} else if (/\s/.test(char)) {
 			if (current) {
 				args.push(current);
 				current = "";
@@ -245,23 +248,53 @@ export function parseCommandArgs(argsString: string): string[] {
 	return args;
 }
 
-/** Substitute prompt template placeholders (`$1`, `$@`, `$ARGUMENTS`, `${@:N}`, `${@:N:L}`) with command arguments. */
+/**
+ * Substitute argument placeholders in template content. Supports:
+ * - `$1`, `$2`, ... positional args
+ * - `$@` and `$ARGUMENTS` for all args
+ * - `${N:-default}` positional arg N with default when missing/empty
+ * - `${@:N}` args from Nth onwards (bash-style slicing)
+ * - `${@:N:L}` L args starting from Nth
+ *
+ * Replacement happens on the template string only; argument/default values are not recursively substituted.
+ */
 export function substituteArgs(content: string, args: string[]): string {
-	let result = content;
-	result = result.replace(/\$(\d+)/g, (_, num: string) => args[parseInt(num, 10) - 1] ?? "");
-	result = result.replace(/\$\{@:(\d+)(?::(\d+))?\}/g, (_, startStr: string, lengthStr?: string) => {
-		let start = parseInt(startStr, 10) - 1;
-		if (start < 0) start = 0;
-		if (lengthStr) return args.slice(start, start + parseInt(lengthStr, 10)).join(" ");
-		return args.slice(start).join(" ");
-	});
 	const allArgs = args.join(" ");
-	result = result.replace(/\$ARGUMENTS/g, allArgs);
-	result = result.replace(/\$@/g, allArgs);
-	return result;
+	return content.replace(
+		/\$\{(\d+):-([^}]*)\}|\$\{@:(\d+)(?::(\d+))?\}|\$(ARGUMENTS|@|\d+)/g,
+		(_match, defaultNum, defaultValue, sliceStart, sliceLength, simple) => {
+			if (defaultNum) {
+				const value = args[parseInt(defaultNum, 10) - 1];
+				return value ? value : defaultValue;
+			}
+			if (sliceStart) {
+				let start = parseInt(sliceStart, 10) - 1;
+				if (start < 0) start = 0;
+				if (sliceLength) return args.slice(start, start + parseInt(sliceLength, 10)).join(" ");
+				return args.slice(start).join(" ");
+			}
+			if (simple === "ARGUMENTS" || simple === "@") return allArgs;
+			return args[parseInt(simple, 10) - 1] ?? "";
+		},
+	);
 }
 
 /** Format a prompt template invocation with positional arguments. */
 export function formatPromptTemplateInvocation(template: PromptTemplate, args: string[] = []): string {
 	return substituteArgs(template.content, args);
+}
+
+/**
+ * Expand a `/name args...` invocation against a set of templates.
+ * Returns the substituted template content, or the original text when it is not a template invocation.
+ */
+export function expandPromptTemplate(text: string, templates: PromptTemplate[]): string {
+	if (!text.startsWith("/")) return text;
+	const match = text.match(/^\/([^\s]+)(?:\s+([\s\S]*))?$/);
+	if (!match) return text;
+	const templateName = match[1];
+	const argsString = match[2] ?? "";
+	const template = templates.find((t) => t.name === templateName);
+	if (template) return substituteArgs(template.content, parseCommandArgs(argsString));
+	return text;
 }

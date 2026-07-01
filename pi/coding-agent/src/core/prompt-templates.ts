@@ -1,176 +1,40 @@
-import { existsSync, readdirSync, readFileSync, statSync } from "fs";
-import { basename, dirname, join, resolve, sep } from "path";
+/**
+ * Adapter that bridges pi's prompt-template loading interface to the harness async abstraction.
+ *
+ * Architecture (mirrors the HCP/Magnet split and the skills adapter): the harness provides the
+ * capability *primitives* — `loadPromptTemplates(env, paths)` and `loadSourcedPromptTemplates(...)`
+ * walk directories / load `.md` files through the `ExecutionEnv` abstraction, and the pure
+ * `parseCommandArgs` / `substituteArgs` / `expandPromptTemplate` helpers. The *policy* of how pi
+ * discovers templates (default dirs, provenance / `sourceInfo` classification) lives here in pi.
+ *
+ * pi's `PromptTemplate` extends the harness template with a required `sourceInfo` (provenance) and a
+ * required `filePath`; the harness loader already populates `filePath` and `argumentHint`, so this
+ * adapter only injects `sourceInfo` via the `mapPromptTemplate` hook (the Magnet seam).
+ */
+import type { PromptTemplate as HarnessPromptTemplate } from "@magenta/harness";
+import { loadSourcedPromptTemplates, NodeExecutionEnv } from "@magenta/harness";
+import { join, resolve, sep } from "path";
 import { CONFIG_DIR_NAME } from "../config.ts";
-import { parseFrontmatter } from "../utils/frontmatter.ts";
 import { resolvePath } from "../utils/paths.ts";
 import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.ts";
 
+// Re-export the pure helpers from the harness so existing pi importers keep stable import paths.
+export {
+	expandPromptTemplate,
+	formatPromptTemplateInvocation,
+	parseCommandArgs,
+	substituteArgs,
+} from "@magenta/harness";
+
 /**
- * Represents a prompt template loaded from a markdown file
+ * Represents a prompt template loaded from a markdown file.
+ * Extends the harness template with pi-specific provenance and a guaranteed source path.
  */
-export interface PromptTemplate {
-	name: string;
-	description: string;
-	argumentHint?: string;
-	content: string;
+export interface PromptTemplate extends HarnessPromptTemplate {
+	/** Source provenance information (user/project/temporary). */
 	sourceInfo: SourceInfo;
-	filePath: string; // Absolute path to the template file
-}
-
-/**
- * Parse command arguments respecting quoted strings (bash-style)
- * Returns array of arguments
- */
-export function parseCommandArgs(argsString: string): string[] {
-	const args: string[] = [];
-	let current = "";
-	let inQuote: string | null = null;
-
-	for (let i = 0; i < argsString.length; i++) {
-		const char = argsString[i];
-
-		if (inQuote) {
-			if (char === inQuote) {
-				inQuote = null;
-			} else {
-				current += char;
-			}
-		} else if (char === '"' || char === "'") {
-			inQuote = char;
-		} else if (/\s/.test(char)) {
-			if (current) {
-				args.push(current);
-				current = "";
-			}
-		} else {
-			current += char;
-		}
-	}
-
-	if (current) {
-		args.push(current);
-	}
-
-	return args;
-}
-
-/**
- * Substitute argument placeholders in template content
- * Supports:
- * - $1, $2, ... for positional args
- * - $@ and $ARGUMENTS for all args
- * - ${N:-default} for positional arg N with default when missing/empty
- * - ${@:N} for args from Nth onwards (bash-style slicing)
- * - ${@:N:L} for L args starting from Nth
- *
- * Note: Replacement happens on the template string only. Argument and default values
- * containing patterns like $1, $@, or $ARGUMENTS are NOT recursively substituted.
- */
-export function substituteArgs(content: string, args: string[]): string {
-	const allArgs = args.join(" ");
-
-	return content.replace(
-		/\$\{(\d+):-([^}]*)\}|\$\{@:(\d+)(?::(\d+))?\}|\$(ARGUMENTS|@|\d+)/g,
-		(_match, defaultNum, defaultValue, sliceStart, sliceLength, simple) => {
-			if (defaultNum) {
-				const index = parseInt(defaultNum, 10) - 1;
-				const value = args[index];
-				return value ? value : defaultValue;
-			}
-
-			if (sliceStart) {
-				let start = parseInt(sliceStart, 10) - 1; // Convert to 0-indexed (user provides 1-indexed)
-				// Treat 0 as 1 (bash convention: args start at 1)
-				if (start < 0) start = 0;
-
-				if (sliceLength) {
-					const length = parseInt(sliceLength, 10);
-					return args.slice(start, start + length).join(" ");
-				}
-				return args.slice(start).join(" ");
-			}
-
-			if (simple === "ARGUMENTS" || simple === "@") {
-				return allArgs;
-			}
-
-			const index = parseInt(simple, 10) - 1;
-			return args[index] ?? "";
-		},
-	);
-}
-
-function loadTemplateFromFile(filePath: string, sourceInfo: SourceInfo): PromptTemplate | null {
-	try {
-		const rawContent = readFileSync(filePath, "utf-8");
-		const { frontmatter, body } = parseFrontmatter<Record<string, string>>(rawContent);
-
-		const name = basename(filePath).replace(/\.md$/, "");
-
-		// Get description from frontmatter or first non-empty line
-		let description = frontmatter.description || "";
-		if (!description) {
-			const firstLine = body.split("\n").find((line) => line.trim());
-			if (firstLine) {
-				// Truncate if too long
-				description = firstLine.slice(0, 60);
-				if (firstLine.length > 60) description += "...";
-			}
-		}
-
-		return {
-			name,
-			description,
-			...(frontmatter["argument-hint"] && { argumentHint: frontmatter["argument-hint"] }),
-			content: body,
-			sourceInfo,
-			filePath,
-		};
-	} catch {
-		return null;
-	}
-}
-
-/**
- * Scan a directory for .md files (non-recursive) and load them as prompt templates.
- */
-function loadTemplatesFromDir(dir: string, getSourceInfo: (filePath: string) => SourceInfo): PromptTemplate[] {
-	const templates: PromptTemplate[] = [];
-
-	if (!existsSync(dir)) {
-		return templates;
-	}
-
-	try {
-		const entries = readdirSync(dir, { withFileTypes: true });
-
-		for (const entry of entries) {
-			const fullPath = join(dir, entry.name);
-
-			// For symlinks, check if they point to a file
-			let isFile = entry.isFile();
-			if (entry.isSymbolicLink()) {
-				try {
-					const stats = statSync(fullPath);
-					isFile = stats.isFile();
-				} catch {
-					// Broken symlink, skip it
-					continue;
-				}
-			}
-
-			if (isFile && entry.name.endsWith(".md")) {
-				const template = loadTemplateFromFile(fullPath, getSourceInfo(fullPath));
-				if (template) {
-					templates.push(template);
-				}
-			}
-		}
-	} catch {
-		return templates;
-	}
-
-	return templates;
+	/** Absolute path to the template file. */
+	filePath: string;
 }
 
 export interface LoadPromptTemplatesOptions {
@@ -180,105 +44,68 @@ export interface LoadPromptTemplatesOptions {
 	agentDir: string;
 	/** Explicit prompt template paths (files or directories). */
 	promptPaths: string[];
-	/** Include default prompt directories. */
+	/** Include default prompt directories (agentDir/prompts, cwd/.pi/prompts). */
 	includeDefaults: boolean;
 }
 
+// CONTINUE_HERE
+
+const isUnderPath = (target: string, root: string): boolean => {
+	const normalizedRoot = resolve(root);
+	if (target === normalizedRoot) return true;
+	const prefix = normalizedRoot.endsWith(sep) ? normalizedRoot : `${normalizedRoot}${sep}`;
+	return target.startsWith(prefix);
+};
+
 /**
- * Load all prompt templates from:
- * 1. Global: agentDir/prompts/
- * 2. Project: cwd/{CONFIG_DIR_NAME}/prompts/
+ * Load all prompt templates through the harness async abstraction and attach pi provenance.
+ *
+ * Sources:
+ * 1. Global: agentDir/prompts/ (when includeDefaults)
+ * 2. Project: cwd/{CONFIG_DIR_NAME}/prompts/ (when includeDefaults)
  * 3. Explicit prompt paths
+ *
+ * Each loaded template's `sourceInfo` is derived from which root it resolved under, preserving pi's
+ * original `loadPromptTemplates` classification semantics.
  */
-export function loadPromptTemplates(options: LoadPromptTemplatesOptions): PromptTemplate[] {
+export async function loadPromptTemplates(options: LoadPromptTemplatesOptions): Promise<PromptTemplate[]> {
 	const resolvedCwd = resolvePath(options.cwd);
 	const resolvedAgentDir = resolvePath(options.agentDir);
-	const promptPaths = options.promptPaths;
-	const includeDefaults = options.includeDefaults;
-
-	const templates: PromptTemplate[] = [];
-
 	const globalPromptsDir = join(resolvedAgentDir, "prompts");
 	const projectPromptsDir = resolve(resolvedCwd, CONFIG_DIR_NAME, "prompts");
 
-	const isUnderPath = (target: string, root: string): boolean => {
-		const normalizedRoot = resolve(root);
-		if (target === normalizedRoot) {
-			return true;
+	const getSourceInfo = (filePath: string, isDir: boolean): SourceInfo => {
+		if (isUnderPath(filePath, globalPromptsDir)) {
+			return createSyntheticSourceInfo(filePath, { source: "local", scope: "user", baseDir: globalPromptsDir });
 		}
-		const prefix = normalizedRoot.endsWith(sep) ? normalizedRoot : `${normalizedRoot}${sep}`;
-		return target.startsWith(prefix);
-	};
-
-	const getSourceInfo = (resolvedPath: string): SourceInfo => {
-		if (isUnderPath(resolvedPath, globalPromptsDir)) {
-			return createSyntheticSourceInfo(resolvedPath, {
-				source: "local",
-				scope: "user",
-				baseDir: globalPromptsDir,
-			});
+		if (isUnderPath(filePath, projectPromptsDir)) {
+			return createSyntheticSourceInfo(filePath, { source: "local", scope: "project", baseDir: projectPromptsDir });
 		}
-		if (isUnderPath(resolvedPath, projectPromptsDir)) {
-			return createSyntheticSourceInfo(resolvedPath, {
-				source: "local",
-				scope: "project",
-				baseDir: projectPromptsDir,
-			});
-		}
-		return createSyntheticSourceInfo(resolvedPath, {
+		return createSyntheticSourceInfo(filePath, {
 			source: "local",
-			baseDir: statSync(resolvedPath).isDirectory() ? resolvedPath : dirname(resolvedPath),
+			baseDir: isDir ? filePath : filePath.slice(0, Math.max(0, filePath.lastIndexOf("/"))) || "/",
 		});
 	};
 
-	if (includeDefaults) {
-		templates.push(...loadTemplatesFromDir(globalPromptsDir, getSourceInfo));
-		templates.push(...loadTemplatesFromDir(projectPromptsDir, getSourceInfo));
+	// Build the sourced input list: default dirs (opt-in) followed by explicit paths, resolved to absolute.
+	const inputs: Array<{ path: string; source: "global" | "project" | "explicit" }> = [];
+	if (options.includeDefaults) {
+		inputs.push({ path: globalPromptsDir, source: "global" });
+		inputs.push({ path: projectPromptsDir, source: "project" });
+	}
+	for (const rawPath of options.promptPaths) {
+		inputs.push({ path: resolvePath(rawPath, resolvedCwd, { trim: true }), source: "explicit" });
 	}
 
-	// 3. Load explicit prompt paths
-	for (const rawPath of promptPaths) {
-		const resolvedPath = resolvePath(rawPath, resolvedCwd, { trim: true });
-		if (!existsSync(resolvedPath)) {
-			continue;
-		}
-
-		try {
-			const stats = statSync(resolvedPath);
-			if (stats.isDirectory()) {
-				templates.push(...loadTemplatesFromDir(resolvedPath, getSourceInfo));
-			} else if (stats.isFile() && resolvedPath.endsWith(".md")) {
-				const template = loadTemplateFromFile(resolvedPath, getSourceInfo(resolvedPath));
-				if (template) {
-					templates.push(template);
-				}
-			}
-		} catch {
-			// Ignore read failures
-		}
+	const env = new NodeExecutionEnv({ cwd: resolvedCwd });
+	try {
+		const result = await loadSourcedPromptTemplates(env, inputs, (template): PromptTemplate => {
+			const filePath = template.filePath ?? "";
+			return { ...template, filePath, sourceInfo: getSourceInfo(filePath, false) };
+		});
+		return result.promptTemplates.map((entry) => entry.promptTemplate);
+	} finally {
+		await env.cleanup();
 	}
-
-	return templates;
 }
 
-/**
- * Expand a prompt template if it matches a template name.
- * Returns the expanded content or the original text if not a template.
- */
-export function expandPromptTemplate(text: string, templates: PromptTemplate[]): string {
-	if (!text.startsWith("/")) return text;
-
-	const match = text.match(/^\/([^\s]+)(?:\s+([\s\S]*))?$/);
-	if (!match) return text;
-
-	const templateName = match[1];
-	const argsString = match[2] ?? "";
-
-	const template = templates.find((t) => t.name === templateName);
-	if (template) {
-		const args = parseCommandArgs(argsString);
-		return substituteArgs(template.content, args);
-	}
-
-	return text;
-}
