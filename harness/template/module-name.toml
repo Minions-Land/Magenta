@@ -1,0 +1,13 @@
+kind = "example"
+name = "module-name"
+description = "Brief description of what this module does"
+source = "pi"  # or rust, mcp, etc.
+
+# Optional: if this component accepts parameters
+# [parameters]
+# type = "object"
+# required = ["param1"]
+#
+# [parameters.properties.param1]
+# type = "string"
+# description = "Description of param1"

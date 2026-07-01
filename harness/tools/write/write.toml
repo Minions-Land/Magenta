@@ -1,0 +1,15 @@
+kind = "tool"
+name = "write"
+description = "Write content to a file, creating parent directories as needed."
+
+[parameters]
+type = "object"
+required = ["path", "content"]
+
+[parameters.properties.path]
+type = "string"
+description = "Path to the file to write (relative or absolute)"
+
+[parameters.properties.content]
+type = "string"
+description = "Content to write to the file"

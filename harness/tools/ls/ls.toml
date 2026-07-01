@@ -1,0 +1,17 @@
+kind = "tool"
+name = "ls"
+description = "List directory entries."
+
+[parameters]
+type = "object"
+required = []
+
+[parameters.properties.path]
+type = "string"
+optional = true
+description = "Directory to list (default: current directory)"
+
+[parameters.properties.limit]
+type = "number"
+optional = true
+description = "Maximum number of entries to return (default: 500)"

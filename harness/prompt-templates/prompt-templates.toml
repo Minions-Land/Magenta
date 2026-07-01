@@ -1,0 +1,4 @@
+kind = "prompt-template"
+name = "prompt-templates"
+description = "Reusable prompt templates with parameter substitution and formatting"
+source = "pi"

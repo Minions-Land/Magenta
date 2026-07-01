@@ -1,0 +1,27 @@
+kind = "tool"
+name = "edit"
+description = "Apply one or more targeted text replacements to a file. Each edit is matched against the original file, not incrementally."
+
+[parameters]
+type = "object"
+required = ["path", "edits"]
+
+[parameters.properties.path]
+type = "string"
+description = "Path to the file to edit (relative or absolute)"
+
+[parameters.properties.edits]
+type = "array"
+description = "One or more targeted replacements. Each edit is matched against the original file, not incrementally. Do not include overlapping or nested edits."
+
+[parameters.properties.edits.items]
+type = "object"
+required = ["oldText", "newText"]
+
+[parameters.properties.edits.items.properties.oldText]
+type = "string"
+description = "Exact text for one targeted replacement. It must be unique in the original file and must not overlap with any other edits[].oldText in the same call."
+
+[parameters.properties.edits.items.properties.newText]
+type = "string"
+description = "Replacement text for this targeted edit."

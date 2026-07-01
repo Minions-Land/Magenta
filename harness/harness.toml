@@ -1,0 +1,112 @@
+name = "magenta-harness"
+description = "Magenta3 harness component registry: pure-execution tools plus the HCP/Magnet assembly layer."
+
+[[components]]
+kind = "tool"
+name = "bash"
+description = "Execute a bash command in the current working directory."
+path = "tools/bash/bash.toml"
+
+[[components]]
+kind = "tool"
+name = "edit"
+description = "Apply one or more targeted text replacements to a file."
+path = "tools/edit/edit.toml"
+
+[[components]]
+kind = "tool"
+name = "read"
+description = "Read the contents of a file with optional line offset/limit."
+path = "tools/read/read.toml"
+
+[[components]]
+kind = "tool"
+name = "write"
+description = "Write content to a file, creating parent directories as needed."
+path = "tools/write/write.toml"
+
+[[components]]
+kind = "tool"
+name = "grep"
+description = "Search file contents for a pattern (respects .gitignore)."
+path = "tools/grep/grep.toml"
+
+[[components]]
+kind = "tool"
+name = "find"
+description = "Find files matching a glob pattern."
+path = "tools/find/find.toml"
+
+[[components]]
+kind = "tool"
+name = "ls"
+description = "List directory entries."
+path = "tools/ls/ls.toml"
+
+# Core modules
+[[components]]
+kind = "compaction"
+name = "compaction"
+description = "Branch summarization and context compaction for agent loop memory management."
+path = "compaction/compaction.toml"
+
+[[components]]
+kind = "prompt-template"
+name = "prompt-templates"
+description = "Reusable prompt templates with parameter substitution and formatting."
+path = "prompt-templates/prompt-templates.toml"
+
+[[components]]
+kind = "skill"
+name = "skills"
+description = "Agent skills - user-invocable capabilities via /skill command."
+path = "skills/skills.toml"
+
+[[components]]
+kind = "system-prompt"
+name = "system-prompt"
+description = "System prompt construction and templating for agent context."
+path = "system-prompt/system-prompt.toml"
+
+[[components]]
+kind = "loop"
+name = "loop"
+description = "Agent harness - main loop orchestration."
+path = "loop/loop.toml"
+
+[[components]]
+kind = "session"
+name = "session"
+description = "Session management with jsonl and memory storage backends."
+path = "session/session.toml"
+
+[[components]]
+kind = "env"
+name = "env"
+description = "Environment adapters for Node.js runtime integration."
+path = "env/env.toml"
+
+[[components]]
+kind = "util"
+name = "utils"
+description = "Shared utilities for shell output formatting and text truncation."
+path = "utils/utils.toml"
+
+# Assembly layer
+[[components]]
+kind = "assembly"
+name = "hcp"
+description = "Harness Component Protocol - management and discovery layer."
+path = "hcp/hcp.toml"
+
+[[components]]
+kind = "assembly"
+name = "magnet"
+description = "Connectors that wrap implementations as AgentTools or HCP targets."
+path = "magnet/magnet.toml"
+
+[[components]]
+kind = "assembly"
+name = "registry"
+description = "TOML registry loader and component discovery."
+path = "registry/registry.toml"

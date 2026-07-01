@@ -1,0 +1,4 @@
+kind = "loop"
+name = "loop"
+description = "Agent harness - main loop orchestration with compaction and skill/prompt integration"
+source = "pi"

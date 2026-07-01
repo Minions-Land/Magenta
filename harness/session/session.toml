@@ -1,0 +1,4 @@
+kind = "session"
+name = "session"
+description = "Session management with jsonl and memory storage backends"
+source = "pi"

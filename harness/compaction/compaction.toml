@@ -1,0 +1,4 @@
+kind = "compaction"
+name = "compaction"
+description = "Branch summarization and context compaction for agent loop memory management"
+source = "pi"
