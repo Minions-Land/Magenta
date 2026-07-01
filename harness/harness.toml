@@ -97,16 +97,16 @@ path = "utils/utils.toml"
 kind = "assembly"
 name = "hcp"
 description = "Harness Component Protocol - management and discovery layer."
-path = "hcp/hcp.toml"
+path = "assembly/hcp/hcp.toml"
 
 [[components]]
 kind = "assembly"
 name = "magnet"
 description = "Connectors that wrap implementations as AgentTools or HCP targets."
-path = "magnet/magnet.toml"
+path = "assembly/magnet/magnet.toml"
 
 [[components]]
 kind = "assembly"
 name = "registry"
 description = "TOML registry loader and component discovery."
-path = "registry/registry.toml"
+path = "assembly/registry/registry.toml"

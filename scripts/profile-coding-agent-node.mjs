@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, "..");
-const packageDir = join(repoRoot, "packages", "coding-agent");
+const packageDir = join(repoRoot, "pi", "coding-agent");
 const distCliPath = join(packageDir, "dist", "cli.js");
 const srcCliPath = join(packageDir, "src", "cli.ts");
 const defaultNodeProfileDir = join(repoRoot, "profiles-node");
@@ -20,8 +20,8 @@ function printHelp() {
   node scripts/profile-coding-agent-node.mjs [options]
 
 Profiles coding-agent startup with the runtime selected below:
-- npm run profile:tui     -> builds packages/coding-agent and profiles TUI startup with Node
-- npm run profile:rpc     -> builds packages/coding-agent and profiles RPC startup with Node
+- npm run profile:tui     -> builds pi/coding-agent and profiles TUI startup with Node
+- npm run profile:rpc     -> builds pi/coding-agent and profiles RPC startup with Node
 - bun run profile:tui     -> profiles TUI startup from src/cli.ts directly with Bun
 - bun run profile:rpc     -> profiles RPC startup from src/cli.ts directly with Bun
 
@@ -279,7 +279,7 @@ async function waitForExit(child, errorPrefix) {
 }
 
 async function runBuild() {
-	process.stdout.write("Building packages/tui, packages/ai, packages/agent, and packages/coding-agent...\n");
+	process.stdout.write("Building harness, pi/tui, pi/ai, pi/agent, and pi/coding-agent...\n");
 	const startedAt = performance.now();
 	const child = spawn(
 		"npm",
@@ -287,13 +287,15 @@ async function runBuild() {
 			"run",
 			"build",
 			"--workspace",
-			"packages/tui",
+			"@magenta/harness",
 			"--workspace",
-			"packages/ai",
+			"@earendil-works/pi-tui",
 			"--workspace",
-			"packages/agent",
+			"@earendil-works/pi-ai",
 			"--workspace",
-			"packages/coding-agent",
+			"@earendil-works/pi-agent-core",
+			"--workspace",
+			"@earendil-works/pi-coding-agent",
 		],
 		{
 			cwd: repoRoot,
@@ -553,7 +555,7 @@ async function main() {
 	}
 	if (runtime === "bun") {
 		process.stdout.write(
-			`Using Bun runtime with ${options.mode === "rpc" ? "packages/coding-agent/src/cli.ts --mode rpc" : "packages/coding-agent/src/cli.ts"}\n`,
+			`Using Bun runtime with ${options.mode === "rpc" ? "pi/coding-agent/src/cli.ts --mode rpc" : "pi/coding-agent/src/cli.ts"}\n`,
 		);
 	}
 

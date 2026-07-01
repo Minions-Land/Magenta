@@ -18,7 +18,7 @@ export * from "./env/pi/nodejs.js";
 // Tools: pure-execution tool logic + the AgentTool Tool contract.
 export * from "./tools/index.js";
 // HCP / Magnet / Registry: the management + assembly layer (not the loop hot path).
-export * from "./hcp/pi/hcp.js";
-export * from "./magnet/pi/magnet.js";
-export * from "./magnet/pi/native.js";
-export * from "./registry/pi/registry.js";
+export * from "./assembly/hcp/pi/hcp.js";
+export * from "./assembly/magnet/pi/magnet.js";
+export * from "./assembly/magnet/pi/native.js";
+export * from "./assembly/registry/pi/registry.js";

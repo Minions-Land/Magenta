@@ -1,0 +1,24 @@
+# Brand Registry
+#
+# Active brand configuration for the agent.
+# Change the active brand by editing the 'active' field below and running `npm run sync-brand`.
+
+active = "magenta"
+
+## Registered Brands
+
+[[brands]]
+name = "magenta"
+path = "magenta/magenta.brand.ts"
+description = "Magenta - AI coding assistant with execution-first architecture"
+
+[[brands]]
+name = "pi"
+path = "pi/pi.brand.ts"
+description = "Pi - Original upstream agent from @earendil-works"
+
+# Future brands can be added here
+# [[brands]]
+# name = "yourbrand"
+# path = "yourbrand/yourbrand.brand.ts"
+# description = "Your custom agent"

@@ -1,12 +1,12 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { TSchema } from "typebox";
-import type { HcpCall, HcpTarget, HcpTargetDescription } from "../../hcp/pi/hcp.ts";
-import type { Magnet } from "./magnet.ts";
+import type { HcpCall, HcpTarget, HcpTargetDescription } from "../../hcp/pi/hcp.js";
+import type { Magnet } from "./magnet.js";
 import {
 	createReadExecute,
 	type ReadToolOptions,
 	readSchema,
-} from "../../tools/index.ts";
+} from "../../../tools/index.js";
 
 /**
  * Declarative spec for a native TS tool: the pure pieces a

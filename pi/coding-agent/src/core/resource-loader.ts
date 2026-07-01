@@ -43,7 +43,7 @@ export interface ResourceLoader {
 	getAgentsFiles(): { agentsFiles: Array<{ path: string; content: string }> };
 	getSystemPrompt(): string | undefined;
 	getAppendSystemPrompt(): string[];
-	extendResources(paths: ResourceExtensionPaths): void;
+	extendResources(paths: ResourceExtensionPaths): Promise<void>;
 	reload(options?: ResourceLoaderReloadOptions): Promise<void>;
 }
 
@@ -628,8 +628,12 @@ export class DefaultResourceLoader implements ResourceLoader {
 		const resolvedSkills = this.skillsOverride ? this.skillsOverride(skillsResult) : skillsResult;
 		this.skills = resolvedSkills.skills.map((skill): Skill => {
 			const baseDir = skill.filePath.split("/").slice(0, -1).join("/") || "/";
+			// Preserve a sourceInfo the skill already carries (e.g. injected by skillsOverride) before
+			// falling back to extension/default resolution, which may stat the filePath.
+			const existingSourceInfo = (skill as Partial<Skill>).sourceInfo;
 			const sourceInfo =
 				this.findSourceInfoForPath(skill.filePath, this.extensionSkillSourceInfos, metadataByPath) ??
+				existingSourceInfo ??
 				this.getDefaultSourceInfoForPath(skill.filePath);
 			return { ...skill, baseDir, sourceInfo } as Skill;
 		});

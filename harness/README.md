@@ -75,6 +75,8 @@ The registry loader (`registry/pi/registry.ts`) parses these declarations at sta
 - **magnet** — Connectors that wrap implementations as AgentTools or HCP targets
 - **registry** — TOML registry loader and component discovery
 
+See `assembly/README.md` for the complete story of how these work together.
+
 ### Contract Modules (flat, no pi/)
 
 - **messages** — Agent message types and utilities

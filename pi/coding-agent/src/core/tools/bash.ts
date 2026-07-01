@@ -1,9 +1,16 @@
 import { constants } from "node:fs";
 import { access as fsAccess } from "node:fs/promises";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
+import {
+	BASH_TOOL_DESCRIPTION,
+	bashSchema,
+	type BashToolDetails,
+	type BashToolOptions,
+	createBashExecute,
+	type BashOperations as HarnessBashOperations,
+} from "@magenta/harness";
 import { Container, Text, truncateToWidth } from "@earendil-works/pi-tui";
 import { spawn } from "child_process";
-import { type Static, Type } from "typebox";
 import { keyHint } from "../../modes/interactive/components/keybinding-hints.ts";
 import { truncateToVisualLines } from "../../modes/interactive/components/visual-truncate.ts";
 import { theme } from "../../modes/interactive/theme/theme.ts";
@@ -16,46 +23,20 @@ import {
 	untrackDetachedChildPid,
 } from "../../utils/shell.ts";
 import type { ToolDefinition, ToolRenderResultOptions } from "../extensions/types.ts";
-import { OutputAccumulator } from "./output-accumulator.ts";
 import { getTextOutput, invalidArgText, str } from "./render-utils.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
-import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize, type TruncationResult } from "./truncate.ts";
+import { DEFAULT_MAX_BYTES, formatSize } from "./truncate.ts";
 
-const bashSchema = Type.Object({
-	command: Type.String({ description: "Bash command to execute" }),
-	timeout: Type.Optional(Type.Number({ description: "Timeout in seconds (optional, no default timeout)" })),
-});
-
-export type BashToolInput = Static<typeof bashSchema>;
-
-export interface BashToolDetails {
-	truncation?: TruncationResult;
-	fullOutputPath?: string;
-}
-
-/**
- * Pluggable operations for the bash tool.
- * Override these to delegate command execution to remote systems (for example SSH).
- */
-export interface BashOperations {
-	/**
-	 * Execute a command and stream output.
-	 * @param command The command to execute
-	 * @param cwd Working directory
-	 * @param options Execution options
-	 * @returns Promise resolving to exit code (null if killed)
-	 */
-	exec: (
-		command: string,
-		cwd: string,
-		options: {
-			onData: (data: Buffer) => void;
-			signal?: AbortSignal;
-			timeout?: number;
-			env?: NodeJS.ProcessEnv;
-		},
-	) => Promise<{ exitCode: number | null }>;
-}
+// Re-export the pure tool surface from harness so downstream pi consumers keep
+// importing these names from the pi tools module unchanged.
+export {
+	type BashToolInput,
+	type BashToolDetails,
+	type BashOperations,
+	type BashSpawnContext,
+	type BashSpawnHook,
+	type BashToolOptions,
+} from "@magenta/harness";
 
 /**
  * Create bash operations using pi's built-in local shell execution backend.
@@ -63,7 +44,7 @@ export interface BashOperations {
  * This is useful for extensions that intercept user_bash and still want pi's
  * standard local shell behavior while wrapping or rewriting commands.
  */
-export function createLocalBashOperations(options?: { shellPath?: string }): BashOperations {
+export function createLocalBashOperations(options?: { shellPath?: string }): HarnessBashOperations {
 	return {
 		exec: async (command, cwd, { onData, signal, timeout, env }) => {
 			const shellConfig = getShellConfig(options?.shellPath);
@@ -130,32 +111,7 @@ export function createLocalBashOperations(options?: { shellPath?: string }): Bas
 	};
 }
 
-export interface BashSpawnContext {
-	command: string;
-	cwd: string;
-	env: NodeJS.ProcessEnv;
-}
-
-export type BashSpawnHook = (context: BashSpawnContext) => BashSpawnContext;
-
-function resolveSpawnContext(command: string, cwd: string, spawnHook?: BashSpawnHook): BashSpawnContext {
-	const baseContext: BashSpawnContext = { command, cwd, env: { ...getShellEnv() } };
-	return spawnHook ? spawnHook(baseContext) : baseContext;
-}
-
-export interface BashToolOptions {
-	/** Custom operations for command execution. Default: local shell */
-	operations?: BashOperations;
-	/** Command prefix prepended to every command (for example shell setup commands) */
-	commandPrefix?: string;
-	/** Optional explicit shell path from settings */
-	shellPath?: string;
-	/** Hook to adjust command, cwd, or env before execution */
-	spawnHook?: BashSpawnHook;
-}
-
 const BASH_PREVIEW_LINES = 5;
-const BASH_UPDATE_THROTTLE_MS = 100;
 
 type BashRenderState = {
 	startedAt: number | undefined;
@@ -276,139 +232,20 @@ export function createBashToolDefinition(
 	options?: BashToolOptions,
 ): ToolDefinition<typeof bashSchema, BashToolDetails | undefined, BashRenderState> {
 	const ops = options?.operations ?? createLocalBashOperations({ shellPath: options?.shellPath });
-	const commandPrefix = options?.commandPrefix;
-	const spawnHook = options?.spawnHook;
+	const execute = createBashExecute(cwd, {
+		operations: ops,
+		commandPrefix: options?.commandPrefix,
+		spawnHook: options?.spawnHook,
+		resolveEnv: () => getShellEnv(),
+	});
 	return {
 		name: "bash",
 		label: "bash",
-		description: `Execute a bash command in the current working directory. Returns stdout and stderr. Output is truncated to last ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds.`,
+		description: BASH_TOOL_DESCRIPTION,
 		promptSnippet: "Execute bash commands (ls, grep, find, etc.)",
 		parameters: bashSchema,
-		async execute(
-			_toolCallId,
-			{ command, timeout }: { command: string; timeout?: number },
-			signal?: AbortSignal,
-			onUpdate?,
-			_ctx?,
-		) {
-			const resolvedCommand = commandPrefix ? `${commandPrefix}\n${command}` : command;
-			const spawnContext = resolveSpawnContext(resolvedCommand, cwd, spawnHook);
-			const output = new OutputAccumulator({ tempFilePrefix: "pi-bash" });
-			let acceptingOutput = true;
-			let updateTimer: NodeJS.Timeout | undefined;
-			let updateDirty = false;
-			let lastUpdateAt = 0;
-
-			const emitOutputUpdate = () => {
-				if (!onUpdate || !updateDirty) return;
-				updateDirty = false;
-				lastUpdateAt = Date.now();
-				const snapshot = output.snapshot({ persistIfTruncated: true });
-				onUpdate({
-					content: [{ type: "text", text: snapshot.content || "" }],
-					details: {
-						truncation: snapshot.truncation.truncated ? snapshot.truncation : undefined,
-						fullOutputPath: snapshot.fullOutputPath,
-					},
-				});
-			};
-
-			const clearUpdateTimer = () => {
-				if (updateTimer) {
-					clearTimeout(updateTimer);
-					updateTimer = undefined;
-				}
-			};
-
-			const scheduleOutputUpdate = () => {
-				if (!onUpdate) return;
-				updateDirty = true;
-				const delay = BASH_UPDATE_THROTTLE_MS - (Date.now() - lastUpdateAt);
-				if (delay <= 0) {
-					clearUpdateTimer();
-					emitOutputUpdate();
-					return;
-				}
-				updateTimer ??= setTimeout(() => {
-					updateTimer = undefined;
-					emitOutputUpdate();
-				}, delay);
-			};
-
-			if (onUpdate) {
-				onUpdate({ content: [], details: undefined });
-			}
-
-			const handleData = (data: Buffer) => {
-				if (!acceptingOutput) return;
-				output.append(data);
-				scheduleOutputUpdate();
-			};
-
-			const finishOutput = async () => {
-				acceptingOutput = false;
-				output.finish();
-				clearUpdateTimer();
-				emitOutputUpdate();
-				const snapshot = output.snapshot({ persistIfTruncated: true });
-				await output.closeTempFile();
-				return snapshot;
-			};
-
-			const formatOutput = (snapshot: Awaited<ReturnType<typeof finishOutput>>, emptyText = "(no output)") => {
-				const truncation = snapshot.truncation;
-				let text = snapshot.content || emptyText;
-				let details: BashToolDetails | undefined;
-				if (truncation.truncated) {
-					details = { truncation, fullOutputPath: snapshot.fullOutputPath };
-					const startLine = truncation.totalLines - truncation.outputLines + 1;
-					const endLine = truncation.totalLines;
-					if (truncation.lastLinePartial) {
-						const lastLineSize = formatSize(output.getLastLineBytes());
-						text += `\n\n[Showing last ${formatSize(truncation.outputBytes)} of line ${endLine} (line is ${lastLineSize}). Full output: ${snapshot.fullOutputPath}]`;
-					} else if (truncation.truncatedBy === "lines") {
-						text += `\n\n[Showing lines ${startLine}-${endLine} of ${truncation.totalLines}. Full output: ${snapshot.fullOutputPath}]`;
-					} else {
-						text += `\n\n[Showing lines ${startLine}-${endLine} of ${truncation.totalLines} (${formatSize(DEFAULT_MAX_BYTES)} limit). Full output: ${snapshot.fullOutputPath}]`;
-					}
-				}
-				return { text, details };
-			};
-
-			const appendStatus = (text: string, status: string) => `${text ? `${text}\n\n` : ""}${status}`;
-
-			try {
-				let exitCode: number | null;
-				try {
-					const result = await ops.exec(spawnContext.command, spawnContext.cwd, {
-						onData: handleData,
-						signal,
-						timeout,
-						env: spawnContext.env,
-					});
-					exitCode = result.exitCode;
-				} catch (err) {
-					const snapshot = await finishOutput();
-					const { text } = formatOutput(snapshot, "");
-					if (err instanceof Error && err.message === "aborted") {
-						throw new Error(appendStatus(text, "Command aborted"));
-					}
-					if (err instanceof Error && err.message.startsWith("timeout:")) {
-						const timeoutSecs = err.message.split(":")[1];
-						throw new Error(appendStatus(text, `Command timed out after ${timeoutSecs} seconds`));
-					}
-					throw err;
-				}
-
-				const snapshot = await finishOutput();
-				const { text: outputText, details } = formatOutput(snapshot);
-				if (exitCode !== 0 && exitCode !== null) {
-					throw new Error(appendStatus(outputText, `Command exited with code ${exitCode}`));
-				}
-				return { content: [{ type: "text", text: outputText }], details };
-			} finally {
-				clearUpdateTimer();
-			}
+		execute(_toolCallId, params, signal, onUpdate, _ctx) {
+			return execute(_toolCallId, params, signal, onUpdate);
 		},
 		renderCall(args, _theme, context) {
 			const state = context.state;
@@ -451,3 +288,5 @@ export function createBashToolDefinition(
 export function createBashTool(cwd: string, options?: BashToolOptions): AgentTool<typeof bashSchema> {
 	return wrapToolDefinition(createBashToolDefinition(cwd, options));
 }
+
+
