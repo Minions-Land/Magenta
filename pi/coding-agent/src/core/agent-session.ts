@@ -44,6 +44,7 @@ import {
 	calculateContextTokens,
 	collectEntriesForBranchSummary,
 	compact,
+	CompactionError,
 	estimateContextTokens,
 	estimateTokens,
 	generateBranchSummary,
@@ -1771,7 +1772,15 @@ export class AgentSession {
 			return compactionResult;
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
-			const aborted = message === "Compaction cancelled" || (error instanceof Error && error.name === "AbortError");
+			// User-cancel detection: pi's own post-compact guard throws "Compaction
+			// cancelled"; an abort during the harness call surfaces as a
+			// CompactionError with code "aborted" (also re-tagged name "AbortError"
+			// by the compaction adapter). Match any of these so a cancel is not
+			// reported as a failure.
+			const aborted =
+				message === "Compaction cancelled" ||
+				(error instanceof Error && error.name === "AbortError") ||
+				(error instanceof CompactionError && error.code === "aborted");
 			this._emit({
 				type: "compaction_end",
 				reason: "manual",
@@ -2058,15 +2067,23 @@ export class AgentSession {
 			return this.agent.hasQueuedMessages();
 		} catch (error) {
 			const errorMessage = error instanceof Error ? error.message : "compaction failed";
+			// An abort raised from inside the harness compaction call (rather than
+			// caught by the post-compact signal check above) arrives here as a
+			// CompactionError code "aborted" / name "AbortError". Treat it as a
+			// cancel — emit aborted, not a failure — to match the signal-check path.
+			const aborted =
+				(error instanceof CompactionError && error.code === "aborted") ||
+				(error instanceof Error && error.name === "AbortError");
 			if (started) {
 				this._emit({
 					type: "compaction_end",
 					reason,
 					result: undefined,
-					aborted: false,
+					aborted,
 					willRetry: false,
-					errorMessage:
-						reason === "overflow"
+					errorMessage: aborted
+						? undefined
+						: reason === "overflow"
 							? `Context overflow recovery failed: ${errorMessage}`
 							: `Auto-compaction failed: ${errorMessage}`,
 				});

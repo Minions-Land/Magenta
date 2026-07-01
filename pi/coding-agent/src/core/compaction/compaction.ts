@@ -10,14 +10,41 @@
 
 import type { AgentMessage, StreamFn, ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { Model } from "@earendil-works/pi-ai/compat";
-import type { SessionTreeEntry } from "@magenta/harness";
+import type { Result, SessionTreeEntry } from "@magenta/harness";
 import {
+	CompactionError,
 	compact as harnessCompact,
 	generateSummary as harnessGenerateSummary,
 	prepareCompaction as harnessPrepareCompaction,
 } from "@magenta/harness";
 import type { SessionEntry } from "../session-manager.ts";
 import { createCompactionModels } from "./harness-models-adapter.ts";
+
+// Re-export the harness error type + its stable code union so callers can branch
+// on `error.code` (backend-independent) instead of matching on message text.
+export { CompactionError } from "@magenta/harness";
+export type { CompactionErrorCode } from "@magenta/harness";
+
+/**
+ * Unwrap a harness `Result`, preserving pi's historical throw semantics.
+ *
+ * Before the harness migration, an in-flight abort surfaced as a rejected
+ * completion whose `error.name === "AbortError"`; pi's callers (agent-session.ts)
+ * branch on that name to distinguish user-cancel from genuine failure. harness
+ * instead resolves aborts to `err(CompactionError("aborted", ...))`, which has a
+ * different name and message. To keep pi's cancel-vs-fail detection working
+ * without touching every call site, re-tag the aborted case with the historical
+ * `name = "AbortError"` before rethrowing. Non-abort errors rethrow unchanged
+ * (they remain `CompactionError` instances, so `error.code` is still available).
+ */
+function unwrap<T>(result: Result<T, CompactionError>): T {
+	if (result.ok) return result.value;
+	const error = result.error;
+	if (error instanceof CompactionError && error.code === "aborted") {
+		error.name = "AbortError";
+	}
+	throw error;
+}
 
 // ============================================================================
 // Pure re-exports (types + pure functions delegated straight to harness)
@@ -82,8 +109,7 @@ export async function generateSummary(
 		previousSummary,
 		thinkingLevel,
 	);
-	if (!result.ok) throw result.error;
-	return result.value;
+	return unwrap(result);
 }
 
 /**
@@ -94,9 +120,12 @@ export function prepareCompaction(
 	pathEntries: SessionEntry[],
 	settings: CompactionSettings,
 ): CompactionPreparation | undefined {
-	const result = harnessPrepareCompaction(pathEntries as unknown as SessionTreeEntry[], settings);
-	if (!result.ok) throw result.error;
-	return result.value;
+	// Single (non-`unknown`) cast: pi's SessionEntry union is a structural subset
+	// of harness's SessionTreeEntry, so this is assignable directly. Keeping it a
+	// single cast (not `as unknown as`) means TS will error here if the two type
+	// definitions ever drift apart, rather than silently masking the mismatch.
+	const result = harnessPrepareCompaction(pathEntries as SessionTreeEntry[], settings);
+	return unwrap(result);
 }
 
 /**
@@ -119,6 +148,5 @@ export async function compact(
 ): Promise<CompactionResult> {
 	const models = createCompactionModels({ apiKey, headers, env, streamFn });
 	const result = await harnessCompact(preparation, models, model, customInstructions, signal, thinkingLevel);
-	if (!result.ok) throw result.error;
-	return result.value;
+	return unwrap(result);
 }

@@ -1,7 +1,7 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, Model } from "@earendil-works/pi-ai";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { type CompactionPreparation, compact, generateSummary } from "../src/core/compaction/index.ts";
+import { type CompactionPreparation, CompactionError, compact, generateSummary } from "../src/core/compaction/index.ts";
 
 const { completeSimpleMock } = vi.hoisted(() => ({
 	completeSimpleMock: vi.fn(),
@@ -130,5 +130,44 @@ describe("generateSummary reasoning options", () => {
 		await compact(preparation, createModel(false, 128000), "test-key");
 
 		expect(completeSimpleMock.mock.calls.map((call) => call[2]?.maxTokens)).toEqual([128000, 128000]);
+	});
+});
+
+// Regression guard for the harness-migration abort semantics. Before the migration
+// an in-flight cancel surfaced as an error with name "AbortError"; harness resolves
+// aborts to err(CompactionError code "aborted"). The pi adapter must preserve BOTH
+// signals (re-tagged name + stable code) so agent-session's cancel-vs-fail detection
+// keeps treating a user cancel as a cancel, not a failure.
+describe("compaction abort semantics", () => {
+	const abortedResponse: AssistantMessage = { ...mockSummaryResponse, stopReason: "aborted" };
+
+	const preparation: CompactionPreparation = {
+		firstKeptEntryId: "entry-keep",
+		messagesToSummarize: messages,
+		turnPrefixMessages: messages,
+		isSplitTurn: false,
+		tokensBefore: 600000,
+		fileOps: { read: new Set(), written: new Set(), edited: new Set() },
+		settings: { enabled: true, reserveTokens: 16384, keepRecentTokens: 20000 },
+	};
+
+	beforeEach(() => {
+		completeSimpleMock.mockReset();
+		completeSimpleMock.mockResolvedValue(abortedResponse);
+	});
+
+	it("generateSummary throws an abort-detectable error when the completion aborts", async () => {
+		const error = await generateSummary(messages, createModel(false), 2000, "test-key").catch((e) => e);
+		expect(error).toBeInstanceOf(CompactionError);
+		expect(error.code).toBe("aborted");
+		// pi's agent-session cancel check also branches on this legacy name.
+		expect(error.name).toBe("AbortError");
+	});
+
+	it("compact throws an abort-detectable error when the completion aborts", async () => {
+		const error = await compact(preparation, createModel(false), "test-key").catch((e) => e);
+		expect(error).toBeInstanceOf(CompactionError);
+		expect(error.code).toBe("aborted");
+		expect(error.name).toBe("AbortError");
 	});
 });

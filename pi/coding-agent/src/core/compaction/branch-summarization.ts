@@ -153,7 +153,9 @@ export function collectEntriesForBranchSummary(
  * subset), so the cast is runtime-safe.
  */
 export function prepareBranchEntries(entries: SessionEntry[], tokenBudget: number = 0): BranchPreparation {
-	return harnessPrepareBranchEntries(entries as unknown as SessionTreeEntry[], tokenBudget);
+	// Single (non-`unknown`) cast so TS flags any future structural drift between
+	// pi's SessionEntry and harness's SessionTreeEntry (pi's union is a subset).
+	return harnessPrepareBranchEntries(entries as SessionTreeEntry[], tokenBudget);
 }
 
 // ============================================================================
@@ -178,7 +180,7 @@ export async function generateBranchSummary(
 	const { model, apiKey, headers, env, signal, customInstructions, replaceInstructions, reserveTokens, streamFn } =
 		options;
 	const models = createCompactionModels({ apiKey, headers, env, streamFn });
-	const result = await harnessGenerateBranchSummary(entries as unknown as SessionTreeEntry[], {
+	const result = await harnessGenerateBranchSummary(entries as SessionTreeEntry[], {
 		models,
 		model,
 		signal,
