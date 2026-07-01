@@ -1,5 +1,5 @@
-import type { AssistantMessage, ImageContent, Model, Models, TextContent, Usage } from "@earendil-works/pi-ai";
-import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
+import type { AssistantMessage, Context, ImageContent, Model, Models, SimpleStreamOptions, TextContent, Usage } from "@earendil-works/pi-ai";
+import type { AgentMessage, StreamFn, ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { type CompactionEntry, CompactionError, err, ok, type Result, type SessionTreeEntry } from "../../types/types.ts";
 import {
 	convertToLlm,
@@ -93,6 +93,8 @@ export interface CompactionResult<T = unknown> {
 	firstKeptEntryId: string;
 	/** Estimated context tokens before compaction. */
 	tokensBefore: number;
+	/** Estimated context tokens after compaction, when the caller computes it. */
+	estimatedTokensAfter?: number;
 	/** Optional implementation-specific details stored with the compaction entry. */
 	details?: T;
 }
@@ -456,6 +458,29 @@ Use this EXACT format:
 
 Keep each section concise. Preserve exact file paths, function names, and error messages.`;
 
+/**
+ * Complete a summarization request, optionally streaming.
+ *
+ * When `streamFn` is provided, the request is routed through it so callers can
+ * observe streamed reasoning/output; the final `AssistantMessage` is awaited via
+ * `stream.result()`. When absent, the provider's non-streaming `completeSimple`
+ * is used. This keeps harness compaction provider-agnostic while still supporting
+ * streaming transports supplied by the caller.
+ */
+async function completeSummarization(
+	models: Models,
+	model: Model<any>,
+	context: Context,
+	options: SimpleStreamOptions,
+	streamFn?: StreamFn,
+): Promise<AssistantMessage> {
+	if (!streamFn) {
+		return models.completeSimple(model, context, options);
+	}
+	const stream = await streamFn(model, context, options);
+	return stream.result();
+}
+
 /** Generate or update a conversation summary for compaction. */
 export async function generateSummary(
 	currentMessages: AgentMessage[],
@@ -466,6 +491,7 @@ export async function generateSummary(
 	customInstructions?: string,
 	previousSummary?: string,
 	thinkingLevel?: ThinkingLevel,
+	streamFn?: StreamFn,
 ): Promise<Result<string, CompactionError>> {
 	const maxTokens = Math.min(
 		Math.floor(0.8 * reserveTokens),
@@ -496,10 +522,12 @@ export async function generateSummary(
 			? { maxTokens, signal, reasoning: thinkingLevel }
 			: { maxTokens, signal };
 
-	const response = await models.completeSimple(
+	const response = await completeSummarization(
+		models,
 		model,
 		{ systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages },
 		completionOptions,
+		streamFn,
 	);
 	if (response.stopReason === "aborted") {
 		return err(new CompactionError("aborted", response.errorMessage || "Summarization aborted"));
@@ -597,6 +625,12 @@ export function prepareCompaction(
 		}
 	}
 
+	// Nothing to summarize (e.g. a prior compaction already covered these entries
+	// and the kept window still fits): compaction is not applicable.
+	if (messagesToSummarize.length === 0 && turnPrefixMessages.length === 0) {
+		return ok(undefined);
+	}
+
 	return ok({
 		firstKeptEntryId,
 		messagesToSummarize,
@@ -634,6 +668,7 @@ export async function compact(
 	customInstructions?: string,
 	signal?: AbortSignal,
 	thinkingLevel?: ThinkingLevel,
+	streamFn?: StreamFn,
 ): Promise<Result<CompactionResult, CompactionError>> {
 	const {
 		firstKeptEntryId,
@@ -664,9 +699,18 @@ export async function compact(
 						customInstructions,
 						previousSummary,
 						thinkingLevel,
+						streamFn,
 					)
 				: Promise.resolve(ok<string, CompactionError>("No prior history.")),
-			generateTurnPrefixSummary(turnPrefixMessages, models, model, settings.reserveTokens, signal, thinkingLevel),
+			generateTurnPrefixSummary(
+				turnPrefixMessages,
+				models,
+				model,
+				settings.reserveTokens,
+				signal,
+				thinkingLevel,
+				streamFn,
+			),
 		]);
 		if (!historyResult.ok) return err(historyResult.error);
 		if (!turnPrefixResult.ok) return err(turnPrefixResult.error);
@@ -681,6 +725,7 @@ export async function compact(
 			customInstructions,
 			previousSummary,
 			thinkingLevel,
+			streamFn,
 		);
 		if (!summaryResult.ok) return err(summaryResult.error);
 		summary = summaryResult.value;
@@ -703,6 +748,7 @@ async function generateTurnPrefixSummary(
 	reserveTokens: number,
 	signal?: AbortSignal,
 	thinkingLevel?: ThinkingLevel,
+	streamFn?: StreamFn,
 ): Promise<Result<string, CompactionError>> {
 	const maxTokens = Math.min(
 		Math.floor(0.5 * reserveTokens),
@@ -719,12 +765,14 @@ async function generateTurnPrefixSummary(
 		},
 	];
 
-	const response = await models.completeSimple(
+	const response = await completeSummarization(
+		models,
 		model,
 		{ systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages },
 		model.reasoning && thinkingLevel && thinkingLevel !== "off"
 			? { maxTokens, signal, reasoning: thinkingLevel }
 			: { maxTokens, signal },
+		streamFn,
 	);
 	if (response.stopReason === "aborted") {
 		return err(new CompactionError("aborted", response.errorMessage || "Turn prefix summarization aborted"));

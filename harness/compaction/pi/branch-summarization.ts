@@ -1,6 +1,6 @@
-import type { Model, Models } from "@earendil-works/pi-ai";
+import type { AssistantMessage, Context, Model, Models, SimpleStreamOptions } from "@earendil-works/pi-ai";
 
-import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import type { AgentMessage, StreamFn } from "@earendil-works/pi-agent-core";
 import {
 	convertToLlm,
 	createBranchSummaryMessage,
@@ -61,6 +61,12 @@ export interface GenerateBranchSummaryOptions {
 	replaceInstructions?: boolean;
 	/** Tokens reserved for prompt and model output. Defaults to 16384. */
 	reserveTokens?: number;
+	/**
+	 * Optional streaming transport. When provided, the summarization request is
+	 * routed through it (final message awaited via `stream.result()`) so callers
+	 * can observe streamed output; otherwise `models.completeSimple` is used.
+	 */
+	streamFn?: StreamFn;
 }
 
 /** Collect entries that should be summarized before navigating to a different session tree entry. */
@@ -195,12 +201,33 @@ Use this EXACT format:
 
 Keep each section concise. Preserve exact file paths, function names, and error messages.`;
 
+/**
+ * Complete a branch-summary request, optionally streaming.
+ *
+ * When `streamFn` is provided the request routes through it and the final
+ * `AssistantMessage` is awaited via `stream.result()`; otherwise the provider's
+ * non-streaming `completeSimple` is used.
+ */
+async function completeBranchSummary(
+	models: Models,
+	model: Model<any>,
+	context: Context,
+	options: SimpleStreamOptions,
+	streamFn?: StreamFn,
+): Promise<AssistantMessage> {
+	if (!streamFn) {
+		return models.completeSimple(model, context, options);
+	}
+	const stream = await streamFn(model, context, options);
+	return stream.result();
+}
+
 /** Generate a summary for abandoned branch entries. */
 export async function generateBranchSummary(
 	entries: SessionTreeEntry[],
 	options: GenerateBranchSummaryOptions,
 ): Promise<Result<BranchSummaryResult, BranchSummaryError>> {
-	const { models, model, signal, customInstructions, replaceInstructions, reserveTokens = 16384 } = options;
+	const { models, model, signal, customInstructions, replaceInstructions, reserveTokens = 16384, streamFn } = options;
 	const contextWindow = model.contextWindow || 128000;
 	const tokenBudget = contextWindow - reserveTokens;
 
@@ -228,10 +255,12 @@ export async function generateBranchSummary(
 			timestamp: Date.now(),
 		},
 	];
-	const response = await models.completeSimple(
+	const response = await completeBranchSummary(
+		models,
 		model,
 		{ systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages },
 		{ signal, maxTokens: 2048 },
+		streamFn,
 	);
 	if (response.stopReason === "aborted") {
 		return err(new BranchSummaryError("aborted", response.errorMessage || "Branch summary aborted"));
