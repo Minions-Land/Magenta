@@ -2,6 +2,12 @@
 export * from "./loop/pi/agent-harness.js";
 export * from "./compaction/pi/compaction.js";
 export * from "./compaction/pi/branch-summarization.js";
+export {
+	computeFileLists,
+	createFileOps,
+	extractFileOpsFromMessage,
+	formatFileOperations,
+} from "./compaction/pi/utils.js";
 export * from "./messages/messages.js";
 export * from "./prompt-templates/pi/prompt-templates.js";
 export * from "./session/pi/session.js";
