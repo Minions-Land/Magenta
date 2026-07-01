@@ -357,7 +357,14 @@ describe("harness compaction", () => {
 		const u3 = createMessageEntry(createUserMessage("user msg 3"), compaction1.id);
 		const a3 = createMessageEntry(createAssistantMessage("assistant msg 3", createMockUsage(8000, 2000)), u3.id);
 		const pathEntries = [u1, a1, u2, a2, compaction1, u3, a3];
-		const preparation = getOrThrow(prepareCompaction(pathEntries, DEFAULT_COMPACTION_SETTINGS));
+		// Shrink the keep-window so compaction is actually applicable for this toy
+		// conversation; with DEFAULT settings (keepRecentTokens 20000) the 7 tiny
+		// messages all fit the retained window and prepareCompaction correctly
+		// returns undefined (nothing new to summarize). Matches the sibling
+		// split-turn test's settings above.
+		const preparation = getOrThrow(
+			prepareCompaction(pathEntries, { enabled: true, reserveTokens: 100, keepRecentTokens: 1 }),
+		);
 		expect(preparation).toBeDefined();
 		expect(preparation?.previousSummary).toBe("First summary");
 		expect(preparation?.firstKeptEntryId).toBeTruthy();
@@ -639,7 +646,14 @@ describe("harness compaction", () => {
 		const a1 = createMessageEntry(assistantMessage, u1.id);
 		const u2 = createMessageEntry(createUserMessage("continue"), a1.id);
 		const a2 = createMessageEntry(createAssistantMessage("done", createMockUsage(4000, 500)), u2.id);
-		const preparation = getOrThrow(prepareCompaction([u1, a1, u2, a2], DEFAULT_COMPACTION_SETTINGS));
+		// keepRecentTokens 2 lands the cut on the u2 user-message boundary (non-split
+		// turn), so [u1, a1] is summarized in a single pass — a1 carries the `read`
+		// tool call, populating result.details. DEFAULT settings would retain
+		// everything (undefined); keepRecentTokens 1 would cut mid-turn and require a
+		// second turn-prefix summary the faux model doesn't queue.
+		const preparation = getOrThrow(
+			prepareCompaction([u1, a1, u2, a2], { enabled: true, reserveTokens: 100, keepRecentTokens: 2 }),
+		);
 		expect(preparation).toBeDefined();
 		const { faux, model } = createFauxModel(false);
 		faux.setResponses([fauxAssistantMessage("## Goal\nTest summary")]);
