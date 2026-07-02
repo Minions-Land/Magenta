@@ -28,7 +28,10 @@ capability-level pieces and recombine them.
 Magenta3 should be able to decompose mature agent harnesses into loose,
 capability-level parts and reassemble them. A module directory is therefore a
 stable capability slot; its source subdirectories are mature-agent
-implementations of that slot.
+implementations of that slot. Source names are origin Agent names, not
+language/runtime labels. Magenta and Magenta1 material uses `magenta`; Pi
+material uses `pi`; future Codex, JCode, and Claude Code material should use
+`codex`, `jcode`, and `claude-code`.
 
 Example:
 
@@ -36,6 +39,7 @@ Example:
 harness/tools/bash/
   bash.toml
   pi/
+  magenta/
   codex/
   jcode/
   claude-code/
@@ -75,7 +79,7 @@ This lets Magenta3 assemble combinations such as:
 ## Current Evidence
 
 - `npm run check:structure`: passed.
-- `npm run inspect`: 31 registered components/modules and 1 catalog.
+- `npm run inspect`: 40 registered components/modules and 1 catalog.
 - The TUI `/harness` menu has current runtime actions for Tools, Compaction,
   Skills, Hooks, Memory, Registry, and Catalog, plus a registry-driven
   `Modules` group for inspecting every registered capability slot and
@@ -100,9 +104,8 @@ This lets Magenta3 assemble combinations such as:
    Harness Modules, even if they are not runtime-switchable.
 4. `mcp/` has documentation but no TOML registration or implementation. It is a
    future module placeholder, not a selectable module yet.
-5. `process-tools/` is a Rust implementation root used by
-   `tools/process/process-tools.toml`, but the top-level directory is not itself
-   registered. That makes ownership unclear.
+5. Magenta process-tool code must live under its functional module/source
+   directory, not as a harness top-level folder or `tools/process` slot.
 6. `docs/`, `scripts/`, `test/`, generated `dist/`, `node_modules/`, and Rust
    `target/` are support/output directories. They should be excluded from module
    selection by rule, not by accident.
@@ -142,7 +145,7 @@ hardcoded in the TUI:
 - `runtime`, `sandbox`, `policy`, `context`, `env`, `session`,
   `system-prompt`, `prompt-templates`, `loop`, `utils`: currently registered but
   not surfaced as first-class `/harness` module rows or implementation choices.
-- `catalog`, `package-overlay`, `registry`, `hcp-process`, `process-tools`:
+- `catalog`, `registry`, `hcp-process`:
   inspectable module rows; some are not runtime-switchable.
 - `messages`, `types`: register as `contract` modules and show as read-only.
 - `mcp`: either register as `deferred` with explicit status or move out of the
@@ -171,7 +174,10 @@ Replace most hardcoded `/harness` categories with registry-driven rows:
 - Catalog candidates from `listHarnessSelectionItems()`.
 - Each row should expose:
   - status: active, registered, inspect-only, deferred, missing, or unsupported
-  - source: pi, codex, jcode, claude-code, rust, process, package, catalog, contract
+  - source: pi, magenta, codex, jcode, claude-code, contract, or another
+    origin-agent name
+  - runtime metadata: native TypeScript, Rust process, Python, script, MCP,
+    package overlay, or catalog-backed
   - actions: choose implementation, enable, disable, inspect, smoke, or explain
     why not switchable
 

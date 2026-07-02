@@ -4,7 +4,7 @@
 kind = "sandbox"
 name = "trusted"
 description = "Broad access (network + writes) for explicitly trusted tools."
-source = "magenta-native"
+source = "magenta"
 origin = "magenta1-general-harness"
 origin_rel = "migrated/adapted"
 

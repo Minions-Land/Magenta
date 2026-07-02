@@ -28,7 +28,7 @@ describe("context provider", () => {
 		expect(files[0]?.content).toContain("@ignored.md");
 		expect(files[0]?.content).not.toContain("must stay fenced");
 		expect(files[1]).toMatchObject({
-			provider: "magenta-native",
+			provider: "magenta",
 			sticky: true,
 			content: "sticky rules",
 		});

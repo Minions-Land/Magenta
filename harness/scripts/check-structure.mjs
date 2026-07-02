@@ -22,9 +22,7 @@ const allowedTopLevel = new Set([
 	"memory",
 	"messages",
 	"package.json",
-	"package-overlay",
 	"policy",
-	"process-tools",
 	"prompt-templates",
 	"runtime",
 	"sandbox",
@@ -54,9 +52,7 @@ const sourceModuleDirs = [
 	"mcp",
 	"memory",
 	"messages",
-	"package-overlay",
 	"policy",
-	"process-tools",
 	"prompt-templates",
 	"runtime",
 	"sandbox",
@@ -204,13 +200,26 @@ function checkRepoPackages() {
 	}
 }
 
+function checkToolLayout() {
+	const processDir = join(harnessRoot, "tools", "process");
+	if (existsSync(processDir)) {
+		fail("harness/tools/process is invalid; process-backed implementations must live under tools/<tool>/<source>/");
+	}
+}
+
 function checkGeneratedNoise() {
 	const generated = [
 		join(harnessRoot, "dist"),
 		join(harnessRoot, "node_modules"),
 		join(harnessRoot, "memory", "dist"),
-		join(harnessRoot, "process-tools", "target"),
 	];
+	const toolsRoot = join(harnessRoot, "tools");
+	if (existsSync(toolsRoot)) {
+		for (const entry of readdirSync(toolsRoot, { withFileTypes: true })) {
+			if (!entry.isDirectory()) continue;
+			generated.push(join(toolsRoot, entry.name, "magenta", "process-tools", "target"));
+		}
+	}
 	for (const path of generated) {
 		if (existsSync(path)) {
 			const stat = statSync(path);
@@ -223,6 +232,7 @@ checkTopLevel();
 checkReadmes();
 checkRegistry();
 checkRepoPackages();
+checkToolLayout();
 checkGeneratedNoise();
 
 for (const message of notes) console.log(`note: ${message}`);

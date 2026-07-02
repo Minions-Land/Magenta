@@ -1,7 +1,7 @@
 kind = "sandbox-pack"
 name = "sandbox"
 description = "Sandbox profile catalog and selection provider migrated from Magenta1 general-harness."
-source = "magenta-native"
+source = "magenta"
 origin = "magenta1-general-harness"
 origin_rel = "migrated/adapted"
 impl = ["sandbox/pi/sandbox.ts"]

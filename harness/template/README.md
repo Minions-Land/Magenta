@@ -11,14 +11,15 @@ harness/<module-name>/
   <module-name>.toml    — Registration metadata (kind, name, description, source)
   pi/                   — Pi-sourced implementations (TypeScript)
     *.ts                — Implementation files
-  rust/                 — (future) Rust-sourced implementations
-  mcp/                  — (future) MCP-sourced implementations
+  magenta/              — Magenta-sourced implementations, possibly Rust/MCP-backed
+  codex/                — (future) Codex-sourced implementations
+  claude-code/          — (future) Claude Code-sourced implementations
   README.md             — Module documentation
 ```
 
 ## Key Principles
 
-1. **Source Separation**: Implementations are organized by source (`pi/`, `rust/`, `mcp/`, etc.), not mixed in the module root.
+1. **Source Separation**: Implementations are organized by origin Agent/source (`pi/`, `magenta/`, `codex/`, `claude-code/`, etc.), not by runtime mechanism. Rust, MCP, Python, and process details live inside the owning Source directory.
 
 2. **Top-Level Registration**: The `.toml` file at module root declares the component for the harness registry. It's indexed in `harness/harness.toml`.
 

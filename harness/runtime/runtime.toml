@@ -1,7 +1,7 @@
 kind = "runtime"
 name = "process"
 description = "Process runtime provider with Magenta1 portable sandbox guardrails ported to TypeScript."
-source = "magenta-native"
+source = "magenta"
 origin = "magenta1-general-harness"
 origin_rel = "ported/adapted"
 target = "runtime://process"

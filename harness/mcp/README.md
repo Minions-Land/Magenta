@@ -4,14 +4,14 @@ This directory is **reserved for future MCP (Model Context Protocol) implementat
 
 ## Purpose
 
-MCP is a protocol for connecting AI assistants to external data sources and tools. When Magenta integrates MCP support, implementations will live here following the standard harness module pattern:
+MCP is a protocol for connecting AI assistants to external data sources and tools. When Magenta integrates MCP support, MCP will be an adapter/runtime detail inside origin Source implementations, not a Source name by itself:
 
 ```
 harness/<module>/
   <module>.toml       — Registration metadata
   pi/                 — Pi-sourced TypeScript implementations
-  mcp/                — MCP-sourced implementations (future)
-  rust/               — Rust-sourced implementations (future)
+  magenta/            — Magenta-sourced implementations, possibly Rust or MCP-backed
+  codex/              — Future Codex-sourced implementations
   README.md           — Module documentation
 ```
 
@@ -39,7 +39,7 @@ When MCP support is added, this directory will enable:
 
 When MCP implementations arrive:
 
-- **Source separation**: MCP implementations will live in `<module>/mcp/` subdirectories, not mixed with `pi/` code
+- **Source separation**: MCP-backed implementations live under their origin Source directory, for example `<module>/magenta/` or `<module>/codex/`
 - **Magnet adaptation**: MCP tools will be wrapped by `McpMagnet` connectors to expose the standard `AgentTool` interface
 - **HCP management**: MCP connections will be managed via HCP, not on the agent loop hot path
 - **No pi dependency**: MCP implementations won't require pi-specific code

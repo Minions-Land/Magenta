@@ -190,7 +190,7 @@ export class ApprovalPolicyProvider {
 			description: "Resolve tool approval decisions from tool tier, session mode, user policy, and safety override.",
 			metadata: {
 				implementation: "native-ts",
-				source: "magenta-native",
+				source: "magenta",
 				origin: "magenta1-general-harness",
 			},
 		};

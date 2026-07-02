@@ -456,7 +456,7 @@ export class ProcessRuntimeProvider {
 			description: "Spawn a local process with Magenta portable sandbox guardrails.",
 			metadata: {
 				implementation: "native-ts",
-				source: "magenta-native",
+				source: "magenta",
 				origin: "magenta1-general-harness",
 				osEnforcement: false,
 			},

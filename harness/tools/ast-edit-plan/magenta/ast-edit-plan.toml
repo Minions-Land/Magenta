@@ -1,0 +1,47 @@
+kind = "process"
+name = "AstEditPlan"
+description = "Internal AST-aware edit planner that converts structural replacements into hashline patches for Resolve."
+command = "tools/ast-edit-plan/magenta/process-tools/target/release/magenta-process-tools"
+args = ["ast-edit-plan"]
+operation = "read"
+read_only = true
+destructive = false
+internal = true
+version = "1.0.0"
+tags = ["filesystem", "read", "ast", "tree-sitter", "structural-edit", "internal"]
+capabilities = ["ast-grep", "tree-sitter", "structural-code-edit", "hashline-patch-plan", "preview"]
+requires = []
+
+[parameters]
+type = "object"
+required = ["file_path", "pattern", "replacement"]
+
+[parameters.properties.file_path]
+type = "string"
+description = "Absolute path to the file to plan edits for."
+
+[parameters.properties.pattern]
+type = "string"
+description = "ast-grep pattern. Use $NAME for captures, $_ for a single anonymous node, and $$$NAME for zero or more nodes."
+
+[parameters.properties.replacement]
+type = "string"
+description = "Replacement source text for each structural match."
+
+[parameters.properties.lang]
+type = "string"
+description = "Optional language override: javascript, typescript, tsx, rust, or python"
+
+[parameters.properties.selector]
+type = "string"
+description = "Optional contextual selector kind for patterns that need parse context"
+
+[parameters.properties.strictness]
+type = "string"
+description = "Match strictness: cst, smart, ast, relaxed, signature, or template"
+default = "smart"
+
+[parameters.properties.limit]
+type = "integer"
+description = "Maximum replacements to plan"
+default = 50

@@ -336,10 +336,7 @@ const KNOWN_IMPLEMENTATION_SOURCES = new Set([
 	"codex",
 	"jcode",
 	"claude-code",
-	"rust",
-	"mcp",
-	"process",
-	"package",
+	"magenta",
 ]);
 
 const CORE_EXCEPTION_MODULE_IDS = new Set(["assembly/hcp", "assembly/magnet"]);

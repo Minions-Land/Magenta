@@ -1,7 +1,7 @@
 kind = "example"
 name = "module-name"
 description = "Brief description of what this module does"
-source = "pi"  # or rust, mcp, etc.
+source = "pi"  # or codex, claude-code, magenta, etc.
 
 # Optional: if this component accepts parameters
 # [parameters]

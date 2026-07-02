@@ -9,9 +9,13 @@ Date: 2026-07-02
   - `cd harness && npm test`: 23 files, 174 tests passed.
   - `cd harness && npm run build`: passed.
 - Governance files and a read-only structure check have been added.
-- The former `harness/packages` module has been renamed to
-  `harness/package-overlay` so the only package content root is the
-  repository-level `packages/` directory.
+- Package overlay assembly lives under `harness/assembly/package-overlay`, so
+  the only package content root is the repository-level `packages/` directory.
+- Harness Source names now mean origin Agent names. Magenta/Magenta1-related
+  implementation material uses `magenta`.
+- Process-backed Magenta tool implementations are owned by their functional
+  tool slots, for example `harness/tools/read/magenta/`; `harness/tools/process`
+  and root-level `harness/process-tools` are invalid.
 - `packages/AutOmicScience` now uses profile-local `general/` and `task/`
   directories; the old internal `domain-harness/` and top-level `skills/`
   split has been removed.
@@ -73,7 +77,7 @@ Date: 2026-07-02
 - `harness/scripts/check-structure.mjs`
 - `harness/scripts/inspect.mjs`
 - `harness/scripts/lib/files.mjs`
-- `harness/package-overlay/`
+- `harness/assembly/package-overlay/`
 - `harness/test/README.md`
 - `harness/test/package-overlay.test.ts`
 - `npm run check:structure`
@@ -99,12 +103,16 @@ Date: 2026-07-02
 ## Latest Verification
 
 - `cd harness && npm run check:structure`: passed.
-- `cd harness && npm run inspect`: passed; 31 components/modules, including 2
-  read-only contract modules and 2 HCP/Magnet core exceptions.
+- `cd harness && npm run inspect`: passed; 40 components/modules, including 17
+  tool modules, 2 read-only contract modules, and 2 HCP/Magnet core exceptions.
 - `cd harness && node scripts/inspect.mjs --json`: valid JSON; parsed
   registry/package tool summary and module implementation rows successfully.
 - `cd harness && npm test`: 23 files, 174 tests passed.
 - `cd harness && npm run build`: passed.
+- `git diff --check`: passed.
+- Path audit confirmed no source `harness/tools/process`, no root
+  `harness/process-tools`, and package overlay under
+  `harness/assembly/package-overlay`.
 - `cd pi/coding-agent && npm run build`: passed.
 - `cd pi/coding-agent && npx vitest --run test/args.test.ts`: 74 tests passed.
 - `cd pi/coding-agent && node dist/cli.js --harness-list`: printed 31 registry

@@ -41,7 +41,7 @@ export interface ProcessToolManifest {
 
 export interface ProcessToolMagnetOptions {
 	manifest: ProcessToolManifest;
-	/** Root used to resolve manifest commands like `bins/process-tools/...`. */
+	/** Root used to resolve package-relative manifest commands. */
 	manifestRoot: string;
 	/** Workspace cwd passed as the child working directory. */
 	cwd: string;
@@ -255,7 +255,7 @@ async function fileExists(path: string): Promise<boolean> {
 }
 
 function isMigratedProcessToolBinary(command: string): boolean {
-	return command.endsWith("/process-tools/target/release/magenta-process-tools");
+	return /\/tools\/[^/]+\/magenta\/process-tools\/target\/release\/magenta-process-tools$/.test(command);
 }
 
 function inferProcessToolsCrateDir(command: string): string {

@@ -57,7 +57,7 @@
       "task-harness": 4
     },
     "by_source": {
-      "magenta-native": 72,
+      "magenta": 72,
       "lazypi": 4,
       "external-upstream": 4,
       "opencode": 1,
@@ -84,7 +84,7 @@
     "domain-specific native pack": "Domain pack material under packs/, outside domain-free General Harness."
   },
   "source_references": {
-    "magenta-native": {
+    "magenta": {
       "label": "Magenta native",
       "relationship": "native",
       "reference_paths": [],
@@ -172,7 +172,7 @@
         "Rust",
         "TOML"
       ],
-      "source": "magenta-native",
+      "source": "magenta",
       "components": [
         {
           "id": "runtime-provider:scaffold:default",
@@ -193,7 +193,7 @@
             "TOML",
             "Rust"
           ],
-          "origin": "magenta-native",
+          "origin": "magenta",
           "origin_rel": "native",
           "origin_confidence": "high",
           "refs": []
@@ -210,7 +210,7 @@
       "primary_languages": [
         "Rust"
       ],
-      "source": "magenta-native",
+      "source": "magenta",
       "components": [
         {
           "id": "general-harness:multiagent:local",
@@ -229,7 +229,7 @@
             "Markdown",
             "Rust"
           ],
-          "origin": "magenta-native",
+          "origin": "magenta",
           "origin_rel": "native",
           "origin_confidence": "high",
           "refs": []
@@ -251,7 +251,7 @@
             "Markdown",
             "Rust"
           ],
-          "origin": "magenta-native",
+          "origin": "magenta",
           "origin_rel": "native",
           "origin_confidence": "high",
           "refs": []
@@ -273,7 +273,7 @@
             "Markdown",
             "Rust"
           ],
-          "origin": "magenta-native",
+          "origin": "magenta",
           "origin_rel": "native",
           "origin_confidence": "high",
           "refs": []
@@ -294,7 +294,7 @@
           "lang": [
             "Rust"
           ],
-          "origin": "magenta-native",
+          "origin": "magenta",
           "origin_rel": "native",
           "origin_confidence": "high",
           "refs": []
@@ -316,7 +316,7 @@
             "Markdown",
             "Rust"
           ],
-          "origin": "magenta-native",
+          "origin": "magenta",
           "origin_rel": "native",
           "origin_confidence": "high",
           "refs": []
@@ -338,7 +338,7 @@
             "Markdown",
             "Rust"
           ],
-          "origin": "magenta-native",
+          "origin": "magenta",
           "origin_rel": "native",
           "origin_confidence": "high",
           "refs": []
@@ -359,7 +359,7 @@
           "lang": [
             "Rust"
           ],
-          "origin": "magenta-native",
+          "origin": "magenta",
           "origin_rel": "native",
           "origin_confidence": "high",
           "refs": []
@@ -380,7 +380,7 @@
           "lang": [
             "Rust"
           ],
-          "origin": "magenta-native",
+          "origin": "magenta",
           "origin_rel": "native",
           "origin_confidence": "high",
           "refs": []
@@ -402,7 +402,7 @@
             "Markdown",
             "Rust"
           ],
-          "origin": "magenta-native",
+          "origin": "magenta",
           "origin_rel": "native",
           "origin_confidence": "high",
           "refs": []
@@ -424,7 +424,7 @@
             "Markdown",
             "Rust"
           ],
-          "origin": "magenta-native",
+          "origin": "magenta",
           "origin_rel": "native",
           "origin_confidence": "high",
           "refs": []
@@ -447,7 +447,7 @@
             "TOML",
             "Rust"
           ],
-          "origin": "magenta-native",
+          "origin": "magenta",
           "origin_rel": "native",
           "origin_confidence": "high",
           "refs": []
@@ -470,7 +470,7 @@
             "TOML",
             "Rust"
           ],
-          "origin": "magenta-native",
+          "origin": "magenta",
           "origin_rel": "native",
           "origin_confidence": "high",
           "refs": []
@@ -493,7 +493,7 @@
             "TOML",
             "Rust"
           ],
-          "origin": "magenta-native",
+          "origin": "magenta",
           "origin_rel": "native",
           "origin_confidence": "high",
           "refs": []
@@ -516,7 +516,7 @@
             "TOML",
             "Rust"
           ],
-          "origin": "magenta-native",
+          "origin": "magenta",
           "origin_rel": "native",
           "origin_confidence": "high",
           "refs": []
@@ -539,7 +539,7 @@
             "TOML",
             "Rust"
           ],
-          "origin": "magenta-native",
+          "origin": "magenta",
           "origin_rel": "native",
           "origin_confidence": "high",
           "refs": []
@@ -561,7 +561,7 @@
           "lang": [
             "Rust"
           ],
-          "origin": "magenta-native",
+          "origin": "magenta",
           "origin_rel": "native",
           "origin_confidence": "high",
           "refs": []
@@ -583,7 +583,7 @@
           "lang": [
             "Rust"
           ],
-          "origin": "magenta-native",
+          "origin": "magenta",
           "origin_rel": "native",
           "origin_confidence": "high",
           "refs": []
@@ -604,7 +604,7 @@
           "lang": [
             "Rust"
           ],
-          "origin": "magenta-native",
+          "origin": "magenta",
           "origin_rel": "native",
           "origin_confidence": "high",
           "refs": []
@@ -625,7 +625,7 @@
           "lang": [
             "Rust"
           ],
-          "origin": "magenta-native",
+          "origin": "magenta",
           "origin_rel": "native",
           "origin_confidence": "high",
           "refs": []
@@ -646,7 +646,7 @@
           "lang": [
             "Rust"
           ],
-          "origin": "magenta-native",
+          "origin": "magenta",
           "origin_rel": "native",
           "origin_confidence": "high",
           "refs": []
@@ -667,7 +667,7 @@
           "lang": [
             "Rust"
           ],
-          "origin": "magenta-native",
+          "origin": "magenta",
           "origin_rel": "native",
           "origin_confidence": "high",
           "refs": []
@@ -688,7 +688,7 @@
           "lang": [
             "Rust"
           ],
-          "origin": "magenta-native",
+          "origin": "magenta",
           "origin_rel": "native",
           "origin_confidence": "high",
           "refs": []
@@ -709,7 +709,7 @@
           "lang": [
             "Rust"
           ],
-          "origin": "magenta-native",
+          "origin": "magenta",
           "origin_rel": "native",
           "origin_confidence": "high",
           "refs": []
@@ -730,7 +730,7 @@
           "lang": [
             "Rust"
           ],
-          "origin": "magenta-native",
+          "origin": "magenta",
           "origin_rel": "native",
           "origin_confidence": "high",
           "refs": []
@@ -751,7 +751,7 @@
           "lang": [
             "Rust"
           ],
-          "origin": "magenta-native",
+          "origin": "magenta",
           "origin_rel": "native",
           "origin_confidence": "high",
           "refs": []
@@ -773,7 +773,7 @@
           "lang": [
             "Rust"
           ],
-          "origin": "magenta-native",
+          "origin": "magenta",
           "origin_rel": "native",
           "origin_confidence": "high",
           "refs": []
@@ -794,7 +794,7 @@
           "lang": [
             "Rust"
           ],
-          "origin": "magenta-native",
+          "origin": "magenta",
           "origin_rel": "native",
           "origin_confidence": "high",
           "refs": []
@@ -814,7 +814,7 @@
         "TOML",
         "Rust"
       ],
-      "source": "magenta-native/oh-my-pi-reference",
+      "source": "magenta/oh-my-pi-reference",
       "components": [
         {
           "id": "general-harness:mcp:echo-json",
@@ -835,7 +835,7 @@
             "TOML",
             "Rust"
           ],
-          "origin": "magenta-native",
+          "origin": "magenta",
           "origin_rel": "native",
           "origin_confidence": "high",
           "refs": []
@@ -859,7 +859,7 @@
             "TOML",
             "Rust"
           ],
-          "origin": "magenta-native",
+          "origin": "magenta",
           "origin_rel": "native",
           "origin_confidence": "high",
           "refs": []
@@ -910,7 +910,7 @@
             "TOML",
             "Rust"
           ],
-          "origin": "magenta-native",
+          "origin": "magenta",
           "origin_rel": "native",
           "origin_confidence": "high",
           "refs": []
@@ -934,7 +934,7 @@
             "TOML",
             "Rust"
           ],
-          "origin": "magenta-native",
+          "origin": "magenta",
           "origin_rel": "native",
           "origin_confidence": "high",
           "refs": []
@@ -985,7 +985,7 @@
             "TOML",
             "Rust"
           ],
-          "origin": "magenta-native",
+          "origin": "magenta",
           "origin_rel": "native",
           "origin_confidence": "high",
           "refs": []
@@ -1009,7 +1009,7 @@
             "TOML",
             "Rust"
           ],
-          "origin": "magenta-native",
+          "origin": "magenta",
           "origin_rel": "native",
           "origin_confidence": "high",
           "refs": []
@@ -1033,7 +1033,7 @@
             "TOML",
             "Rust"
           ],
-          "origin": "magenta-native",
+          "origin": "magenta",
           "origin_rel": "native",
           "origin_confidence": "high",
           "refs": []
@@ -1057,7 +1057,7 @@
             "TOML",
             "Rust"
           ],
-          "origin": "magenta-native",
+          "origin": "magenta",
           "origin_rel": "native",
           "origin_confidence": "high",
           "refs": []
@@ -1189,7 +1189,7 @@
             "TOML",
             "Rust"
           ],
-          "origin": "magenta-native",
+          "origin": "magenta",
           "origin_rel": "native",
           "origin_confidence": "high",
           "refs": []
@@ -1213,7 +1213,7 @@
             "TOML",
             "Rust"
           ],
-          "origin": "magenta-native",
+          "origin": "magenta",
           "origin_rel": "native",
           "origin_confidence": "high",
           "refs": []
@@ -1237,7 +1237,7 @@
             "TOML",
             "Rust"
           ],
-          "origin": "magenta-native",
+          "origin": "magenta",
           "origin_rel": "native",
           "origin_confidence": "high",
           "refs": []
@@ -1256,7 +1256,7 @@
         "TOML",
         "Rust"
       ],
-      "source": "magenta-native/oh-my-pi-reference",
+      "source": "magenta/oh-my-pi-reference",
       "components": [
         {
           "id": "general-harness:declared:Read",
@@ -1275,7 +1275,7 @@
             "TOML",
             "Rust"
           ],
-          "origin": "magenta-native",
+          "origin": "magenta",
           "origin_rel": "native",
           "origin_confidence": "high",
           "refs": []
@@ -1322,7 +1322,7 @@
             "TOML",
             "Rust"
           ],
-          "origin": "magenta-native",
+          "origin": "magenta",
           "origin_rel": "native",
           "origin_confidence": "high",
           "refs": []
@@ -1344,7 +1344,7 @@
             "TOML",
             "Rust"
           ],
-          "origin": "magenta-native",
+          "origin": "magenta",
           "origin_rel": "native",
           "origin_confidence": "high",
           "refs": []
@@ -1391,7 +1391,7 @@
             "TOML",
             "Rust"
           ],
-          "origin": "magenta-native",
+          "origin": "magenta",
           "origin_rel": "native",
           "origin_confidence": "high",
           "refs": []
@@ -1413,7 +1413,7 @@
             "TOML",
             "Rust"
           ],
-          "origin": "magenta-native",
+          "origin": "magenta",
           "origin_rel": "native",
           "origin_confidence": "high",
           "refs": []
@@ -1435,7 +1435,7 @@
             "TOML",
             "Rust"
           ],
-          "origin": "magenta-native",
+          "origin": "magenta",
           "origin_rel": "native",
           "origin_confidence": "high",
           "refs": []
@@ -1457,7 +1457,7 @@
             "TOML",
             "Rust"
           ],
-          "origin": "magenta-native",
+          "origin": "magenta",
           "origin_rel": "native",
           "origin_confidence": "high",
           "refs": []
@@ -1579,7 +1579,7 @@
             "TOML",
             "Rust"
           ],
-          "origin": "magenta-native",
+          "origin": "magenta",
           "origin_rel": "native",
           "origin_confidence": "high",
           "refs": []
@@ -1601,7 +1601,7 @@
             "TOML",
             "Rust"
           ],
-          "origin": "magenta-native",
+          "origin": "magenta",
           "origin_rel": "native",
           "origin_confidence": "high",
           "refs": []
@@ -1623,7 +1623,7 @@
             "TOML",
             "Rust"
           ],
-          "origin": "magenta-native",
+          "origin": "magenta",
           "origin_rel": "native",
           "origin_confidence": "high",
           "refs": []
@@ -1645,7 +1645,7 @@
             "TOML",
             "Rust"
           ],
-          "origin": "magenta-native",
+          "origin": "magenta",
           "origin_rel": "native",
           "origin_confidence": "high",
           "refs": []
@@ -1667,7 +1667,7 @@
         "TOML",
         "Rust"
       ],
-      "source": "magenta-native/opencode-reference/external-upstream",
+      "source": "magenta/opencode-reference/external-upstream",
       "components": [
         {
           "id": "general-harness:adapter:rmcp",
@@ -1759,7 +1759,7 @@
             "TOML",
             "Rust"
           ],
-          "origin": "magenta-native",
+          "origin": "magenta",
           "origin_rel": "native",
           "origin_confidence": "high",
           "refs": []
@@ -1781,7 +1781,7 @@
             "TOML",
             "Rust"
           ],
-          "origin": "magenta-native",
+          "origin": "magenta",
           "origin_rel": "native",
           "origin_confidence": "high",
           "refs": []
@@ -1803,7 +1803,7 @@
             "TOML",
             "Rust"
           ],
-          "origin": "magenta-native",
+          "origin": "magenta",
           "origin_rel": "native",
           "origin_confidence": "high",
           "refs": []
@@ -1847,7 +1847,7 @@
             "TOML",
             "Rust"
           ],
-          "origin": "magenta-native",
+          "origin": "magenta",
           "origin_rel": "native",
           "origin_confidence": "high",
           "refs": []
@@ -1869,7 +1869,7 @@
             "TOML",
             "Rust"
           ],
-          "origin": "magenta-native",
+          "origin": "magenta",
           "origin_rel": "native",
           "origin_confidence": "high",
           "refs": []
@@ -1891,7 +1891,7 @@
         "Rust",
         "TOML"
       ],
-      "source": "magenta-native/external-upstream",
+      "source": "magenta/external-upstream",
       "components": [
         {
           "id": "general-harness:runtime:shell",
@@ -1911,7 +1911,7 @@
             "Markdown",
             "Rust"
           ],
-          "origin": "magenta-native",
+          "origin": "magenta",
           "origin_rel": "native",
           "origin_confidence": "high",
           "refs": []
@@ -1934,7 +1934,7 @@
             "Markdown",
             "Rust"
           ],
-          "origin": "magenta-native",
+          "origin": "magenta",
           "origin_rel": "native",
           "origin_confidence": "high",
           "refs": []
@@ -1957,7 +1957,7 @@
             "Markdown",
             "Rust"
           ],
-          "origin": "magenta-native",
+          "origin": "magenta",
           "origin_rel": "native",
           "origin_confidence": "high",
           "refs": []
@@ -1980,7 +1980,7 @@
             "Markdown",
             "Rust"
           ],
-          "origin": "magenta-native",
+          "origin": "magenta",
           "origin_rel": "native",
           "origin_confidence": "high",
           "refs": []
@@ -2003,7 +2003,7 @@
             "Markdown",
             "Rust"
           ],
-          "origin": "magenta-native",
+          "origin": "magenta",
           "origin_rel": "native",
           "origin_confidence": "high",
           "refs": []
@@ -2049,7 +2049,7 @@
           "lang": [
             "Rust"
           ],
-          "origin": "magenta-native",
+          "origin": "magenta",
           "origin_rel": "native",
           "origin_confidence": "high",
           "refs": []
@@ -2071,7 +2071,7 @@
         "TOML",
         "Rust"
       ],
-      "source": "magenta-native/lazypi-reference",
+      "source": "magenta/lazypi-reference",
       "components": [
         {
           "id": "general-harness:event:manager",
@@ -2162,7 +2162,7 @@
         "Markdown",
         "Rust"
       ],
-      "source": "magenta-native/pi-oh-my-pi-reference",
+      "source": "magenta/pi-oh-my-pi-reference",
       "components": [
         {
           "id": "general-harness:loop:react-loop",
@@ -2182,7 +2182,7 @@
             "Markdown",
             "Rust"
           ],
-          "origin": "magenta-native",
+          "origin": "magenta",
           "origin_rel": "native",
           "origin_confidence": "high",
           "refs": []
@@ -2205,7 +2205,7 @@
             "Markdown",
             "Rust"
           ],
-          "origin": "magenta-native",
+          "origin": "magenta",
           "origin_rel": "native",
           "origin_confidence": "high",
           "refs": []
@@ -2229,7 +2229,7 @@
         "TOML",
         "Rust"
       ],
-      "source": "magenta-native",
+      "source": "magenta",
       "components": [
         {
           "id": "general-harness:recipe:echo-plan",
@@ -2248,7 +2248,7 @@
             "TOML",
             "Rust"
           ],
-          "origin": "magenta-native",
+          "origin": "magenta",
           "origin_rel": "native",
           "origin_confidence": "high",
           "refs": []
@@ -2270,7 +2270,7 @@
             "Markdown",
             "Rust"
           ],
-          "origin": "magenta-native",
+          "origin": "magenta",
           "origin_rel": "native",
           "origin_confidence": "high",
           "refs": []
@@ -2292,7 +2292,7 @@
             "Markdown",
             "Rust"
           ],
-          "origin": "magenta-native",
+          "origin": "magenta",
           "origin_rel": "native",
           "origin_confidence": "high",
           "refs": []
@@ -2314,7 +2314,7 @@
             "Markdown",
             "Rust"
           ],
-          "origin": "magenta-native",
+          "origin": "magenta",
           "origin_rel": "native",
           "origin_confidence": "high",
           "refs": []
@@ -2336,7 +2336,7 @@
         "Rust",
         "TOML"
       ],
-      "source": "magenta-native/opencode-reference/pi-reference",
+      "source": "magenta/opencode-reference/pi-reference",
       "components": [
         {
           "id": "general-harness:system-prompt:magenta-default",
@@ -2353,7 +2353,7 @@
             "Markdown",
             "Rust"
           ],
-          "origin": "magenta-native",
+          "origin": "magenta",
           "origin_rel": "native",
           "origin_confidence": "high",
           "refs": []
@@ -2377,7 +2377,7 @@
           "lang": [
             "Rust"
           ],
-          "origin": "magenta-native",
+          "origin": "magenta",
           "origin_rel": "native",
           "origin_confidence": "high",
           "refs": []
@@ -2400,7 +2400,7 @@
           "lang": [
             "Rust"
           ],
-          "origin": "magenta-native",
+          "origin": "magenta",
           "origin_rel": "native",
           "origin_confidence": "high",
           "refs": []
@@ -2422,7 +2422,7 @@
           "lang": [
             "Rust"
           ],
-          "origin": "magenta-native",
+          "origin": "magenta",
           "origin_rel": "native",
           "origin_confidence": "high",
           "refs": []
@@ -2443,7 +2443,7 @@
         "Rust",
         "TOML"
       ],
-      "source": "magenta-native/external-upstream",
+      "source": "magenta/external-upstream",
       "components": [
         {
           "id": "runtime-provider:mcp:tools",
@@ -2462,7 +2462,7 @@
           "lang": [
             "Rust"
           ],
-          "origin": "magenta-native",
+          "origin": "magenta",
           "origin_rel": "native",
           "origin_confidence": "high",
           "refs": []
@@ -2482,7 +2482,7 @@
         "C",
         "JSON"
       ],
-      "source": "pi-vendored/lazypi-adapted/magenta-native",
+      "source": "pi-vendored/lazypi-adapted/magenta",
       "components": [
         {
           "id": "tui:pi-tui",

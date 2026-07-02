@@ -124,7 +124,7 @@ export class ScriptRuntimeProvider {
 			description: "Script runtime wrappers compiled to runtime://process.",
 			metadata: {
 				implementation: "native-ts",
-				source: "magenta-native",
+				source: "magenta",
 				origin: "magenta1-general-harness",
 				compiledTo: "runtime://process",
 			},

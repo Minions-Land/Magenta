@@ -1,0 +1,28 @@
+kind = "process"
+name = "ReadAnchored"
+description = "Read file contents with hashline anchors. Returns a file tag plus per-line content hashes for EditHashline."
+command = "tools/read-anchored/magenta/process-tools/target/release/magenta-process-tools"
+args = ["read-anchored"]
+operation = "read"
+read_only = true
+destructive = false
+version = "1.0.0"
+tags = ["filesystem", "io", "read", "hashline"]
+capabilities = ["text", "partial-read", "hashline-anchors", "stale-edit-guard"]
+requires = []
+
+[parameters]
+type = "object"
+required = ["file_path"]
+
+[parameters.properties.file_path]
+type = "string"
+description = "Absolute path to the file"
+
+[parameters.properties.offset]
+type = "integer"
+description = "Line number to start from (0-based)"
+
+[parameters.properties.limit]
+type = "integer"
+description = "Max lines to read (default: 2000)"

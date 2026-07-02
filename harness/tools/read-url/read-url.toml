@@ -1,0 +1,6 @@
+kind = "tool"
+name = "read-url"
+description = "Fetch and render HTTP(S) URL contents using the Magenta process-tool source."
+source = "magenta"
+origin = "magenta1-general-harness"
+implementation_manifest = "magenta/read-url.toml"

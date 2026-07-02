@@ -52,55 +52,55 @@
     },
     "general-harness:mcp:echo-json": {
       "state": "available",
-      "component": { "kind": "process-tool", "name": "echo_json", "path": "tools/process/echo-json.toml" },
+      "component": { "kind": "tool", "name": "echo-json", "path": "tools/echo-json/magenta/echo-json.toml" },
       "relation": "migrated-process-tool",
-      "notes": "Magenta1 process-tool manifest migrated under harness/tools/process for Magnet smoke testing."
+      "notes": "Magenta1 process-tool manifest migrated under harness/tools/<tool>/magenta for Magnet smoke testing."
     },
     "general-harness:mcp:ReadAnchored": {
       "state": "available",
-      "component": { "kind": "process-tool", "name": "ReadAnchored", "path": "tools/process/read-anchored.toml" },
+      "component": { "kind": "tool", "name": "read-anchored", "path": "tools/read-anchored/magenta/read-anchored.toml" },
       "relation": "migrated-rust-process-tool",
       "notes": "Hashline anchored read is provided by the migrated Rust process-tools binary through ProcessToolMagnet."
     },
     "general-harness:mcp:EditHashline": {
       "state": "available",
-      "component": { "kind": "process-tool", "name": "EditHashline", "path": "tools/process/edit-hashline.toml" },
+      "component": { "kind": "tool", "name": "edit-hashline", "path": "tools/edit-hashline/magenta/edit-hashline.toml" },
       "relation": "migrated-rust-process-tool",
       "notes": "Hashline edit is provided by the migrated Rust process-tools binary through ProcessToolMagnet."
     },
     "general-harness:mcp:FuzzyFind": {
       "state": "available",
-      "component": { "kind": "process-tool", "name": "FuzzyFind", "path": "tools/process/fuzzy-find.toml" },
+      "component": { "kind": "tool", "name": "fuzzy-find", "path": "tools/fuzzy-find/magenta/fuzzy-find.toml" },
       "relation": "migrated-rust-process-tool",
       "notes": "Fuzzy path search is provided by the migrated Rust process-tools binary through ProcessToolMagnet."
     },
     "general-harness:mcp:AstGrep": {
       "state": "available",
-      "component": { "kind": "process-tool", "name": "AstGrep", "path": "tools/process/ast-grep.toml" },
+      "component": { "kind": "tool", "name": "ast-grep", "path": "tools/ast-grep/magenta/ast-grep.toml" },
       "relation": "migrated-rust-process-tool",
       "notes": "AST structural search is provided by the migrated Rust process-tools binary through ProcessToolMagnet."
     },
     "general-harness:mcp:AstEditPlan": {
       "state": "available",
-      "component": { "kind": "process-tool", "name": "AstEditPlan", "path": "tools/process/ast-edit-plan.toml" },
+      "component": { "kind": "tool", "name": "ast-edit-plan", "path": "tools/ast-edit-plan/magenta/ast-edit-plan.toml" },
       "relation": "migrated-rust-process-tool",
       "notes": "AST edit planning remains internal but is migrated for Resolve/EditHashline flows."
     },
     "general-harness:mcp:Lsp": {
       "state": "available",
-      "component": { "kind": "process-tool", "name": "Lsp", "path": "tools/process/lsp.toml" },
+      "component": { "kind": "tool", "name": "lsp", "path": "tools/lsp/magenta/lsp.toml" },
       "relation": "migrated-rust-process-tool",
       "notes": "LSP-style queries are provided by the migrated Rust process-tools binary through ProcessToolMagnet."
     },
     "general-harness:mcp:WebSearch": {
       "state": "available",
-      "component": { "kind": "process-tool", "name": "WebSearch", "path": "tools/process/web-search.toml" },
+      "component": { "kind": "tool", "name": "web-search", "path": "tools/web-search/magenta/web-search.toml" },
       "relation": "migrated-rust-process-tool",
       "notes": "WebSearch is provided by the migrated Rust process-tools binary through ProcessToolMagnet."
     },
     "general-harness:mcp:ReadUrl": {
       "state": "available",
-      "component": { "kind": "process-tool", "name": "ReadUrl", "path": "tools/process/read-url.toml" },
+      "component": { "kind": "tool", "name": "read-url", "path": "tools/read-url/magenta/read-url.toml" },
       "relation": "migrated-rust-process-tool",
       "notes": "ReadUrl is provided by the migrated Rust process-tools binary through ProcessToolMagnet."
     },

@@ -33,8 +33,16 @@ package overlays, process runtimes, and UI selection keep evolving.
   Python, HCP JSONL, and script-backed tools must not bypass its sandbox and
   policy checks.
 - Repository-level `packages/` is the only package content root. The harness
-  module for package discovery and profile expansion is `harness/package-overlay`;
+  module for package discovery and profile expansion is `harness/assembly/package-overlay`;
   there must not be a second content root under `harness/packages`.
+- Harness Source names are origin-agent names, not programming languages or
+  runtime mechanisms. Magenta/Magenta1-related material uses `magenta`; Pi uses
+  `pi`; future Codex and Claude Code material should use `codex` and
+  `claude-code`.
+- Process-backed tools are still tools. Their manifests, adapter code, Rust
+  crates, and local build artifacts must live under the owning capability source,
+  for example `harness/tools/ast-grep/magenta/process-tools`; a shared
+  `harness/tools/process` capability slot is invalid.
 - `pi/coding-agent` owns app composition, CLI/TUI surfaces, and ResourceLoader.
   It should consume harness through package-level APIs and should not deep-import
   harness internals.
@@ -46,14 +54,15 @@ package overlays, process runtimes, and UI selection keep evolving.
 Manage `harness/` as four layers:
 
 1. Protocol and assembly:
-   `assembly/hcp`, `assembly/magnet`, `assembly/registry`.
+   `assembly/hcp`, `assembly/magnet`, `assembly/registry`,
+   `assembly/package-overlay`.
 2. Runtime guardrails:
    `runtime`, `sandbox`, `policy`, `hooks`.
 3. Capability modules:
    `tools`, `skills`, `prompt-templates`, `system-prompt`, `compaction`,
    `session`, `context`, `memory`, `env`, `utils`.
 4. Resource and catalog overlays:
-   `package-overlay`, `catalog`, `tools/process`, `skills/bundled`.
+   `catalog`, `skills/bundled`, repository-level `packages/`.
 
 New functionality must declare which layer it belongs to before code is added.
 

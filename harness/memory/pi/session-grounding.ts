@@ -97,7 +97,7 @@ export class SessionGroundingMemoryProvider {
 			storePath: this.storePath,
 			workspaceRoot: this.workspaceRoot,
 			provenance: {
-				origin: "magenta-native",
+				origin: "magenta",
 				source: "general-harness/components/providers/memories/session-grounding/MEMORY.md",
 			},
 		};
@@ -202,7 +202,7 @@ export class SessionGroundingMemoryProvider {
 				description: this.description,
 				metadata: {
 					source: "magenta1-general-harness",
-					origin: "magenta-native",
+					origin: "magenta",
 					storePath: this.storePath,
 				},
 			}),

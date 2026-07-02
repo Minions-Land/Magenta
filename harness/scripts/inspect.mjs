@@ -5,7 +5,7 @@ import { harnessRoot, isInside, pathLabel, readJson, readToml, repoRoot } from "
 const args = process.argv.slice(2);
 const jsonOutput = args.includes("--json");
 const scriptRuntimeNames = new Set(["shell", "python", "node", "r", "julia"]);
-const implementationSourceNames = new Set(["pi", "codex", "jcode", "claude-code", "rust", "mcp", "process", "package"]);
+const implementationSourceNames = new Set(["pi", "codex", "jcode", "claude-code", "magenta"]);
 const coreExceptionModuleIds = new Set(["assembly/hcp", "assembly/magnet"]);
 
 function asArray(value) {

@@ -19,9 +19,13 @@ export interface CatalogMagnetFactoryOptions {
 
 export type CatalogMagnet = ProcessToolMagnet | HcpProcessMagnet | Magnet;
 
+function isMagentaProcessToolPath(path: string | undefined): boolean {
+	return /^tools\/[^/]+\/magenta\/[^/]+\.toml$/.test(path ?? "");
+}
+
 export function canCreateMagnetFromCatalogEntry(entry: HarnessCatalogEntry): boolean {
 	if (entry.kind === "hcp-process" || entry.type === "hcp-process") return true;
-	if (entry.migration.component?.path?.startsWith("tools/process/")) return true;
+	if (isMagentaProcessToolPath(entry.migration.component?.path)) return true;
 	return entry.kind === "mcp" && entry.type === "magnet" && entry.migration.state !== "integrated";
 }
 
@@ -42,7 +46,7 @@ export async function createMagnetFromCatalogEntry(
 		return createHcpProcessMagnetFromCatalogEntry(catalog, entry, hcpOptions);
 	}
 
-	if (entry.migration.component?.path?.startsWith("tools/process/") || canCreateMagnetFromCatalogEntry(entry)) {
+	if (isMagentaProcessToolPath(entry.migration.component?.path) || canCreateMagnetFromCatalogEntry(entry)) {
 		const processOptions: Omit<ProcessToolMagnetOptions, "manifest" | "manifestRoot"> = {
 			cwd: options.cwd,
 			env: options.env,

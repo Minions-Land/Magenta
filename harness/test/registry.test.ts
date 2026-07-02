@@ -23,7 +23,10 @@ describe("harness registry", () => {
 		).toBe(true);
 		expect(registry.modules.find((module) => module.id === "tool/bash")).toMatchObject({
 			status: "ready",
-			implementations: [expect.objectContaining({ source: "pi", status: "ready" })],
+			implementations: expect.arrayContaining([
+				expect.objectContaining({ source: "pi", status: "ready" }),
+				expect.objectContaining({ source: "magenta", status: "ready" }),
+			]),
 		});
 		expect(registry.modules.find((module) => module.id === "contract/messages")).toMatchObject({
 			status: "inspect-only",
@@ -48,7 +51,7 @@ describe("harness registry", () => {
 		expect(descriptor?.catalog.summary.module_count).toBe(13);
 		expect(descriptor?.catalog.entries).toHaveLength(111);
 		expect(descriptor?.catalog.summary.by_source).toMatchObject({
-			"magenta-native": 72,
+			"magenta": 72,
 			"domain-pack": 17,
 			"oh-my-pi": 12,
 			lazypi: 4,
@@ -93,8 +96,8 @@ describe("harness registry", () => {
 			migrationStates: ["available"],
 		});
 		expect(availableProcessTools.find((item) => item.id === "general-harness:mcp:AstGrep")?.component).toMatchObject({
-			kind: "process-tool",
-			path: "tools/process/ast-grep.toml",
+			kind: "tool",
+			path: "tools/ast-grep/magenta/ast-grep.toml",
 		});
 		expect(availableProcessTools.find((item) => item.id === "general-harness:mcp:AstGrep")?.readiness).toBe(
 			"ready",

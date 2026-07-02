@@ -1,0 +1,23 @@
+kind = "process"
+name = "Ls"
+description = "List directory contents. Returns entries sorted alphabetically, with '/' suffix for directories. Includes dotfiles."
+command = "tools/ls/magenta/process-tools/target/release/magenta-process-tools"
+args = ["ls"]
+operation = "read"
+read_only = true
+destructive = false
+version = "1.0.0"
+tags = ["filesystem", "directory", "list"]
+capabilities = ["sorted", "dotfiles"]
+requires = []
+
+[parameters]
+type = "object"
+
+[parameters.properties.path]
+type = "string"
+description = "Directory to list (default: current directory)"
+
+[parameters.properties.limit]
+type = "integer"
+description = "Maximum number of entries to return (default: 500)"

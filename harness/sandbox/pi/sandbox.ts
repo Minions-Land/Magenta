@@ -227,7 +227,7 @@ export class SandboxProvider {
 				description: "Sandbox profile provider migrated from Magenta1 general-harness.",
 				metadata: {
 					implementation: "native-ts",
-					source: "magenta-native",
+					source: "magenta",
 					origin: "magenta1-general-harness",
 					enforcement: "not-ported",
 				},
@@ -259,7 +259,7 @@ export class SandboxProvider {
 				description: "Select a sandbox profile for a tool descriptor.",
 				metadata: {
 					implementation: "native-ts",
-					source: "magenta-native",
+					source: "magenta",
 					origin: "magenta1-general-harness",
 					output: "{ profile, reason }",
 				},

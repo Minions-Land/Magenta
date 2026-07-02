@@ -1,7 +1,7 @@
 kind = "hcp-process-pack"
 name = "hcp-process"
 description = "HCP JSONL process manifests migrated from Magenta1 general-harness."
-source = "magenta-native"
+source = "magenta"
 origin = "magenta1-general-harness"
 origin_rel = "migrated/adapted"
 manifests = ["assembly/hcp-process/*.toml"]

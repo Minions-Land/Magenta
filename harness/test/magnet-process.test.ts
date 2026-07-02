@@ -263,7 +263,7 @@ rl.on("line", line => {
 			toolName: "AstGrep",
 		});
 		await expect(processTarget!.call({ target: "tool://AstGrep", op: "health" })).resolves.toMatchObject({
-			command: expect.stringContaining("harness/process-tools/target/release/magenta-process-tools"),
+			command: expect.stringContaining("harness/tools/ast-grep/magenta/process-tools/target/release/magenta-process-tools"),
 			runtime: "runtime://process",
 		});
 

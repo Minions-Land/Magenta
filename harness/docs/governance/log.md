@@ -16,7 +16,7 @@
   needs verification.
 - Package contents must converge on one root only:
   `/Users/mjm/Magenta3/packages`. The harness-side implementation is named
-  `harness/package-overlay` because it is a loader/adapter module, not another
+  `harness/assembly/package-overlay` because it is a loader/adapter module, not another
   package content root.
 
 ### Local Evidence
@@ -69,10 +69,13 @@
 
 - `packages/` at the repository root is the only place for actual Magenta3
   domain/brand/harness overlay packages such as `AutOmicScience`.
-- `harness/package-overlay/` owns discovery, profile expansion, resource path
+- `harness/assembly/package-overlay/` owns discovery, profile expansion, resource path
   resolution, and descriptor handoff into Magnet.
 - A top-level `harness/packages/` directory is invalid because it creates a
   second "packages" concept and obscures the HCP/Magnet boundary.
+- Package overlay is governed as assembly because it is a heuristic,
+  precedence-aware discovery and assembly process over repository-level
+  `packages/`, not package content itself.
 
 ### Package Internal Layout Decision
 
@@ -93,11 +96,16 @@
 - Source subdirectories under a capability slot represent mature-agent harness
   implementations such as `pi`, `codex`, `jcode`, and `claude-code`; they are
   not merely programming language folders.
+- Source names are origin Agent names. Magenta or Magenta1 material uses
+  `magenta`, not `magenta-native`, `rust`, `process`, or `package`.
 - HCP is the unified management protocol for discovery, selection, state,
   health, and configuration.
 - Magnet is the non-invasive bridge that attaches a concrete mature-agent
   implementation to Magenta3 without rewriting that implementation's native
   code or logic.
+- `process` is not a capability slot or Source. Magenta process-backed tool
+  material belongs under the functional tool slot and origin Source, for example
+  `harness/tools/bash/magenta/` or `harness/tools/ast-grep/magenta/`.
 
 ### Module Assembly Loop Checkpoint
 

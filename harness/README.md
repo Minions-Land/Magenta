@@ -3,7 +3,7 @@
 **Harness** is the modular component system for Magenta3. It provides:
 - Pure-execution implementations of tools, skills, compaction, prompt templates, and system prompts
 - A registry-based architecture for discovering and assembling components
-- Source separation: implementations organized by origin (pi, rust, mcp, etc.)
+- Source separation: implementations organized by origin agent/source (pi, codex, claude-code, magenta, etc.)
 - HCP/Magnet assembly layer for connecting components to the agent loop
 
 ## Architecture
@@ -17,12 +17,13 @@ harness/<module>/
   <module>.toml      — Registration metadata
   pi/                — Pi-sourced TypeScript implementations
     *.ts
-  rust/              — (future) Rust implementations
-  mcp/               — (future) MCP implementations
+  codex/             — (future) Codex-sourced implementations
+  claude-code/       — (future) Claude Code-sourced implementations
+  magenta/           — Magenta/Magenta1-sourced implementations
   README.md          — Per-module documentation
 ```
 
-**Key principle**: Implementations are **source-separated**. The `pi/` subdirectory contains all pi-sourced code. Future Rust or MCP implementations would live in sibling `rust/` or `mcp/` directories, not intermixed.
+**Key principle**: Implementations are **source-separated by origin**, not by programming language or runtime protocol. The `pi/` subdirectory contains all Pi-sourced code. Magenta or Magenta1 material uses `magenta/`; Codex material should use `codex/`; Claude Code material should use `claude-code/`. A source directory may contain Rust, Python, TypeScript, binaries, manifests, and local build outputs owned by that source.
 
 ### Special Cases
 
@@ -92,7 +93,11 @@ See `assembly/README.md` for the complete story of how these work together.
 
 ### Tools
 
-7 tools, each in its own directory under `tools/`:
+Tools live directly under `tools/<tool>/`. `process` is not a tool category;
+process-backed behavior is a Source implementation detail under the owning tool
+directory, for example `tools/ast-grep/magenta/`.
+
+Core Pi-backed tools:
 - **bash** — Shell command execution
 - **edit** — File editing with exact text replacement
 - **grep** — Pattern search in files
@@ -101,7 +106,12 @@ See `assembly/README.md` for the complete story of how these work together.
 - **find** — Find files by glob pattern
 - **ls** — List directory entries
 
-Each tool has `<tool>.toml` at the top level and `pi/<tool>.ts` implementation.
+Additional Magenta-backed tools include `ast-grep`, `ast-edit-plan`,
+`edit-hashline`, `fuzzy-find`, `glob`, `lsp`, `read-anchored`, `read-url`,
+`web-search`, and `echo-json`.
+
+Each tool has `<tool>.toml` at the top level. Source implementations live under
+source-named subdirectories such as `pi/` or `magenta/`.
 
 ## HCP / Magnet / Registry
 
@@ -162,7 +172,7 @@ import { createReadExecute, AgentHarness, ... } from "@magenta/harness";
 
 1. **PI holds only abstractions**: The `pi/` packages (coding-agent, agent-core, tui, ai) contain the agent loop, TUI rendering, LLM providers, and CLI. Tool *execution logic* lives in harness.
 
-2. **Source extensibility**: When Rust or MCP implementations arrive, they slot into `<module>/rust/` or `<module>/mcp/` alongside `pi/`, with no pi code changes.
+2. **Source extensibility**: When Rust, MCP, Python, or other runtime-backed implementations arrive, they slot into the origin Source directory such as `<module>/magenta/`, `<module>/codex/`, or `<module>/claude-code/`; the runtime is metadata or adapter code inside that Source, not a Source directory name.
 
 3. **Declarative registry**: Components self-describe via TOML. The registry discovers them without hardcoded lists.
 

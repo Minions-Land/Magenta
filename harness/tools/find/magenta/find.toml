@@ -1,0 +1,27 @@
+kind = "process"
+name = "Find"
+description = "Find files by name pattern or type. Recursively searches directories up to depth 10."
+command = "tools/find/magenta/process-tools/target/release/magenta-process-tools"
+args = ["find"]
+operation = "read"
+read_only = true
+destructive = false
+version = "1.0.0"
+tags = ["filesystem", "search", "find"]
+capabilities = ["regex", "recursive", "type-filter"]
+requires = []
+
+[parameters]
+type = "object"
+
+[parameters.properties.path]
+type = "string"
+description = "Path to search in (default: current directory)"
+
+[parameters.properties.pattern]
+type = "string"
+description = "Regex pattern to match file names (optional)"
+
+[parameters.properties.file_type]
+type = "string"
+description = "Filter by type: 'f'/'file', 'd'/'dir', 'l'/'link' (optional)"

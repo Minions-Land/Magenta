@@ -1,0 +1,24 @@
+kind = "process"
+name = "Write"
+description = "Write content to a file. Creates parent directories if needed. Overwrites existing files."
+command = "tools/write/magenta/process-tools/target/release/magenta-process-tools"
+args = ["write"]
+operation = "write"
+read_only = false
+destructive = true
+version = "1.0.0"
+tags = ["filesystem", "io", "write"]
+capabilities = ["text", "create-dirs"]
+requires = []
+
+[parameters]
+type = "object"
+required = ["file_path", "content"]
+
+[parameters.properties.file_path]
+type = "string"
+description = "Absolute path to the file"
+
+[parameters.properties.content]
+type = "string"
+description = "Content to write to the file"

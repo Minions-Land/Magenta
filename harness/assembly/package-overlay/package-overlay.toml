@@ -1,0 +1,7 @@
+kind = "assembly"
+name = "package-overlay"
+description = "Harness package overlay discovery and profile selection. Actual packages live in the repository-level packages/ root."
+source = "pi"
+
+[exports]
+module = "assembly/package-overlay/pi/package-overlay.ts"

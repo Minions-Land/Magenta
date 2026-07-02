@@ -249,7 +249,7 @@ export class HookProvider {
 			description: "Lifecycle hook provider migrated from Magenta1 general-harness.",
 			metadata: {
 				implementation: "native-ts",
-				source: "magenta-native",
+				source: "magenta",
 				origin: "magenta1-general-harness",
 			},
 		};

@@ -1,0 +1,24 @@
+kind = "process"
+name = "Bash"
+description = "Execute bash commands and return output. Captures both stdout and stderr."
+command = "tools/bash/magenta/process-tools/target/release/magenta-process-tools"
+args = ["bash"]
+operation = "execute"
+read_only = false
+destructive = false
+version = "1.0.0"
+tags = ["shell", "command", "execute"]
+capabilities = ["stdout", "stderr", "exit-code"]
+requires = []
+
+[parameters]
+type = "object"
+required = ["command"]
+
+[parameters.properties.command]
+type = "string"
+description = "Bash command to execute"
+
+[parameters.properties.timeout]
+type = "integer"
+description = "Timeout in seconds (optional)"

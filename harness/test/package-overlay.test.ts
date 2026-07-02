@@ -9,7 +9,7 @@ import {
 	discoverHarnessPackages,
 	loadPackageOverlay,
 	parsePackageSelector,
-} from "../package-overlay/pi/package-overlay.ts";
+} from "../assembly/package-overlay/pi/package-overlay.ts";
 import { loadSkills } from "../skills/pi/skills.ts";
 
 const repoRoot = fileURLToPath(new URL("../..", import.meta.url));

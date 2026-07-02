@@ -174,8 +174,8 @@ export async function discoverContextFiles(workspaceRoot: string): Promise<Conte
 	const root = await normalizeRoot(workspaceRoot);
 	const candidates = [
 		{ path: join(root, "AGENTS.md"), provider: "agents-md", sticky: false, priority: 10 },
-		{ path: join(root, ".magenta", "AGENTS.md"), provider: "magenta-native", sticky: false, priority: 100 },
-		{ path: join(root, ".magenta", "RULES.md"), provider: "magenta-native", sticky: true, priority: 100 },
+		{ path: join(root, ".magenta", "AGENTS.md"), provider: "magenta", sticky: false, priority: 100 },
+		{ path: join(root, ".magenta", "RULES.md"), provider: "magenta", sticky: true, priority: 100 },
 		{ path: join(root, ".claude", "CLAUDE.md"), provider: "claude", sticky: false, priority: 80 },
 		{ path: join(root, ".gemini", "GEMINI.md"), provider: "gemini", sticky: false, priority: 60 },
 		{ path: join(root, ".github", "copilot-instructions.md"), provider: "github", sticky: false, priority: 30 },
@@ -211,7 +211,7 @@ export class ContextProvider {
 			description: "Discover project instruction files and return model-safe context content.",
 			metadata: {
 				implementation: "native-ts",
-				source: "magenta-native",
+				source: "magenta",
 				origin: "magenta1-general-harness",
 			},
 		};

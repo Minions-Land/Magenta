@@ -133,7 +133,7 @@ export class ShellPolicyProvider {
 			description: "Classify shell command intent and suggest native Harness tools before execution.",
 			metadata: {
 				implementation: "native-ts",
-				source: "magenta-native",
+				source: "magenta",
 				origin: "magenta1-general-harness",
 			},
 		};
