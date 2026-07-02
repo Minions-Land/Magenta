@@ -31,6 +31,19 @@ const NAVIGATION_KEY_HOLD_START_DELAY_MS = 180;
 const NAVIGATION_KEY_HOLD_START_MAX_MS = 1200;
 const NAVIGATION_KEY_UNMARKED_REPEAT_BURST_LIMIT = 12;
 
+// Keys that trigger each navigation action, used to tell which navigation key a
+// release event belongs to so hold tracking is only reset by the key that owns it.
+const NAVIGATION_ACTION_KEYS: Record<string, KeyId[]> = {
+	up: ["up"],
+	down: ["down"],
+	left: ["left"],
+	right: ["right"],
+	pageUp: ["pageUp", "ctrl+u"],
+	pageDown: ["pageDown", "ctrl+d"],
+	home: ["home"],
+	end: ["end"],
+};
+
 export type FloatingMenuItem = {
 	value: string;
 	label: string;
@@ -174,9 +187,10 @@ export class FloatingMenuBody implements FloatingOverlayBody {
 	private scrollTop = 0;
 	private filter = "";
 	private lastNavigationKey: string | undefined = undefined;
-	private lastNavigationAt = Number.NEGATIVE_INFINITY;
-	private unmarkedRapidNavigationCount = 0;
-	private unmarkedHoldCandidate = false;
+	private lastNavigationEventAt = Number.NEGATIVE_INFINITY;
+	private lastNavigationMoveAt = Number.NEGATIVE_INFINITY;
+	private navigationRapidTapCount = 0;
+	private navigationHeld = false;
 	private readonly options: FloatingMenuBodyOptions;
 	private readonly stack: Array<{
 		title: string;
@@ -211,7 +225,7 @@ export class FloatingMenuBody implements FloatingOverlayBody {
 
 	handleInput(data: string): boolean | undefined {
 		if (isKeyRelease(data)) {
-			this.resetNavigationRepeat();
+			if (this.releaseMatchesTrackedNavigation(data)) this.resetNavigationRepeat();
 			return true;
 		}
 		if (matchesAny(data, ["escape", "left"])) {
@@ -294,52 +308,71 @@ export class FloatingMenuBody implements FloatingOverlayBody {
 	}
 
 	private shouldSuppressRepeatedNavigation(action: string, data: string): boolean {
+		// Kitty terminals label repeats explicitly: a held key emits one press
+		// followed by repeat events. Suppress every repeat so a held key moves once.
 		if (isKeyRepeat(data)) {
 			this.lastNavigationKey = action;
-			this.lastNavigationAt = this.options.now?.() ?? Date.now();
-			this.unmarkedRapidNavigationCount = 0;
-			this.unmarkedHoldCandidate = true;
+			this.lastNavigationEventAt = this.options.now?.() ?? Date.now();
+			this.navigationRapidTapCount = 0;
+			this.navigationHeld = true;
 			return true;
 		}
 
-		const delayMs = this.options.navigationRepeatDelayMs ?? NAVIGATION_KEY_REPEAT_CADENCE_MS;
-		if (delayMs <= 0) return false;
+		const cadenceMs = this.options.navigationRepeatDelayMs ?? NAVIGATION_KEY_REPEAT_CADENCE_MS;
+		if (cadenceMs <= 0) return false;
 
 		const now = this.options.now?.() ?? Date.now();
-		const elapsed = now - this.lastNavigationAt;
 		const isSameKey = this.lastNavigationKey === action;
-		const holdStartDelayMs = Math.max(NAVIGATION_KEY_HOLD_START_DELAY_MS, delayMs * 2);
+		const sinceEvent = now - this.lastNavigationEventAt;
+		const sinceMove = now - this.lastNavigationMoveAt;
+		const holdStartDelayMs = Math.max(NAVIGATION_KEY_HOLD_START_DELAY_MS, cadenceMs * 2);
 		const holdStartMaxMs = Math.max(NAVIGATION_KEY_HOLD_START_MAX_MS, holdStartDelayMs);
 		let shouldSuppress = false;
 
 		if (!isSameKey) {
-			this.unmarkedRapidNavigationCount = 0;
-			this.unmarkedHoldCandidate = false;
-		} else if (elapsed >= holdStartDelayMs && elapsed <= holdStartMaxMs) {
-			this.unmarkedRapidNavigationCount = 0;
-			this.unmarkedHoldCandidate = true;
-		} else if (elapsed < delayMs) {
-			if (this.unmarkedHoldCandidate) {
-				shouldSuppress = true;
-			} else {
-				this.unmarkedRapidNavigationCount++;
-				shouldSuppress = this.unmarkedRapidNavigationCount >= NAVIGATION_KEY_UNMARKED_REPEAT_BURST_LIMIT;
+			// A different navigation key: start fresh, always let it move.
+			this.navigationRapidTapCount = 0;
+			this.navigationHeld = false;
+		} else if (this.navigationHeld) {
+			// Already recognized as a hold (no key metadata): throttle to one move
+			// per cadence so the cursor scrolls steadily instead of freezing.
+			shouldSuppress = sinceMove < cadenceMs;
+		} else if (sinceEvent >= holdStartDelayMs && sinceEvent <= holdStartMaxMs) {
+			// Steady same-key events at hold cadence: treat as a hold from now on,
+			// but let this event move to keep scrolling responsive.
+			this.navigationRapidTapCount = 0;
+			this.navigationHeld = true;
+		} else if (sinceEvent < cadenceMs) {
+			// Rapid same-key events without metadata: allow a short burst of manual
+			// taps, then throttle to the hold cadence rather than blocking outright.
+			this.navigationRapidTapCount++;
+			if (this.navigationRapidTapCount >= NAVIGATION_KEY_UNMARKED_REPEAT_BURST_LIMIT) {
+				this.navigationHeld = true;
+				shouldSuppress = sinceMove < cadenceMs;
 			}
 		} else {
-			this.unmarkedRapidNavigationCount = 0;
-			this.unmarkedHoldCandidate = false;
+			this.navigationRapidTapCount = 0;
+			this.navigationHeld = false;
 		}
 
 		this.lastNavigationKey = action;
-		this.lastNavigationAt = now;
+		this.lastNavigationEventAt = now;
+		if (!shouldSuppress) this.lastNavigationMoveAt = now;
 		return shouldSuppress;
+	}
+
+	private releaseMatchesTrackedNavigation(data: string): boolean {
+		if (!this.lastNavigationKey) return false;
+		const keys = NAVIGATION_ACTION_KEYS[this.lastNavigationKey];
+		return keys?.some((key) => matchesKey(data, key)) ?? false;
 	}
 
 	private resetNavigationRepeat(): void {
 		this.lastNavigationKey = undefined;
-		this.lastNavigationAt = Number.NEGATIVE_INFINITY;
-		this.unmarkedRapidNavigationCount = 0;
-		this.unmarkedHoldCandidate = false;
+		this.lastNavigationEventAt = Number.NEGATIVE_INFINITY;
+		this.lastNavigationMoveAt = Number.NEGATIVE_INFINITY;
+		this.navigationRapidTapCount = 0;
+		this.navigationHeld = false;
 	}
 
 	private selectIndex(index: number): true | undefined {

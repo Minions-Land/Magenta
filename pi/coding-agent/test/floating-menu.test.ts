@@ -234,7 +234,67 @@ describe("FloatingMenuBody", () => {
 		expect(selected).toEqual(["third"]);
 	});
 
-	it("allows the same navigation key after the repeat cadence breaks", () => {
+	it("keeps a held unmarked navigation key scrolling at a steady cadence", () => {
+		let now = 0;
+		const selected: string[] = [];
+		const body = createMenu(
+			[
+				{ value: "first", label: "First" },
+				{ value: "second", label: "Second" },
+				{ value: "third", label: "Third" },
+				{ value: "fourth", label: "Fourth" },
+				{ value: "fifth", label: "Fifth" },
+				{ value: "sixth", label: "Sixth" },
+			],
+			selected,
+			{ navigationRepeatDelayMs: 80, now: () => now },
+		);
+
+		// A burst of rapid unmarked repeats becomes a recognized hold; once held it
+		// keeps moving one step per cadence instead of freezing after the burst.
+		expect(body.handleInput(KEY_DOWN)).toBe(true);
+		for (let i = 1; i <= 30; i++) {
+			now = i * 10; // 10ms apart, faster than the 80ms cadence
+			body.handleInput(KEY_DOWN);
+		}
+		// Selection has advanced past the burst limit (would freeze on "second" before).
+		expect(body.handleInput(KEY_ENTER)).toBe(true);
+		expect(selected).not.toEqual(["second"]);
+		expect(selected.length).toBe(1);
+	});
+
+	it("resets hold tracking only when the tracked navigation key is released", () => {
+		let now = 0;
+		const selected: string[] = [];
+		const body = createMenu(
+			[
+				{ value: "first", label: "First" },
+				{ value: "second", label: "Second" },
+				{ value: "third", label: "Third" },
+				{ value: "fourth", label: "Fourth" },
+			],
+			selected,
+			{ navigationRepeatDelayMs: 80, now: () => now },
+		);
+
+		// Hold down: press then repeats are suppressed (one move).
+		expect(body.handleInput(KITTY_KEY_DOWN_PRESS)).toBe(true);
+		now = 20;
+		expect(body.handleInput(KITTY_KEY_DOWN_REPEAT)).toBe(true);
+		// A release for a DIFFERENT key must not reset down's hold tracking.
+		now = 40;
+		expect(body.handleInput(KITTY_KEY_LEFT_RELEASE)).toBe(true);
+		now = 60;
+		expect(body.handleInput(KITTY_KEY_DOWN_REPEAT)).toBe(true);
+		now = 80;
+		expect(body.handleInput(KEY_ENTER)).toBe(true);
+
+		// Only the initial press moved; both repeats stayed suppressed across the
+		// unrelated release, so we are still on "second".
+		expect(selected).toEqual(["second"]);
+	});
+
+	it("resets hold tracking when the tracked key is released so a fresh press moves", () => {
 		let now = 0;
 		const selected: string[] = [];
 		const body = createMenu(
@@ -247,9 +307,14 @@ describe("FloatingMenuBody", () => {
 			{ navigationRepeatDelayMs: 80, now: () => now },
 		);
 
-		expect(body.handleInput(KEY_DOWN)).toBe(true);
-		now = 81;
-		expect(body.handleInput(KEY_DOWN)).toBe(true);
+		expect(body.handleInput(KITTY_KEY_DOWN_PRESS)).toBe(true);
+		now = 20;
+		expect(body.handleInput(KITTY_KEY_DOWN_REPEAT)).toBe(true);
+		// Releasing down clears tracking; the next press is a fresh tap that moves.
+		now = 40;
+		expect(body.handleInput(KITTY_KEY_DOWN_RELEASE)).toBe(true);
+		now = 60;
+		expect(body.handleInput(KITTY_KEY_DOWN_PRESS)).toBe(true);
 		expect(body.handleInput(KEY_ENTER)).toBe(true);
 
 		expect(selected).toEqual(["third"]);

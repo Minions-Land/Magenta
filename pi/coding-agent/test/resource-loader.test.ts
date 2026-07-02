@@ -73,6 +73,68 @@ additionalProperties = true
 	);
 }
 
+function writeMultiProfilePackageFixture(repoRoot: string): void {
+	const packageDir = join(repoRoot, "packages", "MultiDomain");
+	const generalDir = join(packageDir, "harness", "general");
+	const extraDir = join(packageDir, "harness", "extra");
+	mkdirSync(generalDir, { recursive: true });
+	mkdirSync(extraDir, { recursive: true });
+	writeFileSync(
+		join(packageDir, "package.toml"),
+		`schema_version = "magenta.package.v1"
+id = "MultiDomain"
+name = "Multi Domain"
+default_profiles = []
+
+[[profiles]]
+name = "general"
+harness = "harness/general/harness.toml"
+
+[[profiles]]
+name = "extra"
+harness = "harness/extra/harness.toml"
+`,
+	);
+	writeFileSync(
+		join(generalDir, "harness.toml"),
+		`[[components]]
+kind = "tool"
+name = "general_tool"
+path = "general-tool.toml"
+`,
+	);
+	writeFileSync(
+		join(extraDir, "harness.toml"),
+		`[[components]]
+kind = "tool"
+name = "extra_tool"
+path = "extra-tool.toml"
+`,
+	);
+	for (const [dir, toolName] of [
+		[generalDir, "general_tool"],
+		[extraDir, "extra_tool"],
+	] as const) {
+		writeFileSync(
+			join(dir, `${toolName === "general_tool" ? "general" : "extra"}-tool.toml`),
+			`kind = "tool"
+name = "${toolName}"
+description = "Echo ${toolName} input."
+runtime = "process"
+command = "node"
+args = ["-e", "process.stdin.pipe(process.stdout)"]
+operation = "execute"
+read_only = true
+destructive = false
+
+[parameters]
+type = "object"
+additionalProperties = true
+`,
+		);
+	}
+}
+
 describe("DefaultResourceLoader", () => {
 	let tempDir: string;
 	let agentDir: string;
@@ -202,6 +264,27 @@ describe("DefaultResourceLoader", () => {
 			expect(loader.getPackageOverlay()).toBeUndefined();
 			expect(loader.getPackageTools().tools).toEqual([]);
 			expect(loader.getSkills().skills.some((skill) => skill.name === "test-domain")).toBe(false);
+		});
+
+		it("loads multiple per-profile selectors for one package additively", async () => {
+			writeMultiProfilePackageFixture(cwd);
+
+			const loader = createLoader();
+			await loader.reload();
+
+			// Selecting only the extra profile loads just that profile's tool.
+			loader.setHarnessPackageSelectors(["MultiDomain:extra"]);
+			await loader.reload();
+			expect(loader.getPackageTools().tools.map((tool) => tool.name).sort()).toEqual(["extra_tool"]);
+
+			// Adding a second per-profile selector for the same package is additive:
+			// both profiles' tools load together (the menu's per-row toggles rely on this).
+			loader.setHarnessPackageSelectors(["MultiDomain:extra", "MultiDomain:general"]);
+			await loader.reload();
+			expect(loader.getPackageTools().tools.map((tool) => tool.name).sort()).toEqual([
+				"extra_tool",
+				"general_tool",
+			]);
 		});
 
 		it("should discover skills from agentDir", async () => {

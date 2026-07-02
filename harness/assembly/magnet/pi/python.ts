@@ -44,7 +44,7 @@ export class PythonModuleToolMagnet<TParameters extends TSchema = TSchema> exten
 					return {
 						command: launcher.command,
 						args: [...(launcher.argsPrefix ?? []), "-m", spec.module, ...pythonArgvFromParams(input)],
-						cwd: dirname(spec.descriptorPath),
+						cwd: spec.workspaceRoot ?? dirname(spec.descriptorPath),
 						workspaceRoot: spec.workspaceRoot,
 						env: moduleRoot ? { PYTHONPATH: prependPath(process.env.PYTHONPATH, moduleRoot) } : undefined,
 						timeoutMs: spec.timeoutMs,
@@ -74,7 +74,14 @@ function pythonArgvFromParams(params: Record<string, unknown>): string[] {
 	}
 
 	for (const [key, value] of Object.entries(params)) {
-		if (key === "subcommand" || key === "args" || key === "pythonBin" || value === undefined || value === null) {
+		if (
+			key === "subcommand" ||
+			key === "args" ||
+			key === "pythonBin" ||
+			key === "modality" ||
+			value === undefined ||
+			value === null
+		) {
 			continue;
 		}
 		argv.push(...flagFromValue(key, value));

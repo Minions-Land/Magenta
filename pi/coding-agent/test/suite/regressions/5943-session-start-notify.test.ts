@@ -103,6 +103,7 @@ type ReloadCommandContext = {
 		getClearOnShrink: () => boolean;
 	};
 	keybindings: { reload: () => void };
+	canReloadRuntime: () => boolean;
 	customHeader?: unknown;
 	builtInHeader?: unknown;
 	editorContainer: { clear: () => void; addChild: (component: unknown) => void };
@@ -175,6 +176,17 @@ function createReloadCommandContext(overrides: ReloadCommandContextOverrides = {
 			...overrides.settingsManager,
 		},
 		keybindings: { reload: () => {}, ...overrides.keybindings },
+		canReloadRuntime(this: ReloadCommandContext) {
+			if (this.session.isStreaming) {
+				this.showWarning("Wait for the current response to finish before reloading.");
+				return false;
+			}
+			if (this.session.isCompacting) {
+				this.showWarning("Wait for compaction to finish before reloading.");
+				return false;
+			}
+			return true;
+		},
 		editorContainer: { clear: () => {}, addChild: () => {}, ...overrides.editorContainer },
 		ui: {
 			setFocus: () => {},

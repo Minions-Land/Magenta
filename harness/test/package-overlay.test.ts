@@ -598,7 +598,7 @@ type = "string"
 import os
 import sys
 
-print(json.dumps({"argv": sys.argv[1:], "path": os.environ.get("PATH", "")}))
+print(json.dumps({"argv": sys.argv[1:], "cwd": os.getcwd(), "path": os.environ.get("PATH", "")}))
 `,
 			);
 
@@ -609,7 +609,11 @@ print(json.dumps({"argv": sys.argv[1:], "path": os.environ.get("PATH", "")}))
 				const assembly = await assemblePackageToolMagnets(overlay);
 				expect(assembly.diagnostics).toEqual([]);
 
-				const result = await assembly.tools[0]?.execute("tool-call", { modality: "scrna", value: "xyz" });
+				const result = await assembly.tools[0]?.execute("tool-call", {
+					modality: "scrna",
+					value: "xyz",
+					args: { modality: "scrna" },
+				});
 				expect(result?.details.command).toBe("pixi");
 				expect(result?.details.args).toEqual(
 					expect.arrayContaining(["run", "--manifest-path", join(packagesRoot, "PixiDomain", "pixi.toml")]),
@@ -617,7 +621,9 @@ print(json.dumps({"argv": sys.argv[1:], "path": os.environ.get("PATH", "")}))
 				expect(result?.details.args).toEqual(expect.arrayContaining(["--environment", "task1"]));
 				expect(result?.details.args).toEqual(expect.arrayContaining(["--executable", "python"]));
 				expect(result?.details.args).toEqual(expect.arrayContaining(["-m", "example_runtime"]));
-				expect(result?.content[0]?.text).toContain('"--value", "xyz"');
+				const payload = JSON.parse(result?.content[0]?.text ?? "{}") as { argv?: string[]; cwd?: string };
+				expect(payload.argv).toEqual(["--modality", "scrna", "--value", "xyz"]);
+				expect(payload.cwd).toBe(await realpath(repoRoot));
 			} finally {
 				process.env.PATH = previousPath;
 			}

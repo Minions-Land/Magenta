@@ -22,6 +22,7 @@ leidenalg = ">=0.10"
 igraph = ">=0.11"
 hdf5plugin = "*"
 scikit-misc = "*"
+scikit-image = "*"
 pytest = ">=8.0"   # run ../omics-compute/python/tests in any analysis env
 
 [feature.scrna.dependencies]

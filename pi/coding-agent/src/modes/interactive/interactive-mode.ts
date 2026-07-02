@@ -364,6 +364,10 @@ export class InteractiveMode {
 	private startupNoticesShown = false;
 	private anthropicSubscriptionWarningShown = false;
 
+	// Serializes harness package selection changes so overlapping toggles cannot
+	// start concurrent reloads (each change awaits the previous one).
+	private harnessPackageMutation: Promise<void> = Promise.resolve();
+
 	// Status line tracking (for mutating immediately-sequential status updates)
 	private lastStatusSpacer: Spacer | undefined = undefined;
 	private lastStatusText: Text | undefined = undefined;
@@ -4168,8 +4172,28 @@ export class InteractiveMode {
 		return snapshot.registry.registry?.modules.find((module) => module.id === id);
 	}
 
+	// Memoizes implementation-readiness fs probes for the duration of a single
+	// menu build. The same implementation paths recur across the tools and modules
+	// views, so without this each menu open re-runs fs.existsSync many times over.
+	// Reset (via beginHarnessMenuBuild) at each menu-open entry point so a rebuild
+	// still reflects on-disk changes (e.g. a binary built between opens).
+	private harnessReadinessCache: Map<string, string> | undefined;
+
+	private beginHarnessMenuBuild(): void {
+		this.harnessReadinessCache = new Map();
+	}
+
 	private getHarnessImplementationReadiness(implementationPath: string | undefined): string {
 		if (!implementationPath) return "no path";
+		const cache = (this.harnessReadinessCache ??= new Map());
+		const cached = cache.get(implementationPath);
+		if (cached !== undefined) return cached;
+		const readiness = this.computeHarnessImplementationReadiness(implementationPath);
+		cache.set(implementationPath, readiness);
+		return readiness;
+	}
+
+	private computeHarnessImplementationReadiness(implementationPath: string): string {
 		const processToolsDir = path.join(implementationPath, "process-tools");
 		if (!fs.existsSync(processToolsDir)) return "source-ready";
 		const releaseBinary = path.join(processToolsDir, "target", "release", "magenta-process-tools");
@@ -4205,9 +4229,13 @@ export class InteractiveMode {
 		if (loader.getHarnessPackageSelectors) {
 			return loader.getHarnessPackageSelectors();
 		}
-		return (loader.getPackageOverlay()?.selections ?? []).map((selection) =>
-			selection.profiles?.length ? `${selection.packageId}:${selection.profiles.join(",")}` : selection.packageId,
-		);
+		// Fallback for loaders without the accessor: reconstruct one selector per
+		// profile (id, id:profile, id:*) so the forms match what the menu emits and
+		// compares against, rather than a single comma-joined "id:a,b" string.
+		return (loader.getPackageOverlay()?.selections ?? []).flatMap((selection) => {
+			if (!selection.profiles?.length) return [selection.packageId];
+			return selection.profiles.map((profile) => `${selection.packageId}:${profile}`);
+		});
 	}
 
 	private getHarnessActiveHookEvents(): string[] {
@@ -4281,7 +4309,9 @@ export class InteractiveMode {
 		this.showStatus(`Harness tools: ${enabled ? "all enabled" : "all disabled"}`);
 	}
 
-	private canReloadHarnessRuntime(): boolean {
+	// Shared guard for runtime reloads (generic /reload and harness package
+	// selection changes both refuse to reload mid-stream or mid-compaction).
+	private canReloadRuntime(): boolean {
 		if (this.session.isStreaming) {
 			this.showWarning("Wait for the current response to finish before reloading.");
 			return false;
@@ -4294,19 +4324,66 @@ export class InteractiveMode {
 	}
 
 	private async setHarnessPackageSelectors(selectors: string[]): Promise<void> {
+		await this.enqueueHarnessPackageMutation(() => selectors);
+	}
+
+	private async toggleHarnessPackageSelector(selector: string): Promise<void> {
+		await this.enqueueHarnessPackageMutation((current) =>
+			current.includes(selector)
+				? current.filter((candidate) => candidate !== selector)
+				: [...current, selector],
+		);
+	}
+
+	private async setHarnessPackageSelectorEnabled(selector: string, enabled: boolean): Promise<void> {
+		await this.enqueueHarnessPackageMutation((current) => {
+			const next = current.filter((candidate) => candidate !== selector);
+			if (enabled) next.push(selector);
+			return next;
+		});
+	}
+
+	private async clearHarnessPackageSelectors(packageId: string): Promise<void> {
+		await this.enqueueHarnessPackageMutation((current) =>
+			current.filter((candidate) => packageIdFromSelector(candidate) !== packageId),
+		);
+	}
+
+	// Serializes package selection changes: each mutation awaits the previous one
+	// and computes its next selectors from the state left by that mutation, so
+	// overlapping toggles cannot start concurrent reloads or clobber each other.
+	private enqueueHarnessPackageMutation(compute: (current: string[]) => string[]): Promise<void> {
+		const run = this.harnessPackageMutation.then(() => this.applyHarnessPackageSelectors(compute));
+		this.harnessPackageMutation = run.catch(() => undefined);
+		return run;
+	}
+
+	private async applyHarnessPackageSelectors(compute: (current: string[]) => string[]): Promise<void> {
 		const loader = this.session.resourceLoader;
 		if (!loader.setHarnessPackageSelectors) {
 			this.showWarning("Current resource loader does not support runtime harness package selection.");
 			return;
 		}
-		if (!this.canReloadHarnessRuntime()) return;
+		if (!this.canReloadRuntime()) return;
 
 		const previousSelectors = this.getHarnessPackageSelectors();
 		const previousOverlay = loader.getPackageOverlay();
-		loader.setHarnessPackageSelectors(selectors);
+		const requestedSelectors = compute(previousSelectors);
+		loader.setHarnessPackageSelectors(requestedSelectors);
 		const reloaded = await this.handleReloadCommand();
 		if (!reloaded) {
+			// The reload failed after loadHarnessPackageResources already rebuilt the
+			// overlay/tools for the new selection. Restoring the selector array alone
+			// would leave runtime state on the failed selection, so reload again with
+			// the previous selectors to bring loaded state back in sync.
 			loader.setHarnessPackageSelectors(previousSelectors);
+			const restored = await this.handleReloadCommand();
+			if (!restored) {
+				this.showError(
+					"Harness package reload failed and the previous selection could not be restored; " +
+						"runtime package state may be inconsistent until the next successful reload.",
+				);
+			}
 			return;
 		}
 		const nextSelectors = this.getHarnessPackageSelectors();
@@ -4324,13 +4401,6 @@ export class InteractiveMode {
 				"Reload completed; package tools were assembled through Magnet. No extra compile step was run.",
 			].join("\n"),
 		);
-	}
-
-	private async setHarnessPackageSelector(packageId: string, selector: string | undefined): Promise<void> {
-		const current = this.getHarnessPackageSelectors();
-		const next = current.filter((candidate) => packageIdFromSelector(candidate) !== packageId);
-		if (selector) next.push(selector);
-		await this.setHarnessPackageSelectors(next);
 	}
 
 	private formatHarnessPackageSelection(
@@ -4498,8 +4568,7 @@ export class InteractiveMode {
 				this.showWarning("Usage: /harness package <selector> <on|off>");
 				return;
 			}
-			const packageId = packageIdFromSelector(selector);
-			await this.setHarnessPackageSelector(packageId, enabled ? selector : undefined);
+			await this.setHarnessPackageSelectorEnabled(selector, enabled);
 			return;
 		}
 
@@ -4739,6 +4808,7 @@ export class InteractiveMode {
 	}
 
 	private async harnessMenuItems(): Promise<FloatingMenuItem> {
+		this.beginHarnessMenuBuild();
 		const snapshot = await this.createHarnessRuntimeSnapshot();
 		const activeToolCount = snapshot.tools.filter((tool) => tool.active).length;
 		const toolItems = snapshot.tools.map((tool) => {
@@ -5186,19 +5256,19 @@ export class InteractiveMode {
 		if (parts[1] === "package" && parts[2] && parts[3]) {
 			const packageId = decodeMenuValuePart(parts[2]);
 			if (parts[3] === "enable") {
-				void this.setHarnessPackageSelector(packageId, packageId);
+				void this.setHarnessPackageSelectorEnabled(packageId, true);
 				return true;
 			}
 			if (parts[3] === "disable") {
-				void this.setHarnessPackageSelector(packageId, undefined);
+				void this.clearHarnessPackageSelectors(packageId);
 				return true;
 			}
 			if (parts[3] === "all-profiles") {
-				void this.setHarnessPackageSelector(packageId, `${packageId}:*`);
+				void this.toggleHarnessPackageSelector(`${packageId}:*`);
 				return true;
 			}
 			if (parts[3] === "profile" && parts[4]) {
-				void this.setHarnessPackageSelector(packageId, `${packageId}:${decodeMenuValuePart(parts[4])}`);
+				void this.toggleHarnessPackageSelector(`${packageId}:${decodeMenuValuePart(parts[4])}`);
 				return true;
 			}
 		}
@@ -6406,12 +6476,7 @@ export class InteractiveMode {
 	// =========================================================================
 
 	private async handleReloadCommand(): Promise<boolean> {
-		if (this.session.isStreaming) {
-			this.showWarning("Wait for the current response to finish before reloading.");
-			return false;
-		}
-		if (this.session.isCompacting) {
-			this.showWarning("Wait for compaction to finish before reloading.");
+		if (!this.canReloadRuntime()) {
 			return false;
 		}
 
