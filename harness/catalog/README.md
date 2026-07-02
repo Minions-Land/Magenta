@@ -12,7 +12,7 @@ It intentionally separates two concepts:
   Magnet.
 
 The Magenta 1 source data is preserved in
-`magenta1-components-inventory.json`. The schema in
+`magenta/magenta1-components-inventory.json`. The schema in
 `component-catalog.schema.json` describes the required inventory shape. The
 integration map marks entries already covered by Magenta3 native TS harness
 modules, plus entries that are locally selectable through generic Magnet/runtime

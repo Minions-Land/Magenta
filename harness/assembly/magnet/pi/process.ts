@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { access, readFile } from "node:fs/promises";
 import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import type { AgentTool, AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
@@ -10,13 +11,13 @@ import {
 	type ProcessExecOutput,
 	type ProcessRuntimeToolMetadata,
 	type RuntimePolicyReport,
-} from "../../../runtime/pi/process-runtime.ts";
+} from "../../../runtime/magenta/process-runtime.ts";
 import {
 	loadSandboxProviderFromPack,
 	type SandboxProfile,
 	type SandboxSelection,
 	selectSandboxProfile,
-} from "../../../sandbox/pi/sandbox.ts";
+} from "../../../sandbox/magenta/sandbox.ts";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, type TruncationResult } from "../../../tools/support/truncate.ts";
 import type { HcpCall } from "../../hcp/pi/hcp.ts";
 import { parseToml, type TomlTable } from "../../registry/pi/registry.ts";
@@ -134,7 +135,17 @@ function asObject(value: unknown): Record<string, unknown> | undefined {
 
 function resolveCatalogLocalPath(catalog: HarnessComponentCatalog, path: string): string {
 	if (isAbsolute(path)) return path;
-	return resolve(dirname(catalog.inventoryPath), "..", path);
+	return resolve(resolveCatalogLocalRoot(catalog), path);
+}
+
+function resolveCatalogLocalRoot(catalog: HarnessComponentCatalog): string {
+	let dir = dirname(catalog.inventoryPath);
+	while (true) {
+		if (existsSync(join(dir, "harness.toml"))) return dir;
+		const parent = dirname(dir);
+		if (parent === dir) return resolve(dirname(catalog.inventoryPath), "..");
+		dir = parent;
+	}
 }
 
 function resolveCatalogSourcePath(catalog: HarnessComponentCatalog, path: string): string {
@@ -155,7 +166,7 @@ function resolveCatalogComponentPath(catalog: HarnessComponentCatalog, entry: Ha
 
 function resolveCatalogManifestRoot(catalog: HarnessComponentCatalog, entry: HarnessCatalogEntry): string {
 	if (entry.migration.component?.path) {
-		return resolve(dirname(catalog.inventoryPath), "..");
+		return resolveCatalogLocalRoot(catalog);
 	}
 	return catalog.inventory.repository_root;
 }
@@ -209,7 +220,7 @@ async function loadCatalogSandboxProfile(
 	catalog: HarnessComponentCatalog,
 	manifest: ProcessToolManifest,
 ): Promise<SandboxProfile | undefined> {
-	const packPath = resolve(dirname(catalog.inventoryPath), "..", "sandbox/sandbox.toml");
+	const packPath = resolve(resolveCatalogLocalRoot(catalog), "sandbox/sandbox.toml");
 	if (!(await fileExists(packPath))) return undefined;
 	const provider = await loadSandboxProviderFromPack(packPath);
 	const selection = selectSandboxProfile({

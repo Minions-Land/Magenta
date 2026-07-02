@@ -106,7 +106,7 @@ describe("harness registry", () => {
 			availableProcessTools.find((item) => item.id === "general-harness:hcp-process:echo-jsonl")?.component,
 		).toMatchObject({
 			kind: "hcp-process",
-			path: "assembly/hcp-process/echo-jsonl.toml",
+			path: "assembly/hcp-process/magenta/echo-jsonl.toml",
 		});
 		expect(
 			availableProcessTools.find((item) => item.id === "general-harness:hcp-process:echo-jsonl")?.readiness,
@@ -156,7 +156,7 @@ describe("harness registry", () => {
 			component: {
 				kind: "memory",
 				name: "session-grounding",
-				path: "memory/pi/session-grounding.ts",
+				path: "memory/magenta/session-grounding.ts",
 			},
 		});
 	});

@@ -4,6 +4,6 @@ description = "Workspace context provider migrated from Magenta1 general-harness
 source = "magenta"
 origin = "magenta1-general-harness"
 origin_rel = "ported/adapted"
-impl = ["context/pi/context.ts"]
+impl = ["context/magenta/context.ts"]
 targets = ["context://workspace", "context://project"]
 operations = ["read", "status"]

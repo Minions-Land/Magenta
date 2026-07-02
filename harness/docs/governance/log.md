@@ -106,6 +106,14 @@
 - `process` is not a capability slot or Source. Magenta process-backed tool
   material belongs under the functional tool slot and origin Source, for example
   `harness/tools/bash/magenta/` or `harness/tools/ast-grep/magenta/`.
+- The same rule applies outside `tools`: Magenta/Magenta1 runtime guardrails,
+  sandbox profiles, hooks, policies, workspace context, session-grounding
+  memory, HCP-process manifests, and catalog inventory live under their owning
+  Module's `magenta/` Source directory.
+- Old registry kinds such as `sandbox-pack`, `runtime-pack`, `hook-pack`,
+  `policy-pack`, and `hcp-process-pack` are deprecated. The Harness Module kind
+  should be the capability slot itself: `sandbox`, `runtime`, `hook`, `policy`,
+  or `hcp-process`.
 
 ### Module Assembly Loop Checkpoint
 

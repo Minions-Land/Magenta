@@ -438,7 +438,7 @@
           "targets": [
             "sandbox://readonly-fs"
           ],
-          "path": "general-harness/components/providers/sandbox/readonly-fs.toml",
+          "path": "general-harness/components/providers/sandbox/magenta/readonly-fs.toml",
           "impl": [
             "general-harness/kernel/src/sandbox_provider.rs",
             "general-harness/kernel/src/runtime_provider.rs"
@@ -461,7 +461,7 @@
           "targets": [
             "sandbox://restricted"
           ],
-          "path": "general-harness/components/providers/sandbox/restricted.toml",
+          "path": "general-harness/components/providers/sandbox/magenta/restricted.toml",
           "impl": [
             "general-harness/kernel/src/sandbox_provider.rs",
             "general-harness/kernel/src/runtime_provider.rs"
@@ -484,7 +484,7 @@
           "targets": [
             "sandbox://workspace-write"
           ],
-          "path": "general-harness/components/providers/sandbox/workspace-write.toml",
+          "path": "general-harness/components/providers/sandbox/magenta/workspace-write.toml",
           "impl": [
             "general-harness/kernel/src/sandbox_provider.rs",
             "general-harness/kernel/src/runtime_provider.rs"
@@ -507,7 +507,7 @@
           "targets": [
             "sandbox://network-read"
           ],
-          "path": "general-harness/components/providers/sandbox/network-read.toml",
+          "path": "general-harness/components/providers/sandbox/magenta/network-read.toml",
           "impl": [
             "general-harness/kernel/src/sandbox_provider.rs",
             "general-harness/kernel/src/runtime_provider.rs"
@@ -530,7 +530,7 @@
           "targets": [
             "sandbox://trusted"
           ],
-          "path": "general-harness/components/providers/sandbox/trusted.toml",
+          "path": "general-harness/components/providers/sandbox/magenta/trusted.toml",
           "impl": [
             "general-harness/kernel/src/sandbox_provider.rs",
             "general-harness/kernel/src/runtime_provider.rs"

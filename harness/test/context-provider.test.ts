@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { HcpRegistry } from "../assembly/hcp/pi/hcp.ts";
 import { getHarnessRegistryPath, loadRegistry } from "../assembly/registry/pi/registry.ts";
-import { ContextProvider, discoverContextFiles } from "../context/pi/context.ts";
+import { ContextProvider, discoverContextFiles } from "../context/magenta/context.ts";
 
 describe("context provider", () => {
 	it("discovers selected and sticky context files with local imports", async () => {

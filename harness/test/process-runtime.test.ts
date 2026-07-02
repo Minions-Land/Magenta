@@ -3,8 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { HcpRegistry } from "../assembly/hcp/pi/hcp.ts";
-import { execProcess, ProcessRuntimeProvider } from "../runtime/pi/process-runtime.ts";
-import { loadSandboxProviderFromPack } from "../sandbox/pi/sandbox.ts";
+import { execProcess, ProcessRuntimeProvider } from "../runtime/magenta/process-runtime.ts";
+import { loadSandboxProviderFromPack } from "../sandbox/magenta/sandbox.ts";
 
 async function writeExecutableScript(dir: string, name: string, source: string): Promise<string> {
 	const path = join(dir, name);

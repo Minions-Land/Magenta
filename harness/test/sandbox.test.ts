@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { HcpRegistry } from "../assembly/hcp/pi/hcp.ts";
 import { getHarnessRegistryPath, loadRegistry } from "../assembly/registry/pi/registry.ts";
-import { loadSandboxProviderFromPack, selectSandboxProfile } from "../sandbox/pi/sandbox.ts";
+import { loadSandboxProviderFromPack, selectSandboxProfile } from "../sandbox/magenta/sandbox.ts";
 
 describe("sandbox provider", () => {
 	it("loads migrated Magenta1 sandbox profiles", async () => {
@@ -85,7 +85,7 @@ describe("sandbox provider", () => {
 	it("is registered in the harness registry and catalog integration map", async () => {
 		const registry = await loadRegistry(getHarnessRegistryPath());
 
-		expect(registry.components.find((component) => component.kind === "sandbox-pack")).toMatchObject({
+		expect(registry.components.find((component) => component.kind === "sandbox")).toMatchObject({
 			name: "sandbox",
 		});
 
@@ -95,11 +95,11 @@ describe("sandbox provider", () => {
 
 		expect(readonly?.migration).toMatchObject({
 			state: "integrated",
-			component: { kind: "sandbox", name: "readonly-fs", path: "sandbox/readonly-fs.toml" },
+			component: { kind: "sandbox", name: "readonly-fs", path: "sandbox/magenta/readonly-fs.toml" },
 		});
 		expect(hook?.migration).toMatchObject({
 			state: "integrated",
-			component: { kind: "hook", name: "sandbox-select", path: "sandbox/pi/sandbox.ts" },
+			component: { kind: "hook", name: "sandbox-select", path: "sandbox/magenta/sandbox.ts" },
 		});
 	});
 });

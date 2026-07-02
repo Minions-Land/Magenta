@@ -1,7 +1,7 @@
 import type { HcpCall, HcpTarget, HcpTargetDescription } from "../../assembly/hcp/pi/hcp.ts";
-import { decideApproval } from "../../policy/pi/approval.ts";
-import { classifyShellCommand } from "../../policy/pi/shell-policy.ts";
-import { selectSandboxProfile } from "../../sandbox/pi/sandbox.ts";
+import { decideApproval } from "../../policy/magenta/approval.ts";
+import { classifyShellCommand } from "../../policy/magenta/shell-policy.ts";
+import { selectSandboxProfile } from "../../sandbox/magenta/sandbox.ts";
 
 export interface HookDescriptor {
 	name: string;

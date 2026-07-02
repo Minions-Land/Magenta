@@ -260,7 +260,7 @@
     },
     "general-harness:hcp-process:echo-jsonl": {
       "state": "available",
-      "component": { "kind": "hcp-process", "name": "echo-jsonl", "path": "assembly/hcp-process/echo-jsonl.toml" },
+      "component": { "kind": "hcp-process", "name": "echo-jsonl", "path": "assembly/hcp-process/magenta/echo-jsonl.toml" },
       "relation": "migrated-hcp-jsonl-process",
       "notes": "HCP JSONL process manifest is available locally through HcpProcessMagnet, but not mounted into the default AgentSession."
     },
@@ -346,7 +346,7 @@
     },
     "general-harness:memory:session-grounding": {
       "state": "integrated",
-      "component": { "kind": "memory", "name": "session-grounding", "path": "memory/pi/session-grounding.ts" },
+      "component": { "kind": "memory", "name": "session-grounding", "path": "memory/magenta/session-grounding.ts" },
       "relation": "ported-to-native-ts-provider",
       "notes": "memory://session-grounding is implemented as a Magenta3 TS HCP target with read/retain/recall/reflect operations and preserves the Magenta1 source constraints."
     },
@@ -377,7 +377,7 @@
     },
     "general-harness:hook:sandbox-select": {
       "state": "integrated",
-      "component": { "kind": "hook", "name": "sandbox-select", "path": "sandbox/pi/sandbox.ts" },
+      "component": { "kind": "hook", "name": "sandbox-select", "path": "sandbox/magenta/sandbox.ts" },
       "relation": "ported-to-native-ts-provider",
       "notes": "The Magenta1 pre-tool sandbox selection rule is implemented in the Magenta3 sandbox provider as hook://sandbox-select."
     },
@@ -431,31 +431,31 @@
     },
     "general-harness:sandbox:readonly-fs": {
       "state": "integrated",
-      "component": { "kind": "sandbox", "name": "readonly-fs", "path": "sandbox/readonly-fs.toml" },
+      "component": { "kind": "sandbox", "name": "readonly-fs", "path": "sandbox/magenta/readonly-fs.toml" },
       "relation": "migrated-sandbox-profile",
       "notes": "Profile metadata is migrated and served by the Magenta3 TS SandboxProvider; runtime enforcement remains a separate provider migration."
     },
     "general-harness:sandbox:restricted": {
       "state": "integrated",
-      "component": { "kind": "sandbox", "name": "restricted", "path": "sandbox/restricted.toml" },
+      "component": { "kind": "sandbox", "name": "restricted", "path": "sandbox/magenta/restricted.toml" },
       "relation": "migrated-sandbox-profile",
       "notes": "Profile metadata is migrated and served by the Magenta3 TS SandboxProvider; runtime enforcement remains a separate provider migration."
     },
     "general-harness:sandbox:workspace-write": {
       "state": "integrated",
-      "component": { "kind": "sandbox", "name": "workspace-write", "path": "sandbox/workspace-write.toml" },
+      "component": { "kind": "sandbox", "name": "workspace-write", "path": "sandbox/magenta/workspace-write.toml" },
       "relation": "migrated-sandbox-profile",
       "notes": "Profile metadata is migrated and served by the Magenta3 TS SandboxProvider; runtime enforcement remains a separate provider migration."
     },
     "general-harness:sandbox:network-read": {
       "state": "integrated",
-      "component": { "kind": "sandbox", "name": "network-read", "path": "sandbox/network-read.toml" },
+      "component": { "kind": "sandbox", "name": "network-read", "path": "sandbox/magenta/network-read.toml" },
       "relation": "migrated-sandbox-profile",
       "notes": "Profile metadata is migrated and served by the Magenta3 TS SandboxProvider; runtime enforcement remains a separate provider migration."
     },
     "general-harness:sandbox:trusted": {
       "state": "integrated",
-      "component": { "kind": "sandbox", "name": "trusted", "path": "sandbox/trusted.toml" },
+      "component": { "kind": "sandbox", "name": "trusted", "path": "sandbox/magenta/trusted.toml" },
       "relation": "migrated-sandbox-profile",
       "notes": "Profile metadata is migrated and served by the Magenta3 TS SandboxProvider; runtime enforcement remains a separate provider migration."
     },

@@ -1,10 +1,10 @@
-kind = "hook-pack"
+kind = "hook"
 name = "hooks"
 description = "Lifecycle hook provider migrated from Magenta1 general-harness."
 source = "magenta"
 origin = "magenta1-general-harness"
 origin_rel = "ported/adapted"
-impl = ["hooks/pi/hooks.ts", "sandbox/pi/sandbox.ts"]
+impl = ["hooks/magenta/hooks.ts", "sandbox/magenta/sandbox.ts"]
 targets = ["hook://init", "hook://pre-turn", "hook://pre-llm", "hook://post-llm", "hook://pre-tool", "hook://post-tool", "hook://compact", "hook://workflow", "hook://sandbox-select"]
 
 [[hooks]]

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { HcpRegistry } from "../assembly/hcp/pi/hcp.ts";
 import { getHarnessRegistryPath, loadRegistry } from "../assembly/registry/pi/registry.ts";
-import { HookProvider } from "../hooks/pi/hooks.ts";
+import { HookProvider } from "../hooks/magenta/hooks.ts";
 
 describe("hook provider", () => {
 	it("discovers and describes migrated lifecycle hooks", async () => {

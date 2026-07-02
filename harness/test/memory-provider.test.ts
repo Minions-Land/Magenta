@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { HcpRegistry } from "../assembly/hcp/pi/hcp.ts";
-import { SessionGroundingMemoryProvider } from "../memory/pi/session-grounding.ts";
+import { SessionGroundingMemoryProvider } from "../memory/magenta/session-grounding.ts";
 
 describe("session grounding memory provider", () => {
 	it("serves Magenta1 session-grounding memory and retains local facts", async () => {

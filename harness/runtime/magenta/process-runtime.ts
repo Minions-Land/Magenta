@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { access, realpath } from "node:fs/promises";
 import { delimiter, isAbsolute, join, normalize, resolve } from "node:path";
 import type { HcpCall, HcpTarget, HcpTargetDescription } from "../../assembly/hcp/pi/hcp.ts";
-import type { SandboxProfile } from "../../sandbox/pi/sandbox.ts";
+import type { SandboxProfile } from "../../sandbox/magenta/sandbox.ts";
 
 export interface ProcessExecInput {
 	command: string;

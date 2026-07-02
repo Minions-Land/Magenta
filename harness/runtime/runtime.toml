@@ -5,7 +5,7 @@ source = "magenta"
 origin = "magenta1-general-harness"
 origin_rel = "ported/adapted"
 target = "runtime://process"
-impl = ["runtime/pi/process-runtime.ts"]
+impl = ["runtime/magenta/process-runtime.ts"]
 
 [policy]
 portable_guards = ["direct-exec gate", "workspace cwd", "environment allowlist", "wall-clock timeout", "filesystem read/write checks for declared paths", "network deny tag checks", "network allowlist checks for declared URL/host inputs"]

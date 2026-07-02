@@ -1,5 +1,5 @@
 # Migrated from Magenta1:
-# general-harness/components/providers/sandbox/workspace-write.toml
+# general-harness/components/providers/sandbox/magenta/workspace-write.toml
 
 kind = "sandbox"
 name = "workspace-write"

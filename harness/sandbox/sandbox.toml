@@ -1,11 +1,11 @@
-kind = "sandbox-pack"
+kind = "sandbox"
 name = "sandbox"
 description = "Sandbox profile catalog and selection provider migrated from Magenta1 general-harness."
 source = "magenta"
 origin = "magenta1-general-harness"
 origin_rel = "migrated/adapted"
-impl = ["sandbox/pi/sandbox.ts"]
-profiles = ["readonly-fs.toml", "restricted.toml", "workspace-write.toml", "network-read.toml", "trusted.toml"]
+impl = ["sandbox/magenta/sandbox.ts"]
+profiles = ["magenta/readonly-fs.toml", "magenta/restricted.toml", "magenta/workspace-write.toml", "magenta/network-read.toml", "magenta/trusted.toml"]
 targets = ["sandbox://readonly-fs", "sandbox://restricted", "sandbox://workspace-write", "sandbox://network-read", "sandbox://trusted", "hook://sandbox-select"]
 
 [runtime]

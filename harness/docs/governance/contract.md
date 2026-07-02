@@ -39,6 +39,10 @@ package overlays, process runtimes, and UI selection keep evolving.
   runtime mechanisms. Magenta/Magenta1-related material uses `magenta`; Pi uses
   `pi`; future Codex and Claude Code material should use `codex` and
   `claude-code`.
+- A registered non-contract component that declares a known Source such as
+  `source = "magenta"` or `source = "pi"` must have the corresponding Source
+  directory beside its descriptor. Runtime mechanisms and grouped "pack" labels
+  must not stand in for Module kinds or Source names.
 - Process-backed tools are still tools. Their manifests, adapter code, Rust
   crates, and local build artifacts must live under the owning capability source,
   for example `harness/tools/ast-grep/magenta/process-tools`; a shared

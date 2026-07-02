@@ -41,6 +41,8 @@ const allowedTopLevel = new Set([
 ]);
 
 const ignoredOutputDirs = new Set(["dist", "node_modules"]);
+const implementationSourceNames = new Set(["pi", "codex", "jcode", "claude-code", "magenta"]);
+const deprecatedPackKinds = new Set(["hcp-process-pack", "sandbox-pack", "runtime-pack", "hook-pack", "policy-pack"]);
 const sourceModuleDirs = [
 	"assembly",
 	"catalog",
@@ -133,12 +135,16 @@ function checkRegistry() {
 			continue;
 		}
 		const spec = readToml(componentPath);
+		if (deprecatedPackKinds.has(component.kind) || deprecatedPackKinds.has(spec.kind)) {
+			fail(`component ${key} uses deprecated pack kind; register it as its Harness Module capability kind`);
+		}
 		if (typeof spec.kind === "string" && spec.kind !== component.kind) {
 			fail(`component ${key} kind drift: index=${component.kind}, spec=${spec.kind}`);
 		}
 		if (typeof spec.name === "string" && spec.name !== component.name) {
 			fail(`component ${key} name drift: index=${component.name}, spec=${spec.name}`);
 		}
+		checkComponentSourceDirectory(componentPath, spec, key);
 	}
 
 	for (const catalog of catalogs) {
@@ -164,6 +170,15 @@ function checkRegistry() {
 				fail(`catalog ${catalog.name} integration map is missing: ${pathLabel(integrationPath)}`);
 			}
 		}
+	}
+}
+
+function checkComponentSourceDirectory(componentPath, spec, key) {
+	if (spec.kind === "contract") return;
+	if (typeof spec.source !== "string" || !implementationSourceNames.has(spec.source)) return;
+	const sourceDir = join(dirname(componentPath), spec.source);
+	if (!existsSync(sourceDir)) {
+		fail(`component ${key} declares source=${spec.source} but is missing ${pathLabel(sourceDir)}`);
 	}
 }
 

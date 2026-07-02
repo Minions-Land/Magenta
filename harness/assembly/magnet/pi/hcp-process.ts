@@ -1,12 +1,13 @@
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { dirname, isAbsolute, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import type { HarnessCatalogEntry, HarnessComponentCatalog } from "../../../catalog/pi/catalog.ts";
 import {
 	execProcess,
 	type ProcessExecOutput,
 	type ProcessRuntimeToolMetadata,
-} from "../../../runtime/pi/process-runtime.ts";
-import type { SandboxProfile } from "../../../sandbox/pi/sandbox.ts";
+} from "../../../runtime/magenta/process-runtime.ts";
+import type { SandboxProfile } from "../../../sandbox/magenta/sandbox.ts";
 import type { HcpCall } from "../../hcp/pi/hcp.ts";
 import { parseToml, type TomlTable } from "../../registry/pi/registry.ts";
 import { UniversalMagnet } from "./universal.ts";
@@ -65,7 +66,17 @@ function asStringArray(value: unknown): string[] {
 
 function resolveCatalogLocalPath(catalog: HarnessComponentCatalog, path: string): string {
 	if (isAbsolute(path)) return path;
-	return resolve(dirname(catalog.inventoryPath), "..", path);
+	return resolve(resolveCatalogLocalRoot(catalog), path);
+}
+
+function resolveCatalogLocalRoot(catalog: HarnessComponentCatalog): string {
+	let dir = dirname(catalog.inventoryPath);
+	while (true) {
+		if (existsSync(join(dir, "harness.toml"))) return dir;
+		const parent = dirname(dir);
+		if (parent === dir) return resolve(dirname(catalog.inventoryPath), "..");
+		dir = parent;
+	}
 }
 
 function resolveCatalogSourcePath(catalog: HarnessComponentCatalog, path: string): string {

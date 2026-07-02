@@ -22,24 +22,24 @@ export {
 	extractFileOpsFromMessage,
 	formatFileOperations,
 } from "./compaction/pi/utils.ts";
-export * from "./context/pi/context.ts";
+export * from "./context/magenta/context.ts";
 export * from "./env/pi/nodejs.ts";
-export * from "./hooks/pi/hooks.ts";
+export * from "./hooks/magenta/hooks.ts";
 export * from "./loop/pi/agent-harness.ts";
 export * from "./messages/messages.ts";
-export * from "./policy/pi/approval.ts";
-export * from "./policy/pi/shell-policy.ts";
+export * from "./policy/magenta/approval.ts";
+export * from "./policy/magenta/shell-policy.ts";
 export * from "./assembly/package-overlay/pi/package-overlay.ts";
 export * from "./prompt-templates/pi/prompt-templates.ts";
-export * from "./runtime/pi/process-runtime.ts";
-export * from "./runtime/pi/script-runtime.ts";
-export * from "./sandbox/pi/sandbox.ts";
+export * from "./runtime/magenta/process-runtime.ts";
+export * from "./runtime/magenta/script-runtime.ts";
+export * from "./sandbox/magenta/sandbox.ts";
 export * from "./session/pi/jsonl-repo.ts";
 export * from "./session/pi/memory-repo.ts";
 export * from "./session/pi/repo-utils.ts";
 export * from "./session/pi/session.ts";
 export { uuidv7 } from "./session/pi/uuid.ts";
-export * from "./memory/pi/session-grounding.ts";
+export * from "./memory/magenta/session-grounding.ts";
 export * from "./skills/pi/skills.ts";
 export * from "./system-prompt/pi/system-prompt.ts";
 // Tools: pure-execution tool logic + the AgentTool Tool contract.

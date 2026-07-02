@@ -1,5 +1,5 @@
 # Migrated from Magenta1:
-# general-harness/components/providers/sandbox/network-read.toml
+# general-harness/components/providers/sandbox/magenta/network-read.toml
 
 kind = "sandbox"
 name = "network-read"

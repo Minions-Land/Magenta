@@ -1,5 +1,5 @@
 # Migrated from Magenta1:
-# general-harness/components/providers/sandbox/trusted.toml
+# general-harness/components/providers/sandbox/magenta/trusted.toml
 
 kind = "sandbox"
 name = "trusted"

@@ -7,13 +7,13 @@ import { ProcessToolMagnet } from "./process.ts";
 import { PythonModuleToolMagnet, type PythonLauncherResolver } from "./python.ts";
 import { parametersFromToml } from "./schema.ts";
 import { parseToml, type TomlTable } from "../../registry/pi/registry.ts";
-import { execScriptRuntime, SCRIPT_RUNTIME_SPECS, type RuntimeSpec } from "../../../runtime/pi/script-runtime.ts";
+import { execScriptRuntime, SCRIPT_RUNTIME_SPECS, type RuntimeSpec } from "../../../runtime/magenta/script-runtime.ts";
 import {
 	loadSandboxProviderFromPack,
 	type SandboxProfile,
 	type SandboxSelection,
 	selectSandboxProfile,
-} from "../../../sandbox/pi/sandbox.ts";
+} from "../../../sandbox/magenta/sandbox.ts";
 
 export type PackageToolMagnetDiagnosticCode =
 	| "package_tool_descriptor_missing"

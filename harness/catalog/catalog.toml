@@ -8,7 +8,7 @@ format = "magenta-harness-inventory"
 schema = "catalog/component-catalog.schema.json"
 
 [inventory]
-path = "magenta1-components-inventory.json"
+path = "magenta/magenta1-components-inventory.json"
 
 [integration]
-path = "magenta1-integration-map.json"
+path = "magenta/magenta1-integration-map.json"

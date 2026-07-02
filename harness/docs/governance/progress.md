@@ -16,6 +16,11 @@ Date: 2026-07-02
 - Process-backed Magenta tool implementations are owned by their functional
   tool slots, for example `harness/tools/read/magenta/`; `harness/tools/process`
   and root-level `harness/process-tools` are invalid.
+- Non-tools Magenta/Magenta1 implementations have been moved under Module-local
+  `magenta/` Source directories: `runtime`, `sandbox`, `hooks`, `policy`,
+  `context`, `memory/session-grounding`, `catalog`, and `assembly/hcp-process`.
+- Old `*-pack` component kinds have been replaced by capability kinds such as
+  `sandbox`, `runtime`, `hook`, `policy`, and `hcp-process`.
 - `packages/AutOmicScience` now uses profile-local `general/` and `task/`
   directories; the old internal `domain-harness/` and top-level `skills/`
   split has been removed.
@@ -104,7 +109,8 @@ Date: 2026-07-02
 
 - `cd harness && npm run check:structure`: passed.
 - `cd harness && npm run inspect`: passed; 40 components/modules, including 17
-  tool modules, 2 read-only contract modules, and 2 HCP/Magnet core exceptions.
+  tool modules, 36 ready modules, 2 read-only contract modules, and 2
+  HCP/Magnet core exceptions.
 - `cd harness && node scripts/inspect.mjs --json`: valid JSON; parsed
   registry/package tool summary and module implementation rows successfully.
 - `cd harness && npm test`: 23 files, 174 tests passed.
@@ -115,10 +121,10 @@ Date: 2026-07-02
   `harness/assembly/package-overlay`.
 - `cd pi/coding-agent && npm run build`: passed.
 - `cd pi/coding-agent && npx vitest --run test/args.test.ts`: 74 tests passed.
-- `cd pi/coding-agent && node dist/cli.js --harness-list`: printed 31 registry
+- `cd pi/coding-agent && node dist/cli.js --harness-list`: printed 40 registry
   module rows.
 - `cd pi/coding-agent && node dist/cli.js --harness-list --mode json`: emitted
-  registry-backed JSON for the same 31 module rows.
+  registry-backed JSON for the same 40 module rows.
 - `cd pi/coding-agent && npm test`: 155 files passed, 6 skipped; 1489 tests
   passed, 44 skipped. The visible npm 404 and git repository errors are
   expected negative-case test output; the command exited 0.

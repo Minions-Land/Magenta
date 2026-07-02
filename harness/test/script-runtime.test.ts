@@ -4,8 +4,8 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { HcpRegistry } from "../assembly/hcp/pi/hcp.ts";
 import { getHarnessRegistryPath, loadRegistry } from "../assembly/registry/pi/registry.ts";
-import { ScriptRuntimeProvider } from "../runtime/pi/script-runtime.ts";
-import { loadSandboxProviderFromPack } from "../sandbox/pi/sandbox.ts";
+import { ScriptRuntimeProvider } from "../runtime/magenta/script-runtime.ts";
+import { loadSandboxProviderFromPack } from "../sandbox/magenta/sandbox.ts";
 
 describe("script runtime provider", () => {
 	it("discovers and describes Magenta1 runtime wrappers", async () => {

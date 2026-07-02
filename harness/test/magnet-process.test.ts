@@ -240,9 +240,9 @@ rl.on("line", line => {
 	it("creates generic magnets from migrated Magenta1 catalog entries", async () => {
 		const catalog = await loadHarnessComponentCatalog(
 			"magenta1-harness-components",
-			new URL("../catalog/magenta1-components-inventory.json", import.meta.url).pathname,
+			new URL("../catalog/magenta/magenta1-components-inventory.json", import.meta.url).pathname,
 			{
-				integrationMapPath: new URL("../catalog/magenta1-integration-map.json", import.meta.url).pathname,
+				integrationMapPath: new URL("../catalog/magenta/magenta1-integration-map.json", import.meta.url).pathname,
 			},
 		);
 		const astGrep = catalog.entries.find((entry) => entry.id === "general-harness:mcp:AstGrep");
@@ -280,9 +280,9 @@ rl.on("line", line => {
 		const dir = await mkdtemp(join(tmpdir(), "magenta-rust-process-tool-"));
 		const catalog = await loadHarnessComponentCatalog(
 			"magenta1-harness-components",
-			new URL("../catalog/magenta1-components-inventory.json", import.meta.url).pathname,
+			new URL("../catalog/magenta/magenta1-components-inventory.json", import.meta.url).pathname,
 			{
-				integrationMapPath: new URL("../catalog/magenta1-integration-map.json", import.meta.url).pathname,
+				integrationMapPath: new URL("../catalog/magenta/magenta1-integration-map.json", import.meta.url).pathname,
 			},
 		);
 		const echoJson = catalog.entries.find((entry) => entry.id === "general-harness:mcp:echo-json");

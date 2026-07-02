@@ -1,10 +1,10 @@
-kind = "runtime-pack"
+kind = "runtime"
 name = "script-runtimes"
 description = "Shell/Python/Node/R/Julia runtime wrappers migrated from Magenta1 general-harness."
 source = "magenta"
 origin = "magenta1-general-harness"
 origin_rel = "ported/adapted"
-impl = ["runtime/pi/script-runtime.ts", "runtime/pi/process-runtime.ts"]
+impl = ["runtime/magenta/script-runtime.ts", "runtime/magenta/process-runtime.ts"]
 targets = ["runtime://shell", "runtime://python", "runtime://node", "runtime://r", "runtime://julia"]
 compiled_to = "runtime://process"
 

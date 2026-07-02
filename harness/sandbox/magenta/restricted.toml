@@ -1,5 +1,5 @@
 # Migrated from Magenta1:
-# general-harness/components/providers/sandbox/restricted.toml
+# general-harness/components/providers/sandbox/magenta/restricted.toml
 
 kind = "sandbox"
 name = "restricted"

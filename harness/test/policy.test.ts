@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { HcpRegistry } from "../assembly/hcp/pi/hcp.ts";
 import { getHarnessRegistryPath, loadRegistry } from "../assembly/registry/pi/registry.ts";
-import { ApprovalPolicyProvider, decideApproval } from "../policy/pi/approval.ts";
-import { ShellPolicyProvider, classifyShellCommand } from "../policy/pi/shell-policy.ts";
+import { ApprovalPolicyProvider, decideApproval } from "../policy/magenta/approval.ts";
+import { ShellPolicyProvider, classifyShellCommand } from "../policy/magenta/shell-policy.ts";
 
 describe("policy providers", () => {
 	it("decides approval from mode, tier, override, and user policy", () => {
