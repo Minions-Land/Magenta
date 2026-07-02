@@ -1,7 +1,7 @@
 kind = "process"
 name = "ReadUrl"
 description = "Fetch an HTTP(S) URL and render JSON, text, or lightweight HTML-to-text content with optional line slicing."
-command = "tools/read-url/magenta/process-tools/target/release/magenta-process-tools"
+command = "tools/read/magenta/process-tools/target/release/magenta-process-tools"
 args = ["read-url"]
 operation = "read"
 read_only = true

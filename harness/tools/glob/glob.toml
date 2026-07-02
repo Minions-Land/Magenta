@@ -1,6 +1,0 @@
-kind = "tool"
-name = "glob"
-description = "Glob path lookup using the Magenta process-tool source."
-source = "magenta"
-origin = "magenta1-general-harness"
-implementation_manifest = "magenta/glob.toml"

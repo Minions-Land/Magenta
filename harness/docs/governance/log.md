@@ -105,7 +105,7 @@
   code or logic.
 - `process` is not a capability slot or Source. Magenta process-backed tool
   material belongs under the functional tool slot and origin Source, for example
-  `harness/tools/bash/magenta/` or `harness/tools/ast-grep/magenta/`.
+  `harness/tools/bash/magenta/` or `harness/tools/grep/magenta/`.
 - The same rule applies outside `tools`: Magenta/Magenta1 runtime guardrails,
   sandbox profiles, hooks, policies, workspace context, session-grounding
   memory, HCP-process manifests, and catalog inventory live under their owning
@@ -128,3 +128,18 @@
 - Current boundary: module/implementation selection is visible and inspectable,
   but alternate implementation switching is not yet active until Magnet
   selection contracts are implemented.
+
+### Tool Capability Folding Decision
+
+- Planner: top-level `harness/tools/<name>` means a selectable tool capability
+  slot, not every migrated Magenta1 process manifest. Sub-operations must live
+  under the owning tool Source directory.
+- Generator: folded `edit-hashline` and `ast-edit-plan` into
+  `tools/edit/magenta/`, `read-anchored` and `read-url` into
+  `tools/read/magenta/`, `glob` and `fuzzy-find` into `tools/find/magenta/`,
+  and `ast-grep` into `tools/grep/magenta/`. Removed `tools/support` by moving
+  shared utilities to `utils/pi`; moved `echo-json` to a test fixture manifest.
+- Evaluator: structure/build/test/inspect passed; coding-agent build/test and
+  CLI `--harness-list` passed; Rust release builds passed for the folded owner
+  crates; direct process-tool smokes passed for `glob`, `ast-grep`, and
+  `read-anchored`.

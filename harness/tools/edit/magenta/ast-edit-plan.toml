@@ -1,7 +1,7 @@
 kind = "process"
 name = "AstEditPlan"
 description = "Internal AST-aware edit planner that converts structural replacements into hashline patches for Resolve."
-command = "tools/ast-edit-plan/magenta/process-tools/target/release/magenta-process-tools"
+command = "tools/edit/magenta/process-tools/target/release/magenta-process-tools"
 args = ["ast-edit-plan"]
 operation = "read"
 read_only = true

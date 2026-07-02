@@ -1,7 +1,7 @@
 kind = "process"
 name = "AstGrep"
 description = "AST-aware structural code search over JavaScript, TypeScript, TSX, Rust, and Python files."
-command = "tools/ast-grep/magenta/process-tools/target/release/magenta-process-tools"
+command = "tools/grep/magenta/process-tools/target/release/magenta-process-tools"
 args = ["ast-grep"]
 operation = "read"
 read_only = true

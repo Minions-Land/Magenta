@@ -18,7 +18,7 @@ import {
 	type SandboxSelection,
 	selectSandboxProfile,
 } from "../../../sandbox/magenta/sandbox.ts";
-import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, type TruncationResult } from "../../../tools/support/truncate.ts";
+import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, type TruncationResult } from "../../../utils/pi/truncate.ts";
 import type { HcpCall } from "../../hcp/pi/hcp.ts";
 import { parseToml, type TomlTable } from "../../registry/pi/registry.ts";
 import { UniversalMagnet } from "./universal.ts";

@@ -1,4 +1,4 @@
 kind = "util"
 name = "utils"
-description = "Shared utilities for shell output formatting and text truncation"
+description = "Shared utilities for shell output formatting, text truncation, path handling, process spawning, output accumulation, and file mutation queues"
 source = "pi"

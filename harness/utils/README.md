@@ -1,6 +1,8 @@
 # Utils Module
 
-The **utils** module provides shared utilities for shell output formatting and text truncation.
+The **utils** module provides shared utilities for shell output formatting,
+text truncation, path handling, process spawning, streaming output collection,
+and serialized file mutation.
 
 ## Implementation
 
@@ -23,6 +25,14 @@ The **utils** module provides shared utilities for shell output formatting and t
 - `executeShellWithCapture()` — Execute shell command with output capture and truncation
 - `sanitizeBinaryOutput()` — Remove control characters from binary output
 - `ShellCaptureResult` — Execution result with output, exit code, truncation metadata
+
+### Tool Support Utilities
+
+- `path-utils.ts` / `paths.ts` — Path normalization, resolution, and display helpers
+- `edit-diff.ts` — Shared edit diff and fuzzy-match utilities
+- `file-mutation-queue.ts` — Per-file serialization for write/edit operations
+- `output-accumulator.ts` — Streaming output collection with bounded memory
+- `child-process.ts` — Cross-platform process spawn helpers
 
 ## Truncation Strategy
 
@@ -119,6 +129,8 @@ path = "utils/utils.toml"
 - **find** tool — Truncates file lists
 - **ls** tool — Truncates directory listings
 - **read** tool — Truncates large files
+- **edit/write** tools — Reuse mutation queues and path resolution
+- **Magnet process adapters** — Reuse truncation and output limits
 
 ## Design Notes
 

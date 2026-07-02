@@ -11,9 +11,9 @@ import {
 	normalizeToLF,
 	restoreLineEndings,
 	stripBom,
-} from "../../support/edit-diff.ts";
-import { withFileMutationQueue } from "../../support/file-mutation-queue.ts";
-import { resolveToCwd } from "../../support/path-utils.ts";
+} from "../../../utils/pi/edit-diff.ts";
+import { withFileMutationQueue } from "../../../utils/pi/file-mutation-queue.ts";
+import { resolveToCwd } from "../../../utils/pi/path-utils.ts";
 
 const replaceEditSchema = Type.Object(
 	{

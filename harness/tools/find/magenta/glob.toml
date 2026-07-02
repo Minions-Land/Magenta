@@ -1,27 +1,27 @@
 kind = "process"
-name = "FuzzyFind"
-description = "Fuzzy path lookup under a directory. Returns score-tab-path rows sorted by best match."
-command = "tools/fuzzy-find/magenta/process-tools/target/release/magenta-process-tools"
-args = ["fuzzy-find"]
+name = "Glob"
+description = "Find paths under a directory using a glob pattern. Respects hidden and node_modules filters by default."
+command = "tools/find/magenta/process-tools/target/release/magenta-process-tools"
+args = ["glob"]
 operation = "read"
 read_only = true
 destructive = false
 version = "1.0.0"
-tags = ["filesystem", "discovery", "fuzzy", "path-search"]
-capabilities = ["fuzzy-path-search", "path-discovery", "file-type-filter"]
+tags = ["filesystem", "discovery", "glob", "path-search"]
+capabilities = ["glob-pattern", "path-discovery", "file-type-filter"]
 requires = []
 
 [parameters]
 type = "object"
-required = ["query"]
-
-[parameters.properties.query]
-type = "string"
-description = "Fuzzy path query"
+required = ["path", "pattern"]
 
 [parameters.properties.path]
 type = "string"
-description = "Directory to search (default: current workspace)"
+description = "Directory to search"
+
+[parameters.properties.pattern]
+type = "string"
+description = "Glob pattern. Simple names are treated as recursive patterns."
 
 [parameters.properties.file_type]
 type = "string"
@@ -40,4 +40,4 @@ default = false
 [parameters.properties.limit]
 type = "integer"
 description = "Maximum results"
-default = 100
+default = 1000

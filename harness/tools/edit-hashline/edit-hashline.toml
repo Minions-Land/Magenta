@@ -1,6 +1,0 @@
-kind = "tool"
-name = "edit-hashline"
-description = "Apply hashline anchored patches using the Magenta process-tool source."
-source = "magenta"
-origin = "magenta1-general-harness"
-implementation_manifest = "magenta/edit-hashline.toml"

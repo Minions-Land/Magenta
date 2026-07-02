@@ -1,7 +1,7 @@
 kind = "process"
 name = "ReadAnchored"
 description = "Read file contents with hashline anchors. Returns a file tag plus per-line content hashes for EditHashline."
-command = "tools/read-anchored/magenta/process-tools/target/release/magenta-process-tools"
+command = "tools/read/magenta/process-tools/target/release/magenta-process-tools"
 args = ["read-anchored"]
 operation = "read"
 read_only = true

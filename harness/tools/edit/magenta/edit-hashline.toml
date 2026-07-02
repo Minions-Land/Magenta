@@ -1,7 +1,7 @@
 kind = "process"
 name = "EditHashline"
 description = "Apply a hashline anchored patch to one file. Rejects stale file tags before writing."
-command = "tools/edit-hashline/magenta/process-tools/target/release/magenta-process-tools"
+command = "tools/edit/magenta/process-tools/target/release/magenta-process-tools"
 args = ["edit-hashline"]
 operation = "edit"
 read_only = false

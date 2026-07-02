@@ -45,57 +45,9 @@ path = "tools/ls/ls.toml"
 
 [[components]]
 kind = "tool"
-name = "ast-edit-plan"
-description = "Plan AST-aware structural edits using the Magenta process-tool source."
-path = "tools/ast-edit-plan/ast-edit-plan.toml"
-
-[[components]]
-kind = "tool"
-name = "ast-grep"
-description = "AST-aware structural code search using the Magenta process-tool source."
-path = "tools/ast-grep/ast-grep.toml"
-
-[[components]]
-kind = "tool"
-name = "echo-json"
-description = "Echo JSON tool arguments for Magnet smoke testing."
-path = "tools/echo-json/echo-json.toml"
-
-[[components]]
-kind = "tool"
-name = "edit-hashline"
-description = "Apply hashline anchored patches using the Magenta process-tool source."
-path = "tools/edit-hashline/edit-hashline.toml"
-
-[[components]]
-kind = "tool"
-name = "fuzzy-find"
-description = "Fuzzy path lookup using the Magenta process-tool source."
-path = "tools/fuzzy-find/fuzzy-find.toml"
-
-[[components]]
-kind = "tool"
-name = "glob"
-description = "Glob path lookup using the Magenta process-tool source."
-path = "tools/glob/glob.toml"
-
-[[components]]
-kind = "tool"
 name = "lsp"
 description = "LSP-style language intelligence queries using the Magenta process-tool source."
 path = "tools/lsp/lsp.toml"
-
-[[components]]
-kind = "tool"
-name = "read-anchored"
-description = "Read file contents with hashline anchors using the Magenta process-tool source."
-path = "tools/read-anchored/read-anchored.toml"
-
-[[components]]
-kind = "tool"
-name = "read-url"
-description = "Fetch and render HTTP(S) URL contents using the Magenta process-tool source."
-path = "tools/read-url/read-url.toml"
 
 [[components]]
 kind = "tool"

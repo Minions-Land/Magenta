@@ -51,15 +51,12 @@ export {
 	lsSchema,
 } from "./ls/pi/ls.ts";
 export * from "./read/pi/read.ts";
-// Shared support modules. These are pure (no TUI) and are surfaced at the
-// package level so pi can source them from "@magenta/harness" instead of
-// keeping its own duplicate copies. truncate is intentionally NOT re-exported
-// here — its symbols already reach the package surface via harness/utils/truncate,
-// and re-exporting again would create an ambiguous duplicate barrel.
-export * from "./support/edit-diff.ts";
-export * from "./support/file-mutation-queue.ts";
-export * from "./support/output-accumulator.ts";
-export * from "./support/path-utils.ts";
+// Shared utility modules live under utils/pi, not tools/<tool>. Re-export them
+// here for the existing @magenta/harness tool-facing public surface.
+export * from "../utils/pi/edit-diff.ts";
+export * from "../utils/pi/file-mutation-queue.ts";
+export * from "../utils/pi/output-accumulator.ts";
+export * from "../utils/pi/path-utils.ts";
 // Tool abstraction surface (AgentTool contract + ToolFactory).
 export * from "./tool.ts";
 export * from "./write/pi/write.ts";

@@ -28,15 +28,15 @@ tools/
 - **write** — Write file contents
 - **find** — Find files by glob pattern
 - **ls** — List directory entries
+- **lsp** — LSP-style language intelligence queries
+- **web-search** — Web search
 
-## Shared Support
-
-`tools/support/` contains shared utilities used by multiple tools:
-- `edit-diff.ts` — Diff computation for edit tool
-- `truncate.ts` — Output truncation
-- `path-utils.ts` — Path resolution
-- `file-mutation-queue.ts` — Serialized file writes
-- `output-accumulator.ts` — Streaming output collection
+Magenta process-backed sub-operations live inside the owning tool Source
+directory. Examples: `edit/magenta/edit-hashline.toml`,
+`edit/magenta/ast-edit-plan.toml`, `read/magenta/read-anchored.toml`,
+`read/magenta/read-url.toml`, `find/magenta/glob.toml`,
+`find/magenta/fuzzy-find.toml`, and `grep/magenta/ast-grep.toml`.
+Shared code used by multiple tools lives under `harness/utils/<source>/`.
 
 ## Design
 

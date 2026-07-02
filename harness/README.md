@@ -95,7 +95,7 @@ See `assembly/README.md` for the complete story of how these work together.
 
 Tools live directly under `tools/<tool>/`. `process` is not a tool category;
 process-backed behavior is a Source implementation detail under the owning tool
-directory, for example `tools/ast-grep/magenta/`.
+directory, for example `tools/grep/magenta/`.
 
 Core Pi-backed tools:
 - **bash** — Shell command execution
@@ -106,9 +106,12 @@ Core Pi-backed tools:
 - **find** — Find files by glob pattern
 - **ls** — List directory entries
 
-Additional Magenta-backed tools include `ast-grep`, `ast-edit-plan`,
-`edit-hashline`, `fuzzy-find`, `glob`, `lsp`, `read-anchored`, `read-url`,
-`web-search`, and `echo-json`.
+Some Magenta-backed implementations expose sub-operations under an owning tool
+slot instead of becoming their own top-level tool module. For example,
+`edit/magenta/` owns `edit-hashline` and `ast-edit-plan`, `read/magenta/` owns
+`read-anchored` and `read-url`, `find/magenta/` owns `glob` and `fuzzy-find`,
+and `grep/magenta/` owns `ast-grep`. Shared tool utilities live under
+`utils/pi/`, not under `tools/`.
 
 Each tool has `<tool>.toml` at the top level. Source implementations live under
 source-named subdirectories such as `pi/` or `magenta/`.

@@ -16,6 +16,14 @@ Date: 2026-07-02
 - Process-backed Magenta tool implementations are owned by their functional
   tool slots, for example `harness/tools/read/magenta/`; `harness/tools/process`
   and root-level `harness/process-tools` are invalid.
+- Folded tool sub-operations are now owned by their real capability slots:
+  `edit-hashline` and `ast-edit-plan` under `tools/edit/magenta/`,
+  `read-anchored` and `read-url` under `tools/read/magenta/`, `glob` and
+  `fuzzy-find` under `tools/find/magenta/`, and `ast-grep` under
+  `tools/grep/magenta/`.
+- `harness/tools` now contains only tool slots with matching `<tool>.toml`
+  descriptors. Shared support code moved to `harness/utils/pi/`; the
+  `echo-json` smoke manifest moved to `harness/test/fixtures/process-tools/`.
 - Non-tools Magenta/Magenta1 implementations have been moved under Module-local
   `magenta/` Source directories: `runtime`, `sandbox`, `hooks`, `policy`,
   `context`, `memory/session-grounding`, `catalog`, and `assembly/hcp-process`.
@@ -108,23 +116,29 @@ Date: 2026-07-02
 ## Latest Verification
 
 - `cd harness && npm run check:structure`: passed.
-- `cd harness && npm run inspect`: passed; 40 components/modules, including 17
-  tool modules, 36 ready modules, 2 read-only contract modules, and 2
+- `cd harness && npm run inspect`: passed; 32 components/modules, including 9
+  tool modules, 28 ready modules, 2 read-only contract modules, and 2
   HCP/Magnet core exceptions.
 - `cd harness && node scripts/inspect.mjs --json`: valid JSON; parsed
   registry/package tool summary and module implementation rows successfully.
 - `cd harness && npm test`: 23 files, 174 tests passed.
 - `cd harness && npm run build`: passed.
 - `git diff --check`: passed.
+- `cargo build --release --manifest-path ...`: passed for
+  `tools/edit/magenta/process-tools`, `tools/read/magenta/process-tools`,
+  `tools/find/magenta/process-tools`, and `tools/grep/magenta/process-tools`.
+- Direct process-tool smoke checks passed from the new owner paths:
+  `find/magenta ... glob`, `grep/magenta ... ast-grep`, and
+  `read/magenta ... read-anchored`.
 - Path audit confirmed no source `harness/tools/process`, no root
-  `harness/process-tools`, and package overlay under
+  `harness/process-tools`, no `harness/tools/support`, no folded tool
+  sub-operation directories under `harness/tools`, and package overlay under
   `harness/assembly/package-overlay`.
 - `cd pi/coding-agent && npm run build`: passed.
-- `cd pi/coding-agent && npx vitest --run test/args.test.ts`: 74 tests passed.
-- `cd pi/coding-agent && node dist/cli.js --harness-list`: printed 40 registry
+- `cd pi/coding-agent && node dist/cli.js --harness-list`: printed 32 registry
   module rows.
 - `cd pi/coding-agent && node dist/cli.js --harness-list --mode json`: emitted
-  registry-backed JSON for the same 40 module rows.
+  registry-backed JSON for the same 32 module rows.
 - `cd pi/coding-agent && npm test`: 155 files passed, 6 skipped; 1489 tests
   passed, 44 skipped. The visible npm 404 and git repository errors are
   expected negative-case test output; the command exited 0.
@@ -139,6 +153,9 @@ Date: 2026-07-02
   into stable public exports plus internal module exports?
 - Should catalog assembly for migrated process tools be promoted into a CLI
   command, or stay selector/TUI-oriented for now?
+- Should the Magenta `process-tools` crate be split into per-tool minimal crates
+  or kept duplicated under each tool Source until a shared-source packaging
+  model exists? Do not reintroduce `tools/process`.
 - Should `mcp/` and `template/` become deferred/scaffold modules, or move under
   support-only documentation?
 - Should `assembly/registry` and `assembly/hcp-process` stay under

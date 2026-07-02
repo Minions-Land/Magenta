@@ -97,7 +97,7 @@ describe("harness registry", () => {
 		});
 		expect(availableProcessTools.find((item) => item.id === "general-harness:mcp:AstGrep")?.component).toMatchObject({
 			kind: "tool",
-			path: "tools/ast-grep/magenta/ast-grep.toml",
+			path: "tools/grep/magenta/ast-grep.toml",
 		});
 		expect(availableProcessTools.find((item) => item.id === "general-harness:mcp:AstGrep")?.readiness).toBe(
 			"ready",

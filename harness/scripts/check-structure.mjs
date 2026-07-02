@@ -43,6 +43,16 @@ const allowedTopLevel = new Set([
 const ignoredOutputDirs = new Set(["dist", "node_modules"]);
 const implementationSourceNames = new Set(["pi", "codex", "jcode", "claude-code", "magenta"]);
 const deprecatedPackKinds = new Set(["hcp-process-pack", "sandbox-pack", "runtime-pack", "hook-pack", "policy-pack"]);
+const foldedToolModuleNames = new Set([
+	"ast-edit-plan",
+	"ast-grep",
+	"echo-json",
+	"edit-hashline",
+	"fuzzy-find",
+	"glob",
+	"read-anchored",
+	"read-url",
+]);
 const sourceModuleDirs = [
 	"assembly",
 	"catalog",
@@ -127,6 +137,9 @@ function checkRegistry() {
 		const key = `${component.kind}:${component.name}`;
 		if (seen.has(key)) fail(`duplicate component registration: ${key}`);
 		seen.add(key);
+		if (component.kind === "tool" && foldedToolModuleNames.has(component.name)) {
+			fail(`component ${key} is a folded tool sub-operation; register the owning tool module instead`);
+		}
 
 		const componentPath = resolveInside(harnessRoot, component.path, `component ${key}`);
 		if (!componentPath) continue;
@@ -219,6 +232,24 @@ function checkToolLayout() {
 	const processDir = join(harnessRoot, "tools", "process");
 	if (existsSync(processDir)) {
 		fail("harness/tools/process is invalid; process-backed implementations must live under tools/<tool>/<source>/");
+	}
+	const supportDir = join(harnessRoot, "tools", "support");
+	if (existsSync(supportDir)) {
+		fail("harness/tools/support is invalid; shared utility code must live under harness/utils/<source>/");
+	}
+	for (const name of foldedToolModuleNames) {
+		const dir = join(harnessRoot, "tools", name);
+		if (existsSync(dir)) {
+			fail(`harness/tools/${name} is a folded tool sub-operation; keep it under the owning tool source directory`);
+		}
+	}
+	const toolsRoot = join(harnessRoot, "tools");
+	for (const entry of readdirSync(toolsRoot, { withFileTypes: true })) {
+		if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
+		const descriptorPath = join(toolsRoot, entry.name, `${entry.name}.toml`);
+		if (!existsSync(descriptorPath)) {
+			fail(`harness/tools/${entry.name} is not a valid tool slot; missing tools/${entry.name}/${entry.name}.toml`);
+		}
 	}
 }
 

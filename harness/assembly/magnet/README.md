@@ -95,7 +95,7 @@ const magnet = new ProcessToolMagnet({
     kind: "process",
     name: "AstGrep",
     description: "AST-aware structural search",
-    command: "tools/ast-grep/magenta/process-tools/target/release/magenta-process-tools",
+    command: "tools/grep/magenta/process-tools/target/release/magenta-process-tools",
     args: ["ast-grep"],
     parameters: { type: "object", required: ["pattern"], properties: { pattern: { type: "string" } } }
   }

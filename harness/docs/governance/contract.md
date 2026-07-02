@@ -45,8 +45,16 @@ package overlays, process runtimes, and UI selection keep evolving.
   must not stand in for Module kinds or Source names.
 - Process-backed tools are still tools. Their manifests, adapter code, Rust
   crates, and local build artifacts must live under the owning capability source,
-  for example `harness/tools/ast-grep/magenta/process-tools`; a shared
+  for example `harness/tools/grep/magenta/process-tools`; a shared
   `harness/tools/process` capability slot is invalid.
+- Tool sub-operations are not separate top-level tool modules when they serve
+  the same capability slot. For example `edit-hashline` and `ast-edit-plan`
+  belong under `tools/edit/<source>/`, `read-anchored` and `read-url` under
+  `tools/read/<source>/`, `glob` and `fuzzy-find` under `tools/find/<source>/`,
+  and `ast-grep` under `tools/grep/<source>/`.
+- `harness/tools/<name>` is reserved for selectable tool capability slots with
+  `tools/<name>/<name>.toml`. Shared utility code belongs under
+  `harness/utils/<source>/`, not under `tools/support`.
 - `pi/coding-agent` owns app composition, CLI/TUI surfaces, and ResourceLoader.
   It should consume harness through package-level APIs and should not deep-import
   harness internals.
