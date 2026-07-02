@@ -207,6 +207,9 @@ harness = "missing/harness.toml"
 
 		expect(overlay.diagnostics).toEqual([]);
 		expect(overlay.packages.map((pkg) => pkg.id)).toContain("AutOmicScience");
+		expect(overlay.componentMap.get("brand:AutOmicScience")?.path).toBe(
+			join(repoRoot, "packages", "AutOmicScience", "brands", "AutOmicScience"),
+		);
 		expect(overlay.componentMap.get("skill:omics-shared")?.path).toBe(
 			join(repoRoot, "packages", "AutOmicScience", "skills", "omics-shared"),
 		);
@@ -236,6 +239,7 @@ harness = "missing/harness.toml"
 			"scatac-seq",
 			"spatial",
 		]);
+		expect(overlay.resources.brandPaths.map((resource) => resource.name)).toEqual(["AutOmicScience"]);
 	});
 
 	it("assembles process-backed package tools into AgentTool instances", async () => {
