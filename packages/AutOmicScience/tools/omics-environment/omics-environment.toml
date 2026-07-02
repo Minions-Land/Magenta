@@ -1,0 +1,33 @@
+kind = "tool"
+name = "omics_environment"
+description = "Describe the Pixi environments used by AutOmicScience omics tools."
+execution = "declarative"
+runtime = "pixi"
+operation = "read"
+read_only = true
+destructive = false
+
+[metadata]
+package = "AutOmicScience"
+env_manifest = "pixi.toml"
+env_lock = "pixi.lock"
+compute_tool = "omics_compute"
+
+[metadata.environments_by_modality]
+rna = "task1"
+spatial = "task2"
+multi_omics = "task3"
+scatac = "task4"
+
+[parameters]
+type = "object"
+
+[parameters.properties.modality]
+type = "string"
+enum = ["rna", "spatial", "multi_omics", "scatac"]
+description = "Optional modality to inspect."
+
+[parameters.properties.checkGpu]
+type = "boolean"
+default = false
+description = "Whether GPU-dependent packages should be considered by the caller."

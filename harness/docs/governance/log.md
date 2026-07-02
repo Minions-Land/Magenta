@@ -79,18 +79,22 @@
 
 ### Package Internal Layout Decision
 
-- Domain packages should use profile-local layout under the package root:
-  `general/` for shared profile resources and `task/<profile>/` for
-  task-specific resources.
+- Domain packages should prefer a flat package-root layout: `skills/` for
+  selectable knowledge modules and `tools/<tool>/` for tool descriptors plus
+  tool-owned implementation assets.
 - Do not add a `domain-harness/` wrapper inside package contents; it duplicates
   the package's `kind = "domain"` meaning.
-- Skills should live beside the profile harness that selects them, for example
-  `general/skills/omics-shared` and `task/scrna/skills/omics-scrna`.
+- Skills should be named directly by capability, for example
+  `skills/omics-shared`, `skills/rna`, `skills/spatial`,
+  `skills/scatac-seq`, and `skills/multi-omics`.
 - Shared implementation assets should be owned by the package capability they
   implement. For AutOmicScience, the user-facing tool is `omics_compute`, and
   its Python implementation lives under `tools/omics-compute/python/`. Root
   `[[components]]` in `package.toml` can still declare the implementation entry
   points (`python-runtime`, tests, env) for package overlay assembly.
+- Pixi environment management is modeled as a package tool capability:
+  `tools/omics-environment/` owns `pixi.toml`, `pixi.lock`, and the
+  declarative `omics_environment` descriptor.
 
 ### Package Template And Runtime Cleanup
 
@@ -106,6 +110,18 @@
   a copied template overlay assembled successfully; an assembled
   `omics_compute` Magnet executed `python3 -m aose_omics_runtime --help`
   through the tool-owned Python implementation.
+
+### Package Flattening Decision
+
+- Planner: AutOmicScience should not use nested `general/` or `task/` harness
+  wrappers because the package itself already names the domain. Modality
+  choices should be flat skills, not profile directories.
+- Generator: moved skills to package-root `skills/`, removed the
+  AutOmicScience profile harness files, moved Pixi files under
+  `tools/omics-environment/`, and made `package.toml` declare all skills/tools
+  as root components.
+- Evaluator: structure and package overlay checks enforce the flat package
+  layout for repository packages and the template package.
 
 ### Harness Module Assembly Decision
 

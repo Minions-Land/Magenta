@@ -199,22 +199,22 @@ harness = "missing/harness.toml"
 		});
 	});
 
-	it("loads the migrated AutOmicScience package profiles", async () => {
+	it("loads the migrated AutOmicScience flat package components", async () => {
 		const overlay = await loadPackageOverlay({
 			repoRoot,
-			selections: ["AutOmicScience:scrna,multiome"],
+			selections: ["AutOmicScience"],
 		});
 
 		expect(overlay.diagnostics).toEqual([]);
 		expect(overlay.packages.map((pkg) => pkg.id)).toContain("AutOmicScience");
 		expect(overlay.componentMap.get("skill:omics-shared")?.path).toBe(
-			join(repoRoot, "packages", "AutOmicScience", "general", "skills", "omics-shared"),
+			join(repoRoot, "packages", "AutOmicScience", "skills", "omics-shared"),
 		);
-		expect(overlay.componentMap.get("skill:omics-scrna")?.path).toBe(
-			join(repoRoot, "packages", "AutOmicScience", "task", "scrna", "skills", "omics-scrna"),
+		expect(overlay.componentMap.get("skill:rna")?.path).toBe(
+			join(repoRoot, "packages", "AutOmicScience", "skills", "rna"),
 		);
-		expect(overlay.componentMap.get("skill:omics-multiome")?.path).toBe(
-			join(repoRoot, "packages", "AutOmicScience", "task", "multiome", "skills", "omics-multiome"),
+		expect(overlay.componentMap.get("skill:multi-omics")?.path).toBe(
+			join(repoRoot, "packages", "AutOmicScience", "skills", "multi-omics"),
 		);
 		const runtimeComponent = overlay.componentMap.get("python-runtime:aose_omics_runtime");
 		expect(runtimeComponent?.path).toBe(
@@ -222,15 +222,19 @@ harness = "missing/harness.toml"
 		);
 		expect(runtimeComponent?.profile).toBeUndefined();
 		const envComponent = overlay.componentMap.get("env:pixi");
-		expect(envComponent?.path).toBe(join(repoRoot, "packages", "AutOmicScience", "pixi.toml"));
+		expect(envComponent?.path).toBe(
+			join(repoRoot, "packages", "AutOmicScience", "tools", "omics-environment", "pixi.toml"),
+		);
 		expect(envComponent?.profile).toBeUndefined();
 		expect(overlay.componentMap.get("tool:omics_compute")?.path).toBe(
 			join(repoRoot, "packages", "AutOmicScience", "tools", "omics-compute", "omics-compute.toml"),
 		);
 		expect(overlay.resources.skillPaths.map((resource) => resource.name).sort()).toEqual([
-			"omics-multiome",
-			"omics-scrna",
+			"multi-omics",
 			"omics-shared",
+			"rna",
+			"scatac-seq",
+			"spatial",
 		]);
 	});
 
@@ -432,7 +436,7 @@ process.stdin.on("end", () => {
 	it("assembles the migrated AutOmicScience python-backed compute tool", async () => {
 		const overlay = await loadPackageOverlay({
 			repoRoot,
-			selections: ["AutOmicScience:scrna"],
+			selections: ["AutOmicScience"],
 		});
 		const assembly = await assemblePackageToolMagnets(overlay);
 
@@ -679,21 +683,15 @@ type = "object"
 
 	it("loads migrated AutOmicScience omics skills with the harness skill loader", async () => {
 		const env = new NodeExecutionEnv({ cwd: repoRoot });
-		const result = await loadSkills(env, [
-			"packages/AutOmicScience/general/skills",
-			"packages/AutOmicScience/task/multiome/skills",
-			"packages/AutOmicScience/task/scatac/skills",
-			"packages/AutOmicScience/task/scrna/skills",
-			"packages/AutOmicScience/task/spatial/skills",
-		]);
+		const result = await loadSkills(env, ["packages/AutOmicScience/skills"]);
 
 		expect(result.diagnostics).toEqual([]);
 		expect(result.skills.map((skill) => skill.name).sort()).toEqual([
-			"omics-multiome",
-			"omics-scatac",
-			"omics-scrna",
+			"multi-omics",
 			"omics-shared",
-			"omics-spatial",
+			"rna",
+			"scatac-seq",
+			"spatial",
 		]);
 	});
 

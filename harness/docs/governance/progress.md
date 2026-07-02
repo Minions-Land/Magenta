@@ -37,10 +37,10 @@ Date: 2026-07-02
   `context`, `memory/session-grounding`, `catalog`, and `assembly/hcp-process`.
 - Old `*-pack` component kinds have been replaced by capability kinds such as
   `sandbox`, `runtime`, `hook`, `policy`, and `hcp-process`.
-- `packages/AutOmicScience` now uses profile-local `general/` and `task/`
-  directories; the old internal `domain-harness/` and top-level `skills/`
-  split has been removed. Package-owned runtime/env/test assets now live at the
-  package root and are declared by root `[[components]]` in `package.toml`.
+- `packages/AutOmicScience` now uses flat package-root `skills/` and
+  `tools/<tool>/` directories; `general/`, `task/`, and the old internal
+  `domain-harness/` split have been removed. `package.toml` declares the package
+  skills/tools directly as root `[[components]]`.
 - Harness module assembly work has started: registry descriptors now need to
   model capability slots plus mature-agent implementation sources.
 
@@ -162,9 +162,8 @@ Date: 2026-07-02
   declares the `python-runtime`, `runtime-tests`, `env`, and `env-lock` root
   components for overlay assembly.
 - `packages/templates/harness-package` replaces the old `domain-package`
-  template and includes a runnable `example_compute` tool with a tool-owned
-  Python implementation plus profile-local `general` and `task/example-task`
-  resources.
+  template and includes flat `skills/`, `tools/example-compute`, and
+  `tools/example-environment` resources.
 - `cd harness && npx vitest --run test/package-overlay.test.ts`: 1 file, 13
   tests passed.
 - Direct package Magnet smoke passed for `omics_compute`, executing

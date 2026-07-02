@@ -15,9 +15,17 @@ The repository package root is:
 packages/
   AutOmicScience/
     package.toml
-    pixi.toml
-    pixi.lock
+    skills/
+      omics-shared/
+      multi-omics/
+      scatac-seq/
+      rna/
+      spatial/
     tools/
+      omics-environment/
+        omics-environment.toml
+        pixi.toml
+        pixi.lock
       omics-compute/
         omics-compute.toml
         python/
@@ -25,13 +33,6 @@ packages/
           tests/
       omics-preflight/
         omics-preflight.toml
-    general/
-      harness.toml
-      skills/
-    task/
-      scrna/
-        harness.toml
-        skills/
 ```
 
 `packages/` is not an npm workspace and package selection is not an external path loader. Manifest references are package-local relative references only.
@@ -47,7 +48,28 @@ name = "AutOmicScience"
 kind = "domain"
 domain = "bioinformatics"
 description = "Multi-omics analysis harness package."
-default_profiles = ["general"]
+
+[[components]]
+kind = "skill"
+name = "omics-shared"
+path = "skills/omics-shared"
+include_in_context = true
+
+[[components]]
+kind = "skill"
+name = "rna"
+path = "skills/rna"
+include_in_context = true
+
+[[components]]
+kind = "tool"
+name = "omics_environment"
+path = "tools/omics-environment/omics-environment.toml"
+
+[[components]]
+kind = "tool"
+name = "omics_compute"
+path = "tools/omics-compute/omics-compute.toml"
 
 [[components]]
 kind = "python-runtime"
@@ -57,30 +79,20 @@ path = "tools/omics-compute/python/aose_omics_runtime"
 [[components]]
 kind = "env"
 name = "pixi"
-path = "pixi.toml"
-
-[[profiles]]
-name = "general"
-description = "Shared omics harness resources."
-harness = "general/harness.toml"
-
-[[profiles]]
-name = "scrna"
-description = "Single-cell RNA-seq task harness."
-extends = ["general"]
-harness = "task/scrna/harness.toml"
+path = "tools/omics-environment/pixi.toml"
 ```
 
-Selecting `AutOmicScience` loads `default_profiles`. Selecting `AutOmicScience:scrna` loads the selected profile plus its `extends` chain. Selecting `AutOmicScience:*` loads every profile.
+Selecting `AutOmicScience` loads its root components directly. Profiles remain
+supported for packages that need opt-in resource subsets, but flat domain
+packages should prefer root components and capability names over nested
+`general/` or `task/` harness wrappers.
 
 ## Components
 
-Profile harness files use the same flat component shape as the Magenta3 registry:
+`package.toml` root components use the same flat component shape as the
+Magenta3 registry:
 
 ```toml
-name = "omics-general"
-description = "Shared omics package profile."
-
 [[components]]
 kind = "skill"
 name = "omics-shared"
@@ -90,14 +102,15 @@ include_in_context = true
 [[components]]
 kind = "tool"
 name = "omics_compute"
-path = "../tools/omics-compute/omics-compute.toml"
+path = "tools/omics-compute/omics-compute.toml"
 ```
 
-Root-level `[[components]]` in `package.toml` are package-owned implementation
-assets that should be available to every selected profile, such as package-local
-runtimes, pinned environments, locks, runtime tests, or shared binaries. Profile
-harness files should select user-facing resources for that profile, such as
-skills, tools, prompt templates, themes, brands, and system-prompt fragments.
+Root-level `[[components]]` in `package.toml` are the preferred package layout:
+skills, tools, tool-owned implementations, pinned environments, locks, tests,
+prompt templates, themes, brands, and system-prompt fragments all stay under the
+package root in their capability folders. Optional profile harness files can
+still select resource subsets, but they should not be used as a second domain or
+task hierarchy when flat capability names are enough.
 
 For migration from Magenta packs, the loader also accepts the old grouped shape:
 

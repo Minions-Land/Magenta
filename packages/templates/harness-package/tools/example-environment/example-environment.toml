@@ -1,0 +1,15 @@
+kind = "tool"
+name = "example_environment"
+description = "Describe the Pixi environment used by the example package tools."
+execution = "declarative"
+runtime = "pixi"
+operation = "read"
+read_only = true
+destructive = false
+
+[metadata]
+env_manifest = "pixi.toml"
+compute_tool = "example_compute"
+
+[parameters]
+type = "object"

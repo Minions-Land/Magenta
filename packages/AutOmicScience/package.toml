@@ -4,7 +4,51 @@ name = "AutOmicScience"
 kind = "domain"
 domain = "bioinformatics"
 description = "Single-cell and spatial omics harness package migrated from AOSE optimize_omics."
-default_profiles = ["general"]
+
+[[components]]
+kind = "skill"
+name = "omics-shared"
+path = "skills/omics-shared"
+include_in_context = true
+
+[[components]]
+kind = "skill"
+name = "multi-omics"
+path = "skills/multi-omics"
+include_in_context = true
+
+[[components]]
+kind = "skill"
+name = "scatac-seq"
+path = "skills/scatac-seq"
+include_in_context = true
+
+[[components]]
+kind = "skill"
+name = "rna"
+path = "skills/rna"
+include_in_context = true
+
+[[components]]
+kind = "skill"
+name = "spatial"
+path = "skills/spatial"
+include_in_context = true
+
+[[components]]
+kind = "tool"
+name = "omics_environment"
+path = "tools/omics-environment/omics-environment.toml"
+
+[[components]]
+kind = "tool"
+name = "omics_preflight"
+path = "tools/omics-preflight/omics-preflight.toml"
+
+[[components]]
+kind = "tool"
+name = "omics_compute"
+path = "tools/omics-compute/omics-compute.toml"
 
 [[components]]
 kind = "python-runtime"
@@ -19,38 +63,9 @@ path = "tools/omics-compute/python/tests"
 [[components]]
 kind = "env"
 name = "pixi"
-path = "pixi.toml"
+path = "tools/omics-environment/pixi.toml"
 
 [[components]]
 kind = "env-lock"
 name = "pixi"
-path = "pixi.lock"
-
-[[profiles]]
-name = "general"
-description = "Shared omics tools and cross-modality skill."
-harness = "general/harness.toml"
-
-[[profiles]]
-name = "scrna"
-description = "Single-cell RNA-seq analysis playbook."
-extends = ["general"]
-harness = "task/scrna/harness.toml"
-
-[[profiles]]
-name = "spatial"
-description = "Spatial transcriptomics analysis playbook."
-extends = ["general"]
-harness = "task/spatial/harness.toml"
-
-[[profiles]]
-name = "scatac"
-description = "Single-cell ATAC-seq analysis playbook."
-extends = ["general"]
-harness = "task/scatac/harness.toml"
-
-[[profiles]]
-name = "multiome"
-description = "Paired RNA plus ATAC multiome analysis playbook."
-extends = ["general"]
-harness = "task/multiome/harness.toml"
+path = "tools/omics-environment/pixi.lock"

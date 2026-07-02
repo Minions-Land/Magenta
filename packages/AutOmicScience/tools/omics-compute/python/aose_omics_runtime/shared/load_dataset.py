@@ -93,7 +93,7 @@ def load_tabular(
         except Exception as e:
             raise ValueError(
                 f"Failed to read Excel file: {e}\n"
-                "Make sure openpyxl is declared in pixi.toml, then run `pixi install -e <env>`"
+                "Make sure openpyxl is declared in tools/omics-environment/pixi.toml, then run `pixi install -e <env>`"
             )
     else:
         df = pd.read_csv(path, sep=sep, index_col=obs_names_col, header=header)

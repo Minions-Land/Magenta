@@ -1,6 +1,6 @@
 kind = "tool"
 name = "omics_preflight"
-description = "Verify package-local omics runtime readiness for a modality before compute. This descriptor is declarative; execution wiring is owned by the runtime/tool integration layer."
+description = "Verify package-local omics implementation and environment readiness for a modality before compute."
 execution = "declarative"
 runtime = "aose_omics_runtime"
 operation = "read"
@@ -11,7 +11,7 @@ destructive = false
 package = "AutOmicScience"
 source = "AOSE origin/main 57ae83b with UPDATING exclusions applied"
 implementation_path = "tools/omics-compute/python"
-env_manifest = "pixi.toml"
+env_manifest = "tools/omics-environment/pixi.toml"
 
 [parameters]
 type = "object"

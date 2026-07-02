@@ -90,9 +90,9 @@ This lets Magenta3 assemble combinations such as:
   `--harness-impl`, or `--harness-disable` switching yet.
 - `listHarnessSelectionItems()` flattens catalog entries, not built-in
   `harness.toml` modules.
-- `packages/AutOmicScience` now keeps tool implementation assets under
-  package-root `tools/<tool>/` directories and keeps profile-selected resources
-  under `general/` and `task/<profile>/`.
+- `packages/AutOmicScience` now keeps skills and tools flat under package-root
+  `skills/` and `tools/<tool>/` directories, with no `general/` or `task/`
+  wrappers.
 
 ## Current Mismatches
 
@@ -132,8 +132,9 @@ Use three explicit classes:
    - Implementation sources represent mature agent harness origins, not only
      programming languages or runtime technologies.
    - Repository package overlays use the same idea one level up: package-owned
-     implementation assets are root `[[components]]` in `package.toml`, while
-     `general/` and `task/<profile>/` select profile resources.
+     skills/tools and implementation assets are root `[[components]]` in
+     `package.toml`; optional profiles exist only for packages that genuinely
+     need resource subsets.
 3. Support/output:
    - Development docs, scripts, tests, templates, generated outputs, and local
      dependency/build directories.

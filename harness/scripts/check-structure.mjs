@@ -207,10 +207,10 @@ function checkRepoPackages() {
 			continue;
 		}
 		if (existsSync(join(packageRoot, "domain-harness"))) {
-			fail(`package ${entry.name} must not contain domain-harness; use package root general/ and task/ profiles`);
+			fail(`package ${entry.name} must not contain domain-harness; use flat package-root skills/ and tools/`);
 		}
-		if (existsSync(join(packageRoot, "skills"))) {
-			fail(`package ${entry.name} must not contain top-level skills/; keep skills under general/ or task/<profile>/`);
+		if (existsSync(join(packageRoot, "general")) || existsSync(join(packageRoot, "task"))) {
+			fail(`package ${entry.name} must not use general/ or task/ wrappers; use flat package-root skills/ and tools/`);
 		}
 		if (existsSync(join(packageRoot, ".omics-runtime")) || existsSync(join(packageRoot, ".runtime"))) {
 			fail(`package ${entry.name} must not keep hidden implementation roots; use package-root tools/<tool>/`);
@@ -260,8 +260,11 @@ function checkRepoPackageTemplates(packagesRoot) {
 	if (existsSync(join(templatesRoot, "harness-package", ".runtime"))) {
 		fail("packages/templates/harness-package/.runtime is invalid; template implementations belong under tools/<tool>/");
 	}
-	if (existsSync(join(templatesRoot, "harness-package", "general", "tools"))) {
-		fail("packages/templates/harness-package/general/tools is invalid; template tools belong under tools/<tool>/");
+	if (
+		existsSync(join(templatesRoot, "harness-package", "general")) ||
+		existsSync(join(templatesRoot, "harness-package", "task"))
+	) {
+		fail("packages/templates/harness-package must be flat; use package-root skills/ and tools/");
 	}
 }
 

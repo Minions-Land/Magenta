@@ -1,0 +1,83 @@
+# AOSE pixi environments (commit pixi.lock alongside this file).
+
+[workspace]
+name = "aose"
+version = "0.1.0"
+description = "AOSE - Autonomous Omics Science Engine"
+authors = ["Jiaming Ma <mjm@example.com>"]
+channels = ["conda-forge", "bioconda"]
+platforms = ["osx-arm64", "linux-64"]
+
+[dependencies]
+python = ">=3.10,<3.14"
+
+[feature.core.dependencies]
+jupyterlab = "*"
+h5py = ">=3.10"
+# numpy unpinned on purpose — scanpy provides it; lets isolated envs differ
+
+[feature.singlecell.dependencies]
+scanpy = ">=1.10"
+leidenalg = ">=0.10"
+igraph = ">=0.11"
+hdf5plugin = "*"
+scikit-misc = "*"
+pytest = ">=8.0"   # run ../omics-compute/python/tests in any analysis env
+
+[feature.scrna.dependencies]
+harmonypy = "*"
+scvi-tools = ">=1.1"
+scvelo = "*"
+cellrank = "*"
+
+[feature.scrna.pypi-dependencies]
+decoupler = ">=2.0"   # 2.x API; conda-forge stuck at 1.x
+pydeseq2 = "*"
+liana = "*"
+pertpy = "*"
+
+[feature.spatial.dependencies]
+squidpy = ">=1.4"
+spatialdata = "*"
+
+[feature.scatac.dependencies]
+macs3 = "*"
+muon = ">=0.1.6"
+
+[feature.scatac.pypi-dependencies]
+snapatac2 = ">=2.5"
+pychromvar = "*"
+
+# multiome = scatac toolkit (composed in task3) + joint modeling
+[feature.multiome.dependencies]
+scvi-tools = ">=1.1"
+
+[feature.r.dependencies]
+r-base = ">=4.3"
+r-essentials = "*"
+r-dplyr = "*"
+r-ggplot2 = "*"
+
+[feature.dev.dependencies]
+black = "*"
+ruff = "*"
+
+[environments]
+all = { features = ["core", "singlecell", "scrna", "spatial", "scatac", "multiome"], solve-group = "all" }
+default = { features = ["core", "singlecell", "scrna"], solve-group = "default" }
+task1 = { features = ["core", "singlecell", "scrna"], solve-group = "task1" }
+task2 = { features = ["core", "singlecell", "spatial"], solve-group = "task2" }
+task3 = { features = ["core", "singlecell", "scatac", "multiome"], solve-group = "task3" }
+task4 = { features = ["core", "singlecell", "scatac"], solve-group = "task4" }
+r-env = { features = ["core", "r"], solve-group = "r-env" }
+dev = { features = ["core", "singlecell", "scrna", "dev"], solve-group = "dev" }
+
+[tasks]
+python = "python"
+jupyter = "jupyter lab"
+r = "R"
+test = "pytest ../omics-compute/python/tests -v"
+lint = "ruff check ."
+format = "black ."
+build = "cargo build --release"
+check = "cargo check"
