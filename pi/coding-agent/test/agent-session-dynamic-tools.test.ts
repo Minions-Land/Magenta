@@ -214,6 +214,43 @@ describe("AgentSession dynamic tool registration", () => {
 		session.dispose();
 	});
 
+	it("reloads runtime harness package tool selections", async () => {
+		writeHarnessPackageFixture(tempDir);
+		const settingsManager = SettingsManager.create(tempDir, agentDir);
+		const sessionManager = SessionManager.inMemory();
+		const resourceLoader = new DefaultResourceLoader({
+			cwd: tempDir,
+			agentDir,
+			settingsManager,
+		});
+		await resourceLoader.reload();
+
+		const { session } = await createAgentSession({
+			cwd: tempDir,
+			agentDir,
+			model: getModel("anthropic", "claude-sonnet-4-5")!,
+			settingsManager,
+			sessionManager,
+			resourceLoader,
+		});
+
+		expect(session.getAllTools().map((tool) => tool.name)).not.toContain("test_package_tool");
+
+		resourceLoader.setHarnessPackageSelectors(["TestDomain"]);
+		await session.reload();
+
+		expect(session.getAllTools().map((tool) => tool.name)).toContain("test_package_tool");
+		expect(session.getActiveToolNames()).toContain("test_package_tool");
+
+		resourceLoader.setHarnessPackageSelectors([]);
+		await session.reload();
+
+		expect(session.getAllTools().map((tool) => tool.name)).not.toContain("test_package_tool");
+		expect(session.getActiveToolNames()).not.toContain("test_package_tool");
+
+		session.dispose();
+	});
+
 	it("keeps custom tools active but omits them from available tools when promptSnippet is not provided", async () => {
 		const settingsManager = SettingsManager.create(tempDir, agentDir);
 		const sessionManager = SessionManager.inMemory();

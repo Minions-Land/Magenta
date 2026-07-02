@@ -50,6 +50,8 @@ export interface ResourceLoader {
 	getThemes(): { themes: Theme[]; diagnostics: ResourceDiagnostic[] };
 	getPackageOverlay(): PackageOverlay | undefined;
 	getPackageTools(): { tools: AgentTool[]; diagnostics: ResourceDiagnostic[] };
+	getHarnessPackageSelectors?(): string[];
+	setHarnessPackageSelectors?(selectors: string[]): void;
 	getAgentsFiles(): { agentsFiles: Array<{ path: string; content: string }> };
 	getSystemPrompt(): string | undefined;
 	getAppendSystemPrompt(): string[];
@@ -184,12 +186,19 @@ function discoverBundledSkillPaths(baseDir: string): string[] {
 
 function parseHarnessPackageEnv(env: NodeJS.ProcessEnv = process.env): string[] {
 	const value = env.MAGENTA_HARNESS_PACKAGES ?? env.PI_HARNESS_PACKAGES;
-	return value
-		? value
-				.split(",")
-				.map((item) => item.trim())
-				.filter(Boolean)
-		: [];
+	return value ? normalizeHarnessPackageSelectors(value.split(",")) : [];
+}
+
+function normalizeHarnessPackageSelectors(selectors: string[]): string[] {
+	const seen = new Set<string>();
+	const normalized: string[] = [];
+	for (const selector of selectors) {
+		const trimmed = selector.trim();
+		if (!trimmed || seen.has(trimmed)) continue;
+		seen.add(trimmed);
+		normalized.push(trimmed);
+	}
+	return normalized;
 }
 
 function packageDiagnosticToResourceDiagnostic(diagnostic: PackageDiagnostic): ResourceDiagnostic {
@@ -322,7 +331,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.additionalSkillPaths = options.additionalSkillPaths ?? [];
 		this.additionalPromptTemplatePaths = options.additionalPromptTemplatePaths ?? [];
 		this.additionalThemePaths = options.additionalThemePaths ?? [];
-		this.harnessPackages = options.harnessPackages ?? parseHarnessPackageEnv();
+		this.harnessPackages = normalizeHarnessPackageSelectors(options.harnessPackages ?? parseHarnessPackageEnv());
 		this.extensionFactories = options.extensionFactories ?? [];
 		this.noExtensions = options.noExtensions ?? false;
 		this.noSkills = options.noSkills ?? false;
@@ -382,6 +391,14 @@ export class DefaultResourceLoader implements ResourceLoader {
 
 	getPackageTools(): { tools: AgentTool[]; diagnostics: ResourceDiagnostic[] } {
 		return { tools: this.packageTools, diagnostics: this.packageDiagnostics };
+	}
+
+	getHarnessPackageSelectors(): string[] {
+		return [...this.harnessPackages];
+	}
+
+	setHarnessPackageSelectors(selectors: string[]): void {
+		this.harnessPackages = normalizeHarnessPackageSelectors(selectors);
 	}
 
 	getAgentsFiles(): { agentsFiles: Array<{ path: string; content: string }> } {

@@ -3,6 +3,8 @@ import {
 	type Component,
 	type Focusable,
 	type KeyId,
+	isKeyRelease,
+	isKeyRepeat,
 	matchesKey,
 	truncateToWidth,
 	visibleWidth,
@@ -24,7 +26,10 @@ export const COMMAND_DOCK_OVERLAY: OverlayOptions = {
 	nonCapturing: true,
 };
 
-const NAVIGATION_KEY_REPEAT_SUPPRESS_MS = 180;
+const NAVIGATION_KEY_REPEAT_CADENCE_MS = 90;
+const NAVIGATION_KEY_HOLD_START_DELAY_MS = 180;
+const NAVIGATION_KEY_HOLD_START_MAX_MS = 1200;
+const NAVIGATION_KEY_UNMARKED_REPEAT_BURST_LIMIT = 12;
 
 export type FloatingMenuItem = {
 	value: string;
@@ -120,6 +125,7 @@ function renderFloatingFrame(options: {
 
 export class FloatingOverlayContainer implements Component, Focusable {
 	focused = false;
+	wantsKeyRelease = true;
 	private readonly body: FloatingOverlayBody;
 	private readonly done: () => void;
 
@@ -129,6 +135,10 @@ export class FloatingOverlayContainer implements Component, Focusable {
 	}
 
 	handleInput(data: string): void {
+		if (isKeyRelease(data)) {
+			this.body.handleInput?.(data);
+			return;
+		}
 		if (this.body.handleInput?.(data)) return;
 		if (
 			matchesKey(data, "escape") ||
@@ -165,6 +175,8 @@ export class FloatingMenuBody implements FloatingOverlayBody {
 	private filter = "";
 	private lastNavigationKey: string | undefined = undefined;
 	private lastNavigationAt = Number.NEGATIVE_INFINITY;
+	private unmarkedRapidNavigationCount = 0;
+	private unmarkedHoldCandidate = false;
 	private readonly options: FloatingMenuBodyOptions;
 	private readonly stack: Array<{
 		title: string;
@@ -198,21 +210,25 @@ export class FloatingMenuBody implements FloatingOverlayBody {
 	}
 
 	handleInput(data: string): boolean | undefined {
+		if (isKeyRelease(data)) {
+			this.resetNavigationRepeat();
+			return true;
+		}
 		if (matchesAny(data, ["escape", "left"])) {
-			if (matchesKey(data, "left") && this.shouldSuppressRepeatedNavigation("left")) return true;
+			if (matchesKey(data, "left") && this.shouldSuppressRepeatedNavigation("left", data)) return true;
 			if (this.stack.length > 0) {
 				this.goBack();
 				return true;
 			}
 			return undefined;
 		}
-		if (matchesAny(data, ["up"])) return this.navigate("up", () => this.move(-1));
-		if (matchesAny(data, ["down"])) return this.navigate("down", () => this.move(1));
-		if (matchesAny(data, ["pageUp", "ctrl+u"])) return this.navigate("pageUp", () => this.move(-8));
-		if (matchesAny(data, ["pageDown", "ctrl+d"])) return this.navigate("pageDown", () => this.move(8));
-		if (matchesAny(data, ["home"])) return this.navigate("home", () => this.selectIndex(0));
-		if (matchesAny(data, ["end"])) return this.navigate("end", () => this.selectIndex(Number.MAX_SAFE_INTEGER));
-		if (matchesAny(data, ["right"])) return this.navigate("right", () => this.openCurrentChild());
+		if (matchesAny(data, ["up"])) return this.navigate("up", data, () => this.move(-1));
+		if (matchesAny(data, ["down"])) return this.navigate("down", data, () => this.move(1));
+		if (matchesAny(data, ["pageUp", "ctrl+u"])) return this.navigate("pageUp", data, () => this.move(-8));
+		if (matchesAny(data, ["pageDown", "ctrl+d"])) return this.navigate("pageDown", data, () => this.move(8));
+		if (matchesAny(data, ["home"])) return this.navigate("home", data, () => this.selectIndex(0));
+		if (matchesAny(data, ["end"])) return this.navigate("end", data, () => this.selectIndex(Number.MAX_SAFE_INTEGER));
+		if (matchesAny(data, ["right"])) return this.navigate("right", data, () => this.openCurrentChild());
 		if (matchesAny(data, ["enter"])) return this.selectCurrent();
 	}
 
@@ -272,20 +288,58 @@ export class FloatingMenuBody implements FloatingOverlayBody {
 		return true;
 	}
 
-	private navigate(action: string, fn: () => true | undefined): true | undefined {
-		if (this.shouldSuppressRepeatedNavigation(action)) return true;
+	private navigate(action: string, data: string, fn: () => true | undefined): true | undefined {
+		if (this.shouldSuppressRepeatedNavigation(action, data)) return true;
 		return fn();
 	}
 
-	private shouldSuppressRepeatedNavigation(action: string): boolean {
-		const delayMs = this.options.navigationRepeatDelayMs ?? NAVIGATION_KEY_REPEAT_SUPPRESS_MS;
+	private shouldSuppressRepeatedNavigation(action: string, data: string): boolean {
+		if (isKeyRepeat(data)) {
+			this.lastNavigationKey = action;
+			this.lastNavigationAt = this.options.now?.() ?? Date.now();
+			this.unmarkedRapidNavigationCount = 0;
+			this.unmarkedHoldCandidate = true;
+			return true;
+		}
+
+		const delayMs = this.options.navigationRepeatDelayMs ?? NAVIGATION_KEY_REPEAT_CADENCE_MS;
 		if (delayMs <= 0) return false;
 
 		const now = this.options.now?.() ?? Date.now();
-		const shouldSuppress = this.lastNavigationKey === action && now - this.lastNavigationAt < delayMs;
+		const elapsed = now - this.lastNavigationAt;
+		const isSameKey = this.lastNavigationKey === action;
+		const holdStartDelayMs = Math.max(NAVIGATION_KEY_HOLD_START_DELAY_MS, delayMs * 2);
+		const holdStartMaxMs = Math.max(NAVIGATION_KEY_HOLD_START_MAX_MS, holdStartDelayMs);
+		let shouldSuppress = false;
+
+		if (!isSameKey) {
+			this.unmarkedRapidNavigationCount = 0;
+			this.unmarkedHoldCandidate = false;
+		} else if (elapsed >= holdStartDelayMs && elapsed <= holdStartMaxMs) {
+			this.unmarkedRapidNavigationCount = 0;
+			this.unmarkedHoldCandidate = true;
+		} else if (elapsed < delayMs) {
+			if (this.unmarkedHoldCandidate) {
+				shouldSuppress = true;
+			} else {
+				this.unmarkedRapidNavigationCount++;
+				shouldSuppress = this.unmarkedRapidNavigationCount >= NAVIGATION_KEY_UNMARKED_REPEAT_BURST_LIMIT;
+			}
+		} else {
+			this.unmarkedRapidNavigationCount = 0;
+			this.unmarkedHoldCandidate = false;
+		}
+
 		this.lastNavigationKey = action;
 		this.lastNavigationAt = now;
 		return shouldSuppress;
+	}
+
+	private resetNavigationRepeat(): void {
+		this.lastNavigationKey = undefined;
+		this.lastNavigationAt = Number.NEGATIVE_INFINITY;
+		this.unmarkedRapidNavigationCount = 0;
+		this.unmarkedHoldCandidate = false;
 	}
 
 	private selectIndex(index: number): true | undefined {

@@ -76,12 +76,16 @@ describe("harness switches", () => {
 			loadedSkills: 2,
 			loadedExtensions: 1,
 			tools: [{ name: "read", active: true, source: "builtin" }],
+			harnessPackages: ["AutOmicScience"],
+			packageToolCount: 1,
+			packageDiagnosticCount: 0,
 			activeHookEvents: ["session_before_compact"],
 			registry: { registry },
 		});
 
 		expect(summary).toContain("Auto-compact: enabled");
 		expect(summary).toContain("Skill commands: disabled (2 skills loaded)");
+		expect(summary).toContain("Packages: AutOmicScience; tools:1; diagnostics:0");
 		expect(summary).toContain("Memory: registered; no AgentSession runtime switch yet");
 	});
 });

@@ -52,6 +52,9 @@ export interface HarnessRuntimeSnapshot {
 	loadedSkills: number;
 	loadedExtensions: number;
 	tools: HarnessToolSwitch[];
+	harnessPackages: string[];
+	packageToolCount: number;
+	packageDiagnosticCount: number;
 	activeHookEvents: string[];
 	registry: HarnessRegistryView;
 }
@@ -116,6 +119,10 @@ export function formatHarnessRuntimeSummary(snapshot: HarnessRuntimeSnapshot): s
 		? "unavailable"
 		: `${snapshot.registry.registry?.components.length ?? 0} components`;
 	const hookStatus = snapshot.activeHookEvents.length > 0 ? snapshot.activeHookEvents.join(", ") : "none";
+	const packageStatus =
+		snapshot.harnessPackages.length > 0
+			? `${snapshot.harnessPackages.join(", ")}; tools:${snapshot.packageToolCount}; diagnostics:${snapshot.packageDiagnosticCount}`
+			: "none";
 
 	return [
 		"Harness runtime",
@@ -124,6 +131,7 @@ export function formatHarnessRuntimeSummary(snapshot: HarnessRuntimeSnapshot): s
 		`Tools: ${activeTools.length}/${snapshot.tools.length} active${
 			activeTools.length > 0 ? ` (${activeTools.join(", ")})` : ""
 		}`,
+		`Packages: ${packageStatus}`,
 		`Hooks: ${snapshot.loadedExtensions} extensions loaded; active events: ${hookStatus}`,
 		`Memory: ${memoryRegistered ? "registered; no AgentSession runtime switch yet" : "not registered"}`,
 		`Registry: ${registryStatus}`,

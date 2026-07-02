@@ -179,6 +179,31 @@ describe("DefaultResourceLoader", () => {
 			});
 		});
 
+		it("can change selected harness packages before reload", async () => {
+			writeHarnessPackageFixture(cwd);
+
+			const loader = createLoader();
+			await loader.reload();
+
+			expect(loader.getHarnessPackageSelectors()).toEqual([]);
+			expect(loader.getPackageOverlay()).toBeUndefined();
+			expect(loader.getPackageTools().tools).toEqual([]);
+
+			loader.setHarnessPackageSelectors(["TestDomain", "TestDomain", " "]);
+			await loader.reload();
+
+			expect(loader.getHarnessPackageSelectors()).toEqual(["TestDomain"]);
+			expect(loader.getPackageOverlay()?.packages.map((pkg) => pkg.id)).toEqual(["TestDomain"]);
+			expect(loader.getPackageTools().tools.map((tool) => tool.name)).toEqual(["test_package_tool"]);
+
+			loader.setHarnessPackageSelectors([]);
+			await loader.reload();
+
+			expect(loader.getPackageOverlay()).toBeUndefined();
+			expect(loader.getPackageTools().tools).toEqual([]);
+			expect(loader.getSkills().skills.some((skill) => skill.name === "test-domain")).toBe(false);
+		});
+
 		it("should discover skills from agentDir", async () => {
 			const skillsDir = join(agentDir, "skills");
 			mkdirSync(skillsDir, { recursive: true });

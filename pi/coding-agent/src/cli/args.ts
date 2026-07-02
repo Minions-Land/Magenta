@@ -270,7 +270,7 @@ ${chalk.bold("Options:")}
   --no-extensions, -ne           Disable extension discovery (explicit -e paths still work)
   --skill <path>                 Load a skill file or directory (can be used multiple times)
   --harness-list                 List registered Harness modules and implementation sources
-  --harness-package <selector>   Load a harness package profile, e.g. AutOmicScience:scrna
+  --harness-package <selector>   Load a harness package, e.g. AutOmicScience
   --no-skills, -ns               Disable skills discovery and loading
   --prompt-template <path>       Load a prompt template file or directory (can be used multiple times)
   --no-prompt-templates, -np     Disable prompt template discovery and loading

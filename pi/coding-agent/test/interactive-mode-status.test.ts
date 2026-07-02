@@ -1,3 +1,4 @@
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import * as path from "node:path";
 import { type AutocompleteProvider, CombinedAutocompleteProvider } from "@earendil-works/pi-tui";
@@ -137,6 +138,75 @@ describe("InteractiveMode.setToolsExpanded", () => {
 		expect(loadedResourcesChild.setExpanded).toHaveBeenCalledWith(true);
 		expect(chatChild.setExpanded).toHaveBeenCalledWith(true);
 		expect(fakeThis.ui.requestRender).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe("InteractiveMode harness menu", () => {
+	test("shows Magenta and Pi tool implementations from the Harness registry", async () => {
+		const root = mkdtempSync(path.join(homedir(), "magenta-harness-menu-"));
+		try {
+			const magentaPath = path.join(root, "harness", "tools", "bash", "magenta");
+			const piPath = path.join(root, "harness", "tools", "bash", "pi");
+			mkdirSync(path.join(magentaPath, "process-tools"), { recursive: true });
+			mkdirSync(piPath, { recursive: true });
+
+			const fakeThis: any = Object.create(InteractiveMode.prototype);
+			fakeThis.createHarnessRuntimeSnapshot = async () => ({
+				autoCompact: true,
+				skillCommands: true,
+				loadedSkills: 0,
+				loadedExtensions: 0,
+				tools: [{ name: "bash", active: true, source: "builtin" }],
+				harnessPackages: [],
+				packageToolCount: 0,
+				packageDiagnosticCount: 0,
+				activeHookEvents: [],
+				registry: {
+					registry: {
+						name: "magenta-harness",
+						components: [],
+						catalogs: [],
+						modules: [
+							{
+								id: "tool/bash",
+								kind: "tool",
+								name: "bash",
+								description: "Bash",
+								path: path.join(root, "harness", "tools", "bash", "bash.toml"),
+								capability: "tool/bash",
+								status: "ready",
+								coreException: false,
+								component: {} as any,
+								implementations: [
+									{ source: "magenta", status: "ready", path: magentaPath },
+									{ source: "pi", status: "ready", path: piPath },
+								],
+							},
+						],
+					},
+				},
+			});
+			fakeThis.loadHarnessPackagesView = async () => ({
+				packagesRoot: path.join(root, "packages"),
+				packages: [],
+				diagnostics: [],
+			});
+
+			const menu = await (InteractiveMode as any).prototype.harnessMenuItems.call(fakeThis);
+			const tools = menu.children.find((item: any) => item.value === "harness:tools");
+			const bash = tools.children.find((item: any) => item.value === "harness:tool:bash");
+			const labels = bash.children.map((item: any) => item.label);
+			const magenta = bash.children.find((item: any) => item.label === "Magenta");
+			const pi = bash.children.find((item: any) => item.label === "Pi");
+
+			expect(labels).toContain("Magenta");
+			expect(labels).toContain("Pi");
+			expect(bash.description).toContain("implementation: Pi");
+			expect(magenta.description).toContain("needs build");
+			expect(pi.description).toContain("active runtime bridge");
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
 	});
 });
 

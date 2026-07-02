@@ -47,8 +47,14 @@ import {
 	TUI,
 	visibleWidth,
 } from "@earendil-works/pi-tui";
-import type { HarnessSelectionItem } from "@magenta/harness";
-import { getHarnessRegistryPath, listHarnessSelectionItems, loadRegistry } from "@magenta/harness";
+import type { HarnessPackage, HarnessSelectionItem, PackageDiagnostic, PackageOverlay } from "@magenta/harness";
+import {
+	discoverHarnessPackages,
+	getHarnessRegistryPath,
+	listHarnessSelectionItems,
+	loadRegistry,
+	parsePackageSelector,
+} from "@magenta/harness";
 import chalk from "chalk";
 import { spawn, spawnSync } from "child_process";
 import {
@@ -166,6 +172,13 @@ interface Expandable {
 	setExpanded(expanded: boolean): void;
 }
 
+interface HarnessPackagesView {
+	packagesRoot?: string;
+	packages: HarnessPackage[];
+	diagnostics: PackageDiagnostic[];
+	error?: string;
+}
+
 function isExpandable(obj: unknown): obj is Expandable {
 	return typeof obj === "object" && obj !== null && "setExpanded" in obj && typeof obj.setExpanded === "function";
 }
@@ -234,6 +247,27 @@ function decodeMenuValuePart(value: string | undefined): string {
 		return decodeURIComponent(value);
 	} catch {
 		return value;
+	}
+}
+
+function packageIdFromSelector(selector: string): string {
+	return parsePackageSelector(selector).packageId;
+}
+
+function formatHarnessSourceLabel(source: string): string {
+	switch (source) {
+		case "pi":
+			return "Pi";
+		case "magenta":
+			return "Magenta";
+		case "codex":
+			return "Codex";
+		case "jcode":
+			return "JCode";
+		case "claude-code":
+			return "Claude Code";
+		default:
+			return source;
 	}
 }
 
@@ -3306,6 +3340,18 @@ export class InteractiveMode {
 		}
 	}
 
+	private showSystemMessage(message: string): void {
+		this.addMessageToChat({
+			role: "custom",
+			customType: "system",
+			content: message,
+			display: true,
+			details: { source: "harness" },
+			timestamp: Date.now(),
+		});
+		this.ui.requestRender();
+	}
+
 	/**
 	 * Render session context to chat. Used for initial load and rebuild after compaction.
 	 * @param sessionContext Session context to render
@@ -4101,43 +4147,116 @@ export class InteractiveMode {
 		}
 	}
 
+	private async loadHarnessPackagesView(): Promise<HarnessPackagesView> {
+		try {
+			const result = await discoverHarnessPackages({ repoRoot: this.sessionManager.getCwd() });
+			return {
+				packagesRoot: result.packagesRoot,
+				packages: result.packages,
+				diagnostics: result.diagnostics,
+			};
+		} catch (error) {
+			return {
+				packages: [],
+				diagnostics: [],
+				error: error instanceof Error ? error.message : String(error),
+			};
+		}
+	}
+
+	private getHarnessModule(snapshot: HarnessRuntimeSnapshot, id: string) {
+		return snapshot.registry.registry?.modules.find((module) => module.id === id);
+	}
+
+	private getHarnessImplementationReadiness(implementationPath: string | undefined): string {
+		if (!implementationPath) return "no path";
+		const processToolsDir = path.join(implementationPath, "process-tools");
+		if (!fs.existsSync(processToolsDir)) return "source-ready";
+		const releaseBinary = path.join(processToolsDir, "target", "release", "magenta-process-tools");
+		return fs.existsSync(releaseBinary) ? "built" : "needs build";
+	}
+
+	private formatHarnessImplementationDescription(input: {
+		source: string;
+		status: string;
+		path?: string;
+		notes?: string;
+		active: boolean;
+	}): string {
+		const readiness = this.getHarnessImplementationReadiness(input.path);
+		return [
+			input.active ? "active runtime bridge" : "registered implementation",
+			input.status,
+			readiness,
+			input.path,
+			input.notes,
+		]
+			.filter(Boolean)
+			.join(" · ");
+	}
+
+	private isHarnessToolImplementationActive(toolSource: string, implementationSource: string): boolean {
+		if (toolSource === "builtin") return implementationSource === "pi";
+		return toolSource === implementationSource;
+	}
+
+	private getHarnessPackageSelectors(): string[] {
+		const loader = this.session.resourceLoader;
+		if (loader.getHarnessPackageSelectors) {
+			return loader.getHarnessPackageSelectors();
+		}
+		return (loader.getPackageOverlay()?.selections ?? []).map((selection) =>
+			selection.profiles?.length ? `${selection.packageId}:${selection.profiles.join(",")}` : selection.packageId,
+		);
+	}
+
 	private getHarnessActiveHookEvents(): string[] {
 		return HARNESS_HOOK_EVENTS.filter((event) => this.session.extensionRunner.hasHandlers(event));
 	}
 
 	private async createHarnessRuntimeSnapshot(): Promise<HarnessRuntimeSnapshot> {
 		const registry = await this.loadHarnessRegistryView();
+		const packageTools = this.session.resourceLoader.getPackageTools();
 		return {
 			autoCompact: this.session.autoCompactionEnabled,
 			skillCommands: this.settingsManager.getEnableSkillCommands(),
 			loadedSkills: this.session.resourceLoader.getSkills().skills.length,
 			loadedExtensions: this.session.extensionRunner.getExtensionPaths().length,
 			tools: buildHarnessToolSwitches(this.session.getAllTools(), this.session.getActiveToolNames()),
+			harnessPackages: this.getHarnessPackageSelectors(),
+			packageToolCount: packageTools.tools.length,
+			packageDiagnosticCount: packageTools.diagnostics.length,
 			activeHookEvents: this.getHarnessActiveHookEvents(),
 			registry,
 		};
 	}
 
 	private setHarnessAutoCompact(enabled: boolean): void {
+		const previous = this.session.autoCompactionEnabled;
 		this.session.setAutoCompactionEnabled(enabled);
 		this.footer.setAutoCompactEnabled(enabled);
+		this.showSystemMessage(`Harness auto-compact changed: ${previous ? "enabled" : "disabled"} -> ${enabled ? "enabled" : "disabled"}.`);
 		this.showStatus(`Harness auto-compact: ${enabled ? "enabled" : "disabled"}`);
 	}
 
 	private setHarnessSkillCommands(enabled: boolean): void {
+		const previous = this.settingsManager.getEnableSkillCommands();
 		this.settingsManager.setEnableSkillCommands(enabled);
 		this.setupAutocompleteProvider();
+		this.showSystemMessage(`Harness skill slash commands changed: ${previous ? "enabled" : "disabled"} -> ${enabled ? "enabled" : "disabled"}.`);
 		this.showStatus(`Harness skill commands: ${enabled ? "enabled" : "disabled"}`);
 	}
 
 	private setHarnessToolEnabled(name: string, enabled: boolean): void {
 		const tools = this.session.getAllTools();
-		if (!tools.some((tool) => tool.name === name)) {
+		const tool = tools.find((candidate) => candidate.name === name);
+		if (!tool) {
 			this.showWarning(`Unknown tool: ${name}`);
 			return;
 		}
 
 		const activeToolNames = new Set(this.session.getActiveToolNames());
+		const previous = activeToolNames.has(name);
 		if (enabled) {
 			activeToolNames.add(name);
 		} else {
@@ -4145,13 +4264,87 @@ export class InteractiveMode {
 		}
 		const orderedToolNames = tools.map((tool) => tool.name).filter((toolName) => activeToolNames.has(toolName));
 		this.session.setActiveToolsByName(orderedToolNames);
+		this.showSystemMessage(
+			`Harness tool exposure changed: ${name} ${previous ? "enabled" : "disabled"} -> ${enabled ? "enabled" : "disabled"}.\nSource: ${tool.sourceInfo.source}\nPath: ${tool.sourceInfo.path}`,
+		);
 		this.showStatus(`Harness tool ${name}: ${enabled ? "enabled" : "disabled"}`);
 	}
 
 	private setAllHarnessToolsEnabled(enabled: boolean): void {
 		const tools = this.session.getAllTools();
+		const previous = this.session.getActiveToolNames();
 		this.session.setActiveToolsByName(enabled ? tools.map((tool) => tool.name) : []);
+		const next = this.session.getActiveToolNames();
+		this.showSystemMessage(
+			`Harness tool exposure changed: ${enabled ? "enabled all tools" : "disabled all tools"}.\nBefore: ${previous.length ? previous.join(", ") : "none"}\nAfter: ${next.length ? next.join(", ") : "none"}`,
+		);
 		this.showStatus(`Harness tools: ${enabled ? "all enabled" : "all disabled"}`);
+	}
+
+	private canReloadHarnessRuntime(): boolean {
+		if (this.session.isStreaming) {
+			this.showWarning("Wait for the current response to finish before reloading.");
+			return false;
+		}
+		if (this.session.isCompacting) {
+			this.showWarning("Wait for compaction to finish before reloading.");
+			return false;
+		}
+		return true;
+	}
+
+	private async setHarnessPackageSelectors(selectors: string[]): Promise<void> {
+		const loader = this.session.resourceLoader;
+		if (!loader.setHarnessPackageSelectors) {
+			this.showWarning("Current resource loader does not support runtime harness package selection.");
+			return;
+		}
+		if (!this.canReloadHarnessRuntime()) return;
+
+		const previousSelectors = this.getHarnessPackageSelectors();
+		const previousOverlay = loader.getPackageOverlay();
+		loader.setHarnessPackageSelectors(selectors);
+		const reloaded = await this.handleReloadCommand();
+		if (!reloaded) {
+			loader.setHarnessPackageSelectors(previousSelectors);
+			return;
+		}
+		const nextSelectors = this.getHarnessPackageSelectors();
+		const nextOverlay = loader.getPackageOverlay();
+		const packageTools = loader.getPackageTools();
+		this.showSystemMessage(
+			[
+				"Harness package selection changed.",
+				"Before:",
+				this.formatHarnessPackageSelection(previousSelectors, previousOverlay),
+				"After:",
+				this.formatHarnessPackageSelection(nextSelectors, nextOverlay),
+				`Package tools: ${packageTools.tools.length ? packageTools.tools.map((tool) => tool.name).join(", ") : "none"}`,
+				`Diagnostics: ${packageTools.diagnostics.length}`,
+				"Reload completed; package tools were assembled through Magnet. No extra compile step was run.",
+			].join("\n"),
+		);
+	}
+
+	private async setHarnessPackageSelector(packageId: string, selector: string | undefined): Promise<void> {
+		const current = this.getHarnessPackageSelectors();
+		const next = current.filter((candidate) => packageIdFromSelector(candidate) !== packageId);
+		if (selector) next.push(selector);
+		await this.setHarnessPackageSelectors(next);
+	}
+
+	private formatHarnessPackageSelection(
+		selectors: string[],
+		overlay: PackageOverlay | undefined,
+	): string {
+		if (selectors.length === 0) return "- none";
+		const packageDirs = new Map((overlay?.packages ?? []).map((pkg) => [pkg.id, pkg.dir]));
+		return selectors
+			.map((selector) => {
+				const packageId = packageIdFromSelector(selector);
+				return `- ${selector} -> ${packageDirs.get(packageId) ?? "not loaded"}`;
+			})
+			.join("\n");
 	}
 
 	private async setSelectedModel(model: Model<any>): Promise<void> {
@@ -4294,7 +4487,23 @@ export class InteractiveMode {
 			return;
 		}
 
-		this.showWarning("Usage: /harness [status|registry|hooks|memory|compact|skills|tool]");
+		if (action === "package" || action === "packages") {
+			const selector = args[1];
+			const enabled = this.parseHarnessToggle(args[2]);
+			if (!selector) {
+				await this.openHarnessPackageMenu();
+				return;
+			}
+			if (enabled === undefined) {
+				this.showWarning("Usage: /harness package <selector> <on|off>");
+				return;
+			}
+			const packageId = packageIdFromSelector(selector);
+			await this.setHarnessPackageSelector(packageId, enabled ? selector : undefined);
+			return;
+		}
+
+		this.showWarning("Usage: /harness [status|registry|hooks|memory|compact|skills|tool|package]");
 	}
 
 	private commandDockShouldRouteInput(data: string): boolean {
@@ -4532,32 +4741,50 @@ export class InteractiveMode {
 	private async harnessMenuItems(): Promise<FloatingMenuItem> {
 		const snapshot = await this.createHarnessRuntimeSnapshot();
 		const activeToolCount = snapshot.tools.filter((tool) => tool.active).length;
-		const toolItems = snapshot.tools.map((tool) => ({
-			value: `harness:tool:${encodeMenuValuePart(tool.name)}`,
-			label: tool.name,
-			description: `${tool.active ? "enabled" : "disabled"} · implementation: Pi`,
-			children: [
-				{
-					value: `harness:tool:${encodeMenuValuePart(tool.name)}:on`,
-					label: "Enabled",
-					description: "Expose this tool to the agent",
-					active: tool.active,
-				},
-				{
-					value: `harness:tool:${encodeMenuValuePart(tool.name)}:off`,
-					label: "Disabled",
-					description: "Remove this tool from the active tool list",
-					active: !tool.active,
-				},
-				{
-					value: `harness:tool:${encodeMenuValuePart(tool.name)}:impl:pi`,
-					label: "Pi",
-					description: "Current in-process Harness implementation",
-					active: true,
-				},
-			],
-		}));
+		const toolItems = snapshot.tools.map((tool) => {
+			const module = this.getHarnessModule(snapshot, `tool/${tool.name}`);
+			const implementationItems =
+				module?.implementations.map((implementation) => {
+					const active = this.isHarnessToolImplementationActive(tool.source, implementation.source);
+					return {
+						value: `harness:tool:${encodeMenuValuePart(tool.name)}:impl:${encodeMenuValuePart(implementation.source)}`,
+						label: formatHarnessSourceLabel(implementation.source),
+						description: this.formatHarnessImplementationDescription({
+							source: implementation.source,
+							status: implementation.status,
+							path: implementation.path,
+							notes: implementation.notes,
+							active,
+						}),
+						active,
+					};
+				}) ?? [];
+			const activeImplementation =
+				implementationItems.find((implementation) => implementation.active)?.label ??
+				(tool.source === "harness-package" ? "package" : tool.source);
+			return {
+				value: `harness:tool:${encodeMenuValuePart(tool.name)}`,
+				label: tool.name,
+				description: `${tool.active ? "enabled" : "disabled"} · implementation: ${activeImplementation}`,
+				children: [
+					{
+						value: `harness:tool:${encodeMenuValuePart(tool.name)}:on`,
+						label: "Enabled",
+						description: "Expose this tool to the agent",
+						active: tool.active,
+					},
+					{
+						value: `harness:tool:${encodeMenuValuePart(tool.name)}:off`,
+						label: "Disabled",
+						description: "Remove this tool from the active tool list",
+						active: !tool.active,
+					},
+					...implementationItems,
+				],
+			};
+		});
 		const moduleItems = this.harnessModuleMenuItems(snapshot);
+		const packageItems = await this.harnessPackageMenuItems(snapshot);
 		const catalogItems = this.harnessCatalogMenuItems(snapshot);
 
 		return {
@@ -4656,6 +4883,7 @@ export class InteractiveMode {
 					children: [{ value: "harness:registry:inspect", label: "Inspect registry" }],
 				},
 				...moduleItems,
+				...packageItems,
 				...catalogItems,
 			],
 		};
@@ -4689,14 +4917,120 @@ export class InteractiveMode {
 								},
 								...module.implementations.map((implementation) => ({
 									value: `harness:module:${encodedId}:impl:${encodeMenuValuePart(implementation.source)}`,
-									label: implementation.source,
-									description: implementation.notes
-										? `${implementation.status} · ${implementation.notes}`
-										: implementation.status,
+									label: formatHarnessSourceLabel(implementation.source),
+									description: this.formatHarnessImplementationDescription({
+										source: implementation.source,
+										status: implementation.status,
+										path: implementation.path,
+										notes: implementation.notes,
+										active: false,
+									}),
 								})),
 							],
 						};
 					}),
+			},
+		];
+	}
+
+	private async harnessPackageMenuItems(snapshot: HarnessRuntimeSnapshot): Promise<FloatingMenuItem[]> {
+		const view = await this.loadHarnessPackagesView();
+		const activeSelectors = snapshot.harnessPackages;
+		const activeByPackage = new Map<string, string[]>();
+		for (const selector of activeSelectors) {
+			const packageId = packageIdFromSelector(selector);
+			const selectors = activeByPackage.get(packageId) ?? [];
+			selectors.push(selector);
+			activeByPackage.set(packageId, selectors);
+		}
+
+		const children: FloatingMenuItem[] = [];
+		if (view.error) {
+			children.push({
+				value: "harness:packages:error",
+				label: "Discovery error",
+				description: view.error,
+				disabled: true,
+			});
+		}
+		if (view.diagnostics.length > 0) {
+			children.push({
+				value: "harness:packages:diagnostics",
+				label: "Diagnostics",
+				description: `${view.diagnostics.length} package discovery issue(s)`,
+				children: view.diagnostics.slice(0, 20).map((diagnostic, index) => ({
+					value: `harness:packages:diagnostic:${index}`,
+					label: `${diagnostic.type}: ${diagnostic.code}`,
+					description: diagnostic.message,
+					disabled: true,
+				})),
+			});
+		}
+
+		for (const pkg of view.packages.slice().sort((left, right) => left.id.localeCompare(right.id))) {
+			const packageSelectors = activeByPackage.get(pkg.id) ?? [];
+			const rootSelector = pkg.id;
+			const selected = packageSelectors.length > 0;
+			const componentCount = pkg.manifest.components.length;
+			const profileCount = pkg.manifest.profiles.length;
+			const selectorLabel = selected ? `selected: ${packageSelectors.join(", ")}` : "not selected";
+			const packageChildren: FloatingMenuItem[] = [
+				{
+					value: `harness:package:${encodeMenuValuePart(pkg.id)}:enable`,
+					label: "Load package",
+					description: "Load root package components and default profiles",
+					active: packageSelectors.includes(rootSelector),
+				},
+				{
+					value: `harness:package:${encodeMenuValuePart(pkg.id)}:disable`,
+					label: "Unload package",
+					description: "Remove this package from the current session selectors",
+					active: !selected,
+				},
+			];
+			if (pkg.manifest.profiles.length > 0) {
+				packageChildren.push({
+					value: `harness:package:${encodeMenuValuePart(pkg.id)}:all-profiles`,
+					label: "Load all profiles",
+					description: "Load every profile declared by this package",
+					active: packageSelectors.includes(`${pkg.id}:*`),
+				});
+				packageChildren.push(
+					...pkg.manifest.profiles.map((profile) => {
+						const selector = `${pkg.id}:${profile.name}`;
+						return {
+							value: `harness:package:${encodeMenuValuePart(pkg.id)}:profile:${encodeMenuValuePart(profile.name)}`,
+							label: profile.name,
+							description: profile.description ?? "Load this package profile",
+							active: packageSelectors.includes(selector),
+						};
+					}),
+				);
+			}
+			children.push({
+				value: `harness:package:${encodeMenuValuePart(pkg.id)}`,
+				label: pkg.id,
+				description: `${selectorLabel} · ${componentCount} root components · ${profileCount} profiles`,
+				active: selected,
+				children: packageChildren,
+			});
+		}
+
+		if (children.length === 0) {
+			children.push({
+				value: "harness:packages:none",
+				label: "No packages found",
+				description: view.packagesRoot ? `Checked ${view.packagesRoot}` : "No packages root available",
+				disabled: true,
+			});
+		}
+
+		return [
+			{
+				value: "harness:packages",
+				label: "Packages",
+				description: `${activeSelectors.length} selected · ${view.packages.length} available`,
+				children,
 			},
 		];
 	}
@@ -4790,6 +5124,14 @@ export class InteractiveMode {
 		);
 	}
 
+	private async openHarnessPackageMenu(): Promise<void> {
+		const snapshot = await this.createHarnessRuntimeSnapshot();
+		const root = (await this.harnessPackageMenuItems(snapshot))[0];
+		this.showFloatingMenu("harness packages", "package / selector", root?.children ?? [], (item) =>
+			this.handleHarnessMenuItem(item),
+		);
+	}
+
 	private handleHarnessMenuItem(item: FloatingMenuItem): boolean {
 		const parts = item.value.split(":");
 		if (parts[0] !== "harness") return false;
@@ -4799,6 +5141,13 @@ export class InteractiveMode {
 		}
 		if (parts[1] === "tool" && parts[2] && (parts[3] === "on" || parts[3] === "off")) {
 			this.setHarnessToolEnabled(decodeMenuValuePart(parts[2]), parts[3] === "on");
+			return true;
+		}
+		if (parts[1] === "tool" && parts[2] && parts[3] === "impl" && parts[4]) {
+			void this.showHarnessToolImplementationSelection(
+				decodeMenuValuePart(parts[2]),
+				decodeMenuValuePart(parts[4]),
+			);
 			return true;
 		}
 		if (parts[1] === "compact" && (parts[2] === "on" || parts[2] === "off")) {
@@ -4824,18 +5173,73 @@ export class InteractiveMode {
 			return true;
 		}
 		if (parts[1] === "module" && parts[2]) {
-			void this.showHarnessModuleItem(decodeMenuValuePart(parts[2]), parts[4] ? decodeMenuValuePart(parts[4]) : undefined);
+			const moduleId = decodeMenuValuePart(parts[2]);
+			const source = parts[4] ? decodeMenuValuePart(parts[4]) : undefined;
+			if (source) {
+				this.showSystemMessage(
+					`Harness implementation inspected: ${moduleId} -> ${formatHarnessSourceLabel(source)}.\nNo runtime implementation switch was performed for this row.`,
+				);
+			}
+			void this.showHarnessModuleItem(moduleId, source);
 			return true;
+		}
+		if (parts[1] === "package" && parts[2] && parts[3]) {
+			const packageId = decodeMenuValuePart(parts[2]);
+			if (parts[3] === "enable") {
+				void this.setHarnessPackageSelector(packageId, packageId);
+				return true;
+			}
+			if (parts[3] === "disable") {
+				void this.setHarnessPackageSelector(packageId, undefined);
+				return true;
+			}
+			if (parts[3] === "all-profiles") {
+				void this.setHarnessPackageSelector(packageId, `${packageId}:*`);
+				return true;
+			}
+			if (parts[3] === "profile" && parts[4]) {
+				void this.setHarnessPackageSelector(packageId, `${packageId}:${decodeMenuValuePart(parts[4])}`);
+				return true;
+			}
 		}
 		if (parts[1] === "catalog" && parts[2] === "item" && parts[3]) {
 			void this.showHarnessCatalogItem(decodeMenuValuePart(parts[3]));
 			return true;
 		}
 		if (item.value.includes(":impl:")) {
+			this.showSystemMessage(
+				`Harness implementation inspected: ${item.label}.\nNo runtime implementation switch was performed for this row.`,
+			);
 			this.showStatus(`${item.label} is the current implementation; alternate providers are not wired yet.`);
 			return true;
 		}
 		return false;
+	}
+
+	private async showHarnessToolImplementationSelection(toolName: string, source: string): Promise<void> {
+		const registry = await this.loadHarnessRegistryView();
+		const module = registry.registry?.modules.find((candidate) => candidate.id === `tool/${toolName}`);
+		const implementation = module?.implementations.find((candidate) => candidate.source === source);
+		const piImplementation = module?.implementations.find((candidate) => candidate.source === "pi");
+		const activeSource = this.session.getAllTools().some((tool) => tool.name === toolName && tool.sourceInfo.source === "builtin")
+			? "pi"
+			: "unknown";
+		const requestedPath = implementation?.path ?? "not registered";
+		const activePath = activeSource === "pi" ? (piImplementation?.path ?? "Pi built-in bridge") : activeSource;
+		const readiness = this.getHarnessImplementationReadiness(implementation?.path);
+
+		this.showSystemMessage(
+			[
+				`Harness implementation inspected: tool/${toolName}`,
+				`Requested source: ${formatHarnessSourceLabel(source)}`,
+				`Requested path: ${requestedPath}`,
+				`Requested readiness: ${readiness}`,
+				`Active source remains: ${formatHarnessSourceLabel(activeSource)}`,
+				`Active path: ${activePath}`,
+				"No runtime implementation switch was performed; this row is inspect-only until implementation hot-swap is wired.",
+			].join("\n"),
+		);
+		await this.showHarnessModuleItem(`tool/${toolName}`, source);
 	}
 
 	private async showHarnessModuleItem(id: string, source?: string): Promise<void> {
@@ -4864,7 +5268,7 @@ export class InteractiveMode {
 					? `Implementations:\n${implementations
 							.map(
 								(implementation) =>
-									`  - ${implementation.source}: ${implementation.status}${
+									`  - ${formatHarnessSourceLabel(implementation.source)}: ${implementation.status}; ${this.getHarnessImplementationReadiness(implementation.path)}${
 										implementation.path ? ` (${implementation.path})` : ""
 									}${implementation.notes ? `\n    ${implementation.notes}` : ""}`,
 							)
@@ -6001,14 +6405,14 @@ export class InteractiveMode {
 	// Command handlers
 	// =========================================================================
 
-	private async handleReloadCommand(): Promise<void> {
+	private async handleReloadCommand(): Promise<boolean> {
 		if (this.session.isStreaming) {
 			this.showWarning("Wait for the current response to finish before reloading.");
-			return;
+			return false;
 		}
 		if (this.session.isCompacting) {
 			this.showWarning("Wait for compaction to finish before reloading.");
-			return;
+			return false;
 		}
 
 		this.resetExtensionUI();
@@ -6088,11 +6492,13 @@ export class InteractiveMode {
 			);
 			dismissReloadBox(this.editor as Component);
 			reloadBoxDismissed = true;
+			return true;
 		} catch (error) {
 			if (!reloadBoxDismissed) {
 				dismissReloadBox(previousEditor as Component);
 			}
 			this.showError(`Reload failed: ${error instanceof Error ? error.message : String(error)}`);
+			return false;
 		}
 	}
 

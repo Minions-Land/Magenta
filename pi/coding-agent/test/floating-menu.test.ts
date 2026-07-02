@@ -1,10 +1,18 @@
 import { beforeAll, describe, expect, it } from "vitest";
-import { FloatingMenuBody, type FloatingMenuItem } from "../src/modes/interactive/components/floating-menu.ts";
+import {
+	FloatingMenuBody,
+	FloatingOverlayContainer,
+	type FloatingMenuItem,
+} from "../src/modes/interactive/components/floating-menu.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 
 const KEY_DOWN = "\x1b[B";
+const KITTY_KEY_DOWN_PRESS = "\x1b[1;1:1B";
+const KITTY_KEY_DOWN_REPEAT = "\x1b[1;1:2B";
+const KITTY_KEY_DOWN_RELEASE = "\x1b[1;1:3B";
 const KEY_RIGHT = "\x1b[C";
 const KEY_LEFT = "\x1b[D";
+const KITTY_KEY_LEFT_RELEASE = "\x1b[1;1:3D";
 const KEY_ENTER = "\r";
 const KEY_ESCAPE = "\x1b";
 
@@ -34,6 +42,30 @@ function createMenu(
 }
 
 describe("FloatingMenuBody", () => {
+	it("opts the overlay into key releases and does not close on release events", () => {
+		let releaseEvents = 0;
+		let closed = false;
+		const container = new FloatingOverlayContainer(
+			{
+				handleInput: (data) => {
+					if (data === KITTY_KEY_LEFT_RELEASE) releaseEvents++;
+					return undefined;
+				},
+				render: () => ({ title: "dock", body: [] }),
+			},
+			() => {
+				closed = true;
+			},
+		);
+
+		expect(container.wantsKeyRelease).toBe(true);
+
+		container.handleInput(KITTY_KEY_LEFT_RELEASE);
+
+		expect(releaseEvents).toBe(1);
+		expect(closed).toBe(false);
+	});
+
 	it("filters root items while keeping nested matches selectable", () => {
 		const body = createMenu([
 			{ value: "model", label: "Model" },
@@ -97,7 +129,7 @@ describe("FloatingMenuBody", () => {
 		expect(selected).toEqual(["enabled"]);
 	});
 
-	it("suppresses rapid repeated navigation keys", () => {
+	it("allows rapid repeated navigation taps without key release metadata", () => {
 		let now = 0;
 		const selected: string[] = [];
 		const body = createMenu(
@@ -105,20 +137,104 @@ describe("FloatingMenuBody", () => {
 				{ value: "first", label: "First" },
 				{ value: "second", label: "Second" },
 				{ value: "third", label: "Third" },
+				{ value: "fourth", label: "Fourth" },
+				{ value: "fifth", label: "Fifth" },
+				{ value: "sixth", label: "Sixth" },
 			],
 			selected,
-			{ navigationRepeatDelayMs: 180, now: () => now },
+			{ navigationRepeatDelayMs: 80, now: () => now },
 		);
 
 		expect(body.handleInput(KEY_DOWN)).toBe(true);
-		now = 50;
-		expect(body.handleInput(KEY_DOWN)).toBe(true);
+		for (const time of [20, 40, 60, 80]) {
+			now = time;
+			expect(body.handleInput(KEY_DOWN)).toBe(true);
+		}
+		expect(body.handleInput(KEY_ENTER)).toBe(true);
+
+		expect(selected).toEqual(["sixth"]);
+	});
+
+	it("allows rapid Kitty press/release navigation taps", () => {
+		let now = 0;
+		const selected: string[] = [];
+		const body = createMenu(
+			[
+				{ value: "first", label: "First" },
+				{ value: "second", label: "Second" },
+				{ value: "third", label: "Third" },
+				{ value: "fourth", label: "Fourth" },
+			],
+			selected,
+			{ navigationRepeatDelayMs: 80, now: () => now },
+		);
+
+		for (const time of [0, 20, 40]) {
+			now = time;
+			expect(body.handleInput(KITTY_KEY_DOWN_PRESS)).toBe(true);
+			expect(body.handleInput(KITTY_KEY_DOWN_RELEASE)).toBe(true);
+		}
+		expect(body.handleInput(KEY_ENTER)).toBe(true);
+
+		expect(selected).toEqual(["fourth"]);
+	});
+
+	it("suppresses Kitty navigation repeat events from a held key", () => {
+		let now = 0;
+		const selected: string[] = [];
+		const body = createMenu(
+			[
+				{ value: "first", label: "First" },
+				{ value: "second", label: "Second" },
+				{ value: "third", label: "Third" },
+				{ value: "fourth", label: "Fourth" },
+				{ value: "fifth", label: "Fifth" },
+			],
+			selected,
+			{ navigationRepeatDelayMs: 80, now: () => now },
+		);
+
+		expect(body.handleInput(KITTY_KEY_DOWN_PRESS)).toBe(true);
+		now = 20;
+		expect(body.handleInput(KITTY_KEY_DOWN_REPEAT)).toBe(true);
+		now = 40;
+		expect(body.handleInput(KITTY_KEY_DOWN_REPEAT)).toBe(true);
+		now = 60;
+		expect(body.handleInput(KITTY_KEY_DOWN_REPEAT)).toBe(true);
+		now = 80;
 		expect(body.handleInput(KEY_ENTER)).toBe(true);
 
 		expect(selected).toEqual(["second"]);
 	});
 
-	it("allows the same navigation key after the repeat delay", () => {
+	it("suppresses unmarked held navigation after the initial repeat delay", () => {
+		let now = 0;
+		const selected: string[] = [];
+		const body = createMenu(
+			[
+				{ value: "first", label: "First" },
+				{ value: "second", label: "Second" },
+				{ value: "third", label: "Third" },
+				{ value: "fourth", label: "Fourth" },
+				{ value: "fifth", label: "Fifth" },
+			],
+			selected,
+			{ navigationRepeatDelayMs: 80, now: () => now },
+		);
+
+		expect(body.handleInput(KEY_DOWN)).toBe(true);
+		now = 300;
+		expect(body.handleInput(KEY_DOWN)).toBe(true);
+		now = 330;
+		expect(body.handleInput(KEY_DOWN)).toBe(true);
+		now = 360;
+		expect(body.handleInput(KEY_DOWN)).toBe(true);
+		expect(body.handleInput(KEY_ENTER)).toBe(true);
+
+		expect(selected).toEqual(["third"]);
+	});
+
+	it("allows the same navigation key after the repeat cadence breaks", () => {
 		let now = 0;
 		const selected: string[] = [];
 		const body = createMenu(
@@ -128,11 +244,11 @@ describe("FloatingMenuBody", () => {
 				{ value: "third", label: "Third" },
 			],
 			selected,
-			{ navigationRepeatDelayMs: 180, now: () => now },
+			{ navigationRepeatDelayMs: 80, now: () => now },
 		);
 
 		expect(body.handleInput(KEY_DOWN)).toBe(true);
-		now = 181;
+		now = 81;
 		expect(body.handleInput(KEY_DOWN)).toBe(true);
 		expect(body.handleInput(KEY_ENTER)).toBe(true);
 
