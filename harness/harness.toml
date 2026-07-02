@@ -148,9 +148,9 @@ path = "memory/memory.toml"
 
 [[components]]
 kind = "assembly"
-name = "packages"
-description = "Harness package overlay discovery and profile selection."
-path = "packages/packages.toml"
+name = "package-overlay"
+description = "Harness package overlay discovery and profile selection. Actual package contents live in the repository-level packages/ root."
+path = "package-overlay/package-overlay.toml"
 
 [[components]]
 kind = "catalog"

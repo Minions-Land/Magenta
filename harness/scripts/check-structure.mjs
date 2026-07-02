@@ -1,0 +1,237 @@
+import { existsSync, readdirSync, statSync } from "node:fs";
+import { dirname, isAbsolute, join, resolve } from "node:path";
+import { harnessRoot, isInside, pathLabel, readToml, repoRoot } from "./lib/files.mjs";
+
+const failures = [];
+const warnings = [];
+const notes = [];
+
+const allowedTopLevel = new Set([
+	"README.md",
+	"assembly",
+	"catalog",
+	"compaction",
+	"context",
+	"docs",
+	"env",
+	"harness.toml",
+	"hooks",
+	"index.ts",
+	"loop",
+	"mcp",
+	"memory",
+	"messages",
+	"package.json",
+	"package-overlay",
+	"policy",
+	"process-tools",
+	"prompt-templates",
+	"runtime",
+	"sandbox",
+	"scripts",
+	"session",
+	"skills",
+	"system-prompt",
+	"template",
+	"test",
+	"tools",
+	"tsconfig.build.json",
+	"tsconfig.json",
+	"types",
+	"utils",
+	"vitest.config.ts",
+]);
+
+const ignoredOutputDirs = new Set(["dist", "node_modules"]);
+const sourceModuleDirs = [
+	"assembly",
+	"catalog",
+	"compaction",
+	"context",
+	"env",
+	"hooks",
+	"loop",
+	"mcp",
+	"memory",
+	"messages",
+	"package-overlay",
+	"policy",
+	"process-tools",
+	"prompt-templates",
+	"runtime",
+	"sandbox",
+	"session",
+	"skills",
+	"system-prompt",
+	"template",
+	"test",
+	"tools",
+	"types",
+	"utils",
+];
+
+function fail(message) {
+	failures.push(message);
+}
+
+function warn(message) {
+	warnings.push(message);
+}
+
+function note(message) {
+	notes.push(message);
+}
+
+function resolveInside(baseDir, ref, context) {
+	if (typeof ref !== "string" || !ref.trim()) {
+		fail(`${context} has an empty path`);
+		return undefined;
+	}
+	const resolved = isAbsolute(ref) ? resolve(ref) : resolve(baseDir, ref);
+	if (!isInside(harnessRoot, resolved)) {
+		fail(`${context} escapes harness root: ${ref}`);
+		return undefined;
+	}
+	return resolved;
+}
+
+function checkTopLevel() {
+	for (const entry of readdirSync(harnessRoot, { withFileTypes: true })) {
+		if (ignoredOutputDirs.has(entry.name)) {
+			note(`ignoring local output directory ${pathLabel(join(harnessRoot, entry.name))}`);
+			continue;
+		}
+		if (!allowedTopLevel.has(entry.name)) {
+			fail(`unexpected top-level harness entry: ${entry.name}`);
+		}
+	}
+}
+
+function checkReadmes() {
+	for (const dir of sourceModuleDirs) {
+		const fullPath = join(harnessRoot, dir);
+		if (!existsSync(fullPath)) {
+			fail(`missing expected harness module directory: harness/${dir}`);
+			continue;
+		}
+		const readme = join(fullPath, "README.md");
+		if (!existsSync(readme)) fail(`missing README.md for harness/${dir}`);
+	}
+}
+
+function checkRegistry() {
+	const index = readToml(join(harnessRoot, "harness.toml"));
+	const components = Array.isArray(index.components) ? index.components : [];
+	const catalogs = Array.isArray(index.catalogs) ? index.catalogs : [];
+	const seen = new Set();
+
+	for (const component of components) {
+		const key = `${component.kind}:${component.name}`;
+		if (seen.has(key)) fail(`duplicate component registration: ${key}`);
+		seen.add(key);
+
+		const componentPath = resolveInside(harnessRoot, component.path, `component ${key}`);
+		if (!componentPath) continue;
+		if (!existsSync(componentPath)) {
+			fail(`component ${key} points to missing file: ${pathLabel(componentPath)}`);
+			continue;
+		}
+		const spec = readToml(componentPath);
+		if (typeof spec.kind === "string" && spec.kind !== component.kind) {
+			fail(`component ${key} kind drift: index=${component.kind}, spec=${spec.kind}`);
+		}
+		if (typeof spec.name === "string" && spec.name !== component.name) {
+			fail(`component ${key} name drift: index=${component.name}, spec=${spec.name}`);
+		}
+	}
+
+	for (const catalog of catalogs) {
+		const catalogPath = resolveInside(harnessRoot, catalog.path, `catalog ${catalog.name}`);
+		if (!catalogPath) continue;
+		if (!existsSync(catalogPath)) {
+			fail(`catalog ${catalog.name} points to missing file: ${pathLabel(catalogPath)}`);
+			continue;
+		}
+		const spec = readToml(catalogPath);
+		const catalogDir = dirname(catalogPath);
+		if (spec.inventory?.path) {
+			const inventoryPath = resolveInside(catalogDir, spec.inventory.path, `catalog ${catalog.name} inventory`);
+			if (inventoryPath && !existsSync(inventoryPath)) {
+				fail(`catalog ${catalog.name} inventory is missing: ${pathLabel(inventoryPath)}`);
+			}
+		} else {
+			fail(`catalog ${catalog.name} is missing [inventory].path`);
+		}
+		if (spec.integration?.path) {
+			const integrationPath = resolveInside(catalogDir, spec.integration.path, `catalog ${catalog.name} integration`);
+			if (integrationPath && !existsSync(integrationPath)) {
+				fail(`catalog ${catalog.name} integration map is missing: ${pathLabel(integrationPath)}`);
+			}
+		}
+	}
+}
+
+function checkRepoPackages() {
+	const packagesRoot = join(repoRoot, "packages");
+	if (!existsSync(packagesRoot)) {
+		warn(`repo packages root is missing: ${pathLabel(packagesRoot)}`);
+		return;
+	}
+	for (const entry of readdirSync(packagesRoot, { withFileTypes: true })) {
+		if (!entry.isDirectory() || entry.name.startsWith(".") || entry.name === "templates") continue;
+		const manifestPath = join(packagesRoot, entry.name, "package.toml");
+		if (!existsSync(manifestPath)) {
+			warn(`package directory has no package.toml: packages/${entry.name}`);
+			continue;
+		}
+		const manifest = readToml(manifestPath);
+		if (manifest.schema_version && manifest.schema_version !== "magenta.package.v1") {
+			fail(`package ${entry.name} has unsupported schema_version: ${manifest.schema_version}`);
+		}
+		if (manifest.id && manifest.id !== entry.name) {
+			warn(`package directory/name differ: dir=${entry.name}, id=${manifest.id}`);
+		}
+		for (const profile of Array.isArray(manifest.profiles) ? manifest.profiles : []) {
+			if (!profile.harness) continue;
+			const packageRoot = join(packagesRoot, entry.name);
+			const profileHarnessPath = resolve(packageRoot, profile.harness);
+			if (!isInside(packageRoot, profileHarnessPath)) {
+				fail(`package ${entry.name} profile ${profile.name ?? "<unnamed>"} harness escapes package: ${profile.harness}`);
+			} else if (!existsSync(profileHarnessPath)) {
+				fail(`package ${entry.name} profile ${profile.name ?? "<unnamed>"} harness is missing: ${pathLabel(profileHarnessPath)}`);
+			}
+		}
+	}
+}
+
+function checkGeneratedNoise() {
+	const generated = [
+		join(harnessRoot, "dist"),
+		join(harnessRoot, "node_modules"),
+		join(harnessRoot, "memory", "dist"),
+		join(harnessRoot, "process-tools", "target"),
+	];
+	for (const path of generated) {
+		if (existsSync(path)) {
+			const stat = statSync(path);
+			if (stat.isDirectory()) note(`local generated directory present and ignored by structure check: ${pathLabel(path)}`);
+		}
+	}
+}
+
+checkTopLevel();
+checkReadmes();
+checkRegistry();
+checkRepoPackages();
+checkGeneratedNoise();
+
+for (const message of notes) console.log(`note: ${message}`);
+for (const message of warnings) console.warn(`warning: ${message}`);
+
+if (failures.length > 0) {
+	console.error("Harness structure check failed:");
+	for (const message of failures) console.error(`  - ${message}`);
+	process.exit(1);
+}
+
+console.log("Harness structure check passed.");

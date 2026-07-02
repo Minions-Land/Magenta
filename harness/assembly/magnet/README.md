@@ -122,7 +122,7 @@ Currently generic catalog assembly supports:
 Other catalog entries remain visible to the selector with provenance and
 migration state, but need a specific Magnet before they become executable.
 
-Package overlays follow the same rule. The packages module resolves package
+Package overlays follow the same rule. The package-overlay module resolves package
 profiles and component paths; it does not own language/runtime branching. It
 passes `tool` descriptors to `createPackageToolMagnet()`, and new language
 adapters should be added there so Python, process, Node/R/Julia, MCP, API, and

@@ -9,10 +9,10 @@ default_profiles = ["general"]
 [[profiles]]
 name = "general"
 description = "Shared domain harness resources."
-harness = "domain-harness/general/harness.toml"
+harness = "general/harness.toml"
 
 [[profiles]]
 name = "task"
 description = "Task-specific harness resources."
 extends = ["general"]
-harness = "domain-harness/task/example-task/harness.toml"
+harness = "task/example-task/harness.toml"

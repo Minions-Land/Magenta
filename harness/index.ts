@@ -29,7 +29,7 @@ export * from "./loop/pi/agent-harness.ts";
 export * from "./messages/messages.ts";
 export * from "./policy/pi/approval.ts";
 export * from "./policy/pi/shell-policy.ts";
-export * from "./packages/pi/packages.ts";
+export * from "./package-overlay/pi/package-overlay.ts";
 export * from "./prompt-templates/pi/prompt-templates.ts";
 export * from "./runtime/pi/process-runtime.ts";
 export * from "./runtime/pi/script-runtime.ts";

@@ -1,8 +1,0 @@
-name = "AutOmicScience-scatac"
-description = "Single-cell ATAC-seq task profile."
-
-[[components]]
-kind = "skill"
-name = "omics-scatac"
-path = "../../../skills/omics/omics-scatac"
-include_in_context = true

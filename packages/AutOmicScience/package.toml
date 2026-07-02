@@ -9,28 +9,28 @@ default_profiles = ["general"]
 [[profiles]]
 name = "general"
 description = "Shared omics runtime, environment, tools, and cross-modality skill."
-harness = "domain-harness/general/harness.toml"
+harness = "general/harness.toml"
 
 [[profiles]]
 name = "scrna"
 description = "Single-cell RNA-seq analysis playbook."
 extends = ["general"]
-harness = "domain-harness/task/scrna/harness.toml"
+harness = "task/scrna/harness.toml"
 
 [[profiles]]
 name = "spatial"
 description = "Spatial transcriptomics analysis playbook."
 extends = ["general"]
-harness = "domain-harness/task/spatial/harness.toml"
+harness = "task/spatial/harness.toml"
 
 [[profiles]]
 name = "scatac"
 description = "Single-cell ATAC-seq analysis playbook."
 extends = ["general"]
-harness = "domain-harness/task/scatac/harness.toml"
+harness = "task/scatac/harness.toml"
 
 [[profiles]]
 name = "multiome"
 description = "Paired RNA plus ATAC multiome analysis playbook."
 extends = ["general"]
-harness = "domain-harness/task/multiome/harness.toml"
+harness = "task/multiome/harness.toml"

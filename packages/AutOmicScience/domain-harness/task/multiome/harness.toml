@@ -1,8 +1,0 @@
-name = "AutOmicScience-multiome"
-description = "Paired RNA plus ATAC multiome task profile."
-
-[[components]]
-kind = "skill"
-name = "omics-multiome"
-path = "../../../skills/omics/omics-multiome"
-include_in_context = true

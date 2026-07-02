@@ -1,0 +1,88 @@
+# Harness Governance Log
+
+## 2026-07-02
+
+### User Direction Captured
+
+- Manage `/Users/mjm/Magenta3/harness` better; it currently feels too messy.
+- The review should understand the whole Magenta3 repository, not only
+  `harness/`.
+- Use the five-sentence loop philosophy:
+  gather/reason/act/verify/repeat, role separation, disk state, restart/delete
+  when wrong, expose the next bottleneck.
+- Reference ModernTSF's registration mechanism, but adapt it to Magenta3.
+- Do not use `codex-agent-team`.
+- Use true terminal verification; Playwright is only relevant when browser UI
+  needs verification.
+- Package contents must converge on one root only:
+  `/Users/mjm/Magenta3/packages`. The harness-side implementation is named
+  `harness/package-overlay` because it is a loader/adapter module, not another
+  package content root.
+
+### Local Evidence
+
+- `harness` tracked source file count: 196 files.
+- `harness` current terminal baseline:
+  - `npm test`: 23 test files, 174 tests passed.
+  - `npm run build`: passed.
+- `git status --short --branch` before adding governance docs: `## main`.
+- Root `tsconfig.json` maps `@magenta/harness` to `./harness/index.ts` and
+  `@magenta/memory` to `./harness/memory/pi/index.ts`.
+- `pi/coding-agent/src/core/resource-loader.ts` is the app assembly point for
+  harness package overlays.
+- `pi/coding-agent/src/cli/args.ts` accepts `--harness-package`.
+- `pi/coding-agent/src/modes/interactive/interactive-mode.ts` loads harness
+  registry state for `/harness` menu and catalog display.
+
+### ModernTSF Reference Notes
+
+- Repository reviewed locally at `/tmp/ModernTSF`.
+- Registry pattern:
+  - singleton registry object per kind
+  - name-to-module map
+  - module-level `register()`
+  - schema attached to registered component
+  - lazy registration from validated config
+- Config pattern:
+  - TOML-first configs
+  - `extends` deep merge
+  - sweep expansion
+  - Pydantic validation
+- Tooling pattern:
+  - `tool/tsf.py` is a single entry for scaffold, inspect, smoke, run, report
+  - new component scaffolding generates code, schema, config, registry entry,
+    and smoke config together
+
+### Adaptation For Magenta3
+
+- Keep Magenta3's TOML registry and package overlay model.
+- Do not replace `harness.toml` with a TypeScript name map.
+- Add the missing closed-loop pieces:
+  - structure check
+  - inspect command
+  - scaffold command
+  - smoke command for runtime/Magnet/package paths
+- Keep HCP/Magnet as the shared abstraction for different languages and
+  runtimes.
+
+### Package Root Decision
+
+- `packages/` at the repository root is the only place for actual Magenta3
+  domain/brand/harness overlay packages such as `AutOmicScience`.
+- `harness/package-overlay/` owns discovery, profile expansion, resource path
+  resolution, and descriptor handoff into Magnet.
+- A top-level `harness/packages/` directory is invalid because it creates a
+  second "packages" concept and obscures the HCP/Magnet boundary.
+
+### Package Internal Layout Decision
+
+- Domain packages should use profile-local layout under the package root:
+  `general/` for shared domain resources and `task/<profile>/` for
+  task-specific resources.
+- Do not add a `domain-harness/` wrapper inside package contents; it duplicates
+  the package's `kind = "domain"` meaning.
+- Skills should live beside the profile harness that selects them, for example
+  `general/skills/omics-shared` and `task/scrna/skills/omics-scrna`.
+- Shared Python runtimes should live under the domain-general profile, for
+  example `general/.omics-runtime`, then enter execution through
+  `python-runtime` components and Magnet.
