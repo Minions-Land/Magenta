@@ -4,6 +4,7 @@ This package is a Magenta3 migration of the AOSE omics harness content from `Min
 
 Included:
 
+- `brands/AutOmicScience/**` package-local brand override using the AOSE Nature-inspired TUI palette.
 - `skills/omics-shared/**` pure Markdown shared playbook and method docs.
 - `skills/{multi-omics,scatac-seq,rna,spatial}/**` modality Markdown playbooks and method docs.
 - `tools/omics-compute/python/aose_omics_runtime/**` as the Python implementation for the `omics_compute` tool.
@@ -20,7 +21,7 @@ Excluded on purpose:
 
 Selection:
 
-- `AutOmicScience` loads the flattened package skills and tools directly.
+- `AutOmicScience` loads the flattened package brand, skills, and tools directly.
 - The package does not define `general` or task profiles; modality behavior is
   expressed by the flat skills `multi-omics`, `scatac-seq`, `rna`, and
   `spatial`.

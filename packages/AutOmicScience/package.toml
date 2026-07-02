@@ -6,6 +6,11 @@ domain = "bioinformatics"
 description = "Single-cell and spatial omics harness package migrated from AOSE optimize_omics."
 
 [[components]]
+kind = "brand"
+name = "AutOmicScience"
+path = "brands/AutOmicScience"
+
+[[components]]
 kind = "skill"
 name = "omics-shared"
 path = "skills/omics-shared"
