@@ -10,7 +10,7 @@
 
 ### Module Layout
 
-Every harness module follows a **standard structure** (see `template/` for the full pattern):
+Every harness module follows a **standard structure** (see `scripts/templates/module/` for the full pattern):
 
 ```
 harness/<module>/
@@ -159,7 +159,7 @@ This separation keeps the loop fast (direct calls) while providing extensibility
    export * from "./my-module/pi/my-module.js";
    ```
 
-See `template/README.md` for the complete pattern.
+See `scripts/templates/module/README.md` for the complete pattern.
 
 ## Public API
 

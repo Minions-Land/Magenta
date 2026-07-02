@@ -1,4 +1,4 @@
-import { cp, copyFile, mkdir, readdir } from "node:fs/promises";
+import { copyFile, mkdir, readdir } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -67,11 +67,6 @@ async function copySelectedTree(relativeDir) {
 		}
 	}
 }
-
-await cp(join(harnessRoot, "skills", "bundled"), join(distRoot, "skills", "bundled"), {
-	recursive: true,
-	force: true,
-});
 
 for (const tree of selectedTrees) {
 	await copySelectedTree(tree);

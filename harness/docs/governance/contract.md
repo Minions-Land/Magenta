@@ -74,7 +74,7 @@ Manage `harness/` as four layers:
    `tools`, `skills`, `prompt-templates`, `system-prompt`, `compaction`,
    `session`, `context`, `memory`, `env`, `utils`.
 4. Resource and catalog overlays:
-   `catalog`, `skills/bundled`, repository-level `packages/`.
+   `catalog`, `skills/pi/bundled`, repository-level `packages/`.
 
 New functionality must declare which layer it belongs to before code is added.
 

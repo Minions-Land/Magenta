@@ -143,3 +143,17 @@
   CLI `--harness-list` passed; Rust release builds passed for the folded owner
   crates; direct process-tool smokes passed for `glob`, `ast-grep`, and
   `read-anchored`.
+
+### Non-Tool Layout Cleanup Decision
+
+- Planner: apply the same Module -> Source rule outside `tools`. Top-level
+  directories must either be registered Harness Modules/core assembly containers
+  or explicit support/output locations.
+- Generator: removed the empty top-level `mcp/` placeholder, moved the scaffold
+  template from `template/` to `scripts/templates/module/`, and moved bundled
+  Harness skills from `skills/bundled` to the owning `skills/pi/bundled`
+  implementation source. Updated build/copy paths and structure checks to
+  reject the old locations.
+- Evaluator: harness structure/build/test/inspect passed; coding-agent build,
+  focused resource-loader/skills tests, full coding-agent tests, and
+  `--harness-list` text/JSON passed.

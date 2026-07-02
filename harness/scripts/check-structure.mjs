@@ -18,7 +18,6 @@ const allowedTopLevel = new Set([
 	"hooks",
 	"index.ts",
 	"loop",
-	"mcp",
 	"memory",
 	"messages",
 	"package.json",
@@ -30,7 +29,6 @@ const allowedTopLevel = new Set([
 	"session",
 	"skills",
 	"system-prompt",
-	"template",
 	"test",
 	"tools",
 	"tsconfig.build.json",
@@ -61,7 +59,6 @@ const sourceModuleDirs = [
 	"env",
 	"hooks",
 	"loop",
-	"mcp",
 	"memory",
 	"messages",
 	"policy",
@@ -71,7 +68,6 @@ const sourceModuleDirs = [
 	"session",
 	"skills",
 	"system-prompt",
-	"template",
 	"test",
 	"tools",
 	"types",
@@ -228,6 +224,18 @@ function checkRepoPackages() {
 	}
 }
 
+function checkSupportLayout() {
+	for (const name of ["mcp", "template"]) {
+		const dir = join(harnessRoot, name);
+		if (existsSync(dir)) {
+			fail(`harness/${name} is invalid as a top-level placeholder; support-only material must live under docs/ or scripts/`);
+		}
+	}
+	if (existsSync(join(harnessRoot, "skills", "bundled"))) {
+		fail("harness/skills/bundled is invalid; bundled skills are owned by the pi source at harness/skills/pi/bundled");
+	}
+}
+
 function checkToolLayout() {
 	const processDir = join(harnessRoot, "tools", "process");
 	if (existsSync(processDir)) {
@@ -278,6 +286,7 @@ checkTopLevel();
 checkReadmes();
 checkRegistry();
 checkRepoPackages();
+checkSupportLayout();
 checkToolLayout();
 checkGeneratedNoise();
 

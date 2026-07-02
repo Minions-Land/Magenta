@@ -50,7 +50,7 @@ export function getBundledSkillsDir(): string {
 	if (isBunBinary) {
 		return join(dirname(process.execPath), "skills", "bundled");
 	}
-	return join(__dirname, "..", "bundled");
+	return join(__dirname, "bundled");
 }
 
 /**

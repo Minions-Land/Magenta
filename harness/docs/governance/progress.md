@@ -24,6 +24,14 @@ Date: 2026-07-02
 - `harness/tools` now contains only tool slots with matching `<tool>.toml`
   descriptors. Shared support code moved to `harness/utils/pi/`; the
   `echo-json` smoke manifest moved to `harness/test/fixtures/process-tools/`.
+- Empty top-level `harness/mcp` has been removed. MCP remains an adapter/runtime
+  detail under future Module Source implementations, not a top-level Source or
+  placeholder module.
+- The scaffold template moved from top-level `harness/template` to
+  `harness/scripts/templates/module`, so it is treated as development support
+  rather than a runtime Harness Module.
+- Bundled Harness skills moved under the owning Source at
+  `harness/skills/pi/bundled`.
 - Non-tools Magenta/Magenta1 implementations have been moved under Module-local
   `magenta/` Source directories: `runtime`, `sandbox`, `hooks`, `policy`,
   `context`, `memory/session-grounding`, `catalog`, and `assembly/hcp-process`.
@@ -135,6 +143,10 @@ Date: 2026-07-02
   sub-operation directories under `harness/tools`, and package overlay under
   `harness/assembly/package-overlay`.
 - `cd pi/coding-agent && npm run build`: passed.
+- `cd pi/coding-agent && npx vitest --run test/resource-loader.test.ts
+  test/skills.test.ts`: 2 files, 53 tests passed.
+- `node -e "import('@magenta/harness').then(...getBundledSkillsDir())"` from
+  `pi/coding-agent`: resolved to `harness/dist/skills/pi/bundled`.
 - `cd pi/coding-agent && node dist/cli.js --harness-list`: printed 32 registry
   module rows.
 - `cd pi/coding-agent && node dist/cli.js --harness-list --mode json`: emitted
@@ -156,8 +168,6 @@ Date: 2026-07-02
 - Should the Magenta `process-tools` crate be split into per-tool minimal crates
   or kept duplicated under each tool Source until a shared-source packaging
   model exists? Do not reintroduce `tools/process`.
-- Should `mcp/` and `template/` become deferred/scaffold modules, or move under
-  support-only documentation?
 - Should `assembly/registry` and `assembly/hcp-process` stay under
   `assembly/`, or move to top-level module directories while HCP/Magnet remain
   core exceptions?

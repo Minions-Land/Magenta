@@ -102,16 +102,16 @@ This lets Magenta3 assemble combinations such as:
 3. `messages/` and `types/` are documented as flat contract modules and are not
    registered. Under the user contract, they should still appear as read-only
    Harness Modules, even if they are not runtime-switchable.
-4. `mcp/` has documentation but no TOML registration or implementation. It is a
-   future module placeholder, not a selectable module yet.
+4. `mcp/` was documentation-only and has been removed from the module root.
+   Future MCP support should enter as adapter/runtime detail under an owning
+   Module Source implementation.
 5. Magenta process-tool code must live under its functional module/source
    directory, not as a harness top-level folder or `tools/process` slot.
 6. `docs/`, `scripts/`, `test/`, generated `dist/`, `node_modules/`, and Rust
    `target/` are support/output directories. They should be excluded from module
    selection by rule, not by accident.
-7. `template/` is a scaffold template, not a runtime module. It should either be
-   moved under support/scaffold docs or represented as a scaffold provider
-   module.
+7. The scaffold template is not a runtime module and now lives under
+   `scripts/templates/module/`.
 
 ## Target Model
 
@@ -148,8 +148,8 @@ hardcoded in the TUI:
 - `catalog`, `registry`, `hcp-process`:
   inspectable module rows; some are not runtime-switchable.
 - `messages`, `types`: register as `contract` modules and show as read-only.
-- `mcp`: either register as `deferred` with explicit status or move out of the
-  module root until implemented.
+- MCP: no top-level placeholder until an actual capability exists. MCP-backed
+  behavior belongs under the owning Module's Source directory and Magnet.
 
 ## CLI Target
 
@@ -197,8 +197,8 @@ Replace most hardcoded `/harness` categories with registry-driven rows:
 5. Add CLI list/select flags against the same descriptor model. `--harness-list`
    is implemented; selection flags are still pending.
 6. Register `messages` and `types` as read-only contract modules.
-7. Decide whether `mcp` and `template` should become deferred/scaffold modules
-   or move under support-only documentation.
+7. Done: removed the empty `mcp/` placeholder and moved the scaffold template to
+   `scripts/templates/module/`.
 8. Decide whether `assembly/registry` and `assembly/hcp-process` stay under
    `assembly/` or move to top-level module directories for clearer parity with
    README module layout.
