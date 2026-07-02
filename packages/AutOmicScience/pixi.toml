@@ -22,7 +22,7 @@ leidenalg = ">=0.10"
 igraph = ">=0.11"
 hdf5plugin = "*"
 scikit-misc = "*"
-pytest = ">=8.0"   # run general/.omics-runtime/tests in any analysis env
+pytest = ">=8.0"   # run .omics-runtime/tests in any analysis env
 
 [feature.scrna.dependencies]
 harmonypy = "*"
@@ -76,7 +76,7 @@ dev = { features = ["core", "singlecell", "scrna", "dev"], solve-group = "dev" }
 python = "python"
 jupyter = "jupyter lab"
 r = "R"
-test = "pytest general/.omics-runtime/tests -v"
+test = "pytest .omics-runtime/tests -v"
 lint = "ruff check ."
 format = "black ."
 build = "cargo build --release"

@@ -1,8 +1,8 @@
-name = "example-domain-task"
+name = "example-task"
 description = "Example task profile."
 
 [[components]]
 kind = "skill"
-name = "example-domain-task"
-path = "skills/example-domain-task"
+name = "example-task"
+path = "skills/example-task"
 include_in_context = true

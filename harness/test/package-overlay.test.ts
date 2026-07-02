@@ -216,9 +216,14 @@ harness = "missing/harness.toml"
 		expect(overlay.componentMap.get("skill:omics-multiome")?.path).toBe(
 			join(repoRoot, "packages", "AutOmicScience", "task", "multiome", "skills", "omics-multiome"),
 		);
-		expect(overlay.componentMap.get("python-runtime:aose_omics_runtime")?.path).toBe(
-			join(repoRoot, "packages", "AutOmicScience", "general", ".omics-runtime", "aose_omics_runtime"),
+		const runtimeComponent = overlay.componentMap.get("python-runtime:aose_omics_runtime");
+		expect(runtimeComponent?.path).toBe(
+			join(repoRoot, "packages", "AutOmicScience", ".omics-runtime", "aose_omics_runtime"),
 		);
+		expect(runtimeComponent?.profile).toBeUndefined();
+		const envComponent = overlay.componentMap.get("env:pixi");
+		expect(envComponent?.path).toBe(join(repoRoot, "packages", "AutOmicScience", "pixi.toml"));
+		expect(envComponent?.profile).toBeUndefined();
 		expect(overlay.componentMap.get("tool:omics_runtime")?.path).toBe(
 			join(repoRoot, "packages", "AutOmicScience", "general", "tools", "omics-runtime.toml"),
 		);

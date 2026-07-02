@@ -15,11 +15,15 @@ The repository package root is:
 packages/
   AutOmicScience/
     package.toml
+    .omics-runtime/
+      aose_omics_runtime/
+      tests/
+    pixi.toml
+    pixi.lock
     general/
       harness.toml
       skills/
       tools/
-      .omics-runtime/
     task/
       scrna/
         harness.toml
@@ -40,6 +44,16 @@ kind = "domain"
 domain = "bioinformatics"
 description = "Multi-omics analysis harness package."
 default_profiles = ["general"]
+
+[[components]]
+kind = "python-runtime"
+name = "aose_omics_runtime"
+path = ".omics-runtime/aose_omics_runtime"
+
+[[components]]
+kind = "env"
+name = "pixi"
+path = "pixi.toml"
 
 [[profiles]]
 name = "general"
@@ -75,6 +89,12 @@ name = "omics_runtime"
 path = "tools/omics-runtime.toml"
 ```
 
+Root-level `[[components]]` in `package.toml` are package-owned implementation
+assets that should be available to every selected profile, such as package-local
+runtimes, pinned environments, locks, runtime tests, or shared binaries. Profile
+harness files should select user-facing resources for that profile, such as
+skills, tools, prompt templates, themes, brands, and system-prompt fragments.
+
 For migration from Magenta packs, the loader also accepts the old grouped shape:
 
 ```toml
@@ -85,7 +105,11 @@ path = "skills/omics-shared"
 
 Known resource component kinds are `skill`, `prompt-template`, `prompt`, `theme`, `system-prompt`, `append-system-prompt`, and `brand`. Other component kinds remain in the overlay component list for later harness/tool integrations.
 
-`harness` values are relative to the package root. Component `path` values are relative to the harness file that declares them. Both must stay inside the package directory. Absolute paths and `..` references that escape `packages/<PackageName>/` are invalid.
+`harness` values are relative to the package root. Root component `path` values
+in `package.toml` are relative to the package root. Profile component `path`
+values are relative to the profile harness file that declares them. All
+references must stay inside the package directory. Absolute paths and `..`
+references that escape `packages/<PackageName>/` are invalid.
 
 ## Tool Assembly
 
@@ -97,7 +121,6 @@ name = "omics_runtime"
 description = "Dispatch to the package-local Python runtime."
 runtime = "aose_omics_runtime"
 module = "aose_omics_runtime"
-module_path = "general/.omics-runtime"
 
 [parameters]
 type = "object"

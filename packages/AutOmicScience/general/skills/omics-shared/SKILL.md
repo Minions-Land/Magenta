@@ -27,7 +27,7 @@ omics_runtime(
 - `args` keys are the subcommand's `--kebab-case` flags (with or without `--`). A value of `""`/`"true"` is a bare store-true flag; `"false"` omits it.
 - The tool returns `{subcommand, pythonBin, report, evidence}`. The `report` dict carries the numbers; cite them.
 - For analysis with **no** runtime subcommand (a `REFERENCE` method), write it by hand in a `run_python` cell — and still emit a trailing JSON `report` and pass it to `evidence_from_kernel_cell` so it is grounded.
-- Runtime helpers live in the `aose_omics_runtime` package (single source of truth), imported by name — e.g. `from aose_omics_runtime.shared.layout import assert_layout`. The `omics_runtime` tool and the test suite resolve the package automatically. To use a helper inside a hand-rolled cell, prefer the matching `omics_runtime` subcommand; if you import it directly, put the package's `general/.omics-runtime/` on `sys.path` first.
+- Runtime helpers live in the `aose_omics_runtime` package (single source of truth), imported by name — e.g. `from aose_omics_runtime.shared.layout import assert_layout`. The `omics_runtime` tool and the test suite resolve the package automatically. To use a helper inside a hand-rolled cell, prefer the matching `omics_runtime` subcommand; if you import it directly, put the package's `.omics-runtime/` on `sys.path` first.
 
 ## Maturity legend (used by every modality skill)
 
@@ -69,11 +69,11 @@ From `conventions.py`, the single source of truth (import the constants; never h
 - **Clusters**: `obs["leiden"]` · **Cell types**: `obs["cell_type"]`
 - **Batch/condition**: `obs["batch"]`, `obs["condition"]` · **Spatial coords**: `obsm["spatial"]`
 
-For hand-written cells, import helpers from the package-local runtime. The `omics_runtime` tool configures this automatically; if a manual cell needs direct imports, put this package's `general/.omics-runtime/` directory on `sys.path` first:
+For hand-written cells, import helpers from the package-local runtime. The `omics_runtime` tool configures this automatically; if a manual cell needs direct imports, put this package's `.omics-runtime/` directory on `sys.path` first:
 
 ```python
 import os, sys
-runtime_dir = os.environ.get("AOSE_OMICS_RUNTIME_DIR") or "general/.omics-runtime"
+runtime_dir = os.environ.get("AOSE_OMICS_RUNTIME_DIR") or ".omics-runtime"
 sys.path.insert(0, runtime_dir)
 from aose_omics_runtime.shared import conventions, io as omics_io, summarize, preprocess
 ```

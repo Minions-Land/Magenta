@@ -79,7 +79,8 @@ This lets Magenta3 assemble combinations such as:
 ## Current Evidence
 
 - `npm run check:structure`: passed.
-- `npm run inspect`: 40 registered components/modules and 1 catalog.
+- `npm run inspect`: 32 registered components/modules, 1 catalog, and 1
+  discovered package overlay.
 - The TUI `/harness` menu has current runtime actions for Tools, Compaction,
   Skills, Hooks, Memory, Registry, and Catalog, plus a registry-driven
   `Modules` group for inspecting every registered capability slot and
@@ -89,6 +90,9 @@ This lets Magenta3 assemble combinations such as:
   `--harness-impl`, or `--harness-disable` switching yet.
 - `listHarnessSelectionItems()` flattens catalog entries, not built-in
   `harness.toml` modules.
+- `packages/AutOmicScience` now keeps package-owned runtime/env/test assets at
+  the package root and keeps profile-selected resources under `general/` and
+  `task/<profile>/`.
 
 ## Current Mismatches
 
@@ -127,6 +131,9 @@ Use three explicit classes:
      implementation-source rows.
    - Implementation sources represent mature agent harness origins, not only
      programming languages or runtime technologies.
+   - Repository package overlays use the same idea one level up: package-owned
+     implementation assets are root `[[components]]` in `package.toml`, while
+     `general/` and `task/<profile>/` select profile resources.
 3. Support/output:
    - Development docs, scripts, tests, templates, generated outputs, and local
      dependency/build directories.

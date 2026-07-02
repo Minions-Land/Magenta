@@ -1,0 +1,17 @@
+kind = "tool"
+name = "example_runtime"
+description = "Example package-local Python runtime tool descriptor."
+runtime = "example_runtime"
+module = "example_runtime"
+pixi_environment = "default"
+operation = "read"
+read_only = true
+destructive = false
+
+[parameters]
+type = "object"
+required = ["value"]
+
+[parameters.properties.value]
+type = "string"
+description = "Example input value."

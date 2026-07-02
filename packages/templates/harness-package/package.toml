@@ -1,0 +1,27 @@
+schema_version = "magenta.package.v1"
+id = "ExamplePackage"
+name = "ExamplePackage"
+kind = "harness"
+description = "Example selectable harness package."
+default_profiles = ["general"]
+
+[[components]]
+kind = "python-runtime"
+name = "example_runtime"
+path = ".runtime/example_runtime"
+
+[[components]]
+kind = "env"
+name = "pixi"
+path = "pixi.toml"
+
+[[profiles]]
+name = "general"
+description = "Shared package resources."
+harness = "general/harness.toml"
+
+[[profiles]]
+name = "example-task"
+description = "Task-specific package resources."
+extends = ["general"]
+harness = "task/example-task/harness.toml"

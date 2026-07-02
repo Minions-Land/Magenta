@@ -6,14 +6,14 @@ Included:
 
 - `general/skills/omics-shared/**` pure Markdown shared playbook and method docs.
 - `task/<modality>/skills/omics-*/**` task-specific Markdown playbooks and method docs.
-- `general/.omics-runtime/aose_omics_runtime/**` as the single Python runtime package home.
-- `general/.omics-runtime/tests/**` runtime tests.
+- `.omics-runtime/aose_omics_runtime/**` as the single package-level Python runtime home.
+- `.omics-runtime/tests/**` runtime tests.
 - `pixi.toml` and `pixi.lock` for pinned task environments.
 - Declarative `omics_preflight` and `omics_runtime` tool descriptors.
 
 Excluded on purpose:
 
-- `general/.omics-runtime/aose_agent/**`, the legacy Python package called out as orphaned.
+- `.omics-runtime/aose_agent/**`, the legacy Python package called out as orphaned.
 - Bio-MAS ghost commands that call removed `aose_agent` subcommands.
 - `census_query` and `geo_fetch` runtime exposure, because the audited source lacks the `aose_omics_runtime.data` implementation modules.
 - Runtime `joint_embed`, `spatial_neighbors`, and `rna_atac_link` modules removed by the latest AOSE update.

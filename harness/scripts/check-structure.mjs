@@ -197,12 +197,23 @@ function checkRepoPackages() {
 		warn(`repo packages root is missing: ${pathLabel(packagesRoot)}`);
 		return;
 	}
+	checkRepoPackageTemplates(packagesRoot);
 	for (const entry of readdirSync(packagesRoot, { withFileTypes: true })) {
 		if (!entry.isDirectory() || entry.name.startsWith(".") || entry.name === "templates") continue;
+		const packageRoot = join(packagesRoot, entry.name);
 		const manifestPath = join(packagesRoot, entry.name, "package.toml");
 		if (!existsSync(manifestPath)) {
 			warn(`package directory has no package.toml: packages/${entry.name}`);
 			continue;
+		}
+		if (existsSync(join(packageRoot, "domain-harness"))) {
+			fail(`package ${entry.name} must not contain domain-harness; use package root general/ and task/ profiles`);
+		}
+		if (existsSync(join(packageRoot, "skills"))) {
+			fail(`package ${entry.name} must not contain top-level skills/; keep skills under general/ or task/<profile>/`);
+		}
+		if (existsSync(join(packageRoot, "general", ".omics-runtime"))) {
+			fail(`package ${entry.name} must not keep runtime assets under general/.omics-runtime; use package-root .omics-runtime`);
 		}
 		const manifest = readToml(manifestPath);
 		if (manifest.schema_version && manifest.schema_version !== "magenta.package.v1") {
@@ -213,7 +224,6 @@ function checkRepoPackages() {
 		}
 		for (const profile of Array.isArray(manifest.profiles) ? manifest.profiles : []) {
 			if (!profile.harness) continue;
-			const packageRoot = join(packagesRoot, entry.name);
 			const profileHarnessPath = resolve(packageRoot, profile.harness);
 			if (!isInside(packageRoot, profileHarnessPath)) {
 				fail(`package ${entry.name} profile ${profile.name ?? "<unnamed>"} harness escapes package: ${profile.harness}`);
@@ -221,6 +231,17 @@ function checkRepoPackages() {
 				fail(`package ${entry.name} profile ${profile.name ?? "<unnamed>"} harness is missing: ${pathLabel(profileHarnessPath)}`);
 			}
 		}
+	}
+}
+
+function checkRepoPackageTemplates(packagesRoot) {
+	const templatesRoot = join(packagesRoot, "templates");
+	if (!existsSync(templatesRoot)) return;
+	if (existsSync(join(templatesRoot, "domain-package"))) {
+		fail("packages/templates/domain-package is invalid; use packages/templates/harness-package");
+	}
+	if (!existsSync(join(templatesRoot, "harness-package"))) {
+		fail("packages/templates/harness-package is missing");
 	}
 }
 

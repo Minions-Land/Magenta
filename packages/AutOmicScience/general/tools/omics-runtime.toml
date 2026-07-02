@@ -3,7 +3,6 @@ name = "omics_runtime"
 description = "Dispatch to the package-local aose_omics_runtime module. Only subcommands backed by migrated runtime modules are exposed."
 runtime = "aose_omics_runtime"
 module = "aose_omics_runtime"
-module_path = "general/.omics-runtime"
 pixi_environment = "default"
 operation = "execute"
 read_only = false

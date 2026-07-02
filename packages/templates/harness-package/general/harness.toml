@@ -1,0 +1,13 @@
+name = "example-general"
+description = "Shared example package profile."
+
+[[components]]
+kind = "skill"
+name = "example-shared"
+path = "skills/example-shared"
+include_in_context = true
+
+[[components]]
+kind = "tool"
+name = "example_runtime"
+path = "tools/example-runtime.toml"

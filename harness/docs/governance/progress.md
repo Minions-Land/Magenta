@@ -39,7 +39,8 @@ Date: 2026-07-02
   `sandbox`, `runtime`, `hook`, `policy`, and `hcp-process`.
 - `packages/AutOmicScience` now uses profile-local `general/` and `task/`
   directories; the old internal `domain-harness/` and top-level `skills/`
-  split has been removed.
+  split has been removed. Package-owned runtime/env/test assets now live at the
+  package root and are declared by root `[[components]]` in `package.toml`.
 - Harness module assembly work has started: registry descriptors now need to
   model capability slots plus mature-agent implementation sources.
 
@@ -156,6 +157,12 @@ Date: 2026-07-02
   expected negative-case test output; the command exited 0.
 - Empty `harness/packages` directory removed; `check:structure` rejects a
   second top-level packages root.
+- `packages/AutOmicScience/.omics-runtime` is now package-owned rather than
+  profile-owned; `package.toml` declares the `python-runtime`, `runtime-tests`,
+  `env`, and `env-lock` root components.
+- `packages/templates/harness-package` replaces the old `domain-package`
+  template and includes a runnable root runtime/env plus profile-local
+  `general` and `task/example-task` resources.
 
 ## Open Decisions
 
