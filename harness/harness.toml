@@ -141,6 +141,18 @@ description = "Shared utilities for shell output formatting and text truncation.
 path = "utils/utils.toml"
 
 [[components]]
+kind = "contract"
+name = "messages"
+description = "Agent message contracts and conversion utilities shared across harness modules."
+path = "messages/messages.toml"
+
+[[components]]
+kind = "contract"
+name = "types"
+description = "Shared harness type contracts, result helpers, execution environment, and errors."
+path = "types/types.toml"
+
+[[components]]
 kind = "memory"
 name = "memory"
 description = "Embedding-based semantic memory storage and retrieval."

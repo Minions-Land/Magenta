@@ -236,6 +236,19 @@ describe("parseArgs", () => {
 		});
 	});
 
+	describe("--harness-list flag", () => {
+		test("parses --harness-list flag", () => {
+			const result = parseArgs(["--harness-list"]);
+			expect(result.harnessList).toBe(true);
+		});
+
+		test("parses --harness-list with json mode", () => {
+			const result = parseArgs(["--harness-list", "--mode", "json"]);
+			expect(result.harnessList).toBe(true);
+			expect(result.mode).toBe("json");
+		});
+	});
+
 	describe("--prompt-template flag", () => {
 		test("parses single --prompt-template", () => {
 			const result = parseArgs(["--prompt-template", "./prompts"]);

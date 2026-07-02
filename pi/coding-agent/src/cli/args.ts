@@ -38,6 +38,7 @@ export interface Args {
 	export?: string;
 	noSkills?: boolean;
 	skills?: string[];
+	harnessList?: boolean;
 	harnessPackages?: string[];
 	promptTemplates?: string[];
 	noPromptTemplates?: boolean;
@@ -155,6 +156,8 @@ export function parseArgs(args: string[]): Args {
 		} else if (arg === "--skill" && i + 1 < args.length) {
 			result.skills = result.skills ?? [];
 			result.skills.push(args[++i]);
+		} else if (arg === "--harness-list") {
+			result.harnessList = true;
 		} else if (arg === "--harness-package" && i + 1 < args.length) {
 			result.harnessPackages = result.harnessPackages ?? [];
 			result.harnessPackages.push(args[++i]);
@@ -266,6 +269,7 @@ ${chalk.bold("Options:")}
   --extension, -e <path>         Load an extension file (can be used multiple times)
   --no-extensions, -ne           Disable extension discovery (explicit -e paths still work)
   --skill <path>                 Load a skill file or directory (can be used multiple times)
+  --harness-list                 List registered Harness modules and implementation sources
   --harness-package <selector>   Load a harness package profile, e.g. AutOmicScience:scrna
   --no-skills, -ns               Disable skills discovery and loading
   --prompt-template <path>       Load a prompt template file or directory (can be used multiple times)

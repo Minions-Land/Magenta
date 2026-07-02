@@ -1,0 +1,4 @@
+kind = "contract"
+name = "types"
+description = "Shared harness type contracts, result helpers, execution environment, and errors."
+source = "contract"

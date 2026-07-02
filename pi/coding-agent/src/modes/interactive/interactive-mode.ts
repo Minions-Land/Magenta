@@ -4557,6 +4557,7 @@ export class InteractiveMode {
 				},
 			],
 		}));
+		const moduleItems = this.harnessModuleMenuItems(snapshot);
 		const catalogItems = this.harnessCatalogMenuItems(snapshot);
 
 		return {
@@ -4654,9 +4655,50 @@ export class InteractiveMode {
 						: `${snapshot.registry.registry?.components.length ?? 0} components`,
 					children: [{ value: "harness:registry:inspect", label: "Inspect registry" }],
 				},
+				...moduleItems,
 				...catalogItems,
 			],
 		};
+	}
+
+	private harnessModuleMenuItems(snapshot: HarnessRuntimeSnapshot): FloatingMenuItem[] {
+		const modules = snapshot.registry.registry?.modules ?? [];
+		if (modules.length === 0) return [];
+		return [
+			{
+				value: "harness:modules",
+				label: "Modules",
+				description: `${modules.length} registered capability slots`,
+				children: modules
+					.slice()
+					.sort((left, right) => left.id.localeCompare(right.id))
+					.map((module) => {
+						const encodedId = encodeMenuValuePart(module.id);
+						const implementations = module.implementations
+							.map((implementation) => `${implementation.source}:${implementation.status}`)
+							.join(", ");
+						return {
+							value: `harness:module:${encodedId}`,
+							label: module.id,
+							description: `${module.status} · ${implementations || "no implementations"}`,
+							children: [
+								{
+									value: `harness:module:${encodedId}:inspect`,
+									label: "Inspect",
+									description: "Print module and implementation details",
+								},
+								...module.implementations.map((implementation) => ({
+									value: `harness:module:${encodedId}:impl:${encodeMenuValuePart(implementation.source)}`,
+									label: implementation.source,
+									description: implementation.notes
+										? `${implementation.status} · ${implementation.notes}`
+										: implementation.status,
+								})),
+							],
+						};
+					}),
+			},
+		];
 	}
 
 	private harnessCatalogMenuItems(snapshot: HarnessRuntimeSnapshot): FloatingMenuItem[] {
@@ -4781,6 +4823,10 @@ export class InteractiveMode {
 			);
 			return true;
 		}
+		if (parts[1] === "module" && parts[2]) {
+			void this.showHarnessModuleItem(decodeMenuValuePart(parts[2]), parts[4] ? decodeMenuValuePart(parts[4]) : undefined);
+			return true;
+		}
 		if (parts[1] === "catalog" && parts[2] === "item" && parts[3]) {
 			void this.showHarnessCatalogItem(decodeMenuValuePart(parts[3]));
 			return true;
@@ -4790,6 +4836,45 @@ export class InteractiveMode {
 			return true;
 		}
 		return false;
+	}
+
+	private async showHarnessModuleItem(id: string, source?: string): Promise<void> {
+		const registry = await this.loadHarnessRegistryView();
+		if (!registry.registry) {
+			this.showStatus(formatHarnessRegistrySummary(registry));
+			return;
+		}
+		const module = registry.registry.modules.find((candidate) => candidate.id === id);
+		if (!module) {
+			this.showWarning(`Unknown harness module: ${id}`);
+			return;
+		}
+		const implementations = source
+			? module.implementations.filter((implementation) => implementation.source === source)
+			: module.implementations;
+		this.showStatus(
+			[
+				`Harness module: ${module.id}`,
+				`Status: ${module.status}${module.coreException ? " (core exception)" : ""}`,
+				`Kind: ${module.kind}`,
+				`Capability: ${module.capability}`,
+				module.description ? `Description: ${module.description}` : undefined,
+				`Descriptor: ${module.path}`,
+				implementations.length > 0
+					? `Implementations:\n${implementations
+							.map(
+								(implementation) =>
+									`  - ${implementation.source}: ${implementation.status}${
+										implementation.path ? ` (${implementation.path})` : ""
+									}${implementation.notes ? `\n    ${implementation.notes}` : ""}`,
+							)
+							.join("\n")}`
+					: "Implementations: none",
+				source ? "Selection: implementation switching is planned; this row is inspect-only for now." : undefined,
+			]
+				.filter((line): line is string => Boolean(line))
+				.join("\n"),
+		);
 	}
 
 	private showFloatingMenu(

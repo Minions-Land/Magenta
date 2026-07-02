@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -69,12 +69,41 @@ export interface CatalogDescriptor {
 	catalog: HarnessComponentCatalog;
 }
 
+export type HarnessImplementationStatus = "ready" | "declared" | "inspect-only";
+
+export interface HarnessImplementationDescriptor {
+	/** Mature-agent harness source, e.g. pi, codex, jcode, claude-code. */
+	source: string;
+	status: HarnessImplementationStatus;
+	/** Absolute path to the implementation source directory, when present. */
+	path?: string;
+	notes?: string;
+}
+
+export type HarnessModuleStatus = "ready" | "registered" | "inspect-only" | "core-exception";
+
+export interface HarnessModuleDescriptor {
+	id: string;
+	kind: string;
+	name: string;
+	description?: string;
+	/** Absolute path to the module descriptor TOML. */
+	path: string;
+	/** Stable capability slot represented by this module row. */
+	capability: string;
+	status: HarnessModuleStatus;
+	coreException: boolean;
+	implementations: HarnessImplementationDescriptor[];
+	component: ComponentDescriptor;
+}
+
 /** Top-level registry: the index metadata plus all loaded components. */
 export interface Registry {
 	name?: string;
 	description?: string;
 	components: ComponentDescriptor[];
 	catalogs: CatalogDescriptor[];
+	modules: HarnessModuleDescriptor[];
 }
 
 /**
@@ -302,6 +331,82 @@ function parseCatalogRefs(indexTable: TomlTable): CatalogRef[] {
 		: [];
 }
 
+const KNOWN_IMPLEMENTATION_SOURCES = new Set([
+	"pi",
+	"codex",
+	"jcode",
+	"claude-code",
+	"rust",
+	"mcp",
+	"process",
+	"package",
+]);
+
+const CORE_EXCEPTION_MODULE_IDS = new Set(["assembly/hcp", "assembly/magnet"]);
+
+export function buildHarnessModuleDescriptors(components: ComponentDescriptor[]): HarnessModuleDescriptor[] {
+	return components.map((component) => {
+		const id = `${component.kind}/${component.name}`;
+		const implementations = listImplementations(component);
+		const coreException = CORE_EXCEPTION_MODULE_IDS.has(id);
+		const status: HarnessModuleStatus = coreException
+			? "core-exception"
+			: implementations.some((implementation) => implementation.status === "ready")
+				? "ready"
+				: component.kind === "contract"
+					? "inspect-only"
+					: "registered";
+		return {
+			id,
+			kind: component.kind,
+			name: component.name,
+			description: component.description,
+			path: component.path,
+			capability: id,
+			status,
+			coreException,
+			implementations,
+			component,
+		};
+	});
+}
+
+function listImplementations(component: ComponentDescriptor): HarnessImplementationDescriptor[] {
+	const componentDir = dirname(component.path);
+	const implementations: HarnessImplementationDescriptor[] = [];
+	if (existsSync(componentDir)) {
+		for (const entry of readdirSync(componentDir, { withFileTypes: true }).sort((a, b) =>
+			a.name.localeCompare(b.name),
+		)) {
+			if (!entry.isDirectory() || !KNOWN_IMPLEMENTATION_SOURCES.has(entry.name)) continue;
+			implementations.push({
+				source: entry.name,
+				status: "ready",
+				path: resolve(componentDir, entry.name),
+			});
+		}
+	}
+
+	const declaredSource = asString(component.spec.source);
+	if (declaredSource && !implementations.some((implementation) => implementation.source === declaredSource)) {
+		implementations.push({
+			source: declaredSource,
+			status: component.kind === "contract" ? "inspect-only" : "declared",
+			notes: "Declared in component TOML; no implementation source directory is present.",
+		});
+	}
+
+	if (implementations.length === 0) {
+		implementations.push({
+			source: "registry",
+			status: "inspect-only",
+			notes: "No mature-agent implementation source directory is present.",
+		});
+	}
+
+	return implementations;
+}
+
 /**
  * Load the harness registry: parse `rootTomlPath` (the `harness.toml` index),
  * then load each referenced per-component TOML and return typed descriptors.
@@ -362,6 +467,7 @@ export async function loadRegistry(rootTomlPath: string): Promise<Registry> {
 		description: asString(indexTable.description),
 		components,
 		catalogs,
+		modules: buildHarnessModuleDescriptors(components),
 	};
 }
 

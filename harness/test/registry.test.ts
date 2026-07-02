@@ -21,6 +21,22 @@ describe("harness registry", () => {
 				(component) => component.kind === "catalog" && component.name === "magenta1-harness-components",
 			),
 		).toBe(true);
+		expect(registry.modules.find((module) => module.id === "tool/bash")).toMatchObject({
+			status: "ready",
+			implementations: [expect.objectContaining({ source: "pi", status: "ready" })],
+		});
+		expect(registry.modules.find((module) => module.id === "contract/messages")).toMatchObject({
+			status: "inspect-only",
+			implementations: [expect.objectContaining({ source: "contract", status: "inspect-only" })],
+		});
+		expect(registry.modules.find((module) => module.id === "assembly/hcp")).toMatchObject({
+			status: "core-exception",
+			coreException: true,
+		});
+		expect(registry.modules.find((module) => module.id === "assembly/magnet")).toMatchObject({
+			status: "core-exception",
+			coreException: true,
+		});
 	});
 
 	it("loads the migrated Magenta1 harness catalog with provenance intact", async () => {

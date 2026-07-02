@@ -15,6 +15,8 @@ Date: 2026-07-02
 - `packages/AutOmicScience` now uses profile-local `general/` and `task/`
   directories; the old internal `domain-harness/` and top-level `skills/`
   split has been removed.
+- Harness module assembly work has started: registry descriptors now need to
+  model capability slots plus mature-agent implementation sources.
 
 ## Completed Investigation
 
@@ -67,6 +69,7 @@ Date: 2026-07-02
 - `harness/docs/governance/contract.md`
 - `harness/docs/governance/progress.md`
 - `harness/docs/governance/log.md`
+- `harness/docs/governance/module-layout-plan.md`
 - `harness/scripts/check-structure.mjs`
 - `harness/scripts/inspect.mjs`
 - `harness/scripts/lib/files.mjs`
@@ -76,14 +79,41 @@ Date: 2026-07-02
 - `npm run check:structure`
 - `npm run inspect`
 
+## Module Assembly Implementation Started
+
+- `loadRegistry()` now includes `modules`, a descriptor view over registered
+  capability slots and mature-agent implementation sources.
+- `harness inspect` now prints and emits JSON module rows, including source
+  implementation states such as `pi:ready`, `contract:inspect-only`, and HCP /
+  Magnet `core-exception`.
+- `messages` and `types` are registered as read-only `contract` modules.
+- The TUI `/harness` menu now includes a registry-driven `Modules` group so
+  every registered capability slot can be inspected with its implementation
+  sources. Existing switchable rows such as tools/compaction/skills still keep
+  their current runtime actions.
+- The coding-agent CLI now exposes `--harness-list`, with text and
+  `--mode json` output backed by the same HCP registry module descriptors.
+  Implementation selection remains intentionally inspect-only until Magnet
+  selection contracts are wired.
+
 ## Latest Verification
 
 - `cd harness && npm run check:structure`: passed.
-- `cd harness && npm run inspect`: passed.
+- `cd harness && npm run inspect`: passed; 31 components/modules, including 2
+  read-only contract modules and 2 HCP/Magnet core exceptions.
 - `cd harness && node scripts/inspect.mjs --json`: valid JSON; parsed
-  registry/package tool summary successfully.
+  registry/package tool summary and module implementation rows successfully.
 - `cd harness && npm test`: 23 files, 174 tests passed.
 - `cd harness && npm run build`: passed.
+- `cd pi/coding-agent && npm run build`: passed.
+- `cd pi/coding-agent && npx vitest --run test/args.test.ts`: 74 tests passed.
+- `cd pi/coding-agent && node dist/cli.js --harness-list`: printed 31 registry
+  module rows.
+- `cd pi/coding-agent && node dist/cli.js --harness-list --mode json`: emitted
+  registry-backed JSON for the same 31 module rows.
+- `cd pi/coding-agent && npm test`: 155 files passed, 6 skipped; 1489 tests
+  passed, 44 skipped. The visible npm 404 and git repository errors are
+  expected negative-case test output; the command exited 0.
 - Empty `harness/packages` directory removed; `check:structure` rejects a
   second top-level packages root.
 
@@ -95,3 +125,8 @@ Date: 2026-07-02
   into stable public exports plus internal module exports?
 - Should catalog assembly for migrated process tools be promoted into a CLI
   command, or stay selector/TUI-oriented for now?
+- Should `mcp/` and `template/` become deferred/scaffold modules, or move under
+  support-only documentation?
+- Should `assembly/registry` and `assembly/hcp-process` stay under
+  `assembly/`, or move to top-level module directories while HCP/Magnet remain
+  core exceptions?

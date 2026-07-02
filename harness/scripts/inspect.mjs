@@ -5,6 +5,8 @@ import { harnessRoot, isInside, pathLabel, readJson, readToml, repoRoot } from "
 const args = process.argv.slice(2);
 const jsonOutput = args.includes("--json");
 const scriptRuntimeNames = new Set(["shell", "python", "node", "r", "julia"]);
+const implementationSourceNames = new Set(["pi", "codex", "jcode", "claude-code", "rust", "mcp", "process", "package"]);
+const coreExceptionModuleIds = new Set(["assembly/hcp", "assembly/magnet"]);
 
 function asArray(value) {
 	return Array.isArray(value) ? value : [];
@@ -35,7 +37,7 @@ function loadRegistryInspect() {
 	const catalogRefs = asArray(index.catalogs);
 	const diagnostics = [];
 
-	const components = componentRefs.map((ref) => {
+	const componentRecords = componentRefs.map((ref) => {
 		const componentPath = resolvePath(harnessRoot, ref.path);
 		let spec = {};
 		if (!componentPath || !existsSync(componentPath)) {
@@ -48,8 +50,11 @@ function loadRegistryInspect() {
 			name: spec.name ?? ref.name,
 			description: spec.description ?? ref.description,
 			path: componentPath ? pathLabel(componentPath) : undefined,
+			absPath: componentPath,
+			source: spec.source,
 		};
 	});
+	const components = componentRecords.map(({ absPath, ...component }) => component);
 
 	const catalogs = catalogRefs.map((ref) => {
 		const catalogPath = resolvePath(harnessRoot, ref.path);
@@ -96,9 +101,67 @@ function loadRegistryInspect() {
 		componentCount: components.length,
 		componentsByKind: countBy(components, (component) => component.kind),
 		components,
+		modules: componentRecords.map((component) => toModuleInspect(component)),
+		modulesByStatus: countBy(componentRecords.map((component) => toModuleInspect(component)), (module) => module.status),
 		catalogs,
 		diagnostics,
 	};
+}
+
+function toModuleInspect(component) {
+	const id = `${component.kind}/${component.name}`;
+	const implementations = listComponentImplementations(component);
+	const coreException = coreExceptionModuleIds.has(id);
+	const status = coreException
+		? "core-exception"
+		: implementations.some((implementation) => implementation.status === "ready")
+			? "ready"
+			: component.kind === "contract"
+				? "inspect-only"
+				: "registered";
+	return {
+		id,
+		kind: component.kind,
+		name: component.name,
+		description: component.description,
+		path: component.path,
+		capability: id,
+		status,
+		coreException,
+		implementations,
+	};
+}
+
+function listComponentImplementations(component) {
+	const implementations = [];
+	const componentDir = component.absPath ? dirname(component.absPath) : undefined;
+	if (componentDir && existsSync(componentDir)) {
+		for (const entry of readdirSync(componentDir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+			if (!entry.isDirectory() || !implementationSourceNames.has(entry.name)) continue;
+			implementations.push({
+				source: entry.name,
+				status: "ready",
+				path: pathLabel(resolve(componentDir, entry.name)),
+			});
+		}
+	}
+
+	if (typeof component.source === "string" && !implementations.some((implementation) => implementation.source === component.source)) {
+		implementations.push({
+			source: component.source,
+			status: component.kind === "contract" ? "inspect-only" : "declared",
+			notes: "Declared in component TOML; no implementation source directory is present.",
+		});
+	}
+
+	if (implementations.length === 0) {
+		implementations.push({
+			source: "registry",
+			status: "inspect-only",
+			notes: "No mature-agent implementation source directory is present.",
+		});
+	}
+	return implementations;
 }
 
 function flattenInventoryComponents(inventory) {
@@ -292,6 +355,11 @@ function formatCounts(counts) {
 function printHuman(report) {
 	console.log(`Harness inspect: ${report.registry.name ?? "unnamed"}`);
 	console.log(`Components: ${report.registry.componentCount} (${formatCounts(report.registry.componentsByKind)})`);
+	console.log(`Modules: ${report.registry.modules.length} (${formatCounts(report.registry.modulesByStatus)})`);
+	for (const module of report.registry.modules) {
+		const implementations = module.implementations.map((implementation) => `${implementation.source}:${implementation.status}`).join(", ");
+		console.log(`  - ${module.id}: ${module.status}; implementations ${implementations}`);
+	}
 	if (report.registry.catalogs.length > 0) {
 		console.log("Catalogs:");
 		for (const catalog of report.registry.catalogs) {

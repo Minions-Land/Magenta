@@ -10,6 +10,7 @@ import { type ImageContent, modelsAreEqual } from "@earendil-works/pi-ai";
 import chalk from "chalk";
 import { type Args, type Mode, parseArgs, printHelp } from "./cli/args.ts";
 import { processFileArguments } from "./cli/file-processor.ts";
+import { listHarnessModules } from "./cli/harness-list.ts";
 import { buildInitialMessage } from "./cli/initial-message.ts";
 import { listModels } from "./cli/list-models.ts";
 import { createProjectTrustContext } from "./cli/project-trust.ts";
@@ -526,6 +527,21 @@ export async function main(args: string[], options?: MainOptions) {
 			process.exit(1);
 		}
 		console.log(`Exported to: ${result}`);
+		process.exit(0);
+	}
+
+	if (parsed.harnessList && !parsed.help) {
+		if (parsed.mode === "rpc") {
+			console.error(chalk.red("Error: --harness-list does not support --mode rpc"));
+			process.exit(1);
+		}
+		try {
+			await listHarnessModules({ json: parsed.mode === "json" });
+		} catch (error: unknown) {
+			const message = error instanceof Error ? error.message : "Failed to list harness modules";
+			console.error(chalk.red(`Error: ${message}`));
+			process.exit(1);
+		}
 		process.exit(0);
 	}
 

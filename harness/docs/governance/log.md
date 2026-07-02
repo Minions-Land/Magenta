@@ -86,3 +86,29 @@
 - Shared Python runtimes should live under the domain-general profile, for
   example `general/.omics-runtime`, then enter execution through
   `python-runtime` components and Magnet.
+
+### Harness Module Assembly Decision
+
+- A harness module directory is a capability slot.
+- Source subdirectories under a capability slot represent mature-agent harness
+  implementations such as `pi`, `codex`, `jcode`, and `claude-code`; they are
+  not merely programming language folders.
+- HCP is the unified management protocol for discovery, selection, state,
+  health, and configuration.
+- Magnet is the non-invasive bridge that attaches a concrete mature-agent
+  implementation to Magenta3 without rewriting that implementation's native
+  code or logic.
+
+### Module Assembly Loop Checkpoint
+
+- Planner: recorded `harness/docs/governance/module-layout-plan.md` as the
+  current contract for capability slots, implementation sources, HCP, Magnet,
+  TUI, and CLI.
+- Generator: added registry-backed module descriptors, registered `messages`
+  and `types` as read-only contract modules, added TUI `Modules` inspection, and
+  added CLI `--harness-list`.
+- Evaluator: ran structure, inspect, harness tests/build, coding-agent
+  tests/build, and actual CLI list commands. All verification commands exited 0.
+- Current boundary: module/implementation selection is visible and inspectable,
+  but alternate implementation switching is not yet active until Magnet
+  selection contracts are implemented.

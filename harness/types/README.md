@@ -40,7 +40,8 @@ function doSomething(): Result<string> {
 
 ## Registration
 
-Contract modules are **not registered** in `harness.toml` — they're always available as part of the harness core API.
+This is registered in `harness.toml` as a read-only `contract` module. It is
+always available as part of the harness core API and is not runtime-switchable.
 
 ## Note
 
