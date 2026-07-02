@@ -1,7 +1,7 @@
 ---
 name: omics-multiome
 description: Single-cell multiome (paired RNA + ATAC) — MuData assembly, per-modality preprocess, joint embedding (WNN / MultiVI), joint clustering & annotation, chromatin-aware velocity (MultiVelo), eGRN (SCENIC+), cross-modal interpretation.
-requiredTools: [run_python, create_notebook, add_cell, observe_figure, omics_preflight, omics_runtime]
+requiredTools: [run_python, create_notebook, add_cell, observe_figure, omics_preflight, omics_compute]
 evidencePolicy: required
 outputSchema: grounded_response
 minConfidence: medium
@@ -11,7 +11,7 @@ extends: omics-shared
 
 # Single-Cell Multiome (RNA + ATAC) Analysis
 
-Paired RNA + ATAC from the same nuclei. Reuses the scRNA and scATAC per-modality recipes, adds joint modeling. Run compute through the **`omics_runtime`** tool with `modality="multiome"` (dispatches into the pinned `task3` env, records evidence).
+Paired RNA + ATAC from the same nuclei. Reuses the scRNA and scATAC per-modality recipes, adds joint modeling. Run compute through the **`omics_compute`** tool with `modality="multiome"` (dispatches into the pinned `task3` env, records evidence).
 
 ## Prerequisites
 
@@ -65,7 +65,7 @@ Per conventions (§6): counts in `layers["counts"]`, embeddings in `obsm["X_*"]`
 
 ## Runtime Dispatch
 
-Run compute through the **`omics_runtime`** tool with `modality="multiome"`:
+Run compute through the **`omics_compute`** tool with `modality="multiome"`:
 ```python
 # Available subcommands:
 #   - load_multiome: Assemble/validate paired MuData

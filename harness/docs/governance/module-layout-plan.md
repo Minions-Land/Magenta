@@ -90,9 +90,9 @@ This lets Magenta3 assemble combinations such as:
   `--harness-impl`, or `--harness-disable` switching yet.
 - `listHarnessSelectionItems()` flattens catalog entries, not built-in
   `harness.toml` modules.
-- `packages/AutOmicScience` now keeps package-owned runtime/env/test assets at
-  the package root and keeps profile-selected resources under `general/` and
-  `task/<profile>/`.
+- `packages/AutOmicScience` now keeps tool implementation assets under
+  package-root `tools/<tool>/` directories and keeps profile-selected resources
+  under `general/` and `task/<profile>/`.
 
 ## Current Mismatches
 

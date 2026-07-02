@@ -18,7 +18,7 @@ Run each modality through its modality's path, then re-intersect if filtering dr
 
 ```python
 # RNA — scRNA preprocess subcommand (write the modality out, run, read back)
-omics_runtime(subcommand="preprocess", modality="scrna",
+omics_compute(subcommand="preprocess", modality="scrna",
               args={"input": "rna.h5ad", "output": "rna_pp.h5ad"})   # QC→norm→HVG→PCA→neighbors→UMAP→Leiden
 
 # ATAC — snapATAC2 in run_python (see omics-scatac: atac_qc.md / feature_matrix.md / dimred_cluster.md)

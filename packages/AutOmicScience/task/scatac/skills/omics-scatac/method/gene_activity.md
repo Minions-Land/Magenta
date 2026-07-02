@@ -1,6 +1,6 @@
 # Gene Activity Scores
 
-**Maturity: READY** — `omics_runtime(subcommand="gene_activity", modality="scatac", ...)`, or `snap.pp.make_gene_matrix` directly. A rough proxy, **not expression**.
+**Maturity: READY** — `omics_compute(subcommand="gene_activity", modality="scatac", ...)`, or `snap.pp.make_gene_matrix` directly. A rough proxy, **not expression**.
 
 ## Goal / When to Use
 

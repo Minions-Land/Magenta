@@ -1,6 +1,6 @@
 # QC, Doublets, Normalization, Feature Selection, Dimensionality Reduction
 
-**Maturity: READY** — the standard path runs via `omics_runtime(subcommand="preprocess", modality="scrna", ...)`. Deviate by hand (below) only when the data breaks the defaults' assumptions.
+**Maturity: READY** — the standard path runs via `omics_compute(subcommand="preprocess", modality="scrna", ...)`. Deviate by hand (below) only when the data breaks the defaults' assumptions.
 
 ## Goal / When to Use
 
@@ -66,7 +66,7 @@ These parameters are best left at helper defaults unless the data argues otherwi
 Run the standardized QC→normalize→HVG→PCA→neighbors→UMAP→Leiden pipeline through the grounded tool — it executes in the pinned `task1` env and records evidence automatically:
 
 ```
-omics_runtime(
+omics_compute(
   subcommand="preprocess",
   modality="scrna",
   args={"input": "raw.h5ad", "output": "processed.h5ad"}
@@ -160,7 +160,7 @@ Record from the helper's `report` dict:
 - `n_clusters` (Leiden clusters)
 - `batch_key` (if multi-sample)
 
-All of these come directly from the `omics_runtime preprocess` `report` (or your hand-written report dict) and are captured as evidence automatically.
+All of these come directly from the `omics_compute preprocess` `report` (or your hand-written report dict) and are captured as evidence automatically.
 
 ## Honesty
 

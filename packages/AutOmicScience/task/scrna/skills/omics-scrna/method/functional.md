@@ -1,6 +1,6 @@
 # Functional Analysis — Pathway/TF Activity, Gene-set Enrichment, Perturbation
 
-**Maturity: READY** — all three run through tested `omics_runtime` subcommands (`pathway_activity`, `enrichment`, `perturbation`) in the pinned `task1` env; call the tool. (CNV inference has no subcommand — out of scope here; if needed it is a REFERENCE hand-rolled `infercnvpy` recipe in `run_python`.)
+**Maturity: READY** — all three run through tested `omics_compute` subcommands (`pathway_activity`, `enrichment`, `perturbation`) in the pinned `task1` env; call the tool. (CNV inference has no subcommand — out of scope here; if needed it is a REFERENCE hand-rolled `infercnvpy` recipe in `run_python`.)
 
 ## Goal / When to Use
 
@@ -17,7 +17,7 @@ Background rule for enrichment: ORA tests your query set against the resource's 
 ## 1. Pathway / TF activity (READY) — `pathway_activity`
 
 ```
-omics_runtime(
+omics_compute(
   subcommand="pathway_activity",
   modality="scrna",
   args={"adata": "processed.h5ad", "output": "pathway.h5ad",
@@ -41,7 +41,7 @@ print(acts.groupby("leiden").mean())     # per-cluster mean activity
 ## 2. Gene-set enrichment (READY) — `enrichment`
 
 ```
-omics_runtime(
+omics_compute(
   subcommand="enrichment",
   modality="scrna",
   args={"gene-list": "CD3D,CD3E,IL7R,CCR7,GZMK,CD8A",
@@ -59,7 +59,7 @@ omics_runtime(
 ## 3. Perturbation / condition response (READY) — `perturbation`
 
 ```
-omics_runtime(
+omics_compute(
   subcommand="perturbation",
   modality="scrna",
   args={"adata": "processed.h5ad", "output": "perturbation.h5ad",

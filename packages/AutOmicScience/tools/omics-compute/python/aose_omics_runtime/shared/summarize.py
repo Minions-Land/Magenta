@@ -129,7 +129,7 @@ def main(args):
             f.write(summary)
     report["summary"] = summary
     # Human-readable text first, then a trailing JSON report so the typed
-    # omics_runtime tool can parse it (extract_trailing_json) and record
+    # omics_compute tool can parse it (extract_trailing_json) and record
     # evidence — consistent with marker_table / preprocess.
     print(summary)
     print(json.dumps(report, default=str))

@@ -1,6 +1,6 @@
 kind = "tool"
-name = "omics_runtime"
-description = "Dispatch to the package-local aose_omics_runtime module. Only subcommands backed by migrated runtime modules are exposed."
+name = "omics_compute"
+description = "Run package-local omics compute subcommands backed by the migrated AOSE Python implementation."
 runtime = "aose_omics_runtime"
 module = "aose_omics_runtime"
 pixi_environment = "default"
@@ -42,7 +42,7 @@ enum = [
   "perturbation",
   "score",
 ]
-description = "Runtime subcommand. Data-acquisition subcommands census_query and geo_fetch are intentionally excluded until their implementation modules are migrated."
+description = "Compute subcommand. Data-acquisition subcommands census_query and geo_fetch are intentionally excluded until their implementation modules are migrated."
 
 [parameters.properties.modality]
 type = "string"
@@ -51,7 +51,7 @@ description = "Optional modality hint used by the execution layer to select a pi
 
 [parameters.properties.args]
 type = "object"
-description = "Runtime flags keyed by subcommand flag names."
+description = "Compute flags keyed by subcommand flag names."
 
 [parameters.properties.pythonBin]
 type = "string"

@@ -15,15 +15,19 @@ The repository package root is:
 packages/
   AutOmicScience/
     package.toml
-    .omics-runtime/
-      aose_omics_runtime/
-      tests/
     pixi.toml
     pixi.lock
+    tools/
+      omics-compute/
+        omics-compute.toml
+        python/
+          aose_omics_runtime/
+          tests/
+      omics-preflight/
+        omics-preflight.toml
     general/
       harness.toml
       skills/
-      tools/
     task/
       scrna/
         harness.toml
@@ -48,7 +52,7 @@ default_profiles = ["general"]
 [[components]]
 kind = "python-runtime"
 name = "aose_omics_runtime"
-path = ".omics-runtime/aose_omics_runtime"
+path = "tools/omics-compute/python/aose_omics_runtime"
 
 [[components]]
 kind = "env"
@@ -85,8 +89,8 @@ include_in_context = true
 
 [[components]]
 kind = "tool"
-name = "omics_runtime"
-path = "tools/omics-runtime.toml"
+name = "omics_compute"
+path = "../tools/omics-compute/omics-compute.toml"
 ```
 
 Root-level `[[components]]` in `package.toml` are package-owned implementation
@@ -117,8 +121,8 @@ Package `tool` components are descriptors. At assembly time, `assemblePackageToo
 
 ```toml
 kind = "tool"
-name = "omics_runtime"
-description = "Dispatch to the package-local Python runtime."
+name = "omics_compute"
+description = "Run package-local omics compute subcommands."
 runtime = "aose_omics_runtime"
 module = "aose_omics_runtime"
 

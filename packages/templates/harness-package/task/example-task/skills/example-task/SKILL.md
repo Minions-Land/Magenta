@@ -1,7 +1,7 @@
 ---
 name: example-task
 description: Task-specific guidance loaded by the example package task profile.
-requiredTools: [example_runtime]
+requiredTools: [example_compute]
 ---
 
 # Example Task Skill

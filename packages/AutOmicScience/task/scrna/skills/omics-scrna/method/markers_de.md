@@ -1,6 +1,6 @@
 # scRNA-seq Marker Genes & Cross-Condition DE
 
-**Maturity: READY** — per-cluster marker genes run via `omics_runtime(subcommand="marker_table", modality="scrna", ...)`. Cross-condition pseudobulk DE is **REFERENCE** (hand-rolled PyDESeq2, Part B).
+**Maturity: READY** — per-cluster marker genes run via `omics_compute(subcommand="marker_table", modality="scrna", ...)`. Cross-condition pseudobulk DE is **REFERENCE** (hand-rolled PyDESeq2, Part B).
 
 ## Goal / When to Use
 
@@ -18,7 +18,7 @@ Two distinct questions, two different tools — do not conflate them:
 Run the grounded subcommand; it executes in the pinned `task1` env and records evidence automatically:
 
 ```
-omics_runtime(
+omics_compute(
   subcommand="marker_table",
   modality="scrna",
   args={
@@ -143,7 +143,7 @@ For a quick exploratory within-cluster contrast (no replicates), `sc.tl.rank_gen
 
 ## Grounding
 
-- Part A: `omics_runtime marker_table` returns a `report` with `n_groups`, `markers_per_group`, the filter parameters, and timings — captured as evidence automatically. Cite the marker CSV path and that report.
+- Part A: `omics_compute marker_table` returns a `report` with `n_groups`, `markers_per_group`, the filter parameters, and timings — captured as evidence automatically. Cite the marker CSV path and that report.
 - Part B: emit the hand-written `report` dict (`n_samples`, `contrast`, `n_genes_tested`, `n_sig`, top genes) and pass the cell to `evidence_from_kernel_cell`. Never report DE numbers that aren't backed by that cell.
 
 ## Honesty / when to abstain

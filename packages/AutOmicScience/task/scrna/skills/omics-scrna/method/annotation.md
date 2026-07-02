@@ -1,6 +1,6 @@
 # scRNA-seq Cell Type Annotation
 
-**Maturity: Route 1 (marker + LLM) = READY** — cluster with Leiden, then `omics_runtime(subcommand="marker_table", modality="scrna", ...)`, then thread the marker table + dataset summary + study description into a labeling decision. **Route 2 (reference pipeline) = PARTIAL** — call the `run_annotation_pipeline` tool when a labeled reference is available.
+**Maturity: Route 1 (marker + LLM) = READY** — cluster with Leiden, then `omics_compute(subcommand="marker_table", modality="scrna", ...)`, then thread the marker table + dataset summary + study description into a labeling decision. **Route 2 (reference pipeline) = PARTIAL** — call the `run_annotation_pipeline` tool when a labeled reference is available.
 
 ## Goal / When to Use
 
@@ -15,18 +15,18 @@ Do not bolt on other automated annotators ad hoc (CellTypist / scANVI / popV / s
 
 ## Anti-circular rule (read first)
 
-If the dataset already carries an `obs["cell_type"]` (or similar) column, treat it as **prior annotation, not ground truth**. Never copy it into your output, and never feed it into the marker test as the grouping. Cluster independently with Leiden, annotate from markers, then **compare** your labels against the prior with ARI/NMI (`omics_runtime score` with `pred-key`/`ref-key`/`metric`, or `sklearn.metrics`). Report agreement and investigate disagreements. Copying the prior column is circular — the most common silent failure in annotation.
+If the dataset already carries an `obs["cell_type"]` (or similar) column, treat it as **prior annotation, not ground truth**. Never copy it into your output, and never feed it into the marker test as the grouping. Cluster independently with Leiden, annotate from markers, then **compare** your labels against the prior with ARI/NMI (`omics_compute score` with `pred-key`/`ref-key`/`metric`, or `sklearn.metrics`). Report agreement and investigate disagreements. Copying the prior column is circular — the most common silent failure in annotation.
 
 ## Route 1 — marker + LLM (READY, default)
 
 ### Step 1 — Ensure clusters exist
 
-Annotation needs a Leiden partition. `omics_runtime preprocess` writes `obs["leiden"]`; if your h5ad lacks it, run preprocess first (`method/qc.md`). Over-clustering forces spurious labels — if markers come back non-specific (Step 3), lower resolution and re-cluster **before** labeling.
+Annotation needs a Leiden partition. `omics_compute preprocess` writes `obs["leiden"]`; if your h5ad lacks it, run preprocess first (`method/qc.md`). Over-clustering forces spurious labels — if markers come back non-specific (Step 3), lower resolution and re-cluster **before** labeling.
 
 ### Step 2 — Compute the marker table (grounded)
 
 ```
-omics_runtime(
+omics_compute(
   subcommand="marker_table",
   modality="scrna",
   args={"input": "processed.h5ad", "output": "markers.csv",
@@ -54,7 +54,7 @@ for grp, genes in per_cluster.items():
 Make the call from three inputs **together** — never markers alone:
 
 1. the top markers per cluster (Step 3),
-2. the dataset summary (`omics_runtime summarize` → n_cells, tissue, organism, n_clusters),
+2. the dataset summary (`omics_compute summarize` → n_cells, tissue, organism, n_clusters),
 3. the free-text study description (tissue, disease, condition, expected populations).
 
 For each cluster, name the most likely cell type from its specific markers, cross-checked against the tissue's expected populations. **Abstain to "unknown" when**: top markers are non-specific or housekeeping; two lineages' markers co-occur (possible doublet/transitional); or no canonical pattern matches the tissue. Record *which* markers drove each call.
@@ -131,7 +131,7 @@ When a quality labeled reference is available, call the `run_annotation_pipeline
 - **adapter** emits an executable AdapterSpec (load query + reference, align shared genes, invoke embedding label transfer, postprocess);
 - **adjudicator** chooses a consensus coarse label per group from votes/confidence, abstaining to the unknown label when evidence is contradictory.
 
-It is **PARTIAL** because it needs a curated reference bundle and heavier transfer deps, and is a separate orchestration tool rather than an `omics_runtime` subcommand. Validate its output with the same marker dotplots as Route 1, and compare to any prior labels with ARI/NMI — never accept transferred labels unchecked. (Notably it does *not* wrap CellTypist/scANVI; it is a label-free consensus transfer with explicit abstention.)
+It is **PARTIAL** because it needs a curated reference bundle and heavier transfer deps, and is a separate orchestration tool rather than an `omics_compute` subcommand. Validate its output with the same marker dotplots as Route 1, and compare to any prior labels with ARI/NMI — never accept transferred labels unchecked. (Notably it does *not* wrap CellTypist/scANVI; it is a label-free consensus transfer with explicit abstention.)
 
 ## Failure Modes
 
@@ -160,7 +160,7 @@ Record from the `marker_table` report + your annotation report dict:
 - `n_unknown` (abstentions);
 - ARI/NMI vs any prior `cell_type` column (comparison, not adoption).
 
-The `omics_runtime marker_table` report is captured automatically; pass your hand-written annotation report through `evidence_from_kernel_cell`.
+The `omics_compute marker_table` report is captured automatically; pass your hand-written annotation report through `evidence_from_kernel_cell`.
 
 ## Honesty / Abstention
 

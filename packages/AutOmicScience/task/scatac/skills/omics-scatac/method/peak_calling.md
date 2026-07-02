@@ -1,6 +1,6 @@
 # Peak Calling & Differential Accessibility
 
-**Maturity: READY** — peak calling via `omics_runtime(subcommand="peak_calling", modality="scatac", ...)`; differential accessibility is hand-rolled snapATAC2 (REFERENCE).
+**Maturity: READY** — peak calling via `omics_compute(subcommand="peak_calling", modality="scatac", ...)`; differential accessibility is hand-rolled snapATAC2 (REFERENCE).
 
 ## Goal / When to Use
 
@@ -31,9 +31,9 @@ Derive cell-type-specific peaks and find differentially accessible regions. Use 
 
 ### Per-group peak calling + merge + matrix
 
-Grounded path — the `omics_runtime` peak_calling subcommand (records evidence):
+Grounded path — the `omics_compute` peak_calling subcommand (records evidence):
 ```python
-omics_runtime(subcommand="peak_calling", modality="scatac", args={
+omics_compute(subcommand="peak_calling", modality="scatac", args={
     "input": "qc.h5ad", "output": "peaks.bed", "fragment-file": "fragments.tsv.gz",
     "mode": "pseudobulk", "cluster-column": "leiden", "qvalue": "0.05",
 })

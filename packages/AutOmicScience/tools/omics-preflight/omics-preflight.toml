@@ -10,7 +10,7 @@ destructive = false
 [metadata]
 package = "AutOmicScience"
 source = "AOSE origin/main 57ae83b with UPDATING exclusions applied"
-runtime_path = ".omics-runtime"
+implementation_path = "tools/omics-compute/python"
 env_manifest = "pixi.toml"
 
 [parameters]

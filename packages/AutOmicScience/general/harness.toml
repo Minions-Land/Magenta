@@ -1,5 +1,5 @@
 name = "AutOmicScience-general"
-description = "Shared omics package foundation: runtime, pinned environments, tools, and cross-modality guidance."
+description = "Shared omics package foundation: pinned environments, tools, and cross-modality guidance."
 
 [[components]]
 kind = "skill"
@@ -10,9 +10,9 @@ include_in_context = true
 [[components]]
 kind = "tool"
 name = "omics_preflight"
-path = "tools/omics-preflight.toml"
+path = "../tools/omics-preflight/omics-preflight.toml"
 
 [[components]]
 kind = "tool"
-name = "omics_runtime"
-path = "tools/omics-runtime.toml"
+name = "omics_compute"
+path = "../tools/omics-compute/omics-compute.toml"

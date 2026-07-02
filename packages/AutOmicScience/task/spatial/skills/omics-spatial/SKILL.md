@@ -1,7 +1,7 @@
 ---
 name: omics-spatial
 description: Spatial transcriptomics (Visium / Xenium / MERFISH / …) — loading, spatial QC, spatial statistics + SVGs (squidpy), spatial domains (SpaGCN), deconvolution & mapping (cell2location / Tangram), spatial cell-cell communication (squidpy / COMMOT), gene imputation (Tangram), 2D/3D visualization.
-requiredTools: [run_python, create_notebook, add_cell, observe_figure, omics_preflight, omics_runtime]
+requiredTools: [run_python, create_notebook, add_cell, observe_figure, omics_preflight, omics_compute]
 evidencePolicy: required
 outputSchema: grounded_response
 minConfidence: medium
@@ -11,7 +11,7 @@ extends: omics-shared
 
 # Spatial Transcriptomics Analysis
 
-Builds on `omics-shared` (loaded automatically — its rules apply here). Load spatial data through the **`omics_runtime`** tool (`read_spatial`, records evidence); the analysis itself is **squidpy** in `run_python` for the statistics / CCC, with heavier methods (cell2location, SpaGCN, COMMOT) run in isolated envs. Read the method doc before running a capability.
+Builds on `omics-shared` (loaded automatically — its rules apply here). Load spatial data through the **`omics_compute`** tool (`read_spatial`, records evidence); the analysis itself is **squidpy** in `run_python` for the statistics / CCC, with heavier methods (cell2location, SpaGCN, COMMOT) run in isolated envs. Read the method doc before running a capability.
 
 ## Prerequisites
 
@@ -23,7 +23,7 @@ Builds on `omics-shared` (loaded automatically — its rules apply here). Load s
 
 | Capability | Maturity | How | Method doc |
 |------------|----------|-----|------------|
-| Load spatial data (Visium / Xenium / MERFISH / …) | **READY** | `omics_runtime read_spatial` | `method/read_spatial.md` |
+| Load spatial data (Visium / Xenium / MERFISH / …) | **READY** | `omics_compute read_spatial` | `method/read_spatial.md` |
 | Spatial QC (on-tissue, segmentation, control probes) | **REFERENCE** | scanpy + squidpy | `method/spatial_qc.md` |
 | Spatial statistics + SVGs (Moran's I / Ripley / nhood / co-occ) | **REFERENCE** | squidpy | `method/spatial_stats.md` |
 | Spatial domains | **PARTIAL** | SpaGCN (Leiden baseline runs) | `method/domains.md` |
@@ -36,7 +36,7 @@ Read the method doc before running a capability — each gives the opinionated d
 
 ## Standard workflow
 
-1. **Preflight & load** — `omics_preflight(modality="spatial")`; `omics_runtime(subcommand="read_spatial", modality="spatial", args={"input":"<path>","platform":"visium"})`. Thread the summary + study description forward.
+1. **Preflight & load** — `omics_preflight(modality="spatial")`; `omics_compute(subcommand="read_spatial", modality="spatial", args={"input":"<path>","platform":"visium"})`. Thread the summary + study description forward.
 2. **Spatial QC** — scanpy QC + squidpy spatial views; filter off-tissue / low-segmentation cells (`method/spatial_qc.md`).
 3. **Cluster / annotate** — reuse the scRNA recipes (`omics-scrna`: preprocess → markers → annotation) on the expression, then validate **in space**.
 4. **Spatial structure** — SVGs + neighborhood enrichment + co-occurrence via squidpy (`method/spatial_stats.md`); spatial domains (`method/domains.md`).

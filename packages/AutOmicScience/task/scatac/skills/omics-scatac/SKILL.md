@@ -1,7 +1,7 @@
 ---
 name: omics-scatac
 description: Single-cell ATAC-seq — fragment import, ATAC QC (TSS / fragment-size / FRiP / doublets), feature matrix (tiles / MACS3 peaks), spectral (LSI) clustering, motif activity (chromVAR), gene activity, peak–gene linkage, scRNA label transfer.
-requiredTools: [run_python, create_notebook, add_cell, observe_figure, omics_preflight, omics_runtime]
+requiredTools: [run_python, create_notebook, add_cell, observe_figure, omics_preflight, omics_compute]
 evidencePolicy: required
 outputSchema: grounded_response
 minConfidence: medium
@@ -11,7 +11,7 @@ extends: omics-shared
 
 # scATAC-seq Analysis
 
-Builds on `omics-shared` (loaded automatically — its rules apply here). Run compute through the **`omics_runtime`** tool with `modality="scatac"`; it dispatches into the pinned `task4` env and records evidence automatically. Steps without a subcommand are hand-rolled in `run_python` with **snapATAC2** (and **pychromVAR** for motifs) — read the method doc first.
+Builds on `omics-shared` (loaded automatically — its rules apply here). Run compute through the **`omics_compute`** tool with `modality="scatac"`; it dispatches into the pinned `task4` env and records evidence automatically. Steps without a subcommand are hand-rolled in `run_python` with **snapATAC2** (and **pychromVAR** for motifs) — read the method doc first.
 
 ## Prerequisites
 
@@ -24,12 +24,12 @@ Builds on `omics-shared` (loaded automatically — its rules apply here). Run co
 | Capability | Maturity | How | Method doc |
 |------------|----------|-----|------------|
 | Import fragments → cell×feature matrix | **REFERENCE** | snapATAC2 `pp.import_fragments` | `method/import_fragments.md` |
-| ATAC QC (TSS, fragment size, FRiP, doublets) | **READY** | `omics_runtime atac_qc` | `method/atac_qc.md` |
+| ATAC QC (TSS, fragment size, FRiP, doublets) | **READY** | `omics_compute atac_qc` | `method/atac_qc.md` |
 | Feature matrix (tiles / peaks) | **PARTIAL** | snapATAC2 tiles; peaks via `peak_calling` | `method/feature_matrix.md` |
-| Peak calling (MACS3, per-cluster) | **READY** | `omics_runtime peak_calling` | `method/peak_calling.md` |
+| Peak calling (MACS3, per-cluster) | **READY** | `omics_compute peak_calling` | `method/peak_calling.md` |
 | Spectral (LSI) embedding + Leiden | **REFERENCE** | snapATAC2 `tl.spectral` / `tl.leiden` | `method/dimred_cluster.md` |
 | Motif activity (chromVAR) | **REFERENCE** | pychromVAR | `method/motif_enrichment.md` |
-| Gene activity scores | **READY** | `omics_runtime gene_activity` | `method/gene_activity.md` |
+| Gene activity scores | **READY** | `omics_compute gene_activity` | `method/gene_activity.md` |
 | Peak–gene linkage (co-accessibility) | **REFERENCE** | distance + correlation (muon) | `method/peak_gene_linkage.md` |
 | Label transfer / integration from scRNA | **REFERENCE** | gene-activity bridge + scRNA recipes | `method/rna_integration.md` |
 
@@ -39,16 +39,16 @@ Read the method doc before running a capability — each gives the opinionated d
 
 ## Standard workflow
 
-Run each step through `omics_runtime` where a subcommand exists; otherwise hand-roll per the method doc. Read the per-step doc for parameters and decisions.
+Run each step through `omics_compute` where a subcommand exists; otherwise hand-roll per the method doc. Read the per-step doc for parameters and decisions.
 
-1. **Preflight & import** — `omics_preflight(modality="scatac")`; import the fragments file into a snapATAC2 AnnData (`method/import_fragments.md`); `omics_runtime(subcommand="summarize", modality="scatac", args={"input":"atac.h5ad"})`. Thread the summary + study description forward.
-2. **ATAC QC** — `omics_runtime(subcommand="atac_qc", modality="scatac", args={"input":"atac.h5ad","output":"qc.h5ad","fragment-file":"fragments.tsv.gz","compute-tsse":"true","compute-frip":"true","filter":"true"})`. See `method/atac_qc.md` for TSSE / nucleosome / FRiP thresholds and the MAD-vs-fixed decision.
-3. **Feature matrix** — tile matrix for a first pass, or call peaks per cluster: `omics_runtime(subcommand="peak_calling", modality="scatac", args={"input":"qc.h5ad","output":"peaks.bed","fragment-file":"fragments.tsv.gz","mode":"pseudobulk","cluster-column":"leiden"})` (`method/feature_matrix.md`, `method/peak_calling.md`).
+1. **Preflight & import** — `omics_preflight(modality="scatac")`; import the fragments file into a snapATAC2 AnnData (`method/import_fragments.md`); `omics_compute(subcommand="summarize", modality="scatac", args={"input":"atac.h5ad"})`. Thread the summary + study description forward.
+2. **ATAC QC** — `omics_compute(subcommand="atac_qc", modality="scatac", args={"input":"atac.h5ad","output":"qc.h5ad","fragment-file":"fragments.tsv.gz","compute-tsse":"true","compute-frip":"true","filter":"true"})`. See `method/atac_qc.md` for TSSE / nucleosome / FRiP thresholds and the MAD-vs-fixed decision.
+3. **Feature matrix** — tile matrix for a first pass, or call peaks per cluster: `omics_compute(subcommand="peak_calling", modality="scatac", args={"input":"qc.h5ad","output":"peaks.bed","fragment-file":"fragments.tsv.gz","mode":"pseudobulk","cluster-column":"leiden"})` (`method/feature_matrix.md`, `method/peak_calling.md`).
 4. **Embed & cluster** — snapATAC2 spectral (LSI) embedding, then Leiden on `obsm["X_spectral"]`; drop the depth-correlated first component (`method/dimred_cluster.md`). Plot UMAP and `observe_figure`.
-5. **Gene activity** — `omics_runtime(subcommand="gene_activity", modality="scatac", args={"input":"qc.h5ad","output":"gene_activity.h5ad"})` for an expression proxy used in annotation / integration (`method/gene_activity.md`).
+5. **Gene activity** — `omics_compute(subcommand="gene_activity", modality="scatac", args={"input":"qc.h5ad","output":"gene_activity.h5ad"})` for an expression proxy used in annotation / integration (`method/gene_activity.md`).
 6. **Motif activity (chromVAR)** — per-cell TF motif deviations via pychromVAR (`method/motif_enrichment.md`).
 7. **Linkage / integration (as needed)** — peak–gene links (`method/peak_gene_linkage.md`); label transfer from an scRNA reference via the gene-activity bridge (`method/rna_integration.md`).
-8. **Visualize & ground** — plot UMAP colored by clusters / QC / gene-activity markers; `observe_figure` each before it backs a claim; cite the `omics_runtime` reports as evidence.
+8. **Visualize & ground** — plot UMAP colored by clusters / QC / gene-activity markers; `observe_figure` each before it backs a claim; cite the `omics_compute` reports as evidence.
 
 ## scATAC-specific rules (on top of omics-shared)
 

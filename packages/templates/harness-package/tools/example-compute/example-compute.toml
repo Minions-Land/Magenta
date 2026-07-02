@@ -1,8 +1,8 @@
 kind = "tool"
-name = "example_runtime"
-description = "Example package-local Python runtime tool descriptor."
-runtime = "example_runtime"
-module = "example_runtime"
+name = "example_compute"
+description = "Example package-local compute tool descriptor."
+runtime = "example_compute_impl"
+module = "example_compute_impl"
 pixi_environment = "default"
 operation = "read"
 read_only = true

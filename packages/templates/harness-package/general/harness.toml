@@ -9,5 +9,5 @@ include_in_context = true
 
 [[components]]
 kind = "tool"
-name = "example_runtime"
-path = "tools/example-runtime.toml"
+name = "example_compute"
+path = "../tools/example-compute/example-compute.toml"

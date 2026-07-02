@@ -1,6 +1,6 @@
 # Load & Assemble Multiome
 
-**Maturity: READY** — `omics_runtime(subcommand="load_multiome", modality="multiome", ...)` assembles a paired MuData with joint QC + barcode intersection, and records evidence automatically.
+**Maturity: READY** — `omics_compute(subcommand="load_multiome", modality="multiome", ...)` assembles a paired MuData with joint QC + barcode intersection, and records evidence automatically.
 
 ## Goal / When to Use
 
@@ -18,7 +18,7 @@ Build a clean, analysis-ready paired MuData (shared barcodes, per-modality QC, j
 ## How-to (default — the subcommand)
 
 ```python
-omics_runtime(subcommand="load_multiome", modality="multiome", args={
+omics_compute(subcommand="load_multiome", modality="multiome", args={
     "rna":    "rna.h5ad",
     "atac":   "atac.h5ad",
     "output": "multiome.h5mu",

@@ -7,8 +7,8 @@ default_profiles = ["general"]
 
 [[components]]
 kind = "python-runtime"
-name = "example_runtime"
-path = ".runtime/example_runtime"
+name = "example_compute_impl"
+path = "tools/example-compute/python/example_compute_impl"
 
 [[components]]
 kind = "env"

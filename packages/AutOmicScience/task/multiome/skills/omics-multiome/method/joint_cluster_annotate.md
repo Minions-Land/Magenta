@@ -26,7 +26,7 @@ mu.tl.umap(mdata)
 
 **Annotation — Route 1 (marker + LLM, default):** markers come from the **RNA** modality via the scRNA marker subcommand; write the RNA modality out and run:
 ```python
-omics_runtime(subcommand="marker_table", modality="scrna",
+omics_compute(subcommand="marker_table", modality="scrna",
               args={"input": "rna.h5ad", "output": "markers.csv", "groupby": "leiden"})
 # thread markers.csv + dataset summary + study description into a labeling decision (omics-scrna: annotation.md)
 ```

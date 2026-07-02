@@ -1,12 +1,12 @@
 # scRNA-seq Batch Integration
 
-**Maturity: READY** — Harmony runs via `omics_runtime(subcommand="integrate", modality="scrna", ...)`. scVI / scANVI are **PARTIAL** (separate tool, needs scvi-tools + GPU; see below). Default to Harmony.
+**Maturity: READY** — Harmony runs via `omics_compute(subcommand="integrate", modality="scrna", ...)`. scVI / scANVI are **PARTIAL** (separate tool, needs scvi-tools + GPU; see below). Default to Harmony.
 
 ## Goal / When to Use
 
 Integrate only when a batch effect is actually visible — cells clustering by sample/donor/lane instead of by cell type on the UMAP. Integration is not a default step; it trades batch mixing against biological signal, and over-correction silently erases real biology (e.g. forcing disease and healthy to overlap). **Integration must earn its place:** validate that it improves batch mixing without degrading biology (below), and if it doesn't, keep the unintegrated space and say so.
 
-Prerequisite: PCA already computed (`obsm["X_pca"]`, from `omics_runtime preprocess`) and a batch column in `obs`.
+Prerequisite: PCA already computed (`obsm["X_pca"]`, from `omics_compute preprocess`) and a batch column in `obs`.
 
 ## Decision Criteria — pick one default
 
@@ -20,7 +20,7 @@ Do not reach for scVI just because it is fancier — on standard same-platform d
 Runs in the pinned `task1` env and records evidence automatically:
 
 ```
-omics_runtime(
+omics_compute(
   subcommand="integrate",
   modality="scrna",
   args={
@@ -86,7 +86,7 @@ Interpretation: integration should keep ARI/NMI vs cell type roughly stable or h
 
 3. **scVI gives a different embedding every run.** → *Diagnosis:* training is stochastic without a fixed seed, and/or it silently ran on CPU and under-trained. → *Fix:* set `scvi.settings.seed`, confirm the GPU was used, and train to convergence (`early_stopping=True`); with no GPU, use Harmony rather than a half-trained scVI.
 
-4. **`KeyError: 'X_pca'` from the subcommand.** → *Diagnosis:* PCA wasn't computed — integration runs on the PCA embedding. → *Fix:* run `omics_runtime preprocess` first so `obsm["X_pca"]` exists.
+4. **`KeyError: 'X_pca'` from the subcommand.** → *Diagnosis:* PCA wasn't computed — integration runs on the PCA embedding. → *Fix:* run `omics_compute preprocess` first so `obsm["X_pca"]` exists.
 
 ## observe_figure checkpoints
 
@@ -96,7 +96,7 @@ Interpretation: integration should keep ARI/NMI vs cell type roughly stable or h
 
 ## Grounding
 
-- `omics_runtime integrate` returns a `report` with `method`, `n_batches`, `batch_sizes`, the Harmony parameters, and `output_embedding` (`X_pca_harmony`) — captured as evidence automatically; cite it plus the validation ARI/NMI numbers.
+- `omics_compute integrate` returns a `report` with `method`, `n_batches`, `batch_sizes`, the Harmony parameters, and `output_embedding` (`X_pca_harmony`) — captured as evidence automatically; cite it plus the validation ARI/NMI numbers.
 - scVI path: emit a `report` dict (method, `n_latent`, `max_epochs`, final ARI/NMI) and pass the cell to `evidence_from_kernel_cell`.
 - Always record the before/after ARI/NMI; an integration claim without the biology-conservation check is ungrounded.
 

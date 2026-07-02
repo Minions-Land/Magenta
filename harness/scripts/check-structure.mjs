@@ -212,8 +212,22 @@ function checkRepoPackages() {
 		if (existsSync(join(packageRoot, "skills"))) {
 			fail(`package ${entry.name} must not contain top-level skills/; keep skills under general/ or task/<profile>/`);
 		}
+		if (existsSync(join(packageRoot, ".omics-runtime")) || existsSync(join(packageRoot, ".runtime"))) {
+			fail(`package ${entry.name} must not keep hidden implementation roots; use package-root tools/<tool>/`);
+		}
+		if (existsSync(join(packageRoot, "general", "tools"))) {
+			fail(`package ${entry.name} must not keep tools under general/tools; use package-root tools/<tool>/`);
+		}
 		if (existsSync(join(packageRoot, "general", ".omics-runtime"))) {
-			fail(`package ${entry.name} must not keep runtime assets under general/.omics-runtime; use package-root .omics-runtime`);
+			fail(`package ${entry.name} must not keep implementation assets under general/.omics-runtime; use package-root tools/<tool>/`);
+		}
+		const taskRoot = join(packageRoot, "task");
+		if (existsSync(taskRoot)) {
+			for (const taskEntry of readdirSync(taskRoot, { withFileTypes: true })) {
+				if (taskEntry.isDirectory() && existsSync(join(taskRoot, taskEntry.name, "tools"))) {
+					fail(`package ${entry.name} task ${taskEntry.name} must not keep tools under task/${taskEntry.name}/tools; use package-root tools/<tool>/`);
+				}
+			}
 		}
 		const manifest = readToml(manifestPath);
 		if (manifest.schema_version && manifest.schema_version !== "magenta.package.v1") {
@@ -242,6 +256,12 @@ function checkRepoPackageTemplates(packagesRoot) {
 	}
 	if (!existsSync(join(templatesRoot, "harness-package"))) {
 		fail("packages/templates/harness-package is missing");
+	}
+	if (existsSync(join(templatesRoot, "harness-package", ".runtime"))) {
+		fail("packages/templates/harness-package/.runtime is invalid; template implementations belong under tools/<tool>/");
+	}
+	if (existsSync(join(templatesRoot, "harness-package", "general", "tools"))) {
+		fail("packages/templates/harness-package/general/tools is invalid; template tools belong under tools/<tool>/");
 	}
 }
 

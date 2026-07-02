@@ -7,7 +7,7 @@ Use this guidance when the user provides an accession ID, public dataset descrip
 ## Current Package Status
 
 **Ready**
-- Local files: load with `omics_runtime load_dataset`, `summarize`, or direct scverse readers in a grounded `run_python` cell.
+- Local files: load with `omics_compute load_dataset`, `summarize`, or direct scverse readers in a grounded `run_python` cell.
 - Gene-level lookups: use whatever general Bio API tools the host harness explicitly provides; do not assume this package installs them.
 
 **Not exposed in this package yet**
@@ -25,10 +25,10 @@ These two commands existed in AOSE descriptors but the audited source lacked `ao
 
 ## Local File Loading
 
-Prefer `omics_runtime load_dataset` when format conversion is needed:
+Prefer `omics_compute load_dataset` when format conversion is needed:
 
 ```python
-omics_runtime(
+omics_compute(
   subcommand="load_dataset",
   modality="scrna",
   args={
@@ -42,7 +42,7 @@ omics_runtime(
 If the file is already an `.h5ad` / `.h5mu`, load and summarize:
 
 ```python
-omics_runtime(
+omics_compute(
   subcommand="summarize",
   modality="scrna",
   args={"input": "data/pbmc3k.h5ad"}

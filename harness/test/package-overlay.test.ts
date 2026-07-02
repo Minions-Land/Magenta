@@ -218,14 +218,14 @@ harness = "missing/harness.toml"
 		);
 		const runtimeComponent = overlay.componentMap.get("python-runtime:aose_omics_runtime");
 		expect(runtimeComponent?.path).toBe(
-			join(repoRoot, "packages", "AutOmicScience", ".omics-runtime", "aose_omics_runtime"),
+			join(repoRoot, "packages", "AutOmicScience", "tools", "omics-compute", "python", "aose_omics_runtime"),
 		);
 		expect(runtimeComponent?.profile).toBeUndefined();
 		const envComponent = overlay.componentMap.get("env:pixi");
 		expect(envComponent?.path).toBe(join(repoRoot, "packages", "AutOmicScience", "pixi.toml"));
 		expect(envComponent?.profile).toBeUndefined();
-		expect(overlay.componentMap.get("tool:omics_runtime")?.path).toBe(
-			join(repoRoot, "packages", "AutOmicScience", "general", "tools", "omics-runtime.toml"),
+		expect(overlay.componentMap.get("tool:omics_compute")?.path).toBe(
+			join(repoRoot, "packages", "AutOmicScience", "tools", "omics-compute", "omics-compute.toml"),
 		);
 		expect(overlay.resources.skillPaths.map((resource) => resource.name).sort()).toEqual([
 			"omics-multiome",
@@ -429,7 +429,7 @@ process.stdin.on("end", () => {
 		});
 	});
 
-	it("assembles the migrated AutOmicScience python runtime tool", async () => {
+	it("assembles the migrated AutOmicScience python-backed compute tool", async () => {
 		const overlay = await loadPackageOverlay({
 			repoRoot,
 			selections: ["AutOmicScience:scrna"],
@@ -438,7 +438,7 @@ process.stdin.on("end", () => {
 
 		expect(assembly.diagnostics).toEqual([]);
 		expect(assembly.magnets.map((magnet) => magnet.kind)).toEqual(["python"]);
-		expect(assembly.tools.map((tool) => tool.name)).toEqual(["omics_runtime"]);
+		expect(assembly.tools.map((tool) => tool.name)).toEqual(["omics_compute"]);
 		expect(assembly.tools[0]?.parameters.properties).toMatchObject({
 			subcommand: {
 				enum: expect.arrayContaining(["summarize", "preprocess", "score"]),

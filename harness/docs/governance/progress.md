@@ -157,12 +157,21 @@ Date: 2026-07-02
   expected negative-case test output; the command exited 0.
 - Empty `harness/packages` directory removed; `check:structure` rejects a
   second top-level packages root.
-- `packages/AutOmicScience/.omics-runtime` is now package-owned rather than
-  profile-owned; `package.toml` declares the `python-runtime`, `runtime-tests`,
-  `env`, and `env-lock` root components.
+- `packages/AutOmicScience/tools/omics-compute/python` is now the tool-owned
+  Python implementation path for the `omics_compute` tool; `package.toml`
+  declares the `python-runtime`, `runtime-tests`, `env`, and `env-lock` root
+  components for overlay assembly.
 - `packages/templates/harness-package` replaces the old `domain-package`
-  template and includes a runnable root runtime/env plus profile-local
-  `general` and `task/example-task` resources.
+  template and includes a runnable `example_compute` tool with a tool-owned
+  Python implementation plus profile-local `general` and `task/example-task`
+  resources.
+- `cd harness && npx vitest --run test/package-overlay.test.ts`: 1 file, 13
+  tests passed.
+- Direct package Magnet smoke passed for `omics_compute`, executing
+  `python3 -m aose_omics_runtime --help` through
+  `tools/omics-compute/python`.
+- Copied `packages/templates/harness-package` into a temporary package root and
+  assembled `example_compute` successfully through package overlay.
 
 ## Open Decisions
 

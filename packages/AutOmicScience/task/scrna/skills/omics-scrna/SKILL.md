@@ -1,7 +1,7 @@
 ---
 name: omics-scrna
 description: Single-cell RNA-seq — QC & preprocessing, batch integration, clustering, marker genes, cell-type annotation (marker+LLM / reference), DE, functional, trajectory, cell-cell communication.
-requiredTools: [run_python, create_notebook, add_cell, observe_figure, omics_preflight, omics_runtime]
+requiredTools: [run_python, create_notebook, add_cell, observe_figure, omics_preflight, omics_compute]
 evidencePolicy: required
 outputSchema: grounded_response
 minConfidence: medium
@@ -11,7 +11,7 @@ extends: omics-shared
 
 # scRNA-seq Analysis
 
-Builds on `omics-shared` (loaded automatically — its rules apply here). Run compute through the **`omics_runtime`** tool with `modality="scrna"`; it dispatches into the pinned `task1` env and records evidence automatically.
+Builds on `omics-shared` (loaded automatically — its rules apply here). Run compute through the **`omics_compute`** tool with `modality="scrna"`; it dispatches into the pinned `task1` env and records evidence automatically.
 
 ## Prerequisites
 
@@ -23,14 +23,14 @@ Builds on `omics-shared` (loaded automatically — its rules apply here). Run co
 
 | Capability | Maturity | How | Method doc |
 |------------|----------|-----|------------|
-| QC → norm → HVG → PCA → neighbors → UMAP → Leiden | **READY** | `omics_runtime preprocess` | `method/qc.md` |
-| Dataset summary for context | **READY** | `omics_runtime summarize` | `../omics-shared/method/data_context.md` |
-| Batch integration (Harmony) | **READY** | `omics_runtime integrate` | `method/integration.md` |
+| QC → norm → HVG → PCA → neighbors → UMAP → Leiden | **READY** | `omics_compute preprocess` | `method/qc.md` |
+| Dataset summary for context | **READY** | `omics_compute summarize` | `../omics-shared/method/data_context.md` |
+| Batch integration (Harmony) | **READY** | `omics_compute integrate` | `method/integration.md` |
 | Batch integration (scVI / scANVI) | **PARTIAL** | needs GPU; verify preflight | `method/integration.md` |
-| Per-cluster marker genes | **READY** | `omics_runtime marker_table` | `method/markers_de.md` |
+| Per-cluster marker genes | **READY** | `omics_compute marker_table` | `method/markers_de.md` |
 | Cell-type annotation (marker + LLM) | **READY** | markers → LLM labeling (Route 1) | `method/annotation.md` |
 | Cell-type annotation (reference pipeline) | **PARTIAL** | `run_annotation_pipeline` (Route 2) | `method/annotation.md` |
-| Pathway / TF activity, enrichment, perturbation | **READY** | `omics_runtime pathway_activity` / `enrichment` / `perturbation` | `method/functional.md` |
+| Pathway / TF activity, enrichment, perturbation | **READY** | `omics_compute pathway_activity` / `enrichment` / `perturbation` | `method/functional.md` |
 | Cross-condition DE (pseudobulk DESeq2) | **REFERENCE** | hand-rolled in `run_python` | `method/markers_de.md` |
 | Trajectory / RNA velocity / fate | **REFERENCE** | hand-rolled (scVelo / CellRank) | `method/trajectory.md` |
 | Cell-cell communication | **REFERENCE** | hand-rolled (LIANA) | `method/ccc.md` |
@@ -39,18 +39,18 @@ Read the method doc before running a capability — each gives the opinionated d
 
 ## Standard workflow
 
-Run each step through `omics_runtime`; read the per-step method doc for parameters and decisions.
+Run each step through `omics_compute`; read the per-step method doc for parameters and decisions.
 
-1. **Preflight & load** — `omics_preflight(modality="scrna")`; load the h5ad; `omics_runtime(subcommand="summarize", modality="scrna", args={"input":"data.h5ad"})`. Thread the summary + study description forward.
-2. **QC & preprocess** — `omics_runtime(subcommand="preprocess", modality="scrna", args={"input":"raw.h5ad","output":"processed.h5ad"})`. See `method/qc.md` for MAD-vs-fixed thresholds, doublets, normalization.
-3. **Integration (if multi-batch)** — only if a batch effect is visible. `omics_runtime(subcommand="integrate", modality="scrna", args={"input":"processed.h5ad","output":"integrated.h5ad","batch-key":"batch","method":"harmony"})`. Validate with ARI/NMI (`method/integration.md`).
-4. **Marker genes** — `omics_runtime(subcommand="marker_table", modality="scrna", args={"input":"processed.h5ad","output":"markers.csv","groupby":"leiden","min-logfc":"0.5","min-pct":"0.25"})`.
+1. **Preflight & load** — `omics_preflight(modality="scrna")`; load the h5ad; `omics_compute(subcommand="summarize", modality="scrna", args={"input":"data.h5ad"})`. Thread the summary + study description forward.
+2. **QC & preprocess** — `omics_compute(subcommand="preprocess", modality="scrna", args={"input":"raw.h5ad","output":"processed.h5ad"})`. See `method/qc.md` for MAD-vs-fixed thresholds, doublets, normalization.
+3. **Integration (if multi-batch)** — only if a batch effect is visible. `omics_compute(subcommand="integrate", modality="scrna", args={"input":"processed.h5ad","output":"integrated.h5ad","batch-key":"batch","method":"harmony"})`. Validate with ARI/NMI (`method/integration.md`).
+4. **Marker genes** — `omics_compute(subcommand="marker_table", modality="scrna", args={"input":"processed.h5ad","output":"markers.csv","groupby":"leiden","min-logfc":"0.5","min-pct":"0.25"})`.
 5. **Annotation** — Route 1 (default): thread the marker table + summary + study description into a labeling decision (`method/annotation.md`); abstain to "unknown" when ambiguous. Route 2: `run_annotation_pipeline` when a labeled reference exists.
-6. **Visualize & ground** — plot UMAP colored by `cell_type`/`leiden`/QC; `observe_figure` each before it backs a claim; cite the `omics_runtime` reports as evidence.
+6. **Visualize & ground** — plot UMAP colored by `cell_type`/`leiden`/QC; `observe_figure` each before it backs a claim; cite the `omics_compute` reports as evidence.
 
 ## Marker table schema (read before using markers)
 
-`omics_runtime marker_table` writes a CSV with columns: **`group`** (cluster id), **`names`** (gene), `scores`, `logfoldchanges`, `pvals`, `pvals_adj`, `pct_nz_group`, `pct_nz_reference`, `pts`, `pts_rest`, `specificity`. Group and rank with these column names (note: `group`/`names`, never `cluster`/`gene`):
+`omics_compute marker_table` writes a CSV with columns: **`group`** (cluster id), **`names`** (gene), `scores`, `logfoldchanges`, `pvals`, `pvals_adj`, `pct_nz_group`, `pct_nz_reference`, `pts`, `pts_rest`, `specificity`. Group and rank with these column names (note: `group`/`names`, never `cluster`/`gene`):
 
 ```python
 import pandas as pd

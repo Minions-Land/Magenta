@@ -86,26 +86,26 @@
   the package's `kind = "domain"` meaning.
 - Skills should live beside the profile harness that selects them, for example
   `general/skills/omics-shared` and `task/scrna/skills/omics-scrna`.
-- Shared implementation assets such as Python runtimes, pinned environments,
-  locks, runtime tests, and shared binaries belong to the package root as
-  package-owned components. For AutOmicScience this is `.omics-runtime/`,
-  declared by root `[[components]]` in `package.toml`, then entered through
-  `python-runtime` components and Magnet.
+- Shared implementation assets should be owned by the package capability they
+  implement. For AutOmicScience, the user-facing tool is `omics_compute`, and
+  its Python implementation lives under `tools/omics-compute/python/`. Root
+  `[[components]]` in `package.toml` can still declare the implementation entry
+  points (`python-runtime`, tests, env) for package overlay assembly.
 
 ### Package Template And Runtime Cleanup
 
 - Planner: `packages/` should be the only package content root, and templates
   must teach the package-root component model instead of creating another
   `domain-*` wrapper concept.
-- Generator: moved AutOmicScience runtime/test assets from
-  `general/.omics-runtime` to package-root `.omics-runtime`, moved
-  runtime/env/test declarations into root `package.toml` components, and
-  replaced `packages/templates/domain-package` with
-  `packages/templates/harness-package`.
+- Generator: moved AutOmicScience Python implementation/test assets from
+  `general/.omics-runtime` into the package-root tool slot
+  `tools/omics-compute/python`, moved implementation/env/test declarations into
+  root `package.toml` components, and replaced
+  `packages/templates/domain-package` with `packages/templates/harness-package`.
 - Evaluator: structure/build/test/inspect passed; package overlay tests passed;
   a copied template overlay assembled successfully; an assembled
-  `omics_runtime` Magnet executed `python3 -m aose_omics_runtime --help`
-  through the moved package-root runtime.
+  `omics_compute` Magnet executed `python3 -m aose_omics_runtime --help`
+  through the tool-owned Python implementation.
 
 ### Harness Module Assembly Decision
 

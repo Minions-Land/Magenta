@@ -112,7 +112,7 @@ ga.obs['transferred_cell_type'] = transferred_labels
 ```python
 # Compute marker peaks for the transferred labels.
 # Build a cell × peak matrix first via the peak_calling subcommand (see peak_calling.md):
-# omics_runtime(subcommand="peak_calling", modality="scatac", args={...})  -> adata_peaks
+# omics_compute(subcommand="peak_calling", modality="scatac", args={...})  -> adata_peaks
 
 # Transfer the labels to the peak matrix
 adata_peaks.obs['transferred_cell_type'] = ga.obs['transferred_cell_type']

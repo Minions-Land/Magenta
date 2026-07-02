@@ -1,6 +1,6 @@
 # ATAC-Specific QC
 
-**Maturity: READY** — `omics_runtime(subcommand="atac_qc", modality="scatac", ...)` computes the metrics + filter and records evidence; the snapATAC2 calls below are what it runs.
+**Maturity: READY** — `omics_compute(subcommand="atac_qc", modality="scatac", ...)` computes the metrics + filter and records evidence; the snapATAC2 calls below are what it runs.
 
 ## Goal / When to Use
 
@@ -25,13 +25,13 @@ Frozen/snATAC often shows lower TSSE - adjust thresholds based on technology and
 - **FRiP**: `snap.metrics.frip(adata, regions)` (requires peak/region set)
 - **Doublets**: `snap.pp.scrublet` + `snap.pp.filter_doublets`
 
-Grounded path: `omics_runtime(subcommand="atac_qc", modality="scatac", ...)` runs these metrics + filter with evidence capture.
+Grounded path: `omics_compute(subcommand="atac_qc", modality="scatac", ...)` runs these metrics + filter with evidence capture.
 
 ## How-to
 
 ```python
-# Grounded path — the omics_runtime atac_qc subcommand (records evidence):
-omics_runtime(subcommand="atac_qc", modality="scatac", args={
+# Grounded path — the omics_compute atac_qc subcommand (records evidence):
+omics_compute(subcommand="atac_qc", modality="scatac", args={
     "input": "atac.h5ad", "output": "qc.h5ad", "fragment-file": "fragments.tsv.gz",
     "compute-tsse": "true", "compute-frip": "true",
     "min-tsse": "5.0", "min-fragments": "1000", "filter": "true",

@@ -9,12 +9,12 @@ default_profiles = ["general"]
 [[components]]
 kind = "python-runtime"
 name = "aose_omics_runtime"
-path = ".omics-runtime/aose_omics_runtime"
+path = "tools/omics-compute/python/aose_omics_runtime"
 
 [[components]]
 kind = "runtime-tests"
 name = "aose_omics_runtime_tests"
-path = ".omics-runtime/tests"
+path = "tools/omics-compute/python/tests"
 
 [[components]]
 kind = "env"

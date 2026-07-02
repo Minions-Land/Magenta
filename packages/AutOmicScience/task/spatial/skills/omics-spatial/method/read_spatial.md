@@ -1,6 +1,6 @@
 # Read Spatial Data
 
-**Maturity: READY** — `omics_runtime(subcommand="read_spatial", modality="spatial", ...)` dispatches the format-aware loader and records evidence; the `spatialdata_io` readers below cover the imaging platforms.
+**Maturity: READY** — `omics_compute(subcommand="read_spatial", modality="spatial", ...)` dispatches the format-aware loader and records evidence; the `spatialdata_io` readers below cover the imaging platforms.
 
 ## Goal / When to Use
 
