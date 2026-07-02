@@ -31,6 +31,7 @@ export { SkillInvocationMessageComponent } from "./skill-invocation-message.ts";
 export { ThemeSelectorComponent } from "./theme-selector.ts";
 export { ThinkingSelectorComponent } from "./thinking-selector.ts";
 export {
+	renderToolCallActivity,
 	renderToolCallGallery,
 	renderToolCallStrip,
 	type ToolCallTile,

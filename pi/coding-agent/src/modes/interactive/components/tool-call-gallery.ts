@@ -34,7 +34,7 @@ interface GridShape {
 
 const DEFAULT_CONFIG: ToolGalleryConfig = {
 	maxHeight: 14,
-	minCellInnerWidth: 18,
+	minCellInnerWidth: 26,
 	minCellHeight: 4,
 	preferredCellHeight: 7,
 	gap: 2,
@@ -57,13 +57,13 @@ function statusColor(status: ToolTileStatus): (text: string) => string {
 function markerFor(status: ToolTileStatus): string {
 	switch (status) {
 		case "running":
-			return ">";
+			return "▸";
 		case "success":
-			return "+";
+			return "✓";
 		case "error":
-			return "!";
+			return "✕";
 		default:
-			return "-";
+			return "·";
 	}
 }
 
@@ -100,8 +100,8 @@ function padToWidth(text: string, width: number): string {
 }
 
 function frameContentLine(text: string, innerWidth: number): string {
-	const content = padToWidth(truncateToWidth(text, innerWidth, "."), innerWidth);
-	return `${theme.fg("borderMuted", "|")}${theme.fg("toolOutput", content)}${theme.fg("borderMuted", "|")}`;
+	const content = padToWidth(truncateToWidth(text, innerWidth, "…"), innerWidth);
+	return `${theme.fg("borderMuted", "│")}${theme.fg("toolOutput", content)}${theme.fg("borderMuted", "│")}`;
 }
 
 function outputLines(tile: ToolCallTile): string[] {
@@ -112,8 +112,8 @@ function outputLines(tile: ToolCallTile): string[] {
 	return output.split(/\r?\n/).filter((line) => line.trim() !== "");
 }
 
-function tileBody(tile: ToolCallTile): string[] {
-	const summary = summarizeToolCall({ name: tile.name, args: tile.args }, 52);
+function tileBody(tile: ToolCallTile, width: number): string[] {
+	const summary = summarizeToolCall({ name: tile.name, args: tile.args }, width);
 	const lines = summary ? [summary] : [];
 	lines.push(...outputLines(tile));
 	return lines;
@@ -133,18 +133,20 @@ function wrapTail(lines: string[], width: number, height: number): string[] {
 function renderCell(tile: ToolCallTile, innerWidth: number, innerHeight: number): string[] {
 	const color = statusColor(tile.status);
 	const title = `${markerFor(tile.status)} ${resolveDisplayToolName(tile.name)}`;
-	const badge = `[${tile.status}]`;
-	const titleBudget = Math.max(1, innerWidth - visibleWidth(badge) - 3);
-	const titleText = color(truncateToWidth(title, titleBudget, "."));
-	const titleVisible = visibleWidth(truncateToWidth(title, titleBudget, "."));
-	const dashCount = Math.max(1, innerWidth - titleVisible - visibleWidth(badge) - 1);
-	const top = `${theme.fg("borderMuted", "+-")}${titleText}${theme.fg("borderMuted", "-".repeat(dashCount))}${color(badge)}${theme.fg("borderMuted", "+")}`;
-	const body = wrapTail(tileBody(tile), innerWidth, innerHeight);
+	const badge = tile.status;
+	const boxWidth = innerWidth + 2;
+	const fixedWidth = visibleWidth("╭─ ") + visibleWidth(" ") + visibleWidth(" ") + visibleWidth(" ╮");
+	const titleBudget = Math.max(1, boxWidth - fixedWidth - visibleWidth(badge) - 1);
+	const titleRaw = truncateToWidth(title, titleBudget, "…");
+	const titleText = color(titleRaw);
+	const dashCount = Math.max(1, boxWidth - fixedWidth - visibleWidth(titleRaw) - visibleWidth(badge));
+	const top = `${theme.fg("borderMuted", "╭─ ")}${titleText}${theme.fg("borderMuted", " ")}${theme.fg("borderMuted", "─".repeat(dashCount))}${theme.fg("borderMuted", " ")}${color(badge)}${theme.fg("borderMuted", " ╮")}`;
+	const body = wrapTail(tileBody(tile, innerWidth), innerWidth, innerHeight);
 	const blankTop = Math.max(0, innerHeight - body.length);
 	const out = [top];
 	for (let i = 0; i < blankTop; i++) out.push(frameContentLine("", innerWidth));
 	for (const line of body) out.push(frameContentLine(line, innerWidth));
-	out.push(theme.fg("borderMuted", `+${"-".repeat(innerWidth)}+`));
+	out.push(theme.fg("borderMuted", `╰${"─".repeat(innerWidth)}╯`));
 	return out;
 }
 
@@ -191,6 +193,79 @@ export function renderToolCallStrip(tiles: ToolCallTile[], width: number): strin
 	return [truncateToWidth(`${prefix}${chips.join("")}${" ".repeat(pad)}${suffix}`, width, "")];
 }
 
+function statusCount(tiles: ToolCallTile[], status: ToolTileStatus): number {
+	return tiles.filter((tile) => tile.status === status).length;
+}
+
+function activitySummary(tiles: ToolCallTile[]): string {
+	const parts = [
+		statusColor("success")(`✓${statusCount(tiles, "success")}`),
+		statusColor("running")(`▸${statusCount(tiles, "running")}`),
+		statusColor("error")(`✕${statusCount(tiles, "error")}`),
+		statusColor("pending")(`·${statusCount(tiles, "pending")}`),
+	];
+	return parts.join("  ");
+}
+
+function activityDetail(tile: ToolCallTile, width: number): string {
+	const output = tile.output?.trim() ?? "";
+	const error = tile.status === "error" && output ? conciseToolErrorSummary(output) : undefined;
+	const summary = summarizeToolCall({ name: tile.name, args: tile.args }, width);
+	const detail = error || summary || outputLines(tile).at(-1) || "";
+	return truncateToWidth(detail, width, "…");
+}
+
+function activityRow(tile: ToolCallTile, width: number): string {
+	const marker = statusColor(tile.status)(markerFor(tile.status));
+	const nameRaw = padToWidth(resolveDisplayToolName(tile.name), 11);
+	const name = theme.fg("toolTitle", nameRaw);
+	const detailBudget = Math.max(0, width - 16);
+	const detail = activityDetail(tile, detailBudget);
+	const row = `  ${marker} ${name}${detail ? ` ${theme.fg(tile.status === "error" ? "error" : "dim", detail)}` : ""}`;
+	return truncateToWidth(row, width, "");
+}
+
+function frameActivityBlock(lines: string[], width: number, hint: string): string[] {
+	if (width < 24) return lines.map((line) => truncateToWidth(line, width, ""));
+	const innerWidth = Math.max(1, width - 4);
+	const title = " activity ";
+	const titleWidth = visibleWidth(title);
+	const topFill = Math.max(0, width - 2 - titleWidth - 1);
+	const hintText = hint ? ` ${hint} ` : "";
+	const bottomFill = Math.max(0, width - 2 - visibleWidth(hintText));
+	return [
+		`${theme.fg("borderMuted", "╭─")}${theme.fg("toolTitle", title)}${theme.fg("borderMuted", "─".repeat(topFill))}${theme.fg("borderMuted", "╮")}`,
+		...lines.map((line) => {
+			const content = padToWidth(truncateToWidth(line, innerWidth, ""), innerWidth);
+			return `${theme.fg("borderMuted", "│ ")}${content}${theme.fg("borderMuted", " │")}`;
+		}),
+		`${theme.fg("borderMuted", "╰")}${theme.fg("borderMuted", "─".repeat(bottomFill))}${theme.fg("dim", hintText)}${theme.fg("borderMuted", "╯")}`,
+	];
+}
+
+export function renderToolCallActivity(
+	tiles: ToolCallTile[],
+	width: number,
+	options: { maxRows?: number; hint?: string } = {},
+): string[] {
+	if (tiles.length === 0 || width <= 0) return [];
+	if (width < 24) return renderToolCallStrip(tiles, width);
+	const ordered = sortTiles(tiles);
+	const maxRows = Math.max(1, options.maxRows ?? 8);
+	const hidden = Math.max(0, ordered.length - maxRows);
+	const rows = [
+		`${theme.fg("toolTitle", "tools")} ${theme.fg("toolTitle", `×${ordered.length}`)}   ${activitySummary(ordered)}`,
+	];
+	if (hidden > 0)
+		rows.push(
+			`  ${theme.fg("muted", "…")} ${theme.fg("dim", `${hidden} earlier tool call${hidden === 1 ? "" : "s"}`)}`,
+		);
+	for (const tile of ordered.slice(-maxRows)) {
+		rows.push(activityRow(tile, Math.max(1, width - 4)));
+	}
+	return frameActivityBlock(rows, width, options.hint ?? "Ctrl+O gallery");
+}
+
 export function renderToolCallGallery(
 	tiles: ToolCallTile[],
 	width: number,
@@ -200,8 +275,8 @@ export function renderToolCallGallery(
 	const cfg = { ...DEFAULT_CONFIG, ...config };
 	const ordered = sortTiles(tiles);
 	const active = ordered.filter((tile) => tile.status === "running" || tile.status === "pending").length;
-	const header = `${theme.fg("toolTitle", "tools")} ${theme.fg("muted", `- ${ordered.length} call${ordered.length === 1 ? "" : "s"}`)}${
-		active > 0 ? theme.fg("warning", ` - ${active} active`) : ""
+	const header = `${theme.fg("toolTitle", "tools")} ${theme.fg("muted", `· ${ordered.length} call${ordered.length === 1 ? "" : "s"}`)}${
+		active > 0 ? theme.fg("warning", ` · ${active} active`) : ""
 	}`;
 	const shape = chooseGrid(ordered.length, width, cfg);
 	if (!shape) return [truncateToWidth(header, width, "")];

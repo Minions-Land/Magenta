@@ -229,9 +229,10 @@ describe("InteractiveMode.renderSessionContext", () => {
 		});
 
 		const rendered = renderChat(fakeThis.chatContainer);
-		expect(rendered).toContain("tools - 2 calls");
-		expect(rendered).toContain("[success]");
-		expect(rendered).toContain("[pending]");
+		expect(rendered).toContain("activity");
+		expect(rendered).toContain("tools ×2");
+		expect(rendered).toContain("✓1");
+		expect(rendered).toContain("·1");
 		expect(fakeThis.pendingTools.has(firstId)).toBe(false);
 		expect(fakeThis.pendingTools.has(secondId)).toBe(true);
 		expect(fakeThis.pendingToolGroups.has(firstId)).toBe(false);

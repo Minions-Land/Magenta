@@ -351,6 +351,7 @@ export {
 	type RenderDiffOptions,
 	rawKeyHint,
 	renderDiff,
+	renderToolCallActivity,
 	renderToolCallGallery,
 	renderToolCallStrip,
 	SessionSelectorComponent,

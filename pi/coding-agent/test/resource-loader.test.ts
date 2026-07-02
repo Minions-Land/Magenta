@@ -16,8 +16,10 @@ function writeHarnessPackageFixture(repoRoot: string): void {
 	const packageDir = join(repoRoot, "packages", "TestDomain");
 	const harnessDir = join(packageDir, "harness");
 	const skillDir = join(packageDir, "skills", "test-domain");
+	const systemPromptDir = join(packageDir, "system-prompt");
 	const toolDir = join(harnessDir, "tools");
 	mkdirSync(skillDir, { recursive: true });
+	mkdirSync(systemPromptDir, { recursive: true });
 	mkdirSync(toolDir, { recursive: true });
 	writeFileSync(
 		join(packageDir, "package.toml"),
@@ -42,6 +44,16 @@ path = "../skills/test-domain"
 kind = "tool"
 name = "test_package_tool"
 path = "tools/test-package-tool.toml"
+
+[[components]]
+kind = "system-prompt"
+name = "system-prompt"
+path = "../system-prompt/system-prompt.toml"
+
+[[components]]
+kind = "append-system-prompt"
+name = "test-domain-append"
+path = "../system-prompt/append-system-prompt.toml"
 `,
 	);
 	writeFileSync(
@@ -54,6 +66,26 @@ description: Test package skill.
 # Test Domain
 `,
 	);
+	writeFileSync(
+		join(systemPromptDir, "system-prompt.toml"),
+		`kind = "system-prompt"
+name = "system-prompt"
+description = "Test package system prompt."
+source = "TestDomain"
+content_path = "SYSTEM.md"
+`,
+	);
+	writeFileSync(
+		join(systemPromptDir, "append-system-prompt.toml"),
+		`kind = "append-system-prompt"
+name = "test-domain-append"
+description = "Test package append prompt."
+source = "TestDomain"
+content_path = "APPEND_SYSTEM.md"
+`,
+	);
+	writeFileSync(join(systemPromptDir, "SYSTEM.md"), "Package system prompt.");
+	writeFileSync(join(systemPromptDir, "APPEND_SYSTEM.md"), "Package append prompt.");
 	writeFileSync(
 		join(toolDir, "test-package-tool.toml"),
 		`kind = "tool"
@@ -239,6 +271,26 @@ describe("DefaultResourceLoader", () => {
 				source: "harness:TestDomain:general",
 				origin: "package",
 			});
+			expect(loader.getSystemPrompt()).toBe("Package system prompt.");
+			expect(loader.getAppendSystemPrompt()).toContain("Package append prompt.");
+		});
+
+		it("uses package system prompts unless an explicit system prompt is provided", async () => {
+			writeHarnessPackageFixture(cwd);
+			const piDir = join(cwd, ".pi");
+			mkdirSync(piDir, { recursive: true });
+			writeFileSync(join(piDir, "SYSTEM.md"), "Project system prompt.");
+
+			const packagePromptLoader = createLoader({ harnessPackages: ["TestDomain"] });
+			await packagePromptLoader.reload();
+			expect(packagePromptLoader.getSystemPrompt()).toBe("Package system prompt.");
+
+			const explicitPromptLoader = createLoader({
+				harnessPackages: ["TestDomain"],
+				systemPrompt: "Explicit system prompt.",
+			});
+			await explicitPromptLoader.reload();
+			expect(explicitPromptLoader.getSystemPrompt()).toBe("Explicit system prompt.");
 		});
 
 		it("can change selected harness packages before reload", async () => {

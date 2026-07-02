@@ -122,6 +122,21 @@ path = "skills/omics-shared"
 
 Known resource component kinds are `skill`, `prompt-template`, `prompt`, `theme`, `system-prompt`, `append-system-prompt`, and `brand`. Other component kinds remain in the overlay component list for later harness/tool integrations.
 
+`system-prompt` and `append-system-prompt` components should point at a module
+descriptor TOML, matching the built-in `harness/system-prompt/system-prompt.toml`
+shape. Package-owned descriptors can provide package-local prompt text through
+`content_path`:
+
+```toml
+kind = "system-prompt"
+name = "system-prompt"
+source = "AutOmicScience"
+content_path = "SYSTEM.md"
+```
+
+The descriptor remains the selected Harness Module. The Markdown file is only
+the module's content asset, not the component path.
+
 `harness` values are relative to the package root. Root component `path` values
 in `package.toml` are relative to the package root. Profile component `path`
 values are relative to the profile harness file that declares them. All

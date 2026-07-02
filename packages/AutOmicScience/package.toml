@@ -36,6 +36,11 @@ path = "skills/spatial"
 include_in_context = true
 
 [[components]]
+kind = "system-prompt"
+name = "system-prompt"
+path = "system-prompt/system-prompt.toml"
+
+[[components]]
 kind = "tool"
 name = "omics_environment"
 path = "tools/omics-environment/omics-environment.toml"

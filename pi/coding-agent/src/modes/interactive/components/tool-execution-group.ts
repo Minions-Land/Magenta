@@ -1,7 +1,12 @@
 import type { Component } from "@earendil-works/pi-tui";
 import { Container } from "@earendil-works/pi-tui";
 import { getTextOutput as getRenderedTextOutput } from "../../../core/tools/render-utils.ts";
-import { renderToolCallGallery, type ToolCallTile, type ToolTileStatus } from "./tool-call-gallery.ts";
+import {
+	renderToolCallActivity,
+	renderToolCallGallery,
+	type ToolCallTile,
+	type ToolTileStatus,
+} from "./tool-call-gallery.ts";
 import type { ToolExecutionComponent } from "./tool-execution.ts";
 
 type ToolResultLike = {
@@ -105,7 +110,7 @@ export class ToolExecutionGroupComponent extends Container {
 		if (tiles.length === 0) return [];
 		if (!this.expanded) {
 			if (tiles.length === 1) return this.singleComponent()?.render(width) ?? [];
-			return ["", ...renderToolCallGallery(tiles, width, { maxHeight: 10 })];
+			return ["", ...renderToolCallActivity(tiles, width, { maxRows: 8, hint: "Ctrl+O gallery" })];
 		}
 		const lines = ["", ...renderToolCallGallery(tiles, width, { maxHeight: 16 })];
 		for (const entry of [...this.entries.values()].sort((a, b) => a.sortIndex - b.sortIndex)) {

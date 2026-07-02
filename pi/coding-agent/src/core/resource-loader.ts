@@ -11,9 +11,11 @@ import { getBundledSkillsDir, type Skill as HarnessSkill } from "@magenta/harnes
 import {
 	assemblePackageToolMagnets,
 	loadPackageOverlay,
+	loadSystemPromptDescriptor,
 	type PackageDiagnostic,
 	type PackageOverlay,
 	type PackageToolAssembly,
+	type SystemPromptDescriptorDiagnostic,
 } from "@magenta/harness";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { canonicalizePath, isLocalPath, resolvePath } from "../utils/paths.ts";
@@ -202,6 +204,14 @@ function normalizeHarnessPackageSelectors(selectors: string[]): string[] {
 }
 
 function packageDiagnosticToResourceDiagnostic(diagnostic: PackageDiagnostic): ResourceDiagnostic {
+	return {
+		type: diagnostic.type,
+		message: diagnostic.message,
+		path: diagnostic.path,
+	};
+}
+
+function systemPromptDiagnosticToResourceDiagnostic(diagnostic: SystemPromptDescriptorDiagnostic): ResourceDiagnostic {
 	return {
 		type: diagnostic.type,
 		message: diagnostic.message,
@@ -477,6 +487,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		await this.settingsManager.reload();
 		const resolvedPaths = await this.packageManager.resolve();
 		const packageResources = await this.loadHarnessPackageResources();
+		const packageSystemPrompts = await this.resolvePackageSystemPromptSources(packageResources);
 		const cliExtensionPaths = await this.packageManager.resolveExtensionSources(this.additionalExtensionPaths, {
 			temporary: true,
 		});
@@ -639,15 +650,20 @@ export class DefaultResourceLoader implements ResourceLoader {
 		const resolvedAgentsFiles = this.agentsFilesOverride ? this.agentsFilesOverride(agentsFiles) : agentsFiles;
 		this.agentsFiles = resolvedAgentsFiles.agentsFiles;
 
+		const packageSystemPromptSource = packageSystemPrompts.systemPromptSources.at(-1);
 		const baseSystemPrompt = resolvePromptInput(
-			this.systemPromptSource ?? this.discoverSystemPromptFile(),
+			this.systemPromptSource ?? packageSystemPromptSource ?? this.discoverSystemPromptFile(),
 			"system prompt",
 		);
 		this.systemPrompt = this.systemPromptOverride ? this.systemPromptOverride(baseSystemPrompt) : baseSystemPrompt;
 
+		const discoveredAppendSystemPrompt = this.discoverAppendSystemPromptFile();
 		const appendSources =
 			this.appendSystemPromptSource ??
-			(this.discoverAppendSystemPromptFile() ? [this.discoverAppendSystemPromptFile()!] : []);
+			[
+				...(discoveredAppendSystemPrompt ? [discoveredAppendSystemPrompt] : []),
+				...packageSystemPrompts.appendSystemPromptSources,
+			];
 		const baseAppend = appendSources
 			.map((s) => resolvePromptInput(s, "append system prompt"))
 			.filter((s): s is string => s !== undefined);
@@ -786,13 +802,15 @@ export class DefaultResourceLoader implements ResourceLoader {
 		skillPaths: PackageOverlay["resources"]["skillPaths"];
 		promptPaths: PackageOverlay["resources"]["promptTemplatePaths"];
 		themePaths: PackageOverlay["resources"]["themePaths"];
+		systemPromptPaths: PackageOverlay["resources"]["systemPromptPaths"];
+		appendSystemPromptPaths: PackageOverlay["resources"]["appendSystemPromptPaths"];
 	}> {
 		this.packageOverlay = undefined;
 		this.packageTools = [];
 		this.packageDiagnostics = [];
 
 		if (this.harnessPackages.length === 0) {
-			return { skillPaths: [], promptPaths: [], themePaths: [] };
+			return { skillPaths: [], promptPaths: [], themePaths: [], systemPromptPaths: [], appendSystemPromptPaths: [] };
 		}
 
 		try {
@@ -811,14 +829,35 @@ export class DefaultResourceLoader implements ResourceLoader {
 				skillPaths: overlay.resources.skillPaths,
 				promptPaths: overlay.resources.promptTemplatePaths,
 				themePaths: overlay.resources.themePaths,
+				systemPromptPaths: overlay.resources.systemPromptPaths,
+				appendSystemPromptPaths: overlay.resources.appendSystemPromptPaths,
 			};
 		} catch (error) {
 			this.packageDiagnostics.push({
 				type: "error",
 				message: error instanceof Error ? error.message : String(error),
 			});
-			return { skillPaths: [], promptPaths: [], themePaths: [] };
+			return { skillPaths: [], promptPaths: [], themePaths: [], systemPromptPaths: [], appendSystemPromptPaths: [] };
 		}
+	}
+
+	private async resolvePackageSystemPromptSources(packageResources: {
+		systemPromptPaths: PackageOverlay["resources"]["systemPromptPaths"];
+		appendSystemPromptPaths: PackageOverlay["resources"]["appendSystemPromptPaths"];
+	}): Promise<{ systemPromptSources: string[]; appendSystemPromptSources: string[] }> {
+		const systemPromptSources: string[] = [];
+		const appendSystemPromptSources: string[] = [];
+		for (const resource of packageResources.systemPromptPaths) {
+			const result = await loadSystemPromptDescriptor(resource.path);
+			this.packageDiagnostics.push(...result.diagnostics.map(systemPromptDiagnosticToResourceDiagnostic));
+			if (result.descriptor?.contentPath) systemPromptSources.push(result.descriptor.contentPath);
+		}
+		for (const resource of packageResources.appendSystemPromptPaths) {
+			const result = await loadSystemPromptDescriptor(resource.path);
+			this.packageDiagnostics.push(...result.diagnostics.map(systemPromptDiagnosticToResourceDiagnostic));
+			if (result.descriptor?.contentPath) appendSystemPromptSources.push(result.descriptor.contentPath);
+		}
+		return { systemPromptSources, appendSystemPromptSources };
 	}
 
 	private mapSkillPath(resource: ResolvedResource, metadataByPath: Map<string, PathMetadata>): string {

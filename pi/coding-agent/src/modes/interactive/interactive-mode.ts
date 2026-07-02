@@ -719,7 +719,7 @@ export class InteractiveMode {
 		}
 
 		// Add header container as first child. Populate it after applying theme settings.
-		// Keep loaded resources before chat so restored session messages never precede them.
+		// Keep startup diagnostics before chat so restored session messages never precede them.
 		this.ui.addChild(this.headerContainer);
 		this.ui.addChild(this.loadedResourcesContainer);
 
@@ -780,19 +780,12 @@ export class InteractiveMode {
 				rawKeyHint(`${keyText("app.clear")}/${keyText("app.exit")}`, "clear/exit"),
 				rawKeyHint("/", "commands"),
 				rawKeyHint("!", "bash"),
-				hint("app.tools.expand", "more"),
+				hint("app.tools.expand", "details"),
 			].join(theme.fg("muted", " · "));
-			const compactOnboarding = theme.fg(
-				"dim",
-				`Press ${keyText("app.tools.expand")} to show full startup help and loaded resources.`,
-			);
-			const onboarding = theme.fg(
-				"dim",
-				`Magenta can explain its own features and look up its docs. Ask it how to use or extend Magenta.`,
-			);
+			const compactOnboarding = theme.fg("dim", `Press ${keyText("app.tools.expand")} to show startup details.`);
 			this.builtInHeader = new ExpandableText(
-				() => `${logo}\n${compactInstructions}\n${compactOnboarding}\n\n${onboarding}`,
-				() => `${logo}\n${expandedInstructions}\n\n${onboarding}`,
+				() => `${logo}\n${compactInstructions}\n${compactOnboarding}`,
+				() => `${logo}\n${expandedInstructions}`,
 				this.getStartupExpansionState(),
 				1,
 				0,
@@ -812,7 +805,7 @@ export class InteractiveMode {
 		// Initialize extensions first so resources are shown before messages
 		await this.rebindCurrentSession();
 
-		// Render initial messages AFTER showing loaded resources
+		// Render initial messages AFTER startup diagnostics are positioned.
 		this.renderInitialMessages();
 
 		// Set up theme file watcher
@@ -1422,7 +1415,7 @@ export class InteractiveMode {
 		// Resource rendering is idempotent; chat clears no longer clear this separate container.
 		this.loadedResourcesContainer.clear();
 
-		const showListing = options?.force || this.options.verbose || !this.settingsManager.getQuietStartup();
+		const showListing = options?.force || this.options.verbose || this.toolOutputExpanded;
 		const showDiagnostics = showListing || options?.showDiagnosticsWhenQuiet === true;
 		if (!showListing && !showDiagnostics) {
 			return;
@@ -3789,6 +3782,7 @@ export class InteractiveMode {
 		if (isExpandable(activeHeader)) {
 			activeHeader.setExpanded(expanded);
 		}
+		this.showLoadedResources({ showDiagnosticsWhenQuiet: true });
 		for (const container of [this.loadedResourcesContainer, this.chatContainer]) {
 			for (const child of container.children) {
 				if (isExpandable(child)) {
@@ -6486,9 +6480,7 @@ export class InteractiveMode {
 		const borderColor = (s: string) => theme.fg("border", s);
 		reloadBox.addChild(new DynamicBorder(borderColor));
 		reloadBox.addChild(new Spacer(1));
-		reloadBox.addChild(
-			new Text(theme.fg("muted", "Reloading keybindings, extensions, skills, prompts, themes..."), 1, 0),
-		);
+		reloadBox.addChild(new Text(theme.fg("muted", "Reloading Magenta runtime..."), 1, 0));
 		reloadBox.addChild(new Spacer(1));
 		reloadBox.addChild(new DynamicBorder(borderColor));
 
@@ -6551,9 +6543,7 @@ export class InteractiveMode {
 				this.showError(`models.json error: ${modelsJsonError}`);
 			}
 			this.showStatus(
-				savedImplicitProjectTrust
-					? "Reloaded keybindings, extensions, skills, prompts, themes; saved project trust"
-					: "Reloaded keybindings, extensions, skills, prompts, themes",
+				savedImplicitProjectTrust ? "Reloaded Magenta runtime; saved project trust" : "Reloaded Magenta runtime",
 			);
 			dismissReloadBox(this.editor as Component);
 			reloadBoxDismissed = true;

@@ -65,6 +65,10 @@ path = "mcp/process/omics-preflight.toml"
 name = "omics-shared"
 path = "skills/omics-shared"
 include_in_context = true
+
+[[components.system-prompt]]
+name = "system-prompt"
+path = "system-prompt/system-prompt.toml"
 `,
 			);
 			await writeText(
@@ -83,6 +87,11 @@ kind = "skill"
 name = "omics-scrna"
 path = "skills/omics-scrna"
 include_in_context = true
+
+[[components]]
+kind = "system-prompt"
+name = "system-prompt"
+path = "system-prompt/system-prompt.toml"
 `,
 			);
 			await writeText(join(packagesRoot, "AutOmicScience", "brands", "omics", "README.md"), "brand");
@@ -102,6 +111,19 @@ Shared.
 `,
 			);
 			await writeText(
+				join(packagesRoot, "AutOmicScience", "general", "system-prompt", "system-prompt.toml"),
+				`kind = "system-prompt"
+name = "system-prompt"
+description = "General prompt."
+source = "AutOmicScience"
+content_path = "SYSTEM.md"
+`,
+			);
+			await writeText(
+				join(packagesRoot, "AutOmicScience", "general", "system-prompt", "SYSTEM.md"),
+				"General prompt.",
+			);
+			await writeText(
 				join(
 					packagesRoot,
 					"AutOmicScience",
@@ -117,6 +139,19 @@ description: Shared scRNA override.
 ---
 Override.
 `,
+			);
+			await writeText(
+				join(packagesRoot, "AutOmicScience", "task", "scrna", "system-prompt", "system-prompt.toml"),
+				`kind = "system-prompt"
+name = "system-prompt"
+description = "scRNA prompt."
+source = "AutOmicScience"
+content_path = "SYSTEM.md"
+`,
+			);
+			await writeText(
+				join(packagesRoot, "AutOmicScience", "task", "scrna", "system-prompt", "SYSTEM.md"),
+				"scRNA prompt.",
 			);
 			await writeText(
 				join(
@@ -161,11 +196,19 @@ scRNA.
 			expect(overlay.componentMap.get("skill:omics-shared")?.path).toBe(
 				join(packagesRoot, "AutOmicScience", "task", "scrna", "skills", "omics-shared-scrna"),
 			);
-			expect(overlay.overrides).toHaveLength(1);
+			expect(overlay.componentMap.get("system-prompt:system-prompt")?.profile).toBe("scrna");
+			expect(overlay.componentMap.get("system-prompt:system-prompt")?.path).toBe(
+				join(packagesRoot, "AutOmicScience", "task", "scrna", "system-prompt", "system-prompt.toml"),
+			);
+			expect(overlay.overrides).toHaveLength(2);
 			expect(overlay.overrides[0]?.key).toBe("skill:omics-shared");
+			expect(overlay.overrides[1]?.key).toBe("system-prompt:system-prompt");
 			expect(overlay.resources.skillPaths.map((resource) => resource.name).sort()).toEqual([
 				"omics-scrna",
 				"omics-shared",
+			]);
+			expect(overlay.resources.systemPromptPaths.map((resource) => resource.path)).toEqual([
+				join(packagesRoot, "AutOmicScience", "task", "scrna", "system-prompt", "system-prompt.toml"),
 			]);
 			expect(overlay.resources.brandPaths.map((resource) => resource.name)).toEqual(["omics-brand"]);
 		});
@@ -229,6 +272,9 @@ harness = "missing/harness.toml"
 		expect(overlay.componentMap.get("tool:omics_compute")?.path).toBe(
 			join(repoRoot, "packages", "AutOmicScience", "tools", "omics-compute", "omics-compute.toml"),
 		);
+		expect(overlay.componentMap.get("system-prompt:system-prompt")?.path).toBe(
+			join(repoRoot, "packages", "AutOmicScience", "system-prompt", "system-prompt.toml"),
+		);
 		expect(overlay.resources.skillPaths.map((resource) => resource.name).sort()).toEqual([
 			"multi-omics",
 			"omics-shared",
@@ -236,6 +282,7 @@ harness = "missing/harness.toml"
 			"scatac-seq",
 			"spatial",
 		]);
+		expect(overlay.resources.systemPromptPaths.map((resource) => resource.name)).toEqual(["system-prompt"]);
 	});
 
 	it("assembles process-backed package tools into AgentTool instances", async () => {

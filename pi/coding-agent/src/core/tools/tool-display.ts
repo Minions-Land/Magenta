@@ -90,11 +90,11 @@ function suffixByWidth(text: string, maxWidth: number): string {
 export function truncateMiddleDisplay(text: string, maxWidth: number): string {
 	if (visibleWidth(text) <= maxWidth) return text;
 	if (maxWidth <= 0) return "";
-	if (maxWidth === 1) return ".";
+	if (maxWidth === 1) return "…";
 	const remaining = maxWidth - 1;
 	const head = Math.ceil(remaining / 2);
 	const tail = Math.floor(remaining / 2);
-	return `${prefixByWidth(text, head)}.${suffixByWidth(text, tail)}`;
+	return `${prefixByWidth(text, head)}…${suffixByWidth(text, tail)}`;
 }
 
 function normalizeBacktickedIdentifier(text: string): string {
@@ -205,8 +205,8 @@ function summarizePatchText(patchText: string): string {
 function truncateEnd(text: string, maxWidth: number): string {
 	if (visibleWidth(text) <= maxWidth) return text;
 	if (maxWidth <= 0) return "";
-	if (maxWidth <= 1) return ".";
-	return `${prefixByWidth(text, maxWidth - 1)}.`;
+	if (maxWidth <= 1) return "…";
+	return `${prefixByWidth(text, maxWidth - 1)}…`;
 }
 
 function summarizeCommand(command: string, maxWidth: number): string {
@@ -214,12 +214,16 @@ function summarizeCommand(command: string, maxWidth: number): string {
 	const tokens = command.split(/\s+/).filter(Boolean);
 	if (tokens.length >= 3) {
 		const candidates = [
-			`${tokens[0]} ${tokens[1]} ... ${tokens[tokens.length - 2]} ${tokens[tokens.length - 1]}`,
-			`${tokens[0]} ${tokens[1]} ... ${tokens[tokens.length - 1]}`,
-			`${tokens[0]} ... ${tokens[tokens.length - 1]}`,
+			`${tokens[0]} ${tokens[1]} … ${tokens[tokens.length - 2]} ${tokens[tokens.length - 1]}`,
+			`${tokens[0]} ${tokens[1]} … ${tokens[tokens.length - 1]}`,
+			`${tokens[0]} … ${tokens[tokens.length - 1]}`,
 		];
 		const candidate = candidates.find((value) => visibleWidth(value) <= maxWidth);
 		if (candidate) return candidate;
+		for (const prefix of [`${tokens[0]} ${tokens[1]} … `, `${tokens[0]} … `]) {
+			const budget = maxWidth - visibleWidth(prefix);
+			if (budget > 1) return `${prefix}${truncateMiddleDisplay(tokens[tokens.length - 1]!, budget)}`;
+		}
 	}
 	return truncateMiddleDisplay(command, maxWidth);
 }
@@ -230,12 +234,12 @@ function summarizePath(path: string, maxWidth: number): string {
 	const parts = normalized.split("/").filter(Boolean);
 	if (parts.length === 0) return truncateMiddleDisplay(path, maxWidth);
 	const marker = normalized.startsWith("~/")
-		? "~/.../"
+		? "~/…/"
 		: normalized.startsWith("./")
-			? "./.../"
+			? "./…/"
 			: normalized.startsWith("/")
-				? "/.../"
-				: ".../";
+				? "/…/"
+				: "…/";
 	let joined = "";
 	for (let index = parts.length - 1; index >= 0; index--) {
 		const candidate = joined ? `${parts[index]}/${joined}` : parts[index]!;
@@ -244,8 +248,8 @@ function summarizePath(path: string, maxWidth: number): string {
 	}
 	if (joined) return `${marker}${joined}`;
 	const last = parts[parts.length - 1]!;
-	const suffixBudget = maxWidth - visibleWidth(".../");
-	return suffixBudget > 0 ? `.../${truncateMiddleDisplay(last, suffixBudget)}` : truncateMiddleDisplay(path, maxWidth);
+	const suffixBudget = maxWidth - visibleWidth("…/");
+	return suffixBudget > 0 ? `…/${truncateMiddleDisplay(last, suffixBudget)}` : truncateMiddleDisplay(path, maxWidth);
 }
 
 export function summarizeToolCall(call: ToolDisplayCall, maxWidth = 50): string {

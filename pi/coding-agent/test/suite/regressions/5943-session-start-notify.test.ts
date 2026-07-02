@@ -259,7 +259,7 @@ function createLoadedResourcesContext(): LoadedResourcesContext {
 }
 
 describe("regression #5943: session_start transient UI", () => {
-	it("renders loaded resources before restored messages without stale entries", () => {
+	it("renders verbose loaded resources before restored messages without stale entries", () => {
 		initTheme("dark", false);
 		const context = createLoadedResourcesContext();
 		const root = new Container();

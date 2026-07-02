@@ -33,7 +33,7 @@ function component(name: string, id: string, args: unknown): ToolExecutionCompon
 }
 
 describe("ToolExecutionGroupComponent", () => {
-	test("collapses multiple tools into a gallery and expands to child details", () => {
+	test("collapses multiple tools into activity and expands to gallery plus child details", () => {
 		const group = new ToolExecutionGroupComponent({ showImages: true });
 		const first = component("custom_a", "a", { value: 1 });
 		const second = component("custom_b", "b", { value: 2 });
@@ -45,13 +45,16 @@ describe("ToolExecutionGroupComponent", () => {
 		group.updateResult("b", { content: [{ type: "text", text: "Error: failed b" }], isError: true }, false);
 
 		const collapsed = stripAnsi(group.render(100).join("\n"));
-		expect(collapsed).toContain("tools - 2 calls");
-		expect(collapsed).toContain("[success]");
-		expect(collapsed).toContain("[error]");
+		expect(collapsed).toContain("activity");
+		expect(collapsed).toContain("tools ×2");
+		expect(collapsed).toContain("✓1");
+		expect(collapsed).toContain("✕1");
+		expect(collapsed).toContain("Ctrl+O gallery");
 		expect(collapsed).not.toContain("result custom_a");
 
 		group.setExpanded(true);
 		const expanded = stripAnsi(group.render(100).join("\n"));
+		expect(expanded).toContain("tools · 2 calls");
 		expect(expanded).toContain("result custom_a done a");
 		expect(expanded).toContain("result custom_b Error: failed b");
 	});

@@ -51,6 +51,6 @@ describe("tool-display helpers", () => {
 	});
 
 	test("middle truncation preserves both ends", () => {
-		expect(truncateMiddleDisplay("abcdefghijklmnopqrstuvwxyz", 9)).toBe("abcd.wxyz");
+		expect(truncateMiddleDisplay("abcdefghijklmnopqrstuvwxyz", 9)).toBe("abcd…wxyz");
 	});
 });

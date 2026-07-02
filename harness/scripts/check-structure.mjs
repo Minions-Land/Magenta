@@ -257,6 +257,12 @@ function checkRepoPackageTemplates(packagesRoot) {
 	if (!existsSync(join(templatesRoot, "harness-package"))) {
 		fail("packages/templates/harness-package is missing");
 	}
+	if (!existsSync(join(templatesRoot, "harness-package", "README.md"))) {
+		fail("packages/templates/harness-package/README.md is missing");
+	}
+	if (existsSync(join(templatesRoot, "harness-package", "package.toml"))) {
+		fail("packages/templates/harness-package must be README-only; create real packages under packages/<PackageName>/");
+	}
 	if (existsSync(join(templatesRoot, "harness-package", ".runtime"))) {
 		fail("packages/templates/harness-package/.runtime is invalid; template implementations belong under tools/<tool>/");
 	}

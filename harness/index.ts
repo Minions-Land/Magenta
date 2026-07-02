@@ -41,6 +41,7 @@ export * from "./session/pi/session.ts";
 export { uuidv7 } from "./session/pi/uuid.ts";
 export * from "./memory/magenta/session-grounding.ts";
 export * from "./skills/pi/skills.ts";
+export * from "./system-prompt/pi/descriptor.ts";
 export * from "./system-prompt/pi/system-prompt.ts";
 // Tools: pure-execution tool logic + the AgentTool Tool contract.
 export * from "./tools/index.ts";
