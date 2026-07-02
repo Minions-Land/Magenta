@@ -60,6 +60,12 @@ const hcpTarget = magnet.toHcpTarget();
 - **HcpProcessMagnet** (`magnet/pi/hcp-process.ts`) — Wraps external processes
   that speak Magenta HCP over JSONL stdio. This is a management/proxy boundary;
   it does not become an `AgentTool` unless the remote side exposes a tool target.
+  Process launch is routed through `runtime://process` so env allowlists, cwd,
+  timeout, and portable policy checks match other process-backed Magnets.
+- **Package tool factory** (`magnet/pi/package-tool.ts`) — Converts package
+  `tool` descriptors into concrete Magnets. This is where package runtime
+  descriptors such as `runtime = "process"` or `runtime = "<python-runtime>"`
+  choose a language/runtime adapter.
 - **UniversalMagnet** (`magnet/pi/universal.ts`) — Base management surface shared
   by non-native magnets.
 
@@ -104,8 +110,8 @@ once the user picks an entry:
 
 ```typescript
 const magnet = await createMagnetFromCatalogEntry(catalog, selectedEntry, { cwd });
-const target = magnet.toHcpTarget?.();
 const tool = magnet.toTool?.();
+registerMagnetHcpTargets(hcp, [magnet]);
 ```
 
 Currently generic catalog assembly supports:
@@ -115,6 +121,16 @@ Currently generic catalog assembly supports:
 
 Other catalog entries remain visible to the selector with provenance and
 migration state, but need a specific Magnet before they become executable.
+
+Package overlays follow the same rule. The packages module resolves package
+profiles and component paths; it does not own language/runtime branching. It
+passes `tool` descriptors to `createPackageToolMagnet()`, and new language
+adapters should be added there so Python, process, Node/R/Julia, MCP, API, and
+WASM integrations all converge through the same Magnet contract.
+
+For the management side, use `registerMagnetHcpTargets(hcp, magnets)` instead of
+hand-registering prefixes. The helper registers exact HCP target addresses and
+detects duplicate Magnet targets during assembly.
 
 ## Registration
 

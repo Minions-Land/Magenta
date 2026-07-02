@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getModel } from "@earendil-works/pi-ai/compat";
@@ -8,6 +8,50 @@ import { DefaultResourceLoader } from "../src/core/resource-loader.ts";
 import { createAgentSession } from "../src/core/sdk.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
+
+function writeHarnessPackageFixture(repoRoot: string): void {
+	const packageDir = join(repoRoot, "packages", "TestDomain");
+	const harnessDir = join(packageDir, "harness");
+	const toolDir = join(harnessDir, "tools");
+	mkdirSync(toolDir, { recursive: true });
+	writeFileSync(
+		join(packageDir, "package.toml"),
+		`schema_version = "magenta.package.v1"
+id = "TestDomain"
+name = "Test Domain"
+default_profiles = ["general"]
+
+[[profiles]]
+name = "general"
+harness = "harness/harness.toml"
+`,
+	);
+	writeFileSync(
+		join(harnessDir, "harness.toml"),
+		`[[components]]
+kind = "tool"
+name = "test_package_tool"
+path = "tools/test-package-tool.toml"
+`,
+	);
+	writeFileSync(
+		join(toolDir, "test-package-tool.toml"),
+		`kind = "tool"
+name = "test_package_tool"
+description = "Echo a package tool input."
+runtime = "process"
+command = "node"
+args = ["-e", "process.stdin.pipe(process.stdout)"]
+operation = "execute"
+read_only = true
+destructive = false
+
+[parameters]
+type = "object"
+additionalProperties = true
+`,
+	);
+}
 
 describe("AgentSession dynamic tool registration", () => {
 	let tempDir: string;
@@ -133,6 +177,39 @@ describe("AgentSession dynamic tool registration", () => {
 			origin: "top-level",
 		});
 		expect(session.getActiveToolNames()).toContain("sdk_tool");
+
+		session.dispose();
+	});
+
+	it("registers selected harness package tools and enables them by default", async () => {
+		writeHarnessPackageFixture(tempDir);
+		const settingsManager = SettingsManager.create(tempDir, agentDir);
+		const sessionManager = SessionManager.inMemory();
+		const resourceLoader = new DefaultResourceLoader({
+			cwd: tempDir,
+			agentDir,
+			settingsManager,
+			harnessPackages: ["TestDomain"],
+		});
+		await resourceLoader.reload();
+
+		const { session } = await createAgentSession({
+			cwd: tempDir,
+			agentDir,
+			model: getModel("anthropic", "claude-sonnet-4-5")!,
+			settingsManager,
+			sessionManager,
+			resourceLoader,
+		});
+
+		const packageTool = session.getAllTools().find((tool) => tool.name === "test_package_tool");
+		expect(packageTool?.sourceInfo).toMatchObject({
+			path: "<harness-package:test_package_tool>",
+			source: "harness-package",
+			scope: "temporary",
+			origin: "package",
+		});
+		expect(session.getActiveToolNames()).toContain("test_package_tool");
 
 		session.dispose();
 	});

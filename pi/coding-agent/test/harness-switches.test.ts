@@ -31,6 +31,31 @@ describe("harness switches", () => {
 		expect(tools[1]?.active).toBe(false);
 	});
 
+	it("keeps package tool source visible in the harness switch view", () => {
+		const tools = buildHarnessToolSwitches(
+			[
+				{
+					name: "omics_runtime",
+					description: "Run omics workflows",
+					parameters: {},
+					sourceInfo: createSyntheticSourceInfo("<harness-package:omics_runtime>", {
+						source: "harness-package",
+						origin: "package",
+					}),
+				},
+			],
+			["omics_runtime"],
+		);
+
+		expect(tools).toEqual([
+			expect.objectContaining({
+				name: "omics_runtime",
+				active: true,
+				source: "harness-package",
+			}),
+		]);
+	});
+
 	it("formats registry and runtime summaries without implying memory is wired", () => {
 		const registry = {
 			name: "magenta-harness",

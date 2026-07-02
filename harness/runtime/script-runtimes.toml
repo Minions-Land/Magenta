@@ -1,0 +1,44 @@
+kind = "runtime-pack"
+name = "script-runtimes"
+description = "Shell/Python/Node/R/Julia runtime wrappers migrated from Magenta1 general-harness."
+source = "magenta-native"
+origin = "magenta1-general-harness"
+origin_rel = "ported/adapted"
+impl = ["runtime/pi/script-runtime.ts", "runtime/pi/process-runtime.ts"]
+targets = ["runtime://shell", "runtime://python", "runtime://node", "runtime://r", "runtime://julia"]
+compiled_to = "runtime://process"
+
+[[runtimes]]
+name = "shell"
+target = "runtime://shell"
+command = "sh"
+exec_flag = "-c"
+description = "Run POSIX shell code through runtime://process."
+
+[[runtimes]]
+name = "python"
+target = "runtime://python"
+command = "python3"
+exec_flag = "-c"
+description = "Run Python code through runtime://process."
+
+[[runtimes]]
+name = "node"
+target = "runtime://node"
+command = "node"
+exec_flag = "-e"
+description = "Run JavaScript code through runtime://process."
+
+[[runtimes]]
+name = "r"
+target = "runtime://r"
+command = "Rscript"
+exec_flag = "-e"
+description = "Run R code through runtime://process."
+
+[[runtimes]]
+name = "julia"
+target = "runtime://julia"
+command = "julia"
+exec_flag = "-e"
+description = "Run Julia code through runtime://process."

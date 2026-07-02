@@ -24,6 +24,8 @@ export const COMMAND_DOCK_OVERLAY: OverlayOptions = {
 	nonCapturing: true,
 };
 
+const NAVIGATION_KEY_REPEAT_SUPPRESS_MS = 180;
+
 export type FloatingMenuItem = {
 	value: string;
 	label: string;
@@ -44,6 +46,8 @@ export type FloatingMenuBodyOptions = {
 	onSelect: (item: FloatingMenuItem) => undefined | boolean;
 	emptyText?: string;
 	requestRender: () => void;
+	navigationRepeatDelayMs?: number;
+	now?: () => number;
 };
 
 export type FloatingMenuRender = {
@@ -159,6 +163,8 @@ export class FloatingMenuBody implements FloatingOverlayBody {
 	private selectedIndex = 0;
 	private scrollTop = 0;
 	private filter = "";
+	private lastNavigationKey: string | undefined = undefined;
+	private lastNavigationAt = Number.NEGATIVE_INFINITY;
 	private readonly options: FloatingMenuBodyOptions;
 	private readonly stack: Array<{
 		title: string;
@@ -193,19 +199,20 @@ export class FloatingMenuBody implements FloatingOverlayBody {
 
 	handleInput(data: string): boolean | undefined {
 		if (matchesAny(data, ["escape", "left"])) {
+			if (matchesKey(data, "left") && this.shouldSuppressRepeatedNavigation("left")) return true;
 			if (this.stack.length > 0) {
 				this.goBack();
 				return true;
 			}
 			return undefined;
 		}
-		if (matchesAny(data, ["up"])) return this.move(-1);
-		if (matchesAny(data, ["down"])) return this.move(1);
-		if (matchesAny(data, ["pageUp", "ctrl+u"])) return this.move(-8);
-		if (matchesAny(data, ["pageDown", "ctrl+d"])) return this.move(8);
-		if (matchesAny(data, ["home"])) return this.selectIndex(0);
-		if (matchesAny(data, ["end"])) return this.selectIndex(Number.MAX_SAFE_INTEGER);
-		if (matchesAny(data, ["right"])) return this.openCurrentChild();
+		if (matchesAny(data, ["up"])) return this.navigate("up", () => this.move(-1));
+		if (matchesAny(data, ["down"])) return this.navigate("down", () => this.move(1));
+		if (matchesAny(data, ["pageUp", "ctrl+u"])) return this.navigate("pageUp", () => this.move(-8));
+		if (matchesAny(data, ["pageDown", "ctrl+d"])) return this.navigate("pageDown", () => this.move(8));
+		if (matchesAny(data, ["home"])) return this.navigate("home", () => this.selectIndex(0));
+		if (matchesAny(data, ["end"])) return this.navigate("end", () => this.selectIndex(Number.MAX_SAFE_INTEGER));
+		if (matchesAny(data, ["right"])) return this.navigate("right", () => this.openCurrentChild());
 		if (matchesAny(data, ["enter"])) return this.selectCurrent();
 	}
 
@@ -263,6 +270,22 @@ export class FloatingMenuBody implements FloatingOverlayBody {
 		this.ensureVisible(20);
 		this.options.requestRender();
 		return true;
+	}
+
+	private navigate(action: string, fn: () => true | undefined): true | undefined {
+		if (this.shouldSuppressRepeatedNavigation(action)) return true;
+		return fn();
+	}
+
+	private shouldSuppressRepeatedNavigation(action: string): boolean {
+		const delayMs = this.options.navigationRepeatDelayMs ?? NAVIGATION_KEY_REPEAT_SUPPRESS_MS;
+		if (delayMs <= 0) return false;
+
+		const now = this.options.now?.() ?? Date.now();
+		const shouldSuppress = this.lastNavigationKey === action && now - this.lastNavigationAt < delayMs;
+		this.lastNavigationKey = action;
+		this.lastNavigationAt = now;
+		return shouldSuppress;
 	}
 
 	private selectIndex(index: number): true | undefined {

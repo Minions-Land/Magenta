@@ -1,0 +1,21 @@
+# Migrated from Magenta1:
+# general-harness/components/providers/sandbox/trusted.toml
+
+kind = "sandbox"
+name = "trusted"
+description = "Broad access (network + writes) for explicitly trusted tools."
+source = "magenta-native"
+origin = "magenta1-general-harness"
+origin_rel = "migrated/adapted"
+
+fs_read = ["."]
+fs_write = ["."]
+
+network = "allow"
+
+max_memory_mb = 0
+max_wall_seconds = 0
+
+env_allowlist = ["PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "MAGENTA_PYTHON", "MAGENTA_RSCRIPT", "MAGENTA_RUNTIME_PATH", "PYTHONPATH", "CUDA_VISIBLE_DEVICES"]
+
+backend = "auto"

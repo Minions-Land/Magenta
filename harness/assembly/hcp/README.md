@@ -50,6 +50,10 @@ const targets = await registry.dispatch({
 });
 ```
 
+Assembly code that already has Magnets should prefer `registerMagnetHcpTargets()`
+from the Magnet module. It registers each Magnet by its exact target address and
+detects duplicates during assembly.
+
 ## Target Addressing
 
 Targets use URI-like addresses:

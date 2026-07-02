@@ -119,19 +119,19 @@ Runtime: Agent Loop → tool.execute() (direct call, fast)
 **Usage**:
 ```typescript
 const hcp = new HcpRegistry();
+const magnets = [bashMagnet, readMagnet];
 
-// Register magnet management endpoints
-hcp.register("tool", bashMagnet.toHcpTarget());
-hcp.register("tool", readMagnet.toHcpTarget());
+// Register magnet management endpoints by exact target address.
+registerMagnetHcpTargets(hcp, magnets);
 
 // Unified management interface
 await hcp.dispatch({
-  target: "tool:read",
+  target: "tool://read",
   op: "describe"  // Query what this tool does
 });
 
 await hcp.dispatch({
-  target: "tool:bash",
+  target: "tool://bash",
   op: "configure",  // Configure this tool
   input: { timeout: 30000 }
 });
@@ -275,7 +275,7 @@ const magnets = registry.components.map(comp =>
   createMagnet(comp)                                  // Magnet
 );
 const tools = magnets.map(m => m.toTool());
-magnets.forEach(m => hcp.register(m.toHcpTarget()));  // HCP
+registerMagnetHcpTargets(hcp, magnets);               // HCP
 loop.setTools(tools);
 
 // Adding new tools → just add TOML declaration

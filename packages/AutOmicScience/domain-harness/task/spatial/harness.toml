@@ -1,0 +1,8 @@
+name = "AutOmicScience-spatial"
+description = "Spatial transcriptomics task profile."
+
+[[components]]
+kind = "skill"
+name = "omics-spatial"
+path = "../../../skills/omics/omics-spatial"
+include_in_context = true

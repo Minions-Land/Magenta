@@ -187,6 +187,8 @@ function stripComment(line: string): string {
 export function parseToml(source: string): TomlTable {
 	const root: TomlTable = {};
 	let current: TomlTable = root;
+	let pendingKey: string | undefined;
+	let pendingArray = "";
 
 	const descend = (path: string[]): TomlTable => {
 		let node = root;
@@ -207,6 +209,16 @@ export function parseToml(source: string): TomlTable {
 	for (const rawLine of rawLines) {
 		const line = stripComment(rawLine).trim();
 		if (line === "") continue;
+
+		if (pendingKey) {
+			pendingArray = `${pendingArray}\n${line}`;
+			if (line.endsWith("]")) {
+				current[pendingKey] = parseScalar(pendingArray);
+				pendingKey = undefined;
+				pendingArray = "";
+			}
+			continue;
+		}
 
 		// [[array-of-tables]]
 		if (line.startsWith("[[") && line.endsWith("]]")) {
@@ -242,7 +254,13 @@ export function parseToml(source: string): TomlTable {
 		const eq = line.indexOf("=");
 		if (eq === -1) continue;
 		const key = line.slice(0, eq).trim();
-		const value = parseScalar(line.slice(eq + 1));
+		const rawValue = line.slice(eq + 1).trim();
+		if (rawValue.startsWith("[") && !rawValue.endsWith("]")) {
+			pendingKey = key;
+			pendingArray = rawValue;
+			continue;
+		}
+		const value = parseScalar(rawValue);
 		current[key] = value;
 	}
 

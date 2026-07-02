@@ -1,0 +1,13 @@
+kind = "runtime"
+name = "process"
+description = "Process runtime provider with Magenta1 portable sandbox guardrails ported to TypeScript."
+source = "magenta-native"
+origin = "magenta1-general-harness"
+origin_rel = "ported/adapted"
+target = "runtime://process"
+impl = ["runtime/pi/process-runtime.ts"]
+
+[policy]
+portable_guards = ["direct-exec gate", "workspace cwd", "environment allowlist", "wall-clock timeout", "filesystem read/write checks for declared paths", "network deny tag checks", "network allowlist checks for declared URL/host inputs"]
+os_enforcement = "not-ported"
+notes = "Magenta1 runtime_provider.rs also had sandbox-exec/bwrap backends. This TS provider currently enforces portable guards only."

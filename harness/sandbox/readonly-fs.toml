@@ -1,0 +1,21 @@
+# Migrated from Magenta1:
+# general-harness/components/providers/sandbox/readonly-fs.toml
+
+kind = "sandbox"
+name = "readonly-fs"
+description = "Read-only filesystem access, no network. For read_only tools."
+source = "magenta-native"
+origin = "magenta1-general-harness"
+origin_rel = "migrated/adapted"
+
+fs_read = ["."]
+fs_write = []
+
+network = "deny"
+
+max_memory_mb = 2048
+max_wall_seconds = 300
+
+env_allowlist = ["PATH", "HOME", "LANG", "LC_ALL", "TMPDIR"]
+
+backend = "auto"

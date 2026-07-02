@@ -1,0 +1,7 @@
+kind = "assembly"
+name = "packages"
+description = "Harness package overlay discovery and profile selection."
+source = "pi"
+
+[exports]
+module = "packages/pi/packages.ts"

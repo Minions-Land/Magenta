@@ -52,6 +52,10 @@ describe("harness registry", () => {
 
 		const summary = summarizeHarnessCatalogEntries(catalog.entries);
 		expect(summary.byMigrationState.integrated).toBeGreaterThan(0);
+		expect(summary.byMigrationState.available).toBe(10);
+		expect(summary.byMigrationState["requires-migration"]).toBe(15);
+		expect(summary.byMigrationState["metadata-only"]).toBe(14);
+		expect(summary.byMigrationState["external-boundary"]).toBe(9);
 		expect(summary.byMigrationState["deferred-domain-pack"]).toBe(17);
 
 		const ohMyPiItems = listHarnessSelectionItems(registry, { origins: ["oh-my-pi"] });
@@ -76,14 +80,96 @@ describe("harness registry", () => {
 			kind: "process-tool",
 			path: "tools/process/ast-grep.toml",
 		});
+		expect(availableProcessTools.find((item) => item.id === "general-harness:mcp:AstGrep")?.readiness).toBe(
+			"ready",
+		);
 		expect(
 			availableProcessTools.find((item) => item.id === "general-harness:hcp-process:echo-jsonl")?.component,
 		).toMatchObject({
 			kind: "hcp-process",
 			path: "assembly/hcp-process/echo-jsonl.toml",
 		});
+		expect(
+			availableProcessTools.find((item) => item.id === "general-harness:hcp-process:echo-jsonl")?.readiness,
+		).toBe("ready");
 
 		const domainEntries = filterHarnessCatalogEntries(catalog.entries, { origins: ["domain-pack"] });
 		expect(domainEntries).toHaveLength(17);
+	});
+
+	it("does not expose unported Magenta1 providers as ready selector items", async () => {
+		const registry = await loadRegistry(getHarnessRegistryPath());
+		const items = listHarnessSelectionItems(registry);
+
+		for (const id of [
+			"runtime-provider:trace:session",
+			"runtime-provider:shell:session",
+			"runtime-provider:capability:catalog",
+			"runtime-provider:llm:providers",
+			"runtime-provider:mcp:tools",
+		]) {
+			expect(items.find((item) => item.id === id)).toMatchObject({
+				migrationState: "requires-migration",
+				readiness: "requires-migration",
+				component: undefined,
+			});
+		}
+
+		expect(items.find((item) => item.id === "general-harness:api:httpbin-get")).toMatchObject({
+			migrationState: "metadata-only",
+			readiness: "metadata-only",
+		});
+		expect(items.find((item) => item.id === "general-harness:mcp-server:filesystem")).toMatchObject({
+			migrationState: "external-boundary",
+			readiness: "external-boundary",
+		});
+	});
+
+	it("marks session-grounding memory as a migrated HCP target", async () => {
+		const registry = await loadRegistry(getHarnessRegistryPath());
+		const item = listHarnessSelectionItems(registry).find(
+			(candidate) => candidate.id === "general-harness:memory:session-grounding",
+		);
+
+		expect(item).toMatchObject({
+			migrationState: "integrated",
+			readiness: "ready",
+			component: {
+				kind: "memory",
+				name: "session-grounding",
+				path: "memory/pi/session-grounding.ts",
+			},
+		});
+	});
+
+	it("marks LazyPi Jobs-derived background Events as covered by the coding-agent extension", async () => {
+		const registry = await loadRegistry(getHarnessRegistryPath());
+		const eventItems = listHarnessSelectionItems(registry, {
+			origins: ["lazypi"],
+			migrationStates: ["integrated"],
+		});
+
+		expect(eventItems.find((item) => item.id === "general-harness:event:manager")).toMatchObject({
+			readiness: "ready",
+			component: {
+				kind: "coding-agent-extension",
+				name: "background-events",
+				path: "pi/coding-agent/src/extensions/background-events/event-monitor.ts",
+			},
+		});
+		expect(eventItems.find((item) => item.id === "general-harness:event-tool:bg_shell")).toMatchObject({
+			component: {
+				kind: "coding-agent-extension-tool",
+				name: "bg_shell",
+				path: "pi/coding-agent/src/extensions/background-events/background-shell.ts",
+			},
+		});
+		expect(eventItems.find((item) => item.id === "general-harness:event-tool:sub_agent")).toMatchObject({
+			component: {
+				kind: "coding-agent-extension-tool",
+				name: "sub_agent",
+				path: "pi/coding-agent/src/extensions/background-events/sub-agents.ts",
+			},
+		});
 	});
 });

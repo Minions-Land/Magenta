@@ -1,0 +1,32 @@
+kind = "tool"
+name = "omics_preflight"
+description = "Verify package-local omics runtime readiness for a modality before compute. This descriptor is declarative; execution wiring is owned by the runtime/tool integration layer."
+execution = "declarative"
+runtime = "aose_omics_runtime"
+operation = "read"
+read_only = true
+destructive = false
+
+[metadata]
+package = "AutOmicScience"
+source = "AOSE origin/main 57ae83b with UPDATING exclusions applied"
+runtime_path = ".omics-runtime"
+env_manifest = "pixi.toml"
+
+[parameters]
+type = "object"
+required = ["modality"]
+
+[parameters.properties.modality]
+type = "string"
+enum = ["scrna", "spatial", "scatac", "multiome"]
+description = "Omics modality to validate."
+
+[parameters.properties.checkGpu]
+type = "boolean"
+default = false
+description = "Check GPU availability for GPU-dependent methods."
+
+[parameters.properties.pythonBin]
+type = "string"
+description = "Optional explicit Python interpreter."

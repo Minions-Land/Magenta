@@ -2,7 +2,9 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { HcpRegistry } from "../assembly/hcp/pi/hcp.ts";
 import { createMagnetFromCatalogEntry } from "../assembly/magnet/pi/factory.ts";
+import { registerMagnetHcpTargets } from "../assembly/magnet/pi/hcp-registry.ts";
 import { HcpProcessMagnet } from "../assembly/magnet/pi/hcp-process.ts";
 import { ProcessToolMagnet } from "../assembly/magnet/pi/process.ts";
 import { loadHarnessComponentCatalog } from "../catalog/pi/catalog.ts";
@@ -51,6 +53,10 @@ process.stdin.on("end", () => {
 		expect(tool.name).toBe("EchoTool");
 		expect(result.content).toEqual([{ type: "text", text: "echo:hello" }]);
 		expect(result.details.status).toBe(0);
+		expect(result.details.runtimePolicy).toMatchObject({
+			network: "deny",
+			os_enforced: false,
+		});
 	});
 
 	it("exposes a common HCP management surface", async () => {
@@ -72,6 +78,60 @@ process.stdin.on("end", () => {
 		expect(await target.call({ target: "tool://ManagedTool", op: "disable" })).toMatchObject({ enabled: false });
 		expect(await target.call({ target: "tool://ManagedTool", op: "health" })).toMatchObject({ status: "disabled" });
 		expect(await target.call({ target: "tool://ManagedTool", op: "enable" })).toMatchObject({ enabled: true });
+	});
+
+	it("registers Magnet management targets into HCP exactly once", async () => {
+		const dir = await mkdtemp(join(tmpdir(), "magenta-process-hcp-registry-"));
+		const first = new ProcessToolMagnet({
+			cwd: dir,
+			manifestRoot: dir,
+			manifest: {
+				kind: "process",
+				name: "ManagedOne",
+				description: "Managed one",
+				command: process.execPath,
+				args: ["--version"],
+			},
+		});
+		const duplicate = new ProcessToolMagnet({
+			cwd: dir,
+			manifestRoot: dir,
+			manifest: {
+				kind: "process",
+				name: "ManagedOne",
+				description: "Managed duplicate",
+				command: process.execPath,
+				args: ["--version"],
+			},
+		});
+		const second = new HcpProcessMagnet({
+			cwd: dir,
+			manifest: {
+				kind: "hcp-process",
+				name: "managed-jsonl",
+				description: "Managed JSONL",
+				command: process.execPath,
+				args: ["--version"],
+			},
+		});
+		const hcp = new HcpRegistry();
+
+		const result = registerMagnetHcpTargets(hcp, [first, second]);
+		expect(result.registrations.map((registration) => registration.target).sort()).toEqual([
+			"hcp-process://managed-jsonl",
+			"tool://ManagedOne",
+		]);
+		await expect(hcp.dispatch({ target: "tool://ManagedOne", op: "state" })).resolves.toMatchObject({
+			enabled: true,
+		});
+		await expect(hcp.dispatch({ target: "hcp:registry", op: "addresses" })).resolves.toEqual([
+			"tool://ManagedOne",
+			"hcp-process://managed-jsonl",
+		]);
+		expect(() => registerMagnetHcpTargets(hcp, [duplicate])).toThrow(/Duplicate Magnet HCP target/);
+		expect(registerMagnetHcpTargets(hcp, [duplicate], { duplicates: "skip" }).skipped).toEqual([
+			{ magnetKind: "process", reason: "duplicate", target: "tool://ManagedOne" },
+		]);
 	});
 
 	it("proxies a JSONL HCP process", async () => {
@@ -121,6 +181,62 @@ rl.on("line", line => {
 		});
 	});
 
+	it("runs JSONL HCP processes through runtime://process policy", async () => {
+		const dir = await mkdtemp(join(tmpdir(), "magenta-hcp-process-policy-"));
+		const script = await writeExecutableScript(
+			dir,
+			"hcp-env-server.mjs",
+			`#!/usr/bin/env node
+import readline from "node:readline";
+const rl = readline.createInterface({ input: process.stdin });
+rl.on("line", line => {
+  const request = JSON.parse(line);
+  process.stdout.write(JSON.stringify({
+    id: request.id,
+    ok: true,
+    result: {
+      allowed: process.env.MAGENTA_HCP_ALLOWED ?? null,
+      blocked: process.env.MAGENTA_HCP_BLOCKED ?? null
+    }
+  }) + "\\n");
+});
+`,
+		);
+		const magnet = new HcpProcessMagnet({
+			cwd: dir,
+			env: {
+				MAGENTA_HCP_ALLOWED: "yes",
+				MAGENTA_HCP_BLOCKED: "no",
+			},
+			manifest: {
+				kind: "hcp-process",
+				name: "echo-env-jsonl",
+				description: "Echo HCP JSONL env",
+				command: process.execPath,
+				args: [script],
+				env_allowlist: ["PATH", "MAGENTA_HCP_ALLOWED"],
+				max_wall_seconds: 30,
+			},
+		});
+
+		await expect(magnet.toHcpTarget().call({ target: "hcp-process://echo-env-jsonl", op: "health" })).resolves.toMatchObject({
+			runtime: "runtime://process",
+			envAllowlist: ["PATH", "MAGENTA_HCP_ALLOWED"],
+			maxWallSeconds: 30,
+		});
+		await expect(
+			magnet.send({
+				id: "req-env",
+				method: "call",
+				target: "tool://Echo",
+				op: "call",
+			}),
+		).resolves.toEqual({
+			allowed: "yes",
+			blocked: null,
+		});
+	});
+
 	it("creates generic magnets from migrated Magenta1 catalog entries", async () => {
 		const catalog = await loadHarnessComponentCatalog(
 			"magenta1-harness-components",
@@ -148,6 +264,7 @@ rl.on("line", line => {
 		});
 		await expect(processTarget!.call({ target: "tool://AstGrep", op: "health" })).resolves.toMatchObject({
 			command: expect.stringContaining("harness/process-tools/target/release/magenta-process-tools"),
+			runtime: "runtime://process",
 		});
 
 		const hcpMagnet = await createMagnetFromCatalogEntry(catalog, hcpProcess!, { cwd: process.cwd() });
@@ -179,5 +296,10 @@ rl.on("line", line => {
 		const firstContent = result.content[0];
 		expect(firstContent?.type).toBe("text");
 		expect(firstContent?.type === "text" ? firstContent.text : "").toContain('"message":"hello"');
+		expect(result.details.sandboxEnforced).toBe(true);
+		expect(result.details.runtimePolicy).toMatchObject({
+			network: "deny",
+			os_enforced: false,
+		});
 	});
 });

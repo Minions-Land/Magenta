@@ -2334,6 +2334,13 @@ export class AgentSession {
 		const registeredTools = this._extensionRunner.getAllRegisteredTools();
 		const allCustomTools = [
 			...registeredTools,
+			...this._resourceLoader.getPackageTools().tools.map((tool) => ({
+				definition: createToolDefinitionFromAgentTool(tool),
+				sourceInfo: createSyntheticSourceInfo(`<harness-package:${tool.name}>`, {
+					source: "harness-package",
+					origin: "package",
+				}),
+			})),
 			...this._customTools.map((definition) => ({
 				definition,
 				sourceInfo: createSyntheticSourceInfo(`<sdk:${definition.name}>`, { source: "sdk" }),

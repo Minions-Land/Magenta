@@ -1,0 +1,13 @@
+kind = "sandbox-pack"
+name = "sandbox"
+description = "Sandbox profile catalog and selection provider migrated from Magenta1 general-harness."
+source = "magenta-native"
+origin = "magenta1-general-harness"
+origin_rel = "migrated/adapted"
+impl = ["sandbox/pi/sandbox.ts"]
+profiles = ["readonly-fs.toml", "restricted.toml", "workspace-write.toml", "network-read.toml", "trusted.toml"]
+targets = ["sandbox://readonly-fs", "sandbox://restricted", "sandbox://workspace-write", "sandbox://network-read", "sandbox://trusted", "hook://sandbox-select"]
+
+[runtime]
+enforcement = "not-ported"
+notes = "This pack provides profile management and selection. Runtime portable guards / OS sandbox enforcement remain a separate runtime provider migration."

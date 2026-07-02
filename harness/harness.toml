@@ -55,6 +55,42 @@ name = "hcp-process"
 description = "HCP JSONL process manifests migrated from Magenta1 general-harness."
 path = "assembly/hcp-process/hcp-process.toml"
 
+[[components]]
+kind = "sandbox-pack"
+name = "sandbox"
+description = "Sandbox profiles and selection provider migrated from Magenta1 general-harness."
+path = "sandbox/sandbox.toml"
+
+[[components]]
+kind = "runtime"
+name = "process"
+description = "Process runtime provider with portable sandbox guardrails."
+path = "runtime/runtime.toml"
+
+[[components]]
+kind = "runtime-pack"
+name = "script-runtimes"
+description = "Shell/Python/Node/R/Julia runtime wrappers compiled to runtime://process."
+path = "runtime/script-runtimes.toml"
+
+[[components]]
+kind = "hook-pack"
+name = "hooks"
+description = "Lifecycle hook provider migrated from Magenta1 general-harness."
+path = "hooks/hooks.toml"
+
+[[components]]
+kind = "policy-pack"
+name = "policy"
+description = "Approval and shell policy providers migrated from Magenta1 general-harness."
+path = "policy/policy.toml"
+
+[[components]]
+kind = "context"
+name = "workspace"
+description = "Workspace context provider migrated from Magenta1 general-harness."
+path = "context/context.toml"
+
 # Core modules
 [[components]]
 kind = "compaction"
@@ -109,6 +145,12 @@ kind = "memory"
 name = "memory"
 description = "Embedding-based semantic memory storage and retrieval."
 path = "memory/memory.toml"
+
+[[components]]
+kind = "assembly"
+name = "packages"
+description = "Harness package overlay discovery and profile selection."
+path = "packages/packages.toml"
 
 [[components]]
 kind = "catalog"

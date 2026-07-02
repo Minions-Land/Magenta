@@ -1,0 +1,21 @@
+# Migrated from Magenta1:
+# general-harness/components/providers/sandbox/network-read.toml
+
+kind = "sandbox"
+name = "network-read"
+description = "Read-only workspace access with outbound network for web fetch/search tools."
+source = "magenta-native"
+origin = "magenta1-general-harness"
+origin_rel = "migrated/adapted"
+
+fs_read = ["."]
+fs_write = ["./.magenta/tmp", "/tmp"]
+
+network = "allow"
+
+max_memory_mb = 1024
+max_wall_seconds = 60
+
+env_allowlist = ["PATH", "HOME", "LANG", "LC_ALL", "TMPDIR"]
+
+backend = "auto"

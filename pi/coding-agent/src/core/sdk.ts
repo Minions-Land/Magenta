@@ -245,8 +245,9 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	const allowedToolNames = options.tools ?? (options.noTools === "all" ? [] : undefined);
 	const excludedToolNames = options.excludeTools;
 	const excludedToolNameSet = excludedToolNames ? new Set(excludedToolNames) : undefined;
+	const packageToolNames = resourceLoader.getPackageTools().tools.map((tool) => tool.name);
 	const initialActiveToolNames: string[] = (
-		options.tools ? [...options.tools] : options.noTools ? [] : defaultActiveToolNames
+		options.tools ? [...options.tools] : options.noTools ? [] : [...defaultActiveToolNames, ...packageToolNames]
 	).filter((name) => !excludedToolNameSet?.has(name));
 
 	let agent: Agent;

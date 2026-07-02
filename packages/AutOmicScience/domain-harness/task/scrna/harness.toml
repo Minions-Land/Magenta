@@ -1,0 +1,8 @@
+name = "AutOmicScience-scrna"
+description = "Single-cell RNA-seq task profile."
+
+[[components]]
+kind = "skill"
+name = "omics-scrna"
+path = "../../../skills/omics/omics-scrna"
+include_in_context = true

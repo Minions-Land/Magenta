@@ -12,6 +12,67 @@ import { SettingsManager } from "../src/core/settings-manager.ts";
 import type { Skill } from "../src/core/skills.ts";
 import { createSyntheticSourceInfo } from "../src/core/source-info.ts";
 
+function writeHarnessPackageFixture(repoRoot: string): void {
+	const packageDir = join(repoRoot, "packages", "TestDomain");
+	const harnessDir = join(packageDir, "harness");
+	const skillDir = join(packageDir, "skills", "test-domain");
+	const toolDir = join(harnessDir, "tools");
+	mkdirSync(skillDir, { recursive: true });
+	mkdirSync(toolDir, { recursive: true });
+	writeFileSync(
+		join(packageDir, "package.toml"),
+		`schema_version = "magenta.package.v1"
+id = "TestDomain"
+name = "Test Domain"
+default_profiles = ["general"]
+
+[[profiles]]
+name = "general"
+harness = "harness/harness.toml"
+`,
+	);
+	writeFileSync(
+		join(harnessDir, "harness.toml"),
+		`[[components]]
+kind = "skill"
+name = "test-domain"
+path = "../skills/test-domain"
+
+[[components]]
+kind = "tool"
+name = "test_package_tool"
+path = "tools/test-package-tool.toml"
+`,
+	);
+	writeFileSync(
+		join(skillDir, "SKILL.md"),
+		`---
+name: test-domain
+description: Test package skill.
+---
+
+# Test Domain
+`,
+	);
+	writeFileSync(
+		join(toolDir, "test-package-tool.toml"),
+		`kind = "tool"
+name = "test_package_tool"
+description = "Echo a package tool input."
+runtime = "process"
+command = "node"
+args = ["-e", "process.stdin.pipe(process.stdout)"]
+operation = "execute"
+read_only = true
+destructive = false
+
+[parameters]
+type = "object"
+additionalProperties = true
+`,
+	);
+}
+
 describe("DefaultResourceLoader", () => {
 	let tempDir: string;
 	let agentDir: string;
@@ -97,6 +158,25 @@ describe("DefaultResourceLoader", () => {
 			expect(commandNames.has("events")).toBe(false);
 			expect(skillNames.has("paper-analysis")).toBe(false);
 			expect(loader.getAppendSystemPrompt().join("\n")).not.toContain("Background Work");
+		});
+
+		it("loads selected harness package skills and tools from repo-local packages", async () => {
+			writeHarnessPackageFixture(cwd);
+
+			const loader = createLoader({ harnessPackages: ["TestDomain"] });
+			await loader.reload();
+
+			const packageTools = loader.getPackageTools();
+			const packageTool = packageTools.tools.find((tool) => tool.name === "test_package_tool");
+			const packageSkill = loader.getSkills().skills.find((skill) => skill.name === "test-domain");
+
+			expect(loader.getPackageOverlay()?.packages.map((pkg) => pkg.id)).toEqual(["TestDomain"]);
+			expect(packageTools.diagnostics).toEqual([]);
+			expect(packageTool?.description).toBe("Echo a package tool input.");
+			expect(packageSkill?.sourceInfo).toMatchObject({
+				source: "harness:TestDomain:general",
+				origin: "package",
+			});
 		});
 
 		it("should discover skills from agentDir", async () => {

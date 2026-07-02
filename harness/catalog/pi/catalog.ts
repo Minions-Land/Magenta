@@ -4,6 +4,7 @@ import { isAbsolute, resolve } from "node:path";
 export type HarnessMigrationState =
 	| "integrated"
 	| "available"
+	| "requires-migration"
 	| "metadata-only"
 	| "external-boundary"
 	| "deferred-domain-pack";
@@ -272,7 +273,7 @@ function deriveMigration(
 	) {
 		return { state: "external-boundary" };
 	}
-	return { state: "available" };
+	return { state: "requires-migration" };
 }
 
 export function flattenHarnessCatalogEntries(
@@ -362,11 +363,14 @@ export function summarizeHarnessCatalogEntries(entries: readonly HarnessCatalogE
 	};
 }
 
-function readinessFor(state: HarnessMigrationState): HarnessSelectionItem["readiness"] {
+function readinessFor(entry: HarnessCatalogEntry): HarnessSelectionItem["readiness"] {
+	const state = entry.migration.state;
 	switch (state) {
 		case "integrated":
 			return "ready";
 		case "available":
+			return entry.migration.component ? "ready" : "requires-migration";
+		case "requires-migration":
 			return "requires-migration";
 		case "metadata-only":
 			return "metadata-only";
@@ -394,7 +398,7 @@ export function toHarnessSelectionItems(
 		sourcePath: entry.path,
 		refs: entry.refs,
 		migrationState: entry.migration.state,
-		readiness: readinessFor(entry.migration.state),
+		readiness: readinessFor(entry),
 		component: entry.migration.component,
 		notes: entry.migration.notes,
 	}));

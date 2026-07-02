@@ -8,6 +8,14 @@ import type { ResourceDiagnostic } from "./diagnostics.ts";
 export type { ResourceCollision, ResourceDiagnostic } from "./diagnostics.ts";
 
 import { getBundledSkillsDir, type Skill as HarnessSkill } from "@magenta/harness";
+import {
+	assemblePackageToolMagnets,
+	loadPackageOverlay,
+	type PackageDiagnostic,
+	type PackageOverlay,
+	type PackageToolAssembly,
+} from "@magenta/harness";
+import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { canonicalizePath, isLocalPath, resolvePath } from "../utils/paths.ts";
 import { createEventBus, type EventBus } from "./event-bus.ts";
 import {
@@ -40,6 +48,8 @@ export interface ResourceLoader {
 	getSkills(): { skills: Skill[]; diagnostics: ResourceDiagnostic[] };
 	getPrompts(): { prompts: PromptTemplate[]; diagnostics: ResourceDiagnostic[] };
 	getThemes(): { themes: Theme[]; diagnostics: ResourceDiagnostic[] };
+	getPackageOverlay(): PackageOverlay | undefined;
+	getPackageTools(): { tools: AgentTool[]; diagnostics: ResourceDiagnostic[] };
 	getAgentsFiles(): { agentsFiles: Array<{ path: string; content: string }> };
 	getSystemPrompt(): string | undefined;
 	getAppendSystemPrompt(): string[];
@@ -172,6 +182,33 @@ function discoverBundledSkillPaths(baseDir: string): string[] {
 	return paths.sort((a, b) => a.localeCompare(b));
 }
 
+function parseHarnessPackageEnv(env: NodeJS.ProcessEnv = process.env): string[] {
+	const value = env.MAGENTA_HARNESS_PACKAGES ?? env.PI_HARNESS_PACKAGES;
+	return value
+		? value
+				.split(",")
+				.map((item) => item.trim())
+				.filter(Boolean)
+		: [];
+}
+
+function packageDiagnosticToResourceDiagnostic(diagnostic: PackageDiagnostic): ResourceDiagnostic {
+	return {
+		type: diagnostic.type,
+		message: diagnostic.message,
+		path: diagnostic.path,
+	};
+}
+
+function packageResourceMetadata(resource: { packageId: string; profile?: string; sourcePath: string }): PathMetadata {
+	return {
+		source: `harness:${resource.packageId}${resource.profile ? `:${resource.profile}` : ""}`,
+		scope: "temporary",
+		origin: "package",
+		baseDir: resource.sourcePath,
+	};
+}
+
 export interface DefaultResourceLoaderOptions {
 	cwd: string;
 	agentDir: string;
@@ -181,6 +218,7 @@ export interface DefaultResourceLoaderOptions {
 	additionalSkillPaths?: string[];
 	additionalPromptTemplatePaths?: string[];
 	additionalThemePaths?: string[];
+	harnessPackages?: string[];
 	extensionFactories?: ExtensionFactory[];
 	noExtensions?: boolean;
 	noSkills?: boolean;
@@ -220,6 +258,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 	private additionalSkillPaths: string[];
 	private additionalPromptTemplatePaths: string[];
 	private additionalThemePaths: string[];
+	private harnessPackages: string[];
 	private extensionFactories: ExtensionFactory[];
 	private noExtensions: boolean;
 	private noSkills: boolean;
@@ -255,6 +294,9 @@ export class DefaultResourceLoader implements ResourceLoader {
 	private promptDiagnostics: ResourceDiagnostic[];
 	private themes: Theme[];
 	private themeDiagnostics: ResourceDiagnostic[];
+	private packageOverlay?: PackageOverlay;
+	private packageTools: AgentTool[];
+	private packageDiagnostics: ResourceDiagnostic[];
 	private agentsFiles: Array<{ path: string; content: string }>;
 	private systemPrompt?: string;
 	private appendSystemPrompt: string[];
@@ -280,6 +322,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.additionalSkillPaths = options.additionalSkillPaths ?? [];
 		this.additionalPromptTemplatePaths = options.additionalPromptTemplatePaths ?? [];
 		this.additionalThemePaths = options.additionalThemePaths ?? [];
+		this.harnessPackages = options.harnessPackages ?? parseHarnessPackageEnv();
 		this.extensionFactories = options.extensionFactories ?? [];
 		this.noExtensions = options.noExtensions ?? false;
 		this.noSkills = options.noSkills ?? false;
@@ -304,6 +347,8 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.promptDiagnostics = [];
 		this.themes = [];
 		this.themeDiagnostics = [];
+		this.packageTools = [];
+		this.packageDiagnostics = [];
 		this.agentsFiles = [];
 		this.appendSystemPrompt = [];
 		this.lastSkillPaths = [];
@@ -329,6 +374,14 @@ export class DefaultResourceLoader implements ResourceLoader {
 
 	getThemes(): { themes: Theme[]; diagnostics: ResourceDiagnostic[] } {
 		return { themes: this.themes, diagnostics: this.themeDiagnostics };
+	}
+
+	getPackageOverlay(): PackageOverlay | undefined {
+		return this.packageOverlay;
+	}
+
+	getPackageTools(): { tools: AgentTool[]; diagnostics: ResourceDiagnostic[] } {
+		return { tools: this.packageTools, diagnostics: this.packageDiagnostics };
 	}
 
 	getAgentsFiles(): { agentsFiles: Array<{ path: string; content: string }> } {
@@ -406,6 +459,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		// reload() preserves SettingsManager.projectTrusted and reloads settings for that trust state.
 		await this.settingsManager.reload();
 		const resolvedPaths = await this.packageManager.resolve();
+		const packageResources = await this.loadHarnessPackageResources();
 		const cliExtensionPaths = await this.packageManager.resolveExtensionSources(this.additionalExtensionPaths, {
 			temporary: true,
 		});
@@ -433,6 +487,21 @@ export class DefaultResourceLoader implements ResourceLoader {
 		const enabledThemes = getEnabledPaths(resolvedPaths.themes);
 
 		const enabledSkills = enabledSkillResources.map((resource) => this.mapSkillPath(resource, metadataByPath));
+		const packageSkillResources = packageResources.skillPaths.map((resource) => ({
+			path: resource.path,
+			enabled: true,
+			metadata: packageResourceMetadata(resource),
+		}));
+		const packagePromptResources = packageResources.promptPaths.map((resource) => ({
+			path: resource.path,
+			enabled: true,
+			metadata: packageResourceMetadata(resource),
+		}));
+		const packageThemeResources = packageResources.themePaths.map((resource) => ({
+			path: resource.path,
+			enabled: true,
+			metadata: packageResourceMetadata(resource),
+		}));
 
 		// Add CLI paths metadata
 		for (const r of cliExtensionPaths.extensions) {
@@ -443,6 +512,11 @@ export class DefaultResourceLoader implements ResourceLoader {
 		for (const r of cliExtensionPaths.skills) {
 			if (!metadataByPath.has(r.path)) {
 				metadataByPath.set(r.path, { source: "cli", scope: "temporary", origin: "top-level" });
+			}
+		}
+		for (const resource of [...packageSkillResources, ...packagePromptResources, ...packageThemeResources]) {
+			if (!metadataByPath.has(resource.path)) {
+				metadataByPath.set(resource.path, resource.metadata);
 			}
 		}
 
@@ -478,7 +552,15 @@ export class DefaultResourceLoader implements ResourceLoader {
 
 		const skillPaths = this.noSkills
 			? this.mergePaths(cliEnabledSkills, this.additionalSkillPaths)
-			: this.mergePaths([...cliEnabledSkills, ...bundledSkills, ...enabledSkills], this.additionalSkillPaths);
+			: this.mergePaths(
+					[
+						...cliEnabledSkills,
+						...packageSkillResources.map((resource) => this.mapSkillPath(resource, metadataByPath)),
+						...bundledSkills,
+						...enabledSkills,
+					],
+					this.additionalSkillPaths,
+				);
 
 		this.lastSkillPaths = skillPaths;
 		await this.updateSkillsFromPaths(skillPaths, metadataByPath);
@@ -493,7 +575,10 @@ export class DefaultResourceLoader implements ResourceLoader {
 
 		const promptPaths = this.noPromptTemplates
 			? this.mergePaths(cliEnabledPrompts, this.additionalPromptTemplatePaths)
-			: this.mergePaths([...cliEnabledPrompts, ...enabledPrompts], this.additionalPromptTemplatePaths);
+			: this.mergePaths(
+					[...cliEnabledPrompts, ...packagePromptResources.map((resource) => resource.path), ...enabledPrompts],
+					this.additionalPromptTemplatePaths,
+				);
 
 		this.lastPromptPaths = promptPaths;
 		await this.updatePromptsFromPaths(promptPaths, metadataByPath);
@@ -512,7 +597,10 @@ export class DefaultResourceLoader implements ResourceLoader {
 
 		const themePaths = this.noThemes
 			? this.mergePaths(cliEnabledThemes, this.additionalThemePaths)
-			: this.mergePaths([...cliEnabledThemes, ...enabledThemes], this.additionalThemePaths);
+			: this.mergePaths(
+					[...cliEnabledThemes, ...packageThemeResources.map((resource) => resource.path), ...enabledThemes],
+					this.additionalThemePaths,
+				);
 
 		this.lastThemePaths = themePaths;
 		this.updateThemesFromPaths(themePaths, metadataByPath);
@@ -675,6 +763,45 @@ export class DefaultResourceLoader implements ResourceLoader {
 			baseDir,
 		};
 		return discoverBundledSkillPaths(baseDir).map((path) => ({ path, enabled: true, metadata }));
+	}
+
+	private async loadHarnessPackageResources(): Promise<{
+		skillPaths: PackageOverlay["resources"]["skillPaths"];
+		promptPaths: PackageOverlay["resources"]["promptTemplatePaths"];
+		themePaths: PackageOverlay["resources"]["themePaths"];
+	}> {
+		this.packageOverlay = undefined;
+		this.packageTools = [];
+		this.packageDiagnostics = [];
+
+		if (this.harnessPackages.length === 0) {
+			return { skillPaths: [], promptPaths: [], themePaths: [] };
+		}
+
+		try {
+			const overlay = await loadPackageOverlay({
+				repoRoot: this.cwd,
+				selections: this.harnessPackages,
+			});
+			this.packageOverlay = overlay;
+			this.packageDiagnostics.push(...overlay.diagnostics.map(packageDiagnosticToResourceDiagnostic));
+
+			const assembly: PackageToolAssembly = await assemblePackageToolMagnets(overlay);
+			this.packageDiagnostics.push(...assembly.diagnostics.map(packageDiagnosticToResourceDiagnostic));
+			this.packageTools = assembly.tools;
+
+			return {
+				skillPaths: overlay.resources.skillPaths,
+				promptPaths: overlay.resources.promptTemplatePaths,
+				themePaths: overlay.resources.themePaths,
+			};
+		} catch (error) {
+			this.packageDiagnostics.push({
+				type: "error",
+				message: error instanceof Error ? error.message : String(error),
+			});
+			return { skillPaths: [], promptPaths: [], themePaths: [] };
+		}
 	}
 
 	private mapSkillPath(resource: ResolvedResource, metadataByPath: Map<string, PathMetadata>): string {

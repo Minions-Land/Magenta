@@ -1,0 +1,36 @@
+schema_version = "magenta.package.v1"
+id = "AutOmicScience"
+name = "AutOmicScience"
+kind = "domain"
+domain = "bioinformatics"
+description = "Single-cell and spatial omics harness package migrated from AOSE optimize_omics."
+default_profiles = ["general"]
+
+[[profiles]]
+name = "general"
+description = "Shared omics runtime, environment, tools, and cross-modality skill."
+harness = "domain-harness/general/harness.toml"
+
+[[profiles]]
+name = "scrna"
+description = "Single-cell RNA-seq analysis playbook."
+extends = ["general"]
+harness = "domain-harness/task/scrna/harness.toml"
+
+[[profiles]]
+name = "spatial"
+description = "Spatial transcriptomics analysis playbook."
+extends = ["general"]
+harness = "domain-harness/task/spatial/harness.toml"
+
+[[profiles]]
+name = "scatac"
+description = "Single-cell ATAC-seq analysis playbook."
+extends = ["general"]
+harness = "domain-harness/task/scatac/harness.toml"
+
+[[profiles]]
+name = "multiome"
+description = "Paired RNA plus ATAC multiome analysis playbook."
+extends = ["general"]
+harness = "domain-harness/task/multiome/harness.toml"

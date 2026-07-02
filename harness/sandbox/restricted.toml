@@ -1,0 +1,22 @@
+# Migrated from Magenta1:
+# general-harness/components/providers/sandbox/restricted.toml
+
+kind = "sandbox"
+name = "restricted"
+description = "Default least-privilege profile for untrusted/agent-driven execution."
+source = "magenta-native"
+origin = "magenta1-general-harness"
+origin_rel = "migrated/adapted"
+
+fs_read = ["."]
+fs_write = ["./.magenta/tmp", "/tmp"]
+
+network = "deny"
+network_allowlist = []
+
+max_memory_mb = 4096
+max_wall_seconds = 600
+
+env_allowlist = ["PATH", "HOME", "LANG", "LC_ALL", "TMPDIR"]
+
+backend = "auto"

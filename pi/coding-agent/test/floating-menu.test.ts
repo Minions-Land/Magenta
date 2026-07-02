@@ -16,7 +16,11 @@ function renderText(body: FloatingMenuBody): string {
 	return body.render(80, 12).body.join("\n");
 }
 
-function createMenu(items: FloatingMenuItem[], selected: string[] = []): FloatingMenuBody {
+function createMenu(
+	items: FloatingMenuItem[],
+	selected: string[] = [],
+	options: Partial<ConstructorParameters<typeof FloatingMenuBody>[0]> = {},
+): FloatingMenuBody {
 	return new FloatingMenuBody({
 		title: "dock",
 		items,
@@ -25,6 +29,7 @@ function createMenu(items: FloatingMenuItem[], selected: string[] = []): Floatin
 			return undefined;
 		},
 		requestRender: () => undefined,
+		...options,
 	});
 }
 
@@ -90,5 +95,47 @@ describe("FloatingMenuBody", () => {
 		expect(body.handleInput(KEY_DOWN)).toBe(true);
 		expect(body.handleInput(KEY_ENTER)).toBe(true);
 		expect(selected).toEqual(["enabled"]);
+	});
+
+	it("suppresses rapid repeated navigation keys", () => {
+		let now = 0;
+		const selected: string[] = [];
+		const body = createMenu(
+			[
+				{ value: "first", label: "First" },
+				{ value: "second", label: "Second" },
+				{ value: "third", label: "Third" },
+			],
+			selected,
+			{ navigationRepeatDelayMs: 180, now: () => now },
+		);
+
+		expect(body.handleInput(KEY_DOWN)).toBe(true);
+		now = 50;
+		expect(body.handleInput(KEY_DOWN)).toBe(true);
+		expect(body.handleInput(KEY_ENTER)).toBe(true);
+
+		expect(selected).toEqual(["second"]);
+	});
+
+	it("allows the same navigation key after the repeat delay", () => {
+		let now = 0;
+		const selected: string[] = [];
+		const body = createMenu(
+			[
+				{ value: "first", label: "First" },
+				{ value: "second", label: "Second" },
+				{ value: "third", label: "Third" },
+			],
+			selected,
+			{ navigationRepeatDelayMs: 180, now: () => now },
+		);
+
+		expect(body.handleInput(KEY_DOWN)).toBe(true);
+		now = 181;
+		expect(body.handleInput(KEY_DOWN)).toBe(true);
+		expect(body.handleInput(KEY_ENTER)).toBe(true);
+
+		expect(selected).toEqual(["third"]);
 	});
 });

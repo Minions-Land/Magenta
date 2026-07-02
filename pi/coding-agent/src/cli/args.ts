@@ -38,6 +38,7 @@ export interface Args {
 	export?: string;
 	noSkills?: boolean;
 	skills?: string[];
+	harnessPackages?: string[];
 	promptTemplates?: string[];
 	noPromptTemplates?: boolean;
 	themes?: string[];
@@ -154,6 +155,9 @@ export function parseArgs(args: string[]): Args {
 		} else if (arg === "--skill" && i + 1 < args.length) {
 			result.skills = result.skills ?? [];
 			result.skills.push(args[++i]);
+		} else if (arg === "--harness-package" && i + 1 < args.length) {
+			result.harnessPackages = result.harnessPackages ?? [];
+			result.harnessPackages.push(args[++i]);
 		} else if (arg === "--prompt-template" && i + 1 < args.length) {
 			result.promptTemplates = result.promptTemplates ?? [];
 			result.promptTemplates.push(args[++i]);
@@ -262,6 +266,7 @@ ${chalk.bold("Options:")}
   --extension, -e <path>         Load an extension file (can be used multiple times)
   --no-extensions, -ne           Disable extension discovery (explicit -e paths still work)
   --skill <path>                 Load a skill file or directory (can be used multiple times)
+  --harness-package <selector>   Load a harness package profile, e.g. AutOmicScience:scrna
   --no-skills, -ns               Disable skills discovery and loading
   --prompt-template <path>       Load a prompt template file or directory (can be used multiple times)
   --no-prompt-templates, -np     Disable prompt template discovery and loading
@@ -373,6 +378,8 @@ ${chalk.bold("Environment Variables:")}
   AWS_REGION                       - AWS region for Amazon Bedrock (e.g., us-east-1)
   ${ENV_AGENT_DIR.padEnd(32)} - Config directory (default: ~/${CONFIG_DIR_NAME}/agent)
   ${ENV_SESSION_DIR.padEnd(32)} - Session storage directory (overridden by --session-dir)
+  MAGENTA_HARNESS_PACKAGES       - Comma-separated harness package selectors
+  PI_HARNESS_PACKAGES            - Comma-separated harness package selectors
   PI_PACKAGE_DIR                   - Override package directory (for Nix/Guix store paths)
   PI_OFFLINE                       - Disable startup network operations when set to 1/true/yes
   PI_TELEMETRY                     - Override install telemetry when set to 1/true/yes or 0/false/no

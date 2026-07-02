@@ -1,0 +1,18 @@
+kind = "policy-pack"
+name = "policy"
+description = "Approval and shell policy providers migrated from Magenta1 general-harness."
+source = "magenta-native"
+origin = "magenta1-general-harness"
+origin_rel = "ported/adapted"
+impl = ["policy/pi/approval.ts", "policy/pi/shell-policy.ts"]
+targets = ["approval://policy", "shell://policy"]
+
+[[policies]]
+name = "approval"
+target = "approval://policy"
+operations = ["decide", "status"]
+
+[[policies]]
+name = "shell"
+target = "shell://policy"
+operations = ["classify", "status"]

@@ -1,8 +1,12 @@
-import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
-import { createInterface } from "node:readline";
 import type { HarnessCatalogEntry, HarnessComponentCatalog } from "../../../catalog/pi/catalog.ts";
+import {
+	execProcess,
+	type ProcessExecOutput,
+	type ProcessRuntimeToolMetadata,
+} from "../../../runtime/pi/process-runtime.ts";
+import type { SandboxProfile } from "../../../sandbox/pi/sandbox.ts";
 import type { HcpCall } from "../../hcp/pi/hcp.ts";
 import { parseToml, type TomlTable } from "../../registry/pi/registry.ts";
 import { UniversalMagnet } from "./universal.ts";
@@ -40,6 +44,11 @@ export interface HcpProcessMagnetOptions {
 	manifest: HcpProcessManifest;
 	cwd: string;
 	env?: NodeJS.ProcessEnv;
+	maxOutputBytes?: number;
+	runtimeExec?: (
+		input: Parameters<typeof execProcess>[0],
+		signal?: AbortSignal,
+	) => Promise<ProcessExecOutput>;
 }
 
 function asString(value: unknown): string | undefined {
@@ -138,16 +147,104 @@ function errorMessage(error: unknown): string {
 	return typeof message === "string" ? message : JSON.stringify(error);
 }
 
+function defaultEnvAllowlist(): string[] {
+	return ["PATH", "HOME", "LANG", "LC_ALL", "TMPDIR"];
+}
+
+function resolveProcessCwd(workspaceRoot: string, cwd: string | undefined): string {
+	if (!cwd) return workspaceRoot;
+	return isAbsolute(cwd) ? cwd : resolve(workspaceRoot, cwd);
+}
+
+function envAllowlist(manifest: HcpProcessManifest): string[] {
+	return manifest.env_allowlist?.length ? manifest.env_allowlist : defaultEnvAllowlist();
+}
+
+function envOverrides(
+	env: NodeJS.ProcessEnv | undefined,
+	allowlist: readonly string[],
+): Record<string, string> | undefined {
+	if (!env) return undefined;
+	const allowed = new Set(allowlist);
+	const result: Record<string, string> = {};
+	for (const [key, value] of Object.entries(env)) {
+		if (allowed.has(key) && typeof value === "string") {
+			result[key] = value;
+		}
+	}
+	return Object.keys(result).length > 0 ? result : undefined;
+}
+
+function runtimeSandboxProfile(manifest: HcpProcessManifest): SandboxProfile {
+	const allowlist = envAllowlist(manifest);
+	return {
+		kind: "sandbox",
+		name: `hcp-process-${manifest.name}`,
+		description: `Runtime policy profile for HCP process ${manifest.name}.`,
+		fs_read: ["."],
+		fs_write: ["./.magenta/tmp", "/tmp"],
+		network: "deny",
+		network_allowlist: [],
+		max_memory_mb: 0,
+		max_wall_seconds: manifest.max_wall_seconds ?? 0,
+		env_allowlist: allowlist,
+		backend: manifest.sandbox_backend ?? "auto",
+	};
+}
+
+function runtimeToolMetadata(manifest: HcpProcessManifest): ProcessRuntimeToolMetadata {
+	return {
+		name: manifest.name,
+		operation: "execute",
+		read_only: false,
+		destructive: false,
+		tags: ["hcp-process"],
+	};
+}
+
+function parseJsonlResponse(manifest: HcpProcessManifest, request: HcpJsonlRequest, output: ProcessExecOutput): unknown {
+	if (output.status !== 0 && output.status !== null) {
+		throw new Error(`HCP process ${manifest.name} exited with status ${output.status}\n${output.stderr}`);
+	}
+	const line = output.stdout
+		.split(/\r?\n/)
+		.find((candidate) => candidate.trim().length > 0);
+	if (!line) {
+		throw new Error(`HCP process ${manifest.name} exited without a response\n${output.stderr}`);
+	}
+	let response: HcpJsonlResponse;
+	try {
+		response = JSON.parse(line) as HcpJsonlResponse;
+	} catch (error) {
+		throw new Error(`HCP process ${manifest.name} returned invalid JSONL: ${errorMessage(error)}`);
+	}
+	if (response.id !== request.id) {
+		throw new Error(`HCP response id mismatch: expected ${request.id}, got ${response.id}`);
+	}
+	if (!response.ok) {
+		throw new Error(errorMessage(response.error));
+	}
+	return response.result;
+}
+
 /**
  * Magnet for external processes that speak Magenta HCP over JSONL stdio.
  *
  * This is a management/process boundary, not an AgentTool by default. A specific
- * HCP process can still expose tools through its own HCP targets.
+ * HCP process can still expose tools through its own HCP targets. Process
+ * launch is still routed through runtime://process so external Harness modules
+ * share cwd, env allowlist, timeout, and direct-exec guardrails.
  */
 export class HcpProcessMagnet extends UniversalMagnet {
 	private readonly manifest: HcpProcessManifest;
+	private readonly workspaceRoot: string;
 	private readonly cwd: string;
 	private readonly env?: NodeJS.ProcessEnv;
+	private readonly maxOutputBytes?: number;
+	private readonly runtimeExec: (
+		input: Parameters<typeof execProcess>[0],
+		signal?: AbortSignal,
+	) => Promise<ProcessExecOutput>;
 
 	constructor(options: HcpProcessMagnetOptions) {
 		super({
@@ -167,8 +264,11 @@ export class HcpProcessMagnet extends UniversalMagnet {
 			},
 		});
 		this.manifest = options.manifest;
-		this.cwd = options.manifest.cwd ?? options.cwd;
+		this.workspaceRoot = resolve(options.cwd);
+		this.cwd = resolveProcessCwd(this.workspaceRoot, options.manifest.cwd);
 		this.env = options.env;
+		this.maxOutputBytes = options.maxOutputBytes;
+		this.runtimeExec = options.runtimeExec ?? execProcess;
 	}
 
 	override health(): Record<string, unknown> {
@@ -178,6 +278,9 @@ export class HcpProcessMagnet extends UniversalMagnet {
 			args: this.manifest.args ?? [],
 			transport: "hcp-jsonl",
 			lifecycle: "per-call process",
+			runtime: "runtime://process",
+			envAllowlist: envAllowlist(this.manifest),
+			maxWallSeconds: this.manifest.max_wall_seconds ?? 0,
 		};
 	}
 
@@ -215,55 +318,19 @@ export class HcpProcessMagnet extends UniversalMagnet {
 
 	async send(request: HcpJsonlRequest): Promise<unknown> {
 		this.assertEnabled();
-		return new Promise((resolve, reject) => {
-			const child = spawn(this.manifest.command, this.manifest.args ?? [], {
-				cwd: this.cwd,
-				env: { ...process.env, ...(this.env ?? {}) },
-				stdio: ["pipe", "pipe", "pipe"],
-			});
-			const stderr: Buffer[] = [];
-			const rl = createInterface({ input: child.stdout });
-			let settled = false;
-
-			const settle = (fn: () => void) => {
-				if (settled) return;
-				settled = true;
-				rl.close();
-				child.kill();
-				fn();
-			};
-
-			child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
-			child.on("error", (error) => settle(() => reject(error)));
-			child.on("close", (status) => {
-				if (!settled) {
-					reject(
-						new Error(
-							`HCP process ${this.manifest.name} exited before response with status ${status}\n${Buffer.concat(stderr).toString("utf-8")}`,
-						),
-					);
-				}
-			});
-			rl.on("line", (line) => {
-				if (!line.trim()) return;
-				let response: HcpJsonlResponse;
-				try {
-					response = JSON.parse(line) as HcpJsonlResponse;
-				} catch (error) {
-					settle(() => reject(error));
-					return;
-				}
-				if (response.id !== request.id) {
-					settle(() => reject(new Error(`HCP response id mismatch: expected ${request.id}, got ${response.id}`)));
-					return;
-				}
-				if (!response.ok) {
-					settle(() => reject(new Error(errorMessage(response.error))));
-					return;
-				}
-				settle(() => resolve(response.result));
-			});
-			child.stdin.end(`${JSON.stringify(request)}\n`);
+		const allowlist = envAllowlist(this.manifest);
+		const output = await this.runtimeExec({
+			command: this.manifest.command,
+			args: this.manifest.args ?? [],
+			stdin: `${JSON.stringify(request)}\n`,
+			cwd: this.cwd,
+			workspace_root: this.workspaceRoot,
+			sandbox: { profile: runtimeSandboxProfile(this.manifest) },
+			tool: runtimeToolMetadata(this.manifest),
+			allow_direct_exec: false,
+			env_overrides: envOverrides(this.env, allowlist),
+			max_output_bytes: this.maxOutputBytes,
 		});
+		return parseJsonlResponse(this.manifest, request, output);
 	}
 }

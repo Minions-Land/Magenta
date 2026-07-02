@@ -1,0 +1,757 @@
+import { existsSync } from "node:fs";
+import { readdir, readFile, stat } from "node:fs/promises";
+import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
+import type { AgentTool } from "@earendil-works/pi-agent-core";
+import {
+	createPackageToolMagnet as createPackageToolMagnetFromDescriptor,
+	type PackageToolMagnetDiagnosticCode,
+} from "../../assembly/magnet/pi/package-tool.ts";
+import type { Magnet } from "../../assembly/magnet/pi/magnet.ts";
+import { parseToml, type TomlTable, type TomlValue } from "../../assembly/registry/pi/registry.ts";
+
+export const PACKAGE_MANIFEST_FILE = "package.toml";
+export const PACKAGE_SCHEMA_VERSION = "magenta.package.v1";
+
+export type HarnessPackageKind = "domain" | "brand" | "harness" | string;
+
+export type PackageDiagnosticCode =
+	| "packages_root_missing"
+	| "package_manifest_missing"
+	| "package_manifest_read_failed"
+	| "package_manifest_invalid"
+	| "package_profile_missing"
+	| "package_profile_cycle"
+	| "package_harness_missing"
+	| "package_harness_read_failed"
+	| "package_harness_invalid"
+	| "package_component_missing"
+	| "package_component_invalid"
+	| PackageToolMagnetDiagnosticCode;
+
+export interface PackageDiagnostic {
+	type: "warning" | "error";
+	code: PackageDiagnosticCode;
+	message: string;
+	path?: string;
+	packageId?: string;
+	profile?: string;
+}
+
+export interface HarnessPackageProfile {
+	name: string;
+	description?: string;
+	extends: string[];
+	harness?: string;
+}
+
+export interface HarnessPackageManifest {
+	schemaVersion?: string;
+	id: string;
+	name: string;
+	description?: string;
+	kind?: HarnessPackageKind;
+	domain?: string;
+	defaultProfiles: string[];
+	profiles: HarnessPackageProfile[];
+	components: PackageComponentRef[];
+	raw: TomlTable;
+}
+
+export interface HarnessPackage {
+	id: string;
+	dir: string;
+	manifestPath: string;
+	manifest: HarnessPackageManifest;
+	diagnostics: PackageDiagnostic[];
+}
+
+export interface PackageComponentRef {
+	kind: string;
+	name: string;
+	description?: string;
+	path?: string;
+	includeInContext?: boolean;
+	raw: TomlTable;
+}
+
+export interface PackageResolvedComponent extends PackageComponentRef {
+	packageId: string;
+	profile?: string;
+	key: string;
+	baseDir: string;
+	path?: string;
+	sourcePath: string;
+}
+
+export interface PackageResourcePath {
+	packageId: string;
+	profile?: string;
+	name: string;
+	path: string;
+	sourcePath: string;
+	component: PackageResolvedComponent;
+}
+
+export interface PackageOverlayResources {
+	skillPaths: PackageResourcePath[];
+	promptTemplatePaths: PackageResourcePath[];
+	themePaths: PackageResourcePath[];
+	systemPromptPaths: PackageResourcePath[];
+	appendSystemPromptPaths: PackageResourcePath[];
+	brandPaths: PackageResourcePath[];
+}
+
+export interface PackageComponentOverride {
+	key: string;
+	replaced: PackageResolvedComponent;
+	replacement: PackageResolvedComponent;
+}
+
+export interface PackageProfileSelection {
+	packageId: string;
+	profiles?: string[];
+}
+
+export interface PackageOverlay {
+	repoRoot: string;
+	packagesRoot: string;
+	selections: PackageProfileSelection[];
+	packages: HarnessPackage[];
+	components: PackageResolvedComponent[];
+	componentMap: Map<string, PackageResolvedComponent>;
+	overrides: PackageComponentOverride[];
+	resources: PackageOverlayResources;
+	diagnostics: PackageDiagnostic[];
+}
+
+export interface PackageToolAssembly {
+	magnets: Magnet[];
+	tools: AgentTool[];
+	diagnostics: PackageDiagnostic[];
+}
+
+export interface DiscoverHarnessPackagesResult {
+	repoRoot: string;
+	packagesRoot: string;
+	packages: HarnessPackage[];
+	diagnostics: PackageDiagnostic[];
+}
+
+export interface DiscoverHarnessPackagesOptions {
+	repoRoot?: string;
+}
+
+export interface LoadPackageOverlayOptions {
+	repoRoot?: string;
+	selections: Array<string | PackageProfileSelection>;
+	includeDefaultProfiles?: boolean;
+}
+
+interface LoadedProfile {
+	name: string;
+	components: PackageResolvedComponent[];
+	diagnostics: PackageDiagnostic[];
+}
+
+export function getHarnessPackagesRoot(repoRoot: string = process.cwd()): string {
+	return resolve(repoRoot, "packages");
+}
+
+export function parsePackageSelector(selector: string): PackageProfileSelection {
+	const trimmed = selector.trim();
+	const separator = trimmed.indexOf(":");
+	if (separator === -1) return { packageId: trimmed };
+	const packageId = trimmed.slice(0, separator).trim();
+	const profiles = trimmed
+		.slice(separator + 1)
+		.split(",")
+		.map((profile) => profile.trim())
+		.filter(Boolean);
+	return profiles.length > 0 ? { packageId, profiles } : { packageId };
+}
+
+export async function discoverHarnessPackages(
+	options: DiscoverHarnessPackagesOptions = {},
+): Promise<DiscoverHarnessPackagesResult> {
+	const repoRoot = resolve(options.repoRoot ?? process.cwd());
+	const root = getHarnessPackagesRoot(repoRoot);
+	const diagnostics: PackageDiagnostic[] = [];
+	const packages: HarnessPackage[] = [];
+
+	const rootInfo = await statIfExists(root);
+	if (!rootInfo) {
+		diagnostics.push({
+			type: "warning",
+			code: "packages_root_missing",
+			message: `Packages root does not exist: ${root}`,
+			path: root,
+		});
+		return { repoRoot, packagesRoot: root, packages, diagnostics };
+	}
+	if (!rootInfo.isDirectory()) {
+		diagnostics.push({
+			type: "error",
+			code: "packages_root_missing",
+			message: `Packages root is not a directory: ${root}`,
+			path: root,
+		});
+		return { repoRoot, packagesRoot: root, packages, diagnostics };
+	}
+
+	for (const entry of (await readdir(root, { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name))) {
+		if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
+		const manifestPath = resolve(root, entry.name, PACKAGE_MANIFEST_FILE);
+		if (!existsSync(manifestPath)) continue;
+		const loaded = await loadHarnessPackageManifest(manifestPath);
+		packages.push(loaded.package);
+		diagnostics.push(...loaded.package.diagnostics);
+	}
+
+	return { repoRoot, packagesRoot: root, packages, diagnostics };
+}
+
+async function loadHarnessPackageManifest(
+	manifestPath: string,
+): Promise<{ package: HarnessPackage; diagnostics: PackageDiagnostic[] }> {
+	const resolvedManifestPath = resolve(manifestPath);
+	const packageDir = dirname(resolvedManifestPath);
+	const fallbackId = basename(packageDir);
+	const diagnostics: PackageDiagnostic[] = [];
+	let raw: TomlTable = {};
+
+	try {
+		raw = parseToml(await readFile(resolvedManifestPath, "utf-8"));
+	} catch (error) {
+		diagnostics.push({
+			type: "error",
+			code: "package_manifest_read_failed",
+			message: `Unable to read package manifest ${resolvedManifestPath}: ${formatUnknownError(error)}`,
+			path: resolvedManifestPath,
+		});
+	}
+
+	const id = asString(raw.id) ?? fallbackId;
+	const name = asString(raw.name) ?? id;
+	const manifest: HarnessPackageManifest = {
+		schemaVersion: asString(raw.schema_version),
+		id,
+		name,
+		description: asString(raw.description),
+		kind: asString(raw.kind),
+		domain: asString(raw.domain),
+		defaultProfiles: asStringArray(raw.default_profiles),
+		profiles: parseProfiles(raw.profiles, resolvedManifestPath, id, diagnostics),
+		components: parseComponents(raw, id, undefined, resolvedManifestPath, diagnostics),
+		raw,
+	};
+
+	if (!manifest.id) {
+		diagnostics.push({
+			type: "error",
+			code: "package_manifest_invalid",
+			message: "Package manifest must declare id or live in a named package directory.",
+			path: resolvedManifestPath,
+			packageId: id,
+		});
+	}
+	if (manifest.schemaVersion && manifest.schemaVersion !== PACKAGE_SCHEMA_VERSION) {
+		diagnostics.push({
+			type: "warning",
+			code: "package_manifest_invalid",
+			message: `Unsupported package schema_version ${manifest.schemaVersion}; expected ${PACKAGE_SCHEMA_VERSION}.`,
+			path: resolvedManifestPath,
+			packageId: id,
+		});
+	}
+
+	const loadedPackage = {
+		id,
+		dir: packageDir,
+		manifestPath: resolvedManifestPath,
+		manifest,
+		diagnostics,
+	};
+	return { package: loadedPackage, diagnostics };
+}
+
+export async function loadPackageOverlay(options: LoadPackageOverlayOptions): Promise<PackageOverlay> {
+	const repoRoot = resolve(options.repoRoot ?? process.cwd());
+	const packagesRoot = getHarnessPackagesRoot(repoRoot);
+	const includeDefaultProfiles = options.includeDefaultProfiles ?? true;
+	const discovery = await discoverHarnessPackages({ repoRoot });
+	const packageMap = new Map(discovery.packages.map((pkg) => [pkg.id, pkg]));
+	const selections = options.selections.map((selection) =>
+		typeof selection === "string" ? parsePackageSelector(selection) : selection,
+	);
+	const diagnostics: PackageDiagnostic[] = [...discovery.diagnostics];
+	const selectedPackages: HarnessPackage[] = [];
+	const components: PackageResolvedComponent[] = [];
+
+	for (const selection of selections) {
+		const pkg = packageMap.get(selection.packageId);
+		if (!pkg) {
+			diagnostics.push({
+				type: "error",
+				code: "package_manifest_missing",
+				message: `Selected package was not found: ${selection.packageId}`,
+				path: resolve(packagesRoot, selection.packageId, PACKAGE_MANIFEST_FILE),
+				packageId: selection.packageId,
+			});
+			continue;
+		}
+
+		selectedPackages.push(pkg);
+		const profileNames = resolveSelectedProfileNames(pkg, selection.profiles, includeDefaultProfiles);
+		components.push(...resolvePackageRootComponents(pkg, diagnostics));
+		const loadedProfiles = new Set<string>();
+
+		for (const profileName of profileNames) {
+			const loaded = await loadProfile(pkg, profileName, [], loadedProfiles);
+			components.push(...loaded.components);
+			diagnostics.push(...loaded.diagnostics);
+		}
+	}
+
+	const { componentMap, overrides } = overlayComponentMap(components);
+	const resolvedComponents = [...componentMap.values()];
+	return {
+		repoRoot,
+		packagesRoot,
+		selections,
+		packages: selectedPackages,
+		components: resolvedComponents,
+		componentMap,
+		overrides,
+		resources: collectOverlayResources(resolvedComponents),
+		diagnostics,
+	};
+}
+
+export async function assemblePackageToolMagnets(overlay: PackageOverlay): Promise<PackageToolAssembly> {
+	const diagnostics: PackageDiagnostic[] = [];
+	const magnets: Magnet[] = [];
+
+	for (const component of overlay.components) {
+		if (component.kind !== "tool") continue;
+		const result = await createPackageToolMagnetFromDescriptor({
+			component,
+			context: {
+				repoRoot: overlay.repoRoot,
+				packagesRoot: overlay.packagesRoot,
+				components: overlay.components,
+				componentMap: overlay.componentMap,
+			},
+		});
+		diagnostics.push(...result.diagnostics);
+		if (result.magnet) magnets.push(result.magnet);
+	}
+
+	return {
+		magnets,
+		tools: magnets.flatMap((magnet) => (magnet.toTool ? [magnet.toTool()] : [])),
+		diagnostics,
+	};
+}
+
+function resolveSelectedProfileNames(
+	pkg: HarnessPackage,
+	selectedProfiles: string[] | undefined,
+	includeDefaultProfiles: boolean,
+): string[] {
+	if (selectedProfiles?.includes("*") || selectedProfiles?.includes("all")) {
+		return unique(pkg.manifest.profiles.map((profile) => profile.name));
+	}
+	const profiles = selectedProfiles?.length ? selectedProfiles : pkg.manifest.defaultProfiles;
+	return unique([...(includeDefaultProfiles ? pkg.manifest.defaultProfiles : []), ...profiles]);
+}
+
+function resolvePackageRootComponents(
+	pkg: HarnessPackage,
+	diagnostics: PackageDiagnostic[],
+): PackageResolvedComponent[] {
+	return pkg.manifest.components
+		.map((component) => resolveComponent(component, pkg, undefined, pkg.dir, pkg.manifestPath, diagnostics))
+		.filter((component): component is PackageResolvedComponent => Boolean(component));
+}
+
+async function loadProfile(
+	pkg: HarnessPackage,
+	profileName: string,
+	stack: string[],
+	loadedProfiles: Set<string>,
+): Promise<LoadedProfile> {
+	if (loadedProfiles.has(profileName)) return { name: profileName, components: [], diagnostics: [] };
+	const diagnostics: PackageDiagnostic[] = [];
+	const profile = pkg.manifest.profiles.find((candidate) => candidate.name === profileName);
+	if (!profile) {
+		return {
+			name: profileName,
+			components: [],
+			diagnostics: [
+				{
+					type: "error",
+					code: "package_profile_missing",
+					message: `Package ${pkg.id} does not declare profile ${profileName}.`,
+					path: pkg.manifestPath,
+					packageId: pkg.id,
+					profile: profileName,
+				},
+			],
+		};
+	}
+	if (stack.includes(profileName)) {
+		return {
+			name: profileName,
+			components: [],
+			diagnostics: [
+				{
+					type: "error",
+					code: "package_profile_cycle",
+					message: `Package ${pkg.id} has cyclic profile inheritance: ${[...stack, profileName].join(" -> ")}.`,
+					path: pkg.manifestPath,
+					packageId: pkg.id,
+					profile: profileName,
+				},
+			],
+		};
+	}
+
+	const components: PackageResolvedComponent[] = [];
+	for (const parentProfile of profile.extends) {
+		const loaded = await loadProfile(pkg, parentProfile, [...stack, profileName], loadedProfiles);
+		components.push(...loaded.components);
+		diagnostics.push(...loaded.diagnostics);
+	}
+
+	if (!profile.harness) {
+		loadedProfiles.add(profileName);
+		return { name: profileName, components, diagnostics };
+	}
+
+	const harnessPath = resolvePackageLocalReference({
+		reference: profile.harness,
+		packageDir: pkg.dir,
+		baseDir: pkg.dir,
+		sourcePath: pkg.manifestPath,
+		packageId: pkg.id,
+		profile: profileName,
+		diagnostics,
+		invalidCode: "package_harness_invalid",
+		referenceKind: "profile harness",
+	});
+	if (!harnessPath) return { name: profileName, components, diagnostics };
+
+	const info = await statIfExists(harnessPath);
+	if (!info || !info.isFile()) {
+		diagnostics.push({
+			type: "error",
+			code: "package_harness_missing",
+			message: `Package ${pkg.id} profile ${profileName} harness file is missing: ${harnessPath}`,
+			path: harnessPath,
+			packageId: pkg.id,
+			profile: profileName,
+		});
+		return { name: profileName, components, diagnostics };
+	}
+
+	let table: TomlTable;
+	try {
+		table = parseToml(await readFile(harnessPath, "utf-8"));
+	} catch (error) {
+		diagnostics.push({
+			type: "error",
+			code: "package_harness_read_failed",
+			message: `Unable to read package harness ${harnessPath}: ${formatUnknownError(error)}`,
+			path: harnessPath,
+			packageId: pkg.id,
+			profile: profileName,
+		});
+		return { name: profileName, components, diagnostics };
+	}
+
+	const refs = parseComponents(table, pkg.id, profileName, harnessPath, diagnostics);
+	for (const ref of refs) {
+		const component = resolveComponent(ref, pkg, profileName, dirname(harnessPath), harnessPath, diagnostics);
+		if (component) components.push(component);
+	}
+	loadedProfiles.add(profileName);
+	return { name: profileName, components, diagnostics };
+}
+
+function parseProfiles(
+	value: TomlValue | undefined,
+	path: string,
+	packageId: string,
+	diagnostics: PackageDiagnostic[],
+): HarnessPackageProfile[] {
+	if (!Array.isArray(value)) return [];
+	const profiles: HarnessPackageProfile[] = [];
+	for (const item of value) {
+		if (!isTomlTable(item)) continue;
+		const name = asString(item.name);
+		if (!name) {
+			diagnostics.push({
+				type: "error",
+				code: "package_manifest_invalid",
+				message: "Package profile entries must declare name.",
+				path,
+				packageId,
+			});
+			continue;
+		}
+		profiles.push({
+			name,
+			description: asString(item.description),
+			extends: asStringArray(item.extends),
+			harness: asString(item.harness) ?? asString(item.path),
+		});
+	}
+	return profiles;
+}
+
+function parseComponents(
+	table: TomlTable,
+	packageId: string,
+	profile: string | undefined,
+	sourcePath: string,
+	diagnostics: PackageDiagnostic[],
+): PackageComponentRef[] {
+	const components = table.components;
+	if (Array.isArray(components)) {
+		return components
+			.filter(isTomlTable)
+			.map((entry) => parseComponentEntry(entry, asString(entry.kind), packageId, profile, sourcePath, diagnostics))
+			.filter((entry): entry is PackageComponentRef => Boolean(entry));
+	}
+	if (isTomlTable(components)) {
+		const refs: PackageComponentRef[] = [];
+		for (const [kind, entries] of Object.entries(components)) {
+			if (!Array.isArray(entries)) continue;
+			for (const entry of entries.filter(isTomlTable)) {
+				const component = parseComponentEntry(entry, kind, packageId, profile, sourcePath, diagnostics);
+				if (component) refs.push(component);
+			}
+		}
+		return refs;
+	}
+	return [];
+}
+
+function parseComponentEntry(
+	entry: TomlTable,
+	defaultKind: string | undefined,
+	packageId: string,
+	profile: string | undefined,
+	sourcePath: string,
+	diagnostics: PackageDiagnostic[],
+): PackageComponentRef | undefined {
+	const kind = asString(entry.kind) ?? defaultKind;
+	const name = asString(entry.name);
+	if (!kind || !name) {
+		diagnostics.push({
+			type: "error",
+			code: "package_component_invalid",
+			message: "Package components must declare kind and name.",
+			path: sourcePath,
+			packageId,
+			profile,
+		});
+		return undefined;
+	}
+	return {
+		kind,
+		name,
+		description: asString(entry.description),
+		path: asString(entry.path),
+		includeInContext: asBoolean(entry.include_in_context),
+		raw: entry,
+	};
+}
+
+function resolveComponent(
+	component: PackageComponentRef,
+	pkg: HarnessPackage,
+	profile: string | undefined,
+	baseDir: string,
+	sourcePath: string,
+	diagnostics: PackageDiagnostic[],
+): PackageResolvedComponent | undefined {
+	const resolvedPath = component.path
+		? resolvePackageLocalReference({
+				reference: component.path,
+				packageDir: pkg.dir,
+				baseDir,
+				sourcePath,
+				packageId: pkg.id,
+				profile,
+				diagnostics,
+				invalidCode: "package_component_invalid",
+				referenceKind: `${component.kind}:${component.name} component`,
+			})
+		: undefined;
+	if (component.path && !resolvedPath) return undefined;
+	if (resolvedPath && !existsSync(resolvedPath)) {
+		diagnostics.push({
+			type: "error",
+			code: "package_component_missing",
+			message: `Package ${pkg.id} ${component.kind}:${component.name} component path is missing: ${resolvedPath}`,
+			path: sourcePath,
+			packageId: pkg.id,
+			profile,
+		});
+		return undefined;
+	}
+	return {
+		...component,
+		packageId: pkg.id,
+		profile,
+		key: componentKey(component),
+		baseDir,
+		...(resolvedPath ? { path: resolvedPath } : {}),
+		sourcePath,
+	};
+}
+
+function resolvePackageLocalReference(options: {
+	reference: string;
+	packageDir: string;
+	baseDir: string;
+	sourcePath: string;
+	packageId: string;
+	profile?: string;
+	diagnostics: PackageDiagnostic[];
+	invalidCode: Extract<PackageDiagnosticCode, "package_harness_invalid" | "package_component_invalid">;
+	referenceKind: string;
+}): string | undefined {
+	if (isAbsolute(options.reference)) {
+		options.diagnostics.push({
+			type: "error",
+			code: options.invalidCode,
+			message: `Package ${options.packageId} ${options.referenceKind} must be a package-local relative reference, not an absolute path: ${options.reference}`,
+			path: options.sourcePath,
+			packageId: options.packageId,
+			profile: options.profile,
+		});
+		return undefined;
+	}
+
+	const resolvedPath = resolve(options.baseDir, options.reference);
+	if (!isWithinDir(options.packageDir, resolvedPath)) {
+		options.diagnostics.push({
+			type: "error",
+			code: options.invalidCode,
+			message: `Package ${options.packageId} ${options.referenceKind} escapes the package directory: ${options.reference}`,
+			path: options.sourcePath,
+			packageId: options.packageId,
+			profile: options.profile,
+		});
+		return undefined;
+	}
+
+	return resolvedPath;
+}
+
+function isWithinDir(parentDir: string, childPath: string): boolean {
+	const rel = relative(parentDir, childPath);
+	return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+}
+
+function overlayComponentMap(components: PackageResolvedComponent[]): {
+	componentMap: Map<string, PackageResolvedComponent>;
+	overrides: PackageComponentOverride[];
+} {
+	const componentMap = new Map<string, PackageResolvedComponent>();
+	const overrides: PackageComponentOverride[] = [];
+	for (const component of components) {
+		const replaced = componentMap.get(component.key);
+		if (replaced) {
+			overrides.push({ key: component.key, replaced, replacement: component });
+		}
+		componentMap.set(component.key, component);
+	}
+	return { componentMap, overrides };
+}
+
+function collectOverlayResources(components: PackageResolvedComponent[]): PackageOverlayResources {
+	const resources: PackageOverlayResources = {
+		skillPaths: [],
+		promptTemplatePaths: [],
+		themePaths: [],
+		systemPromptPaths: [],
+		appendSystemPromptPaths: [],
+		brandPaths: [],
+	};
+
+	for (const component of components) {
+		if (!component.path) continue;
+		const resource = {
+			packageId: component.packageId,
+			profile: component.profile,
+			name: component.name,
+			path: component.path,
+			sourcePath: component.sourcePath,
+			component,
+		};
+		switch (component.kind) {
+			case "skill":
+				resources.skillPaths.push(resource);
+				break;
+			case "prompt":
+			case "prompt-template":
+				resources.promptTemplatePaths.push(resource);
+				break;
+			case "theme":
+				resources.themePaths.push(resource);
+				break;
+			case "system-prompt":
+				resources.systemPromptPaths.push(resource);
+				break;
+			case "append-system-prompt":
+				resources.appendSystemPromptPaths.push(resource);
+				break;
+			case "brand":
+				resources.brandPaths.push(resource);
+				break;
+		}
+	}
+
+	return resources;
+}
+
+function componentKey(component: Pick<PackageComponentRef, "kind" | "name">): string {
+	return `${component.kind}:${component.name}`;
+}
+
+function asString(value: TomlValue | undefined): string | undefined {
+	return typeof value === "string" ? value : undefined;
+}
+
+function asBoolean(value: TomlValue | undefined): boolean | undefined {
+	return typeof value === "boolean" ? value : undefined;
+}
+
+function asStringArray(value: TomlValue | undefined): string[] {
+	if (typeof value === "string") return [value];
+	if (!Array.isArray(value)) return [];
+	return value.filter((item): item is string => typeof item === "string");
+}
+
+function isTomlTable(value: TomlValue | undefined): value is TomlTable {
+	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function unique(values: string[]): string[] {
+	return [...new Set(values.filter(Boolean))];
+}
+
+async function statIfExists(path: string): Promise<import("node:fs").Stats | undefined> {
+	try {
+		return await stat(path);
+	} catch {
+		return undefined;
+	}
+}
+
+function formatUnknownError(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
+}

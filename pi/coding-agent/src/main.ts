@@ -92,6 +92,13 @@ function reportDiagnostics(diagnostics: readonly AgentSessionRuntimeDiagnostic[]
 	}
 }
 
+function toRuntimeDiagnostic(diagnostic: { type: string; message: string; path?: string }): AgentSessionRuntimeDiagnostic {
+	return {
+		type: diagnostic.type === "error" ? "error" : "warning",
+		message: diagnostic.path ? `${diagnostic.message} (${diagnostic.path})` : diagnostic.message,
+	};
+}
+
 function isTruthyEnvFlag(value: string | undefined): boolean {
 	if (!value) return false;
 	return value === "1" || value.toLowerCase() === "true" || value.toLowerCase() === "yes";
@@ -652,6 +659,7 @@ export async function main(args: string[], options?: MainOptions) {
 				additionalSkillPaths: resolvedSkillPaths,
 				additionalPromptTemplatePaths: resolvedPromptTemplatePaths,
 				additionalThemePaths: resolvedThemePaths,
+				harnessPackages: parsed.harnessPackages,
 				noExtensions: parsed.noExtensions,
 				noSkills: parsed.noSkills,
 				noPromptTemplates: parsed.noPromptTemplates,
@@ -671,6 +679,7 @@ export async function main(args: string[], options?: MainOptions) {
 				type: "error" as const,
 				message: `Failed to load extension "${path}": ${error}`,
 			})),
+			...resourceLoader.getPackageTools().diagnostics.map(toRuntimeDiagnostic),
 		];
 
 		const modelPatterns = parsed.models ?? settingsManager.getEnabledModels();

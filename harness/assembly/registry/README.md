@@ -95,8 +95,9 @@ without registering every historical Magenta1 entry as an executable component.
 1. Parse `[[catalogs]]` from `harness.toml`
 2. Load each catalog TOML file
 3. Load and validate its JSON inventory
-4. Apply the integration map (`integrated`, `available`, `metadata-only`,
-   `external-boundary`, `deferred-domain-pack`)
+4. Apply the integration map (`integrated`, `available`,
+   `requires-migration`, `metadata-only`, `external-boundary`,
+   `deferred-domain-pack`)
 5. Return selector-ready records via `listHarnessSelectionItems()`
 
 ## Registration

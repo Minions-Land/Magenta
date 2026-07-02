@@ -1,0 +1,9 @@
+kind = "context"
+name = "workspace"
+description = "Workspace context provider migrated from Magenta1 general-harness."
+source = "magenta-native"
+origin = "magenta1-general-harness"
+origin_rel = "ported/adapted"
+impl = ["context/pi/context.ts"]
+targets = ["context://workspace", "context://project"]
+operations = ["read", "status"]
