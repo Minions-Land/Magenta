@@ -73,12 +73,41 @@ empty diagnostics). Added `system-prompt-resource-regression.test.ts` guard
 classified as capabilities. The pi `SystemPromptProvider` remains a legitimate
 Capability (`system-prompt:pi` builder) — the two faces coexist per §5.
 
-### Step D — §8 Magnet relocation  [TODO]
+### Step D — §8 Magnet relocation  [BLOCKED — design decision needed]
 Dissolve `BUILTIN_CAPABILITY_BUILDERS` / `DEFAULT_CAPABILITY_SOURCES` /
 `CAPABILITY_KINDS` central tables in `assembly/magnet/capability.ts`. Each source
 owns `<module>/<source>/magnet.ts`; package overlay discovers + constructs during
-selection. Replace with per-module descriptors (kind, sources, default source,
-primitive kind, node attributes).
+selection.
+
+**Build constraint found (verified 2026-07-03):** the central table only works
+because it uses LITERAL `import("...provider.ts")` specifiers, which tsc
+`rewriteRelativeImportExtensions` turns into `.js` for dist (confirmed in
+`dist/assembly/magnet/capability.js`). dist ships `.js` only. There are ZERO
+computed dynamic imports in the codebase. A discovery-driven `import(computed)`
+would NOT be extension-rewritten and would break in dist. So we cannot have both
+"no central static import list" AND "no computed dynamic imports".
+
+**Recommended approach (satisfies §8/§10.1 spirit within the constraint):**
+1. Each source owns `<module>/<source>/magnet.ts` exporting a
+   `CapabilitySourceMagnet` descriptor `{ kind, name?, source, primitive,
+   defaultSource?, hotSwappable?, build(context) }`, importing its provider via a
+   LITERAL sibling import (survives the build).
+2. Replace the *builder table with logic* by a DUMB aggregation barrel that
+   statically re-exports each source magnet (literal specifiers). No kind→source
+   selection logic lives there — that is the real "second registry" §10.1
+   forbids; a dumb collection is not.
+3. Derive `DEFAULT_CAPABILITY_SOURCES` / `CAPABILITY_KINDS` from the collected
+   descriptors' declared metadata instead of hand-maintained tables.
+4. Keep `createCapabilityMagnet` / `buildDefaultCapabilityHcp` public API stable
+   (consumers: agent-harness.ts:195, overlay) so this stays behavior-preserving.
+5. De-risk via pilot: convert `compaction` (simplest single-source capability)
+   first, prove build+full-suite+pi green, THEN fan out the other 9 builders.
+
+**Open interpretation for the user:** is the "dumb aggregation barrel" (a
+central static import list with no selection logic) an acceptable reading of
+"there is no central builder map"? The alternative — runtime computed imports —
+requires solving the extension problem (directory/package-main resolution or
+runtime .ts/.js detection) and is materially riskier. Recommend the barrel.
 
 ### Step E — §9 hotSwappable + §6 Tool Search  [TODO]
 Highest risk; new features.
@@ -96,3 +125,8 @@ Highest risk; new features.
 - 2026-07-03: Step B DONE (992681a) + Step C DONE (087a074). Resource primitive
   added to taxonomy; §5.1 locked. 236 tests, pi build green. Next: Step D
   (Magnet relocation / dissolve central builder table — highest structural risk).
+- 2026-07-03: Step D investigation surfaced a build constraint (literal-import
+  extension rewrite vs computed dynamic imports). Recorded recommended
+  barrel-based approach + pilot plan. Paused for user confirmation on the
+  "is a dumb aggregation barrel an acceptable reading of 'no central builder
+  map'" interpretation before executing the large refactor.
