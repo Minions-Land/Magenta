@@ -57,13 +57,21 @@ Mechanical rename, isolated commit, ZERO behavior change.
   address `hcp:registry` still use old vocab; revisit only in a dedicated
   behavioral change since `hcp:registry` is an address, not a type.
 
-### Step B — §5 Resource primitive  [TODO]
-Add `HcpMagnet.toResource()`. Register system-prompt + prompt-templates as
-Resources (data injected into context, referenced not called).
+### Step B — §5 Resource primitive  [DONE — commit 992681a]
+Added `HcpResource` binding + `ResourceMergeMode` (replace/append) to magnet.ts,
+`toResource?()` on the `HcpMagnet` interface, and a `ResourceMagnet` class in
+universal.ts (mirrors CapabilityMagnet; no toTool/toCapability). Extended the
+one-of invariant in package-overlay.ts to tool XOR capability XOR resource.
++5 tests (resource-magnet.test.ts). Existing path-based resource flow
+(PackageOverlayResources) left intact — this is the taxonomy addition.
 
-### Step C — §5.1 Lock in the system-prompt-as-Resource fix  [TODO]
-Confirm the regression is already closed; add a guard test asserting
-`system-prompt` is NOT in `CAPABILITY_KINDS` and is classified as a Resource.
+### Step C — §5.1 Lock in the system-prompt-as-Resource fix  [DONE — commit 087a074]
+Confirmed regression already closed: `system-prompt` is NOT in `CAPABILITY_KINDS`
+(overlay routes it to `resources.systemPromptPaths`; existing overlay test shows
+empty diagnostics). Added `system-prompt-resource-regression.test.ts` guard
+(+2 tests, 236 total) asserting system-prompt/append-system-prompt are never
+classified as capabilities. The pi `SystemPromptProvider` remains a legitimate
+Capability (`system-prompt:pi` builder) — the two faces coexist per §5.
 
 ### Step D — §8 Magnet relocation  [TODO]
 Dissolve `BUILTIN_CAPABILITY_BUILDERS` / `DEFAULT_CAPABILITY_SOURCES` /
@@ -85,3 +93,6 @@ Highest risk; new features.
   adding a `pi` PATH shim with auth injection.
 - 2026-07-03: Step A DONE (commit 81c4506). Naming migration complete +
   independently verified. Next: Step B (Resource primitive).
+- 2026-07-03: Step B DONE (992681a) + Step C DONE (087a074). Resource primitive
+  added to taxonomy; §5.1 locked. 236 tests, pi build green. Next: Step D
+  (Magnet relocation / dissolve central builder table — highest structural risk).
