@@ -51,6 +51,12 @@ path = "tools/lsp/lsp.toml"
 
 [[components]]
 kind = "tool"
+name = "todo"
+description = "Manage a session-scoped todo list with branching support."
+path = "tools/todo/todo.toml"
+
+[[components]]
+kind = "tool"
 name = "web-search"
 description = "Search the web using the Magenta process-tool source."
 path = "tools/web-search/web-search.toml"
@@ -115,6 +121,12 @@ kind = "skill"
 name = "skills"
 description = "Agent skills - user-invocable capabilities via /skill command."
 path = "skills/skills.toml"
+
+[[components]]
+kind = "extension"
+name = "extensions"
+description = "Bundled pi agent extensions loaded as built-in runtime capabilities."
+path = "extensions/extensions.toml"
 
 [[components]]
 kind = "system-prompt"

@@ -24,6 +24,7 @@ export {
 } from "./compaction/pi/utils.ts";
 export * from "./context/magenta/context.ts";
 export * from "./env/pi/nodejs.ts";
+export * from "./extensions/pi/extensions.ts";
 export * from "./hooks/magenta/hooks.ts";
 export * from "./loop/pi/agent-harness.ts";
 export * from "./messages/messages.ts";
@@ -45,6 +46,7 @@ export * from "./system-prompt/pi/descriptor.ts";
 export * from "./system-prompt/pi/system-prompt.ts";
 // Tools: pure-execution tool logic + the AgentTool Tool contract.
 export * from "./tools/index.ts";
+export * from "./tools/todo/pi/todo.ts";
 export * from "./types/types.ts";
 export * from "./utils/pi/shell-output.ts";
 export * from "./utils/pi/truncate.ts";
