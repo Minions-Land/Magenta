@@ -7,10 +7,6 @@ source = "pi"
 module = "extensions/pi/extensions.ts"
 
 [[bundled_extensions]]
-name = "local-credential-bridge"
-path = "pi/bundled/local-credential-bridge.ts"
-
-[[bundled_extensions]]
 name = "background-events"
 path = "pi/bundled/background-events/index.ts"
 tools = ["bg_shell", "sub_agent"]
