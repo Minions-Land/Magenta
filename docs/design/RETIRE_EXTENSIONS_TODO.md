@@ -1,7 +1,7 @@
 # Extension Migration Status
 
 **Last Updated:** 2026-07-03  
-**Status:** Complete: 7/7 handled (6 migrated/retired, 1 kept as stable extension)
+**Status:** Complete: 7/7 handled (7 migrated/retired)
 
 ## Completed
 
@@ -29,15 +29,15 @@
 **Status:** Done  
 **Outcome:** `/side`, `/btw`, `/s`, the side-chat overlay, and tool-progress context moved into Pi core/TUI.
 
-### 7. ssh -> Stable optional extension
-**Status:** Kept  
-**Outcome:** `ssh.ts` remains the only bundled extension. It is documented as an advanced opt-in remote execution mode.
+### 7. ssh -> `harness/tools/ssh/`
+**Status:** Done  
+**Outcome:** SSH remote workspace operations moved to `harness/tools/ssh/`; Pi keeps the `--ssh user@host[:path]` user experience.
 
 ## Final Architecture
 
 - Harness owns reusable execution/protocol capabilities such as HCP tools.
 - Pi owns TUI, session, Agent-loop, and user-experience features.
-- Bundled extension registry now only contains `ssh`.
+- Bundled extension registry has been removed.
 
 ## Verification
 

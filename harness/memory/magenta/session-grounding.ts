@@ -1,6 +1,13 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
-import type { HcpCall, HcpTarget, HcpTargetDescription } from "../../assembly/hcp/pi/hcp.ts";
+import type { HcpCall, HcpTarget, HcpTargetDescription } from "../../assembly/hcp/hcp.ts";
+import type {
+	MemoryProvider,
+	MemoryReadResult,
+	MemoryRetainResult,
+	MemoryRecallResult,
+	MemoryReflectResult,
+} from "../contract.ts";
 
 export interface SessionGroundingMemoryEntry {
 	id: string;
@@ -18,12 +25,30 @@ export interface SessionGroundingMemoryOptions {
 	now?: () => number;
 }
 
-export interface SessionGroundingReadResult {
+export interface SessionGroundingReadResult extends MemoryReadResult {
 	name: "session-grounding";
 	target: "memory://session-grounding";
-	description: string;
-	content: string;
 	entries: SessionGroundingMemoryEntry[];
+}
+
+export interface SessionGroundingRetainResult extends MemoryRetainResult {
+	target: "memory://session-grounding";
+	op: "retain";
+	scope: string;
+	tags: string[];
+	storePath: string;
+}
+
+export interface SessionGroundingRecallResult extends MemoryRecallResult {
+	target: "memory://session-grounding";
+	op: "recall";
+	matches: Array<SessionGroundingMemoryEntry & { score: number }>;
+}
+
+export interface SessionGroundingReflectResult extends MemoryReflectResult {
+	target: "memory://session-grounding";
+	op: "reflect";
+	matches: Array<SessionGroundingMemoryEntry & { score: number }>;
 }
 
 const DEFAULT_DESCRIPTION = "Domain-free base memory for preserving user-driven constraints during harness assembly.";
@@ -64,7 +89,7 @@ function scoreEntry(entry: SessionGroundingMemoryEntry, query: string): number {
 	return terms.filter((term) => haystack.includes(term)).length;
 }
 
-export class SessionGroundingMemoryProvider {
+export class SessionGroundingMemoryProvider implements MemoryProvider {
 	private readonly workspaceRoot: string;
 	private readonly content: string;
 	private readonly description: string;
@@ -88,17 +113,19 @@ export class SessionGroundingMemoryProvider {
 		};
 	}
 
-	describe(): Record<string, unknown> {
+	describe(): { name: string; description?: string; metadata?: Record<string, unknown> } {
 		return {
 			name: "session-grounding",
-			target: "memory://session-grounding",
 			description: this.description,
-			operations: ["read", "retain", "recall", "reflect"],
-			storePath: this.storePath,
-			workspaceRoot: this.workspaceRoot,
-			provenance: {
-				origin: "magenta",
-				source: "general-harness/components/providers/memories/session-grounding/MEMORY.md",
+			metadata: {
+				target: "memory://session-grounding",
+				operations: ["read", "retain", "recall", "reflect"],
+				storePath: this.storePath,
+				workspaceRoot: this.workspaceRoot,
+				provenance: {
+					origin: "magenta",
+					source: "general-harness/components/providers/memories/session-grounding/MEMORY.md",
+				},
 			},
 		};
 	}
@@ -114,7 +141,7 @@ export class SessionGroundingMemoryProvider {
 		};
 	}
 
-	async retain(input: unknown): Promise<Record<string, unknown>> {
+	async retain(input: unknown): Promise<SessionGroundingRetainResult> {
 		const text = (readString(input, "text") ?? readString(input, "fact") ?? readString(input, "content") ?? "").trim();
 		if (!text) throw new Error("memory://session-grounding retain requires text");
 		await this.loadStore();
@@ -137,7 +164,7 @@ export class SessionGroundingMemoryProvider {
 		};
 	}
 
-	async recall(input: unknown): Promise<Record<string, unknown>> {
+	async recall(input: unknown): Promise<SessionGroundingRecallResult> {
 		await this.loadStore();
 		const query = readString(input, "query") ?? readString(input, "q") ?? "";
 		const limit = Math.max(1, Math.min(100, Number(isRecord(input) ? input.limit : undefined) || 10));
@@ -155,7 +182,7 @@ export class SessionGroundingMemoryProvider {
 		};
 	}
 
-	async reflect(input: unknown): Promise<Record<string, unknown>> {
+	async reflect(input: unknown): Promise<SessionGroundingReflectResult> {
 		const recalled = await this.recall(input);
 		const matches = Array.isArray(recalled.matches) ? recalled.matches : [];
 		return {

@@ -2,7 +2,7 @@
 
 **Status:** Complete as of 2026-07-03.
 
-The roadmap is closed. The bundled Pi extension retirement work ended with six features migrated or removed and one stable optional extension retained.
+The roadmap is closed. The bundled Pi extension retirement work ended with all seven features migrated or removed.
 
 ## Outcome
 
@@ -12,7 +12,7 @@ The roadmap is closed. The bundled Pi extension retirement work ended with six f
 4. `ui-optimize` moved to Pi core/TUI.
 5. `background-events` moved to Pi core/TUI.
 6. `side-chat` moved to Pi core/TUI.
-7. `ssh` remains a stable optional extension.
+7. `ssh` moved to `harness/tools/ssh/` with Pi `--ssh` integration.
 
 ## Final Boundary
 

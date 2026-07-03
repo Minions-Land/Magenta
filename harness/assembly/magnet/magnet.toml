@@ -1,4 +1,3 @@
 kind = "assembly"
 name = "magnet"
 description = "Connectors that wrap implementations as AgentTools or HCP targets"
-source = "pi"

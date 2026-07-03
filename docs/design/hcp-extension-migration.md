@@ -1,6 +1,6 @@
 # HCP/Magnet 完全取代 PI Extension 的设计方案
 
-> Archived note (2026-07-03): this was an early design proposal. The final migration kept UX/session/TUI features in `pi/`, moved only reusable tool capability such as `todo` into Harness, and kept `ssh.ts` as the sole stable optional bundled extension. See `extension-migration-progress.md` and `RETIRE_EXTENSIONS_TODO.md` for the current state.
+> Archived note (2026-07-03): this was an early design proposal. The final migration kept UX/session/TUI features in `pi/`, moved reusable execution capabilities such as `todo` and `ssh` into Harness tools, and removed the bundled extension registry. See `extension-migration-progress.md` and `RETIRE_EXTENSIONS_TODO.md` for the current state.
 
 ## 目标
 

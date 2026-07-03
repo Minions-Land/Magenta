@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getHarnessRegistryPath, listHarnessSelectionItems, loadRegistry } from "../assembly/registry/pi/registry.ts";
+import { getHarnessRegistryPath, listHarnessSelectionItems, loadRegistry } from "../assembly/registry/registry.ts";
 import { filterHarnessCatalogEntries, summarizeHarnessCatalogEntries } from "../catalog/pi/catalog.ts";
 
 describe("harness registry", () => {

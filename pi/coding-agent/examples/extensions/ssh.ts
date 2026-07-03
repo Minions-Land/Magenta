@@ -2,11 +2,12 @@
  * SSH Remote Execution Example
  *
  * Demonstrates delegating tool operations to a remote machine via SSH.
- * When --ssh is provided, read/write/edit/bash run on the remote.
+ * Pi has a built-in --ssh mode. This example uses --example-ssh to avoid
+ * conflicting with the built-in flag while demonstrating the extension APIs.
  *
  * Usage:
- *   pi -e ./ssh.ts --ssh user@host
- *   pi -e ./ssh.ts --ssh user@host:/remote/path
+ *   pi -e ./ssh.ts --example-ssh user@host
+ *   pi -e ./ssh.ts --example-ssh user@host:/remote/path
  *
  * Requirements:
  *   - SSH key-based auth (no password prompts)
@@ -112,7 +113,7 @@ function createRemoteBashOps(remote: string, remoteCwd: string, localCwd: string
 }
 
 export default function (pi: ExtensionAPI) {
-	pi.registerFlag("ssh", { description: "SSH remote: user@host or user@host:/path", type: "string" });
+	pi.registerFlag("example-ssh", { description: "Example SSH remote: user@host or user@host:/path", type: "string" });
 
 	const localCwd = process.cwd();
 	const localRead = createReadTool(localCwd);
@@ -183,7 +184,7 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("session_start", async (_event, ctx) => {
 		// Resolve SSH config now that CLI flags are available
-		const arg = pi.getFlag("ssh") as string | undefined;
+		const arg = pi.getFlag("example-ssh") as string | undefined;
 		if (arg) {
 			if (arg.includes(":")) {
 				const [remote, path] = arg.split(":");

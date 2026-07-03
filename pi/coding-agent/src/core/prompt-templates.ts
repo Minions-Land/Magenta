@@ -11,8 +11,7 @@
  * required `filePath`; the harness loader already populates `filePath` and `argumentHint`, so this
  * adapter only injects `sourceInfo` via the `mapPromptTemplate` hook (the Magnet seam).
  */
-import type { PromptTemplate as HarnessPromptTemplate } from "@magenta/harness";
-import { loadSourcedPromptTemplates, NodeExecutionEnv } from "@magenta/harness";
+import { loadSourcedPromptTemplates, NodeExecutionEnv, type PromptTemplate as HarnessPromptTemplate } from "@magenta/harness";
 import { join, resolve, sep } from "path";
 import { CONFIG_DIR_NAME } from "../config.ts";
 import { resolvePath } from "../utils/paths.ts";

@@ -2,7 +2,7 @@
 
 **Status as of 2026-07-03:** Complete.
 
-The original bundled Pi extension set has been retired from the default extension architecture. User-facing behavior is preserved; the code ownership changed so Pi UX/session features live in Pi, reusable tools live in Harness, and optional remote execution remains an extension.
+The original bundled Pi extension set has been retired from the default extension architecture. User-facing behavior is preserved; the code ownership changed so Pi UX/session features live in Pi and reusable execution capabilities live in Harness.
 
 ## Final Status
 
@@ -14,7 +14,7 @@ The original bundled Pi extension set has been retired from the default extensio
 | `ui-optimize` | Migrated | `pi/coding-agent` core/editor and `pi/tui` Markdown/activity rendering |
 | `background-events` | Migrated | `pi/coding-agent/src/core/background-events.ts`, `core/tools/bg-shell.ts`, `core/tools/sub-agent.ts`, interactive overlay components |
 | `side-chat` | Migrated | `pi/coding-agent/src/core/side-chat.ts`, `modes/interactive/components/side-chat-overlay.ts` |
-| `ssh` | Kept | `harness/extensions/pi/bundled/ssh.ts` |
+| `ssh` | Migrated | `harness/tools/ssh/` with Pi `--ssh` integration |
 
 ## Architecture Decision
 
@@ -22,7 +22,7 @@ The migration avoids adding Harness abstractions for features that are fundament
 
 - `bg_shell`, `sub_agent`, `/events`, Side Chat, image tokens, Markdown rendering, command aliases, and tool grouping are Pi Agent-loop/TUI concerns.
 - `todo` is a reusable tool and belongs in Harness.
-- `ssh` is advanced, setup-dependent, and opt-in, so it remains a stable extension.
+- `ssh` is an important remote workspace backend and belongs with Harness tool operations; Pi owns the `--ssh` user experience.
 
 ## Testing Evidence
 
@@ -39,6 +39,6 @@ Focused migration coverage includes image tokens, Markdown rendering, `bg_shell`
 
 ## Remaining Maintenance
 
-- Keep `ssh.ts` documented and maintained as a stable optional extension.
+- Keep `harness/tools/ssh` documented and maintained as the `--ssh` remote workspace backend.
 - Prefer Pi core/TUI for future user-facing Agent-loop features.
 - Prefer Harness/HCP only for reusable agent capabilities that are not Pi-specific UI/session behavior.

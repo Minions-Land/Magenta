@@ -1,23 +1,9 @@
-import type { HcpCall, HcpTarget, HcpTargetDescription } from "../../assembly/hcp/pi/hcp.ts";
+import type { HcpCall, HcpTarget, HcpTargetDescription } from "../../assembly/hcp/hcp.ts";
+import type { HookDescriptor, HookDiscoverResult, HookProviderContract, HookResult } from "../contract.ts";
 import { decideApproval } from "../../policy/magenta/approval.ts";
+import type { ShellPolicyClassification } from "../../policy/contract.ts";
 import { classifyShellCommand } from "../../policy/magenta/shell-policy.ts";
 import { selectSandboxProfile } from "../../sandbox/magenta/sandbox.ts";
-
-export interface HookDescriptor {
-	name: string;
-	target: string;
-	path?: string;
-	description: string;
-}
-
-export interface HookResult {
-	hook: string;
-	status: "ok" | "no_op";
-	return_mode?: string;
-	actions?: unknown[];
-	data?: unknown;
-	reason?: string;
-}
 
 const LIFECYCLE_HOOKS = ["init", "pre-turn", "pre-llm", "post-llm", "pre-tool", "post-tool", "compact", "workflow"];
 
@@ -65,7 +51,7 @@ function toolInput(input: unknown): Record<string, unknown> {
 	return isRecord(input) && isRecord(input.tool) ? input.tool : {};
 }
 
-function shellPolicyForPreTool(input: unknown): Record<string, unknown> | undefined {
+function shellPolicyForPreTool(input: unknown): ShellPolicyClassification | undefined {
 	const tool = toolInput(input);
 	const name = typeof tool.name === "string" ? tool.name : "";
 	const tags = Array.isArray(tool.tags) ? tool.tags.filter((item): item is string => typeof item === "string") : [];
@@ -212,7 +198,7 @@ export function runLifecycleHook(name: string, input: unknown): HookResult {
 	};
 }
 
-export class HookProvider {
+export class HookProvider implements HookProviderContract {
 	private readonly hooks = new Map<string, HookDescriptor>();
 
 	constructor(hooks: readonly HookDescriptor[] = HOOKS) {
@@ -221,13 +207,24 @@ export class HookProvider {
 		}
 	}
 
-	discover(): Record<string, unknown> {
+	discover(): HookDiscoverResult {
 		const hooks = [...this.hooks.values()];
 		return {
 			provider: "hooks",
 			targets: hooks.map((hook) => hook.target),
 			lifecycle_targets: LIFECYCLE_HOOKS.map((name) => `hook://${name}`),
 			hooks,
+		};
+	}
+
+	run(name: string, input: unknown): HookResult | unknown {
+		const hook = this.describeHook(name);
+		if (hook.name === "sandbox-select") return selectSandboxProfile(input);
+		if (LIFECYCLE_HOOKS.includes(hook.name)) return runLifecycleHook(hook.name, input);
+		return {
+			hook: hook.name,
+			status: "no_op",
+			reason: "declarative hook has no runtime implementation yet",
 		};
 	}
 
@@ -269,13 +266,7 @@ export class HookProvider {
 						return hook;
 					case "run":
 					case "call":
-						if (hook.name === "sandbox-select") return selectSandboxProfile(call.input);
-						if (LIFECYCLE_HOOKS.includes(hook.name)) return runLifecycleHook(hook.name, call.input);
-						return {
-							hook: hook.name,
-							status: "no_op",
-							reason: "declarative hook has no runtime implementation yet",
-						};
+						return this.run(hook.name, call.input);
 					default:
 						throw new Error(`unsupported hook operation ${call.op}`);
 				}

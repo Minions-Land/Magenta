@@ -4,7 +4,7 @@ description = "Approval and shell policy providers migrated from Magenta1 genera
 source = "magenta"
 origin = "magenta1-general-harness"
 origin_rel = "ported/adapted"
-impl = ["policy/magenta/approval.ts", "policy/magenta/shell-policy.ts"]
+impl = ["policy/magenta/policy.ts", "policy/magenta/approval.ts", "policy/magenta/shell-policy.ts"]
 targets = ["approval://policy", "shell://policy"]
 
 [[policies]]

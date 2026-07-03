@@ -45,3 +45,22 @@ export { TrustSelectorComponent } from "./trust-selector.ts";
 export { UserMessageComponent } from "./user-message.ts";
 export { UserMessageSelectorComponent } from "./user-message-selector.ts";
 export { truncateToVisualLines, type VisualTruncateResult } from "./visual-truncate.ts";
+
+// Rich content components
+export {
+	createRichContentReference,
+	detectRichContentType,
+	ExpandableRichContent,
+	RichContentLink,
+	type RichContentMetadata,
+	type RichContentReference,
+	type RichContentType,
+} from "./rich-content-reference.ts";
+export {
+	CodeViewer,
+	createRichContentViewer,
+	FileViewer,
+	getViewerSize,
+	ImageViewer,
+	MarkdownViewer,
+} from "./rich-content-viewer.ts";

@@ -1,4 +1,3 @@
 kind = "assembly"
 name = "registry"
 description = "TOML registry loader and component discovery"
-source = "pi"

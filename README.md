@@ -73,9 +73,7 @@ Former bundled Pi extension behavior has been moved to the layer that owns it:
 
 ### Harness Tools
 - **todo** - TODO management via `harness/tools/todo/`
-
-### Stable Optional Extension
-- **ssh** - Opt-in SSH integration in `harness/extensions/pi/bundled/ssh.ts`
+- **ssh** - SSH-backed remote workspace mode via `harness/tools/ssh/`
 
 ### Harness Skills
 - **paper-analysis** - Academic paper processing

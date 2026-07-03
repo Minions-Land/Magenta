@@ -1,0 +1,41 @@
+name = "show"
+description = """
+Display content (images, PDFs, HTML, Markdown, code, etc.) in a floating overlay.
+Accepts a URL or file path, automatically detects content type from extension.
+Supports showing multiple items at once - users can navigate between them in the overlay.
+
+Use this tool to display visual content that users can click to view.
+"""
+
+[input]
+type = "object"
+required = ["url"]
+
+[input.properties.url]
+type = ["string", "array"]
+description = "URL or file path (or array of URLs/paths) to display. Content type is auto-detected from file extension."
+items = { type = "string" }
+
+[output]
+type = "object"
+
+[output.properties.success]
+type = "boolean"
+description = "Whether the content reference(s) were created successfully"
+
+[output.properties.message]
+type = "string"
+description = "Status message"
+
+[output.properties.items]
+type = "array"
+description = "Array of content items to display"
+
+[examples]
+[[examples]]
+description = "Show a single image"
+input = { url = "./output/architecture.png" }
+
+[[examples]]
+description = "Show multiple files at once"
+input = { url = ["./diagram.png", "./design.md", "./code.py"] }

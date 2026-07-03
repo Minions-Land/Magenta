@@ -735,13 +735,13 @@ export const OPENROUTER_MODELS = {
 		thinkingLevelMap: {"minimal":null,"low":null,"medium":null,"high":"high","xhigh":"xhigh"},
 		input: ["text"],
 		cost: {
-			input: 0.089,
+			input: 0.09,
 			output: 0.18,
 			cacheRead: 0.018,
 			cacheWrite: 0,
 		},
 		contextWindow: 1048576,
-		maxTokens: 4096,
+		maxTokens: 16384,
 	} satisfies Model<"openai-completions">,
 	"deepseek/deepseek-v4-pro": {
 		id: "deepseek/deepseek-v4-pro",
@@ -4446,13 +4446,13 @@ export const OPENROUTER_MODELS = {
 		reasoning: true,
 		input: ["text"],
 		cost: {
-			input: 0.975,
-			output: 4.3,
-			cacheRead: 0,
+			input: 0.966,
+			output: 3.036,
+			cacheRead: 0.1794,
 			cacheWrite: 0,
 		},
 		contextWindow: 202752,
-		maxTokens: 4096,
+		maxTokens: 128000,
 	} satisfies Model<"openai-completions">,
 	"z-ai/glm-5.2": {
 		id: "z-ai/glm-5.2",

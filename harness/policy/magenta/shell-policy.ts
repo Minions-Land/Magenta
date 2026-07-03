@@ -1,6 +1,11 @@
-import type { HcpCall, HcpTarget, HcpTargetDescription } from "../../assembly/hcp/pi/hcp.ts";
-
-const SHELL_POLICY_TARGET = "shell://policy";
+import type { HcpCall, HcpTarget, HcpTargetDescription } from "../../assembly/hcp/hcp.ts";
+import {
+	SHELL_POLICY_TARGET,
+	type ShellPolicyClassification,
+	type ShellPolicyFinding,
+	type ShellPolicyProviderContract,
+	type ShellPolicyStatus,
+} from "../contract.ts";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -18,7 +23,7 @@ function finding(
 	severity: string,
 	message: string,
 	suggestedTool?: string,
-): Record<string, unknown> {
+): ShellPolicyFinding {
 	return {
 		code,
 		severity,
@@ -56,7 +61,7 @@ function commandHasInplaceEdit(command: string): boolean {
 	);
 }
 
-export function shellPolicyStatus(): Record<string, unknown> {
+export function shellPolicyStatus(): ShellPolicyStatus {
 	return {
 		target: SHELL_POLICY_TARGET,
 		rules: [
@@ -74,10 +79,10 @@ export function shellPolicyStatus(): Record<string, unknown> {
 	};
 }
 
-export function classifyShellCommand(input: unknown): Record<string, unknown> {
+export function classifyShellCommand(input: unknown): ShellPolicyClassification {
 	const command = commandFromInput(input);
 	const normalized = normalizeShellCommand(command);
-	const findings: Record<string, unknown>[] = [];
+	const findings: ShellPolicyFinding[] = [];
 	const suggestedTools: string[] = [];
 	let mutating = false;
 
@@ -124,7 +129,15 @@ export function classifyShellCommand(input: unknown): Record<string, unknown> {
 	};
 }
 
-export class ShellPolicyProvider {
+export class ShellPolicyProvider implements ShellPolicyProviderContract {
+	classify(input: unknown): ShellPolicyClassification {
+		return classifyShellCommand(input);
+	}
+
+	status(): ShellPolicyStatus {
+		return shellPolicyStatus();
+	}
+
 	describe(): HcpTargetDescription {
 		return {
 			target: SHELL_POLICY_TARGET,
@@ -164,9 +177,9 @@ export class ShellPolicyProvider {
 						};
 					case "classify":
 					case "call":
-						return classifyShellCommand(call.input);
+						return this.classify(call.input);
 					case "status":
-						return shellPolicyStatus();
+						return this.status();
 					default:
 						throw new Error(`unsupported shell policy operation ${call.op}`);
 				}

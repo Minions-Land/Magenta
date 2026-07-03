@@ -7,5 +7,5 @@
     "declarationMap": true
   },
   "include": ["./**/*"],
-  "exclude": ["dist", "node_modules", "test", "vitest.config.ts", "**/*.test.ts", "extensions/pi/bundled/**"]
+  "exclude": ["dist", "node_modules", "test", "vitest.config.ts", "**/*.test.ts"]
 }

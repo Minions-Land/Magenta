@@ -1,58 +1,15 @@
 import { readFile } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
-import type { HcpCall, HcpTarget, HcpTargetDescription } from "../../assembly/hcp/pi/hcp.ts";
-import { parseToml, type TomlTable } from "../../assembly/registry/pi/registry.ts";
-
-export type SandboxNetworkPolicy = "deny" | "allowlist" | "allow" | string;
-
-export interface SandboxProfile {
-	kind: "sandbox" | string;
-	name: string;
-	description: string;
-	fs_read: string[];
-	fs_write: string[];
-	network: SandboxNetworkPolicy;
-	network_allowlist: string[];
-	max_memory_mb: number;
-	max_wall_seconds: number;
-	env_allowlist: string[];
-	backend: string;
-	source?: string;
-	origin?: string;
-	origin_rel?: string;
-	path?: string;
-}
-
-export interface SandboxSelectionTool {
-	read_only?: boolean;
-	destructive?: boolean;
-	tags?: string[];
-	operation?: string;
-	name?: string;
-}
-
-export interface SandboxSelection {
-	profile: string;
-	reason: {
-		read_only: boolean;
-		destructive: boolean;
-		trusted: boolean;
-		network_read: boolean;
-		workspace_write: boolean;
-	};
-}
-
-export interface SandboxDiscoverResult {
-	provider: "sandbox";
-	targets: string[];
-	profiles: SandboxProfile[];
-	selectionTarget: "hook://sandbox-select";
-	enforcement: "not-ported";
-}
-
-export interface SandboxProviderOptions {
-	profiles: SandboxProfile[];
-}
+import type { HcpCall, HcpTarget, HcpTargetDescription } from "../../assembly/hcp/hcp.ts";
+import { parseToml, type TomlTable } from "../../assembly/registry/registry.ts";
+import type {
+	SandboxDiscoverResult,
+	SandboxProfile,
+	SandboxProviderContract,
+	SandboxProviderOptions,
+	SandboxSelection,
+	SandboxSelectionTool,
+} from "../contract.ts";
 
 function asString(value: unknown): string | undefined {
 	return typeof value === "string" ? value : undefined;
@@ -175,7 +132,7 @@ export async function loadSandboxProviderFromPack(path: string): Promise<Sandbox
 	});
 }
 
-export class SandboxProvider {
+export class SandboxProvider implements SandboxProviderContract {
 	private readonly profiles = new Map<string, SandboxProfile>();
 
 	constructor(options: SandboxProviderOptions) {

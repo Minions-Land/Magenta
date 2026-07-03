@@ -49,6 +49,7 @@ export interface Args {
 	offline?: boolean;
 	verbose?: boolean;
 	projectTrustOverride?: boolean;
+	ssh?: string;
 	messages: string[];
 	fileArgs: string[];
 	/** Unknown flags (potentially extension flags) - map of flag name to value */
@@ -190,6 +191,12 @@ export function parseArgs(args: string[]): Args {
 			result.projectTrustOverride = false;
 		} else if (arg === "--offline") {
 			result.offline = true;
+		} else if (arg === "--ssh") {
+			if (i + 1 < args.length) {
+				result.ssh = args[++i];
+			} else {
+				result.diagnostics.push({ type: "error", message: "--ssh requires a value" });
+			}
 		} else if (arg.startsWith("@")) {
 			result.fileArgs.push(arg.slice(1)); // Remove @ prefix
 		} else if (arg.startsWith("--")) {
@@ -283,6 +290,7 @@ ${chalk.bold("Options:")}
   --approve, -a                  Trust project-local files for this run
   --no-approve, -na              Ignore project-local files for this run
   --offline                      Disable startup network operations (same as PI_OFFLINE=1)
+  --ssh <user@host[:path]>       Run read/write/edit/bash against a remote workspace over SSH
   --help, -h                     Show this help
   --version, -v                  Show version number
 
@@ -333,6 +341,9 @@ ${chalk.bold("Examples:")}
 
   # Read-only mode (no file modifications possible)
   ${APP_NAME} --tools read,grep,find,ls -p "Review the code in src/"
+
+  # Work against a remote checkout over SSH
+  ${APP_NAME} --ssh user@host:/remote/project
 
   # Disable one tool while keeping the rest available
   ${APP_NAME} --exclude-tools ask_question

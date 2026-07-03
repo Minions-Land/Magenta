@@ -1,27 +1,13 @@
 import { readFile } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
-import { parseToml, type TomlTable, type TomlValue } from "../../assembly/registry/pi/registry.ts";
+import { parseToml, type TomlTable, type TomlValue } from "../../assembly/registry/registry.ts";
+import type { SystemPromptDescriptor, SystemPromptDescriptorDiagnostic } from "../contract.ts";
 
-export type SystemPromptDescriptorDiagnosticCode =
-	| "system_prompt_descriptor_read_failed"
-	| "system_prompt_descriptor_invalid";
-
-export interface SystemPromptDescriptorDiagnostic {
-	type: "warning" | "error";
-	code: SystemPromptDescriptorDiagnosticCode;
-	message: string;
-	path: string;
-}
-
-export interface SystemPromptDescriptor {
-	kind: "system-prompt" | "append-system-prompt";
-	name: string;
-	description?: string;
-	source?: string;
-	contentPath?: string;
-	descriptorPath: string;
-	raw: TomlTable;
-}
+export type {
+	SystemPromptDescriptor,
+	SystemPromptDescriptorDiagnostic,
+	SystemPromptDescriptorDiagnosticCode,
+} from "../contract.ts";
 
 export async function loadSystemPromptDescriptor(
 	descriptorPath: string,

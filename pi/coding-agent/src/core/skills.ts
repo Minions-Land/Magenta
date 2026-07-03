@@ -8,8 +8,7 @@
  * harness (formatSkillsForSystemPrompt); pi injects its own intro wording and a
  * leading blank-line prefix (the block is appended inline to the system prompt).
  */
-import type { Skill as BaseSkill } from "@magenta/harness";
-import { formatSkillsForSystemPrompt } from "@magenta/harness";
+import { formatSkillsForSystemPrompt, type Skill as BaseSkill } from "@magenta/harness";
 import type { SourceInfo } from "./source-info.ts";
 
 /** Pi's Skill type extends harness Skill with pi-specific fields. */

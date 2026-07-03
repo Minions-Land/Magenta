@@ -57,6 +57,12 @@ path = "tools/todo/todo.toml"
 
 [[components]]
 kind = "tool"
+name = "ssh"
+description = "SSH-backed remote workspace operations for read, write, edit, and bash."
+path = "tools/ssh/ssh.toml"
+
+[[components]]
+kind = "tool"
 name = "web-search"
 description = "Search the web using the Magenta process-tool source."
 path = "tools/web-search/web-search.toml"
@@ -121,12 +127,6 @@ kind = "skill"
 name = "skills"
 description = "Agent skills - user-invocable capabilities via /skill command."
 path = "skills/skills.toml"
-
-[[components]]
-kind = "extension"
-name = "extensions"
-description = "Bundled pi agent extensions loaded as built-in runtime capabilities."
-path = "extensions/extensions.toml"
 
 [[components]]
 kind = "system-prompt"

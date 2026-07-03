@@ -1,6 +1,6 @@
 # HCP/Magnet 取代 PI Extension - 执行摘要
 
-> Archived note (2026-07-03): this summary predates the final ownership decision. Current state: Pi owns Agent-loop, session, slash command, overlay, and TUI UX features; Harness owns reusable tools/protocol capabilities; `ssh.ts` remains the only bundled optional extension. See `extension-migration-progress.md` for the final result.
+> Archived note (2026-07-03): this summary predates the final ownership decision. Current state: Pi owns Agent-loop, session, slash command, overlay, and TUI UX features; Harness owns reusable tools/protocol capabilities including SSH remote workspace operations; the bundled extension registry has been removed. See `extension-migration-progress.md` for the final result.
 
 ## 背景
 

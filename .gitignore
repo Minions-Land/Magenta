@@ -1,6 +1,11 @@
 node_modules/
 dist/
 *.log
+# Stray compiled artifacts emitted outside dist/ (source dirs must stay .ts-only)
+harness/**/*.js
+harness/**/*.js.map
+harness/**/*.d.ts
+harness/**/*.d.ts.map
 .DS_Store
 *.tsbuildinfo
 __pycache__/

@@ -2,6 +2,7 @@ kind = "runtime"
 name = "script-runtimes"
 description = "Shell/Python/Node/R/Julia runtime wrappers migrated from Magenta1 general-harness."
 source = "magenta"
+bundles = ["sandbox:magenta", "runtime:process:magenta"]
 origin = "magenta1-general-harness"
 origin_rel = "ported/adapted"
 impl = ["runtime/magenta/script-runtime.ts", "runtime/magenta/process-runtime.ts"]

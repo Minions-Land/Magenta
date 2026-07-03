@@ -1,6 +1,7 @@
 import type { AgentEvent, AgentMessage, AgentTool, QueueMode, ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { ImageContent, Model, Models, SimpleStreamOptions, TextContent, Transport } from "@earendil-works/pi-ai";
-import type { CompactionPreparation } from "../compaction/pi/compaction.ts";
+import type { CompactionPreparation, CompactionProvider } from "../compaction/contract.ts";
+import type { HcpRegistry } from "../assembly/hcp/hcp.ts";
 import type { Session } from "../session/pi/session.ts";
 
 /** Result of a fallible operation. Expected failures are returned as `ok: false` instead of thrown. */
@@ -80,6 +81,22 @@ export interface AgentHarnessResources<
 	promptTemplates?: TPromptTemplate[];
 	/** Skills available to the model and explicit skill invocation. */
 	skills?: TSkill[];
+	/**
+	 * Source-selected compaction capability. Injected by the assembly layer so
+	 * the loop uses the selected source instead of a static import. When absent,
+	 * the harness resolves `"compaction"` by name from {@link hcp}, and if that
+	 * too is absent, from the assembly layer's built-in default capability HCP —
+	 * so the consumer never names a source.
+	 */
+	compaction?: CompactionProvider;
+	/**
+	 * The capability HCP the harness resolves non-tool capabilities against by
+	 * name (e.g. `"compaction"`). Populated by the assembly layer from the package
+	 * overlay. This is the setup-time resolver; the resolved instance is invoked
+	 * directly on the runtime hot path, so HCP stays off it and stays invisible to
+	 * the LLM's tool-call path.
+	 */
+	hcp?: HcpRegistry;
 }
 
 /** Curated provider request options owned by the harness and snapshotted per turn. */
@@ -806,3 +823,4 @@ export interface AgentHarnessOptions<
 }
 
 export type { AgentHarness } from "../loop/pi/agent-harness.ts";
+export type { CompactionProvider } from "../compaction/contract.ts";

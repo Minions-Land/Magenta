@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { HcpRegistry } from "../assembly/hcp/pi/hcp.ts";
-import { getHarnessRegistryPath, loadRegistry } from "../assembly/registry/pi/registry.ts";
+import { HcpRegistry } from "../assembly/hcp/hcp.ts";
+import { getHarnessRegistryPath, loadRegistry } from "../assembly/registry/registry.ts";
 import { ApprovalPolicyProvider, decideApproval } from "../policy/magenta/approval.ts";
 import { ShellPolicyProvider, classifyShellCommand } from "../policy/magenta/shell-policy.ts";
 

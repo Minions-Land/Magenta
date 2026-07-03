@@ -106,6 +106,16 @@ export class AssistantMessageComponent extends Container {
 	}
 
 	/**
+	 * Instantly display all remaining content (skip animation).
+	 */
+	finishAnimation(): void {
+		for (let i = 0; i < this.targetTexts.length; i++) {
+			this.displayedTexts[i] = this.targetTexts[i] || "";
+		}
+		this.renderContent();
+	}
+
+	/**
 	 * Advance the character-by-character animation.
 	 * Returns true if there's still more content to display.
 	 */

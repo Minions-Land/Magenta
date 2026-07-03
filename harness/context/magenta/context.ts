@@ -1,6 +1,7 @@
 import { readFile, realpath, stat } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
-import type { HcpCall, HcpTarget, HcpTargetDescription } from "../../assembly/hcp/pi/hcp.ts";
+import type { HcpCall, HcpTarget, HcpTargetDescription } from "../../assembly/hcp/hcp.ts";
+import type { ContextProvider as IContextProvider } from "../contract.ts";
 
 const CONTEXT_TARGETS = ["context://workspace", "context://project"] as const;
 const MAX_IMPORT_DEPTH = 5;
@@ -196,11 +197,15 @@ export async function discoverContextFiles(workspaceRoot: string): Promise<Conte
 	return files;
 }
 
-export class ContextProvider {
+export class ContextProvider implements IContextProvider {
 	private readonly workspaceRoot: string;
 
 	constructor(options: ContextProviderOptions = {}) {
 		this.workspaceRoot = options.workspaceRoot ?? process.cwd();
+	}
+
+	async discoverContextFiles(workspaceRoot: string): Promise<ContextFile[]> {
+		return discoverContextFiles(workspaceRoot);
 	}
 
 	describe(): HcpTargetDescription {
