@@ -191,32 +191,32 @@
     "general-harness:event:manager": {
       "state": "integrated",
       "component": {
-        "kind": "harness-extension",
+        "kind": "pi-core",
         "name": "background-events",
-        "path": "extensions/pi/bundled/background-events/event-monitor.ts"
+        "path": "pi/coding-agent/src/core/background-events.ts"
       },
-      "relation": "covered-by-magenta3-lazypi-background-events-extension",
-      "notes": "LazyPi Jobs manager has already been integrated in Magenta3 as Background Events: createEventsMonitor aggregates bg_shell/sub_agent sources, drives the /events overlay, and is bundled by pi/coding-agent/src/core/resource-loader.ts. This is outside harness/HCP provider registration."
+      "relation": "migrated-to-pi-core-tui",
+      "notes": "LazyPi Jobs manager has been migrated into Pi as Background Events. Pi core tracks bg_shell/sub_agent sources and the interactive TUI owns the /events overlay. This is intentionally outside Harness/HCP provider registration."
     },
     "general-harness:event-tool:bg_shell": {
       "state": "integrated",
       "component": {
-        "kind": "harness-extension-tool",
+        "kind": "pi-builtin-tool",
         "name": "bg_shell",
-        "path": "extensions/pi/bundled/background-events/background-shell.ts"
+        "path": "pi/coding-agent/src/core/tools/bg-shell.ts"
       },
-      "relation": "covered-by-magenta3-lazypi-background-events-extension",
-      "notes": "Magenta3 already registers the bg_shell extension tool for long-running shell commands as background events with start/status/wait/cancel/config actions."
+      "relation": "migrated-to-pi-core-tui",
+      "notes": "Pi registers bg_shell as a built-in tool for long-running shell commands with start/status/wait/cancel/config actions."
     },
     "general-harness:event-tool:sub_agent": {
       "state": "integrated",
       "component": {
-        "kind": "harness-extension-tool",
+        "kind": "pi-builtin-tool",
         "name": "sub_agent",
-        "path": "extensions/pi/bundled/background-events/sub-agents.ts"
+        "path": "pi/coding-agent/src/core/tools/sub-agent.ts"
       },
-      "relation": "covered-by-magenta3-lazypi-background-events-extension",
-      "notes": "Magenta3 already registers the sub_agent extension tool for parallel headless Pi workers and connects it to the Background Events monitor."
+      "relation": "migrated-to-pi-core-tui",
+      "notes": "Pi registers sub_agent as a built-in tool for parallel headless Pi workers and connects it to the Background Events manager."
     },
     "general-harness:runtime:shell": {
       "state": "integrated",

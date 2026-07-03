@@ -70,6 +70,7 @@ import {
 } from "../../config.ts";
 import { type AgentSession, type AgentSessionEvent, parseSkillBlock } from "../../core/agent-session.ts";
 import { type AgentSessionRuntime, SessionImportFileNotFoundError } from "../../core/agent-session-runtime.ts";
+import { applyCommandAlias } from "../../core/command-aliases.ts";
 import type {
 	AutocompleteProviderFactory,
 	EditorFactory,
@@ -92,6 +93,7 @@ import {
 	hasRegistryComponent,
 } from "../../core/harness-switches.ts";
 import { configureHttpDispatcher, formatHttpIdleTimeoutMs } from "../../core/http-dispatcher.ts";
+import { ImageTokenController } from "../../core/image-tokens.ts";
 import { type AppKeybinding, KeybindingsManager } from "../../core/keybindings.ts";
 import { createCompactionSummaryMessage } from "../../core/messages.ts";
 import { defaultModelPerProvider, findExactModelReferenceMatch, resolveModelScope } from "../../core/model-resolver.ts";
@@ -336,6 +338,7 @@ export class InteractiveMode {
 	private pendingMessagesContainer: Container;
 	private statusContainer: Container;
 	private defaultEditor: CustomEditor;
+	private readonly imageTokenController = new ImageTokenController();
 	private editor: EditorComponent;
 	private editorComponentFactory: EditorFactory | undefined;
 	private autocompleteProvider: AutocompleteProvider | undefined;
@@ -500,6 +503,7 @@ export class InteractiveMode {
 			autocompleteMaxVisible,
 			slashAutocomplete: false,
 		});
+		this.configureImageTokens();
 		this.editor = this.defaultEditor;
 		this.editorContainer = new Container();
 		this.editorContainer.addChild(this.editor as Component);
@@ -1041,6 +1045,16 @@ export class InteractiveMode {
 			...getMarkdownTheme(),
 			codeBlockIndent: this.settingsManager.getCodeBlockIndent(),
 		};
+	}
+
+	private configureImageTokens(): void {
+		if (!this.settingsManager.getCompressImageTokens()) {
+			this.imageTokenController.clear();
+			this.defaultEditor.setImageTokenController(undefined);
+			return;
+		}
+
+		this.defaultEditor.setImageTokenController(this.imageTokenController, () => theme);
 	}
 
 	// =========================================================================
@@ -2697,7 +2711,7 @@ export class InteractiveMode {
 			const filePath = path.join(tmpDir, fileName);
 			fs.writeFileSync(filePath, Buffer.from(image.bytes));
 
-			// Insert file path directly
+			// Insert file path; CustomEditor may render it as a compact [imageN] token.
 			this.editor.insertTextAtCursor?.(filePath);
 			this.ui.requestRender();
 		} catch {
@@ -2707,12 +2721,11 @@ export class InteractiveMode {
 
 	private setupEditorSubmitHandler(): void {
 		this.defaultEditor.onSubmit = async (text: string) => {
+			text = this.defaultEditor.transformImageTokenInput(text);
 			text = text.trim();
 			if (!text) return;
 
-			// Apply command aliases (migrate from command-aliases extension)
-			if (text === "exit" || text === "quit") text = "/quit";
-			if (text === "clear") text = "/new";
+			text = applyCommandAlias(text);
 
 			// Handle commands
 			if (text === "/settings") {
@@ -4099,6 +4112,8 @@ export class InteractiveMode {
 
 		const spaceIndex = text.indexOf(" ");
 		const commandName = spaceIndex === -1 ? text.slice(1) : text.slice(1, spaceIndex);
+		if (commandName === "events") return true;
+		if (commandName === "side" || commandName === "btw" || commandName === "s") return true;
 		return !!extensionRunner.getCommand(commandName);
 	}
 
@@ -4744,6 +4759,8 @@ export class InteractiveMode {
 				children: (await this.harnessMenuItems()).children,
 			},
 			{ value: "slash:settings", label: "Settings", aliases: ["settings"], description: "/settings" },
+			{ value: "slash:events", label: "Events", aliases: ["events"], description: "/events" },
+			{ value: "slash:side", label: "Side Chat", aliases: ["side", "btw", "s"], description: "/side" },
 			{
 				value: "slash:scoped-models",
 				label: "Scoped Models",
@@ -4803,6 +4820,12 @@ export class InteractiveMode {
 		switch (command) {
 			case "settings":
 				this.showSettingsSelector();
+				return;
+			case "events":
+				await this.session.prompt("/events");
+				return;
+			case "side":
+				await this.session.prompt("/side");
 				return;
 			case "scoped-models":
 				await this.showModelsSelector();

@@ -161,7 +161,7 @@ describe("harness registry", () => {
 		});
 	});
 
-	it("marks LazyPi Jobs-derived background Events as covered by the coding-agent extension", async () => {
+	it("marks LazyPi Jobs-derived background Events as migrated to Pi core/TUI", async () => {
 		const registry = await loadRegistry(getHarnessRegistryPath());
 		const eventItems = listHarnessSelectionItems(registry, {
 			origins: ["lazypi"],
@@ -171,23 +171,23 @@ describe("harness registry", () => {
 		expect(eventItems.find((item) => item.id === "general-harness:event:manager")).toMatchObject({
 			readiness: "ready",
 			component: {
-				kind: "harness-extension",
+				kind: "pi-core",
 				name: "background-events",
-				path: "extensions/pi/bundled/background-events/event-monitor.ts",
+				path: "pi/coding-agent/src/core/background-events.ts",
 			},
 		});
 		expect(eventItems.find((item) => item.id === "general-harness:event-tool:bg_shell")).toMatchObject({
 			component: {
-				kind: "harness-extension-tool",
+				kind: "pi-builtin-tool",
 				name: "bg_shell",
-				path: "extensions/pi/bundled/background-events/background-shell.ts",
+				path: "pi/coding-agent/src/core/tools/bg-shell.ts",
 			},
 		});
 		expect(eventItems.find((item) => item.id === "general-harness:event-tool:sub_agent")).toMatchObject({
 			component: {
-				kind: "harness-extension-tool",
+				kind: "pi-builtin-tool",
 				name: "sub_agent",
-				path: "extensions/pi/bundled/background-events/sub-agents.ts",
+				path: "pi/coding-agent/src/core/tools/sub-agent.ts",
 			},
 		});
 	});

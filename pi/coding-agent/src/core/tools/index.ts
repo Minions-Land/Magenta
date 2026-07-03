@@ -1,4 +1,19 @@
 export {
+	type BgShellDetails,
+	type BgShellInput,
+	BackgroundShellController,
+	type BackgroundShellReturnMessage,
+	type BackgroundShellSendMessage,
+} from "./bg-shell.ts";
+export {
+	type SubAgentDetails,
+	type SubAgentInput,
+	SubAgentController,
+	type SubAgentReturnMessage,
+	type SubAgentSendMessage,
+	type SubAgentSpawn,
+} from "./sub-agent.ts";
+export {
 	type BashOperations,
 	type BashSpawnContext,
 	type BashSpawnHook,

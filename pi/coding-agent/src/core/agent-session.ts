@@ -39,6 +39,7 @@ import { resolvePath } from "../utils/paths.ts";
 import { sleep } from "../utils/sleep.ts";
 import { formatNoApiKeyFoundMessage, formatNoModelSelectedMessage } from "./auth-guidance.ts";
 import { type BashResult, executeBashWithOperations } from "./bash-executor.ts";
+import { BackgroundEventManager } from "./background-events.ts";
 import {
 	CompactionError,
 	type CompactionResult,
@@ -88,11 +89,15 @@ import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.t
 import type { BranchSummaryEntry, CompactionEntry, SessionManager } from "./session-manager.ts";
 import { CURRENT_SESSION_VERSION, getLatestCompactionEntry, type SessionHeader } from "./session-manager.ts";
 import type { SettingsManager } from "./settings-manager.ts";
+import { SIDE_CHAT_COMMAND_NAMES, SideChatManager } from "./side-chat.ts";
 import type { SlashCommandInfo } from "./slash-commands.ts";
 import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.ts";
 import { type BuildSystemPromptOptions, buildSystemPrompt } from "./system-prompt.ts";
+import { ToolProgressTracker } from "./tool-progress.ts";
+import { BackgroundShellController } from "./tools/bg-shell.ts";
 import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts";
 import { createAllToolDefinitions } from "./tools/index.ts";
+import { SubAgentController } from "./tools/sub-agent.ts";
 import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.ts";
 
 // ============================================================================
@@ -318,6 +323,11 @@ export class AgentSession {
 	private _extensionShutdownHandler?: ShutdownHandler;
 	private _extensionErrorListener?: ExtensionErrorListener;
 	private _extensionErrorUnsubscriber?: () => void;
+	private _backgroundEvents: BackgroundEventManager;
+	private _backgroundShell: BackgroundShellController;
+	private _subAgents: SubAgentController;
+	private _toolProgressTracker: ToolProgressTracker;
+	private _sideChat: SideChatManager;
 
 	// Model registry for API key resolution
 	private _modelRegistry: ModelRegistry;
@@ -347,6 +357,15 @@ export class AgentSession {
 		this._excludedToolNames = config.excludedToolNames ? new Set(config.excludedToolNames) : undefined;
 		this._baseToolsOverride = config.baseToolsOverride;
 		this._sessionStartEvent = config.sessionStartEvent ?? { type: "session_start", reason: "startup" };
+		this._backgroundEvents = new BackgroundEventManager();
+		this._toolProgressTracker = new ToolProgressTracker();
+		this._backgroundShell = new BackgroundShellController(this._backgroundEvents, {
+			sendMessage: (message, options) => this.sendCustomMessage(message, options),
+		});
+		this._subAgents = new SubAgentController(this._backgroundEvents, {
+			sendMessage: (message, options) => this.sendCustomMessage(message, options),
+		});
+		this._sideChat = new SideChatManager({ toolProgress: this._toolProgressTracker });
 
 		// Always subscribe to agent events for internal handling
 		// (session persistence, extensions, auto-compaction, retry logic)
@@ -510,9 +529,13 @@ export class AgentSession {
 
 		// Emit to extensions first
 		await this._emitExtensionEvent(event);
+		const sessionEvent =
+			event.type === "agent_end" ? { ...event, willRetry: this._willRetryAfterAgentEnd(event) } : event;
+		this._toolProgressTracker.handleAgentEvent(sessionEvent);
+		this._subAgents.handleAgentEvent(sessionEvent);
 
 		// Notify all listeners
-		this._emit(event.type === "agent_end" ? { ...event, willRetry: this._willRetryAfterAgentEnd(event) } : event);
+		this._emit(sessionEvent);
 
 		// Handle session persistence
 		if (event.type === "message_end") {
@@ -732,6 +755,9 @@ export class AgentSession {
 			this.abortCompaction();
 			this.abortBranchSummary();
 			this.abortBash();
+			this._backgroundShell.shutdown();
+			this._subAgents.shutdown();
+			this._backgroundEvents.dispose();
 			this.agent.abort();
 		} catch {
 			// Dispose must succeed even if an abort hook throws.
@@ -1157,6 +1183,15 @@ export class AgentSession {
 		const commandName = spaceIndex === -1 ? text.slice(1) : text.slice(1, spaceIndex);
 		const args = spaceIndex === -1 ? "" : text.slice(spaceIndex + 1);
 
+		if (commandName === "events") {
+			await this._backgroundEvents.handleCommand(args, this._extensionRunner.createCommandContext());
+			return true;
+		}
+		if (SIDE_CHAT_COMMAND_NAMES.includes(commandName as (typeof SIDE_CHAT_COMMAND_NAMES)[number])) {
+			await this._sideChat.handleCommand(commandName, args, this._extensionRunner.createCommandContext());
+			return true;
+		}
+
 		const command = this._extensionRunner.getCommand(commandName);
 		if (!command) return false;
 
@@ -1289,6 +1324,12 @@ export class AgentSession {
 	private _throwIfExtensionCommand(text: string): void {
 		const spaceIndex = text.indexOf(" ");
 		const commandName = spaceIndex === -1 ? text.slice(1) : text.slice(1, spaceIndex);
+		if (commandName === "events") {
+			throw new Error(`Command "/${commandName}" cannot be queued. Execute it when not streaming.`);
+		}
+		if (SIDE_CHAT_COMMAND_NAMES.includes(commandName as (typeof SIDE_CHAT_COMMAND_NAMES)[number])) {
+			throw new Error(`Command "/${commandName}" cannot be queued. Execute it when not streaming.`);
+		}
 		const command = this._extensionRunner.getCommand(commandName);
 
 		if (command) {
@@ -1417,6 +1458,10 @@ export class AgentSession {
 
 	get resourceLoader(): ResourceLoader {
 		return this._resourceLoader;
+	}
+
+	get toolProgressTracker(): ToolProgressTracker {
+		return this._toolProgressTracker;
 	}
 
 	/**
@@ -2210,6 +2255,20 @@ export class AgentSession {
 
 	private _bindExtensionCore(runner: ExtensionRunner): void {
 		const getCommands = (): SlashCommandInfo[] => {
+			const builtinCommands: SlashCommandInfo[] = [
+				{
+					name: "events",
+					description: "Show background work started by the main agent",
+					source: "builtin",
+					sourceInfo: createSyntheticSourceInfo("<builtin:events>", { source: "builtin" }),
+				},
+				...SIDE_CHAT_COMMAND_NAMES.map((name) => ({
+					name,
+					description: "Open a temporary no-tools side/btw chat for explanations",
+					source: "builtin" as const,
+					sourceInfo: createSyntheticSourceInfo(`<builtin:${name}>`, { source: "builtin" }),
+				})),
+			];
 			const extensionCommands: SlashCommandInfo[] = runner.getRegisteredCommands().map((command) => ({
 				name: command.invocationName,
 				description: command.description,
@@ -2231,7 +2290,7 @@ export class AgentSession {
 				sourceInfo: skill.sourceInfo,
 			}));
 
-			return [...extensionCommands, ...templates, ...skills];
+			return [...builtinCommands, ...extensionCommands, ...templates, ...skills];
 		};
 
 		runner.bindCore(
@@ -2431,17 +2490,21 @@ export class AgentSession {
 		const autoResizeImages = this.settingsManager.getImageAutoResize();
 		const shellCommandPrefix = this.settingsManager.getShellCommandPrefix();
 		const shellPath = this.settingsManager.getShellPath();
-		const baseToolDefinitions = this._baseToolsOverride
+		const baseToolDefinitions: Record<string, ToolDefinition> = this._baseToolsOverride
 			? Object.fromEntries(
 					Object.entries(this._baseToolsOverride).map(([name, tool]) => [
 						name,
 						createToolDefinitionFromAgentTool(tool),
 					]),
 				)
-			: createAllToolDefinitions(this._cwd, {
+			: (createAllToolDefinitions(this._cwd, {
 					read: { autoResizeImages },
 					bash: { commandPrefix: shellCommandPrefix, shellPath },
-				});
+				}) as Record<string, ToolDefinition>);
+		if (!this._baseToolsOverride) {
+			baseToolDefinitions.bg_shell = this._backgroundShell.createToolDefinition() as ToolDefinition;
+			baseToolDefinitions.sub_agent = this._subAgents.createToolDefinition() as ToolDefinition;
+		}
 
 		this._baseToolDefinitions = new Map(
 			Object.entries(baseToolDefinitions).map(([name, tool]) => [name, tool as ToolDefinition]),
@@ -2469,7 +2532,7 @@ export class AgentSession {
 
 		const defaultActiveToolNames = this._baseToolsOverride
 			? Object.keys(this._baseToolsOverride)
-			: ["read", "bash", "edit", "write"];
+			: ["read", "bash", "edit", "write", "bg_shell", "sub_agent"];
 		const baseActiveToolNames = options.activeToolNames ?? defaultActiveToolNames;
 		this._refreshToolRegistry({
 			activeToolNames: baseActiveToolNames,

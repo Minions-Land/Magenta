@@ -41,6 +41,7 @@ export interface TerminalSettings {
 export interface ImageSettings {
 	autoResize?: boolean; // default: true (resize images to 2000x2000 max for better model compatibility)
 	blockImages?: boolean; // default: false - when true, prevents all images from being sent to LLM providers
+	compressTokens?: boolean; // default: true - show pasted image file paths as compact [imageN] editor tokens
 }
 
 export interface ThinkingBudgetsSettings {
@@ -1114,6 +1115,19 @@ export class SettingsManager {
 		}
 		this.globalSettings.images.blockImages = blocked;
 		this.markModified("images", "blockImages");
+		this.save();
+	}
+
+	getCompressImageTokens(): boolean {
+		return this.settings.images?.compressTokens ?? true;
+	}
+
+	setCompressImageTokens(enabled: boolean): void {
+		if (!this.globalSettings.images) {
+			this.globalSettings.images = {};
+		}
+		this.globalSettings.images.compressTokens = enabled;
+		this.markModified("images", "compressTokens");
 		this.save();
 	}
 

@@ -1,7 +1,7 @@
 import { APP_NAME } from "../config.ts";
 import type { SourceInfo } from "./source-info.ts";
 
-export type SlashCommandSource = "extension" | "prompt" | "skill";
+export type SlashCommandSource = "builtin" | "extension" | "prompt" | "skill";
 
 export interface SlashCommandInfo {
 	name: string;
@@ -26,6 +26,10 @@ export const BUILTIN_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 	{ name: "copy", description: "Copy last agent message to clipboard" },
 	{ name: "name", description: "Set session display name" },
 	{ name: "session", description: "Show session info and stats" },
+	{ name: "events", description: "Show background work started by the main agent" },
+	{ name: "side", description: "Open a temporary no-tools side chat" },
+	{ name: "btw", description: "Open a temporary no-tools side chat" },
+	{ name: "s", description: "Open a temporary no-tools side chat" },
 	{ name: "changelog", description: "Show changelog entries" },
 	{ name: "hotkeys", description: "Show all keyboard shortcuts" },
 	{ name: "fork", description: "Create a new fork from a previous user message" },

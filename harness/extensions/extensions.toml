@@ -7,20 +7,5 @@ source = "pi"
 module = "extensions/pi/extensions.ts"
 
 [[bundled_extensions]]
-name = "background-events"
-path = "pi/bundled/background-events/index.ts"
-tools = ["bg_shell", "sub_agent"]
-commands = ["events"]
-
-[[bundled_extensions]]
 name = "ssh"
 path = "pi/bundled/ssh.ts"
-
-[[bundled_extensions]]
-name = "ui-optimize"
-path = "pi/bundled/ui-optimize/index.ts"
-
-[[bundled_extensions]]
-name = "side-chat"
-path = "pi/bundled/side-chat.ts"
-commands = ["side", "btw", "s"]

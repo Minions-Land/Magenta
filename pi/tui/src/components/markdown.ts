@@ -1,9 +1,10 @@
 import { Marked, type Token, Tokenizer, type Tokens } from "marked";
 import { getCapabilities, hyperlink, isImageLine } from "../terminal-image.ts";
 import type { Component } from "../tui.ts";
-import { applyBackgroundToLine, visibleWidth, wrapTextWithAnsi } from "../utils.ts";
+import { applyBackgroundToLine, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "../utils.ts";
 
 const STRICT_STRIKETHROUGH_REGEX = /^(~~)(?=[^\s~])((?:\\.|[^\\])*?(?:\\.|[^\s~\\]))\1(?=[^~]|$)/;
+const PLAIN_CODE_LANGS = new Set(["", "text", "plain", "plaintext"]);
 
 class StrictStrikethroughTokenizer extends Tokenizer {
 	override del(src: string): Tokens.Del | undefined {
@@ -333,17 +334,11 @@ export class Markdown implements Component {
 		switch (token.type) {
 			case "heading": {
 				const headingLevel = token.depth;
-				const headingPrefix = `${"#".repeat(headingLevel)} `;
 
 				// Build a heading-specific style context so inline tokens (codespan, bold, etc.)
 				// restore heading styling after their own ANSI resets instead of falling back to
 				// the default text style.
-				let headingStyleFn: (text: string) => string;
-				if (headingLevel === 1) {
-					headingStyleFn = (text: string) => this.theme.heading(this.theme.bold(this.theme.underline(text)));
-				} else {
-					headingStyleFn = (text: string) => this.theme.heading(this.theme.bold(text));
-				}
+				const headingStyleFn = (text: string) => this.theme.heading(this.theme.bold(text));
 
 				const headingStyleContext: InlineStyleContext = {
 					applyText: headingStyleFn,
@@ -351,8 +346,20 @@ export class Markdown implements Component {
 				};
 
 				const headingText = this.renderInlineTokens(token.tokens || [], headingStyleContext);
-				const styledHeading = headingLevel >= 3 ? headingStyleFn(headingPrefix) + headingText : headingText;
-				lines.push(styledHeading);
+				if (headingLevel === 1) {
+					lines.push(truncateToWidth(headingText, width, ""));
+					const rawWidth = visibleWidth(token.text || headingText);
+					lines.push(this.theme.hr("━".repeat(Math.min(width, Math.max(rawWidth, 12)))));
+				} else {
+					const prefixes: Record<number, string> = {
+						2: "▌ ",
+						3: "▸ ",
+						4: "▪ ",
+						5: "• ",
+						6: "· ",
+					};
+					lines.push(truncateToWidth(this.theme.heading(prefixes[headingLevel] ?? "▸ ") + headingText, width, ""));
+				}
 				if (nextTokenType && nextTokenType !== "space") {
 					lines.push(""); // Add spacing after headings (unless space token follows)
 				}
@@ -374,21 +381,35 @@ export class Markdown implements Component {
 				break;
 
 			case "code": {
+				const lang = (token.lang ?? "").trim();
 				const indent = this.theme.codeBlockIndent ?? "  ";
-				lines.push(this.theme.codeBlockBorder(`\`\`\`${token.lang || ""}`));
+				if (PLAIN_CODE_LANGS.has(lang.toLowerCase()) || width < 12) {
+					const codeLines = token.text.split("\n");
+					for (const codeLine of codeLines) {
+						lines.push(`${indent}${this.theme.codeBlock(codeLine)}`);
+					}
+					if (nextTokenType && nextTokenType !== "space") {
+						lines.push("");
+					}
+					break;
+				}
+
+				const label = truncateToWidth(lang ? ` ${lang} ` : " code ", Math.max(0, width - 4), "");
+				const topFill = Math.max(0, width - 2 - visibleWidth(label));
+				lines.push(this.theme.codeBlockBorder(`╭${label}${"─".repeat(topFill)}╮`));
 				if (this.theme.highlightCode) {
 					const highlightedLines = this.theme.highlightCode(token.text, token.lang);
 					for (const hlLine of highlightedLines) {
-						lines.push(`${indent}${hlLine}`);
+						lines.push(truncateToWidth(hlLine, width, ""));
 					}
 				} else {
 					// Split code by newlines and style each line
 					const codeLines = token.text.split("\n");
 					for (const codeLine of codeLines) {
-						lines.push(`${indent}${this.theme.codeBlock(codeLine)}`);
+						lines.push(truncateToWidth(this.theme.codeBlock(codeLine), width, ""));
 					}
 				}
-				lines.push(this.theme.codeBlockBorder("```"));
+				lines.push(this.theme.codeBlockBorder(`╰${"─".repeat(Math.max(0, width - 2))}╯`));
 				if (nextTokenType && nextTokenType !== "space") {
 					lines.push(""); // Add spacing after code blocks (unless space token follows)
 				}
@@ -420,7 +441,7 @@ export class Markdown implements Component {
 					return quoteStyle(lineWithReappliedStyle);
 				};
 
-				// Calculate available width for quote content (subtract border "│ " = 2 chars)
+				// Calculate available width for quote content (subtract border "▌ " = 2 chars)
 				const quoteContentWidth = Math.max(1, width - 2);
 
 				// Blockquotes contain block-level tokens (paragraph, list, code, etc.), so render
@@ -449,7 +470,7 @@ export class Markdown implements Component {
 					const styledLine = applyQuoteStyle(quoteLine);
 					const wrappedLines = wrapTextWithAnsi(styledLine, quoteContentWidth);
 					for (const wrappedLine of wrappedLines) {
-						lines.push(this.theme.quoteBorder("│ ") + wrappedLine);
+						lines.push(this.theme.quoteBorder("▌ ") + wrappedLine);
 					}
 				}
 				if (nextTokenType && nextTokenType !== "space") {
@@ -459,7 +480,7 @@ export class Markdown implements Component {
 			}
 
 			case "hr":
-				lines.push(this.theme.hr("─".repeat(Math.min(width, 80))));
+				lines.push(this.theme.hr("╌".repeat(Math.min(width, 96))));
 				if (nextTokenType && nextTokenType !== "space") {
 					lines.push(""); // Add spacing after horizontal rules (unless space token follows)
 				}
@@ -610,9 +631,8 @@ export class Markdown implements Component {
 					: `${startNumber + i}. `
 				: this.options.preserveOrderedListMarkers
 					? (this.getUnorderedListMarker(item) ?? "- ")
-					: "- ";
-			const taskMarker = item.task ? `[${item.checked ? "x" : " "}] ` : "";
-			const marker = bullet + taskMarker;
+					: "• ";
+			const marker = item.task ? (item.checked ? "✓ " : "○ ") : bullet;
 			const firstPrefix = indent + this.theme.listBullet(marker);
 			const continuationPrefix = indent + " ".repeat(visibleWidth(marker));
 			const itemWidth = Math.max(1, width - visibleWidth(firstPrefix));

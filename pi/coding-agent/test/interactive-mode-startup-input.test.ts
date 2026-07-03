@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
 
 type SubmitContext = {
-	defaultEditor: { onSubmit?: (text: string) => void };
+	defaultEditor: { onSubmit?: (text: string) => void; transformImageTokenInput: (text: string) => string };
 	editor: {
 		addToHistory?: (text: string) => void;
 		setText: (text: string) => void;
@@ -32,7 +32,9 @@ const interactiveModePrototype = InteractiveMode.prototype as unknown as Interac
 
 function createSubmitContext(): SubmitContext {
 	return {
-		defaultEditor: {},
+		defaultEditor: {
+			transformImageTokenInput: (text) => text,
+		},
 		editor: {
 			addToHistory: vi.fn(),
 			setText: vi.fn(),

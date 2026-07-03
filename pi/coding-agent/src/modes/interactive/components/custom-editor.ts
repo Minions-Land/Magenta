@@ -1,23 +1,61 @@
-import { Editor, type EditorOptions, type EditorTheme, matchesKey, type TUI } from "@earendil-works/pi-tui";
+import {
+	Editor,
+	type EditorOptions,
+	type EditorTheme,
+	type TUI,
+	matchesKey,
+} from "@earendil-works/pi-tui";
+import {
+	ImageTokenController,
+	readClipboardFilePaths,
+	type ImageTokenTheme,
+} from "../../../core/image-tokens.ts";
 import type { AppKeybinding, KeybindingsManager } from "../../../core/keybindings.ts";
+
+type EditorInternals = {
+	state: { lines: string[]; cursorLine: number; cursorCol: number };
+	historyIndex: number;
+	lastAction: string | null;
+	pushUndoSnapshot: () => void;
+	setCursorCol: (col: number) => void;
+};
 
 /**
  * Custom editor that handles app-level keybindings for coding-agent.
  */
 export class CustomEditor extends Editor {
 	private keybindings: KeybindingsManager;
+	private imageTokens: ImageTokenController | undefined;
+	private getImageTokenTheme: (() => ImageTokenTheme) | undefined;
+	private scanTimers: Array<ReturnType<typeof setTimeout>> = [];
 	public actionHandlers: Map<AppKeybinding, () => void> = new Map();
 
 	// Special handlers that can be dynamically replaced
 	public onEscape?: () => void;
 	public onCtrlD?: () => void;
-	public onPasteImage?: () => void;
+	public onPasteImage?: () => void | Promise<void>;
 	/** Handler for extension-registered shortcuts. Returns true if handled. */
 	public onExtensionShortcut?: (data: string) => boolean;
 
 	constructor(tui: TUI, theme: EditorTheme, keybindings: KeybindingsManager, options?: EditorOptions) {
 		super(tui, theme, options);
 		this.keybindings = keybindings;
+	}
+
+	setImageTokenController(
+		controller: ImageTokenController | undefined,
+		getTheme?: () => ImageTokenTheme,
+	): void {
+		this.imageTokens = controller;
+		this.getImageTokenTheme = getTheme;
+	}
+
+	clearImageTokens(): void {
+		this.imageTokens?.clear();
+	}
+
+	transformImageTokenInput(text: string): string {
+		return this.imageTokens?.transformInput(text).text ?? text;
 	}
 
 	/**
@@ -33,9 +71,15 @@ export class CustomEditor extends Editor {
 			return;
 		}
 
+		if (this.deleteImageTokenAtCursor(data)) {
+			return;
+		}
+
 		// Check for paste image keybinding
 		if (this.keybindings.matches(data, "app.clipboard.pasteImage")) {
-			this.onPasteImage?.();
+			if (this.pasteClipboardFilePaths()) return;
+			void this.onPasteImage?.();
+			this.scheduleImageTokenScan();
 			return;
 		}
 
@@ -88,5 +132,71 @@ export class CustomEditor extends Editor {
 
 		// Pass to parent for editor handling
 		super.handleInput(data);
+	}
+
+	override insertTextAtCursor(text: string): void {
+		const next = this.imageTokens?.replaceClipboardPaths(text, this.getText()) ?? text;
+		super.insertTextAtCursor(next);
+	}
+
+	override render(width: number): string[] {
+		const lines = super.render(width);
+		const theme = this.getImageTokenTheme?.();
+		if (!this.imageTokens || !theme) return lines;
+		return this.imageTokens.render(lines, theme, width);
+	}
+
+	private pasteClipboardFilePaths(): boolean {
+		if (!this.imageTokens) return false;
+		const paths = readClipboardFilePaths();
+		if (paths.length === 0) return false;
+
+		const text = this.imageTokens.formatClipboardPaths(paths, this.getText());
+		if (!text) return false;
+
+		super.insertTextAtCursor(text);
+		this.tui.requestRender();
+		return true;
+	}
+
+	private deleteImageTokenAtCursor(data: string): boolean {
+		if (!this.imageTokens) return false;
+
+		const backward =
+			this.keybindings.matches(data, "tui.editor.deleteCharBackward") || matchesKey(data, "shift+backspace");
+		const forward =
+			this.keybindings.matches(data, "tui.editor.deleteCharForward") || matchesKey(data, "shift+delete");
+		if (!backward && !forward) return false;
+
+		const writable = this as unknown as Partial<EditorInternals>;
+		if (!writable.state || !writable.pushUndoSnapshot || !writable.setCursorCol) return false;
+
+		const line = writable.state.lines[writable.state.cursorLine] || "";
+		const range = this.imageTokens.findDeleteRange(line, writable.state.cursorCol, backward);
+		if (!range) return false;
+
+		writable.historyIndex = -1;
+		writable.lastAction = null;
+		writable.pushUndoSnapshot();
+		writable.state.lines[writable.state.cursorLine] = line.slice(0, range.start) + line.slice(range.end);
+		writable.setCursorCol(range.start);
+		this.imageTokens.deleteAttachment(range.token);
+		this.onChange?.(this.getText());
+		this.tui.requestRender();
+		return true;
+	}
+
+	private scheduleImageTokenScan(): void {
+		if (!this.imageTokens) return;
+		for (const timer of this.scanTimers) clearTimeout(timer);
+		this.scanTimers = [80, 250, 600].map((delay) =>
+			setTimeout(() => {
+				const current = this.getText();
+				const next = this.imageTokens?.replaceClipboardPaths(current);
+				if (!next || next === current) return;
+				this.setText(next);
+				this.tui.requestRender();
+			}, delay),
+		);
 	}
 }

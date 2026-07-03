@@ -40,6 +40,8 @@ export class AssistantMessageComponent extends Container {
 
 		if (message) {
 			this.updateContent(message);
+			this.displayedTexts = [...this.targetTexts];
+			this.renderContent();
 		}
 	}
 

@@ -136,17 +136,9 @@ export function loadProjectContextFiles(options: {
 	return contextFiles;
 }
 
-const BUNDLED_EXTENSION_ENTRIES = [
-	"local-credential-bridge.ts",
-	"background-events/index.ts",
-	"todo.ts",
-	"ssh.ts",
-	"ui-optimize/index.ts",
-	"side-chat.ts",
-	"command-aliases.ts",
-] as const;
+const BUNDLED_EXTENSION_ENTRIES = ["ssh.ts"] as const;
 
-const BUNDLED_BACKGROUND_WORK_PROMPT = `# Background Work
+const BUILTIN_BACKGROUND_WORK_PROMPT = `# Background Work
 
 Treat background shell events and sub-agents as built-in Magenta agent-loop infrastructure.
 
@@ -673,8 +665,8 @@ export class DefaultResourceLoader implements ResourceLoader {
 		const baseAppend = appendSources
 			.map((s) => resolvePromptInput(s, "append system prompt"))
 			.filter((s): s is string => s !== undefined);
-		if (this.includeBundledResources && !this.noExtensions) {
-			baseAppend.unshift(BUNDLED_BACKGROUND_WORK_PROMPT);
+		if (this.includeBundledResources) {
+			baseAppend.unshift(BUILTIN_BACKGROUND_WORK_PROMPT);
 		}
 		this.appendSystemPrompt = this.appendSystemPromptOverride
 			? this.appendSystemPromptOverride(baseAppend)

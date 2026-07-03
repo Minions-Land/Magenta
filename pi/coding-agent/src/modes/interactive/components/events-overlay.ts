@@ -1,9 +1,8 @@
-import type { Theme } from "@earendil-works/pi-coding-agent";
 import { type Component, type Focusable, matchesKey } from "@earendil-works/pi-tui";
-
-import { FLOATING_WINDOW_BODY_LINES, renderFloatingWindow } from "../shared/floating-window.ts";
-import { formatDuration } from "../shared/shell.ts";
-import type { EventEntry, EventFilter, NotifyLevel, TuiLike } from "./types.ts";
+import type { EventEntry, EventFilter, NotifyLevel, TuiLike } from "../../../core/background-events.ts";
+import { formatDuration } from "../../../core/background-shell-utils.ts";
+import type { Theme } from "../theme/theme.ts";
+import { FLOATING_WINDOW_BODY_LINES, renderFloatingWindow } from "./floating-window.ts";
 
 const VIEWPORT_LINES = FLOATING_WINDOW_BODY_LINES;
 const COLLAPSED_TAIL_LINES = 2;

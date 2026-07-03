@@ -1,6 +1,6 @@
 # Magenta3
 
-AI coding assistant combining Pi framework with LazyPi extensions.
+AI coding assistant combining the Pi framework with Harness-backed reusable tools.
 
 ## Status
 
@@ -51,7 +51,7 @@ Magenta3/
 ├── pi/                    # Pi ecosystem
 │   ├── ai/                # LLM API abstraction
 │   ├── agent/             # Agent core
-│   ├── coding-agent/      # Full app + LazyPi extensions
+│   ├── coding-agent/      # Full app + Pi UX/session features
 │   └── tui/               # Terminal UI
 ├── harness/               # Agent runtime + pure execution components
 │   └── memory/            # Semantic memory package
@@ -59,21 +59,23 @@ Magenta3/
 └── bin/magenta            # CLI entry point
 ```
 
-## LazyPi Extensions
+## Pi UX And Tools
 
-Integrated into `pi/coding-agent/src/extensions/`:
+Former bundled Pi extension behavior has been moved to the layer that owns it:
 
-### Background Events
+### Pi Core/TUI
 - **bg_shell** - Long-running shell commands
 - **sub_agent** - Parallel agent delegation
 - **/events** - Event monitoring UI
+- **/side**, **/btw**, **/s** - No-tools side chat
+- **command aliases** - Bare `exit`, `quit`, and `clear`
+- **UI polish** - Image tokens, Markdown rendering, and tool activity grouping
 
-### Tools & UI
-- **todo** - TODO management
-- **ssh** - SSH integration
-- **command-aliases** - Shell aliases
-- **side-chat** - `/side`, `/btw`, and `/s` no-tools side chat
-- **ui-optimize** - Image tokens, markdown
+### Harness Tools
+- **todo** - TODO management via `harness/tools/todo/`
+
+### Stable Optional Extension
+- **ssh** - Opt-in SSH integration in `harness/extensions/pi/bundled/ssh.ts`
 
 ### Harness Skills
 - **paper-analysis** - Academic paper processing

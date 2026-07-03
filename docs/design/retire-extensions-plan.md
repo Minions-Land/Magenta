@@ -1,5 +1,7 @@
 # 退役 PI Extension 系统 - 详细执行计划
 
+> Archived note (2026-07-03): this was the working plan before implementation finished. The completed migration differs in one important boundary: Pi UX/session/TUI features live in `pi/`, not in Harness abstractions. See `RETIRE_EXTENSIONS_TODO.md` and `extension-migration-progress.md` for the final state.
+
 ## 总览
 
 **目标：** 完全废弃 PI Extension 系统，将 7 个 bundled extensions 重新归类到正确的层级

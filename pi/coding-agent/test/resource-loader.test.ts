@@ -217,12 +217,14 @@ describe("DefaultResourceLoader", () => {
 			const skills = loader.getSkills().skills;
 			const skillNames = new Set(skills.map((skill) => skill.name));
 
-			for (const name of ["side", "btw", "s", "events", "todos"]) {
-				expect(commandNames.has(name)).toBe(true);
-			}
-			for (const name of ["bg_shell", "sub_agent", "todo"]) {
-				expect(toolNames.has(name)).toBe(true);
-			}
+			expect(commandNames.size).toBe(0);
+			expect(commandNames.has("side")).toBe(false);
+			expect(commandNames.has("btw")).toBe(false);
+			expect(commandNames.has("s")).toBe(false);
+			expect(commandNames.has("events")).toBe(false);
+			expect(toolNames.size).toBe(0);
+			expect(toolNames.has("bg_shell")).toBe(false);
+			expect(toolNames.has("sub_agent")).toBe(false);
 			for (const name of ["paper-analysis", "pptx", "research-orchestration"]) {
 				expect(skillNames.has(name)).toBe(true);
 			}

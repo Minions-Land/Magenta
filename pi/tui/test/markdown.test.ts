@@ -57,10 +57,10 @@ describe("Markdown component", () => {
 			const plainLines = lines.map((line) => line.replace(/\x1b\[[0-9;]*m/g, ""));
 
 			// Check structure
-			assert.ok(plainLines.some((line) => line.includes("- Item 1")));
-			assert.ok(plainLines.some((line) => line.includes("    - Nested 1.1")));
-			assert.ok(plainLines.some((line) => line.includes("    - Nested 1.2")));
-			assert.ok(plainLines.some((line) => line.includes("- Item 2")));
+			assert.ok(plainLines.some((line) => line.includes("• Item 1")));
+			assert.ok(plainLines.some((line) => line.includes("    • Nested 1.1")));
+			assert.ok(plainLines.some((line) => line.includes("    • Nested 1.2")));
+			assert.ok(plainLines.some((line) => line.includes("• Item 2")));
 		});
 
 		it("should render deeply nested list", () => {
@@ -78,10 +78,10 @@ describe("Markdown component", () => {
 			const plainLines = lines.map((line) => line.replace(/\x1b\[[0-9;]*m/g, ""));
 
 			// Check proper indentation
-			assert.ok(plainLines.some((line) => line.includes("- Level 1")));
-			assert.ok(plainLines.some((line) => line.includes("    - Level 2")));
-			assert.ok(plainLines.some((line) => line.includes("        - Level 3")));
-			assert.ok(plainLines.some((line) => line.includes("            - Level 4")));
+			assert.ok(plainLines.some((line) => line.includes("• Level 1")));
+			assert.ok(plainLines.some((line) => line.includes("    • Level 2")));
+			assert.ok(plainLines.some((line) => line.includes("        • Level 3")));
+			assert.ok(plainLines.some((line) => line.includes("            • Level 4")));
 		});
 
 		it("should render ordered nested list", () => {
@@ -156,7 +156,7 @@ describe("Markdown component", () => {
 			const plainLines = lines.map((line) => line.replace(/\x1b\[[0-9;]*m/g, ""));
 
 			assert.ok(plainLines.some((line) => line.includes("1. Ordered item")));
-			assert.ok(plainLines.some((line) => line.includes("    - Unordered nested")));
+			assert.ok(plainLines.some((line) => line.includes("    • Unordered nested")));
 			assert.ok(plainLines.some((line) => line.includes("2. Second ordered")));
 		});
 
@@ -196,7 +196,7 @@ describe("Markdown component", () => {
 
 			const lines = markdown.render(80).map((line) => stripAnsi(line).trimEnd());
 
-			assert.deepStrictEqual(lines, ["- [ ] beep", "- [x] boop"]);
+			assert.deepStrictEqual(lines, ["○ beep", "✓ boop"]);
 		});
 
 		it("should maintain numbering when code blocks are not indented (LLM output)", () => {
@@ -241,7 +241,7 @@ describe("Markdown component", () => {
 
 			const lines = markdown.render(20).map((line) => stripAnsi(line).trimEnd());
 
-			assert.deepStrictEqual(lines, ["- alpha beta gamma", "  delta epsilon"]);
+			assert.deepStrictEqual(lines, ["• alpha beta gamma", "  delta epsilon"]);
 		});
 
 		it("should indent wrapped ordered list lines", () => {
@@ -265,7 +265,7 @@ describe("Markdown component", () => {
 
 			const lines = markdown.render(24).map((line) => stripAnsi(line).trimEnd());
 
-			assert.deepStrictEqual(lines, ["- parent", "    - alpha beta gamma", "      delta epsilon"]);
+			assert.deepStrictEqual(lines, ["• parent", "    • alpha beta gamma", "      delta epsilon"]);
 		});
 
 		it("should indent wrapped nested list lines under ordered parents", () => {
@@ -273,7 +273,7 @@ describe("Markdown component", () => {
 
 			const lines = markdown.render(24).map((line) => stripAnsi(line).trimEnd());
 
-			assert.deepStrictEqual(lines, ["1. parent", "    - alpha beta gamma", "      delta epsilon"]);
+			assert.deepStrictEqual(lines, ["1. parent", "    • alpha beta gamma", "      delta epsilon"]);
 		});
 
 		it("should render and wrap blockquotes inside list items", () => {
@@ -281,7 +281,7 @@ describe("Markdown component", () => {
 
 			const lines = markdown.render(24).map((line) => stripAnsi(line).trimEnd());
 
-			assert.deepStrictEqual(lines, ["- │ alpha beta gamma", "  │ delta epsilon zeta"]);
+			assert.deepStrictEqual(lines, ["• ▌ alpha beta gamma", "  ▌ delta epsilon zeta"]);
 		});
 
 		it("should render and wrap code blocks inside list items", () => {
@@ -294,7 +294,11 @@ describe("Markdown component", () => {
 
 			const lines = markdown.render(24).map((line) => stripAnsi(line).trimEnd());
 
-			assert.deepStrictEqual(lines, ["- ```ts", "    alpha beta gamma", "  delta epsilon zeta", "  ```"]);
+			assert.deepStrictEqual(lines, [
+				"• ╭ ts ────────────────╮",
+				"  alpha beta gamma delta",
+				"  ╰────────────────────╯",
+			]);
 		});
 	});
 
@@ -646,8 +650,8 @@ describe("Markdown component", () => {
 			// Check heading
 			assert.ok(plainLines.some((line) => line.includes("Test Document")));
 			// Check list
-			assert.ok(plainLines.some((line) => line.includes("- Item 1")));
-			assert.ok(plainLines.some((line) => line.includes("    - Nested item")));
+			assert.ok(plainLines.some((line) => line.includes("• Item 1")));
+			assert.ok(plainLines.some((line) => line.includes("    • Nested item")));
 			// Check table
 			assert.ok(plainLines.some((line) => line.includes("Col1")));
 			assert.ok(plainLines.some((line) => line.includes("│")));
@@ -766,8 +770,8 @@ again, hello world`,
 			const lines = markdown.render(80);
 			const plainLines = lines.map((line) => line.replace(/\x1b\[[0-9;]*m/g, "").trimEnd());
 
-			const closingBackticksIndex = plainLines.indexOf("```");
-			assert.ok(closingBackticksIndex !== -1, "Should have closing backticks");
+			const closingBackticksIndex = plainLines.findIndex((line) => line.startsWith("╰"));
+			assert.ok(closingBackticksIndex !== -1, "Should have closing code block border");
 
 			const afterBackticks = plainLines.slice(closingBackticksIndex + 1);
 			const emptyLineCount = afterBackticks.findIndex((line) => line !== "");
@@ -775,7 +779,7 @@ again, hello world`,
 			assert.strictEqual(
 				emptyLineCount,
 				1,
-				`Expected 1 empty line after code block, but found ${emptyLineCount}. Lines after backticks: ${JSON.stringify(afterBackticks.slice(0, 5))}`,
+				`Expected 1 empty line after code block, but found ${emptyLineCount}. Lines after code block: ${JSON.stringify(afterBackticks.slice(0, 5))}`,
 			);
 		});
 
@@ -794,7 +798,7 @@ code block
 
 more text`,
 			];
-			const expectedLines = ["hello this is text", "", "```", "  code block", "```", "", "more text"];
+			const expectedLines = ["hello this is text", "", "  code block", "", "more text"];
 
 			for (const text of cases) {
 				const markdown = new Markdown(text, 0, 0, defaultMarkdownTheme);
@@ -842,7 +846,7 @@ again, hello world`,
 			const lines = markdown.render(80);
 			const plainLines = lines.map((line) => line.replace(/\x1b\[[0-9;]*m/g, "").trimEnd());
 
-			const dividerIndex = plainLines.findIndex((line) => line.includes("─"));
+			const dividerIndex = plainLines.findIndex((line) => line.includes("╌"));
 			assert.ok(dividerIndex !== -1, "Should have divider");
 
 			const afterDivider = plainLines.slice(dividerIndex + 1);
@@ -885,7 +889,10 @@ This is a paragraph`,
 			const headingIndex = plainLines.findIndex((line) => line.includes("Hello"));
 			assert.ok(headingIndex !== -1, "Should have heading");
 
-			const afterHeading = plainLines.slice(headingIndex + 1);
+			const underlineIndex = plainLines.findIndex((line, index) => index > headingIndex && line.includes("━"));
+			assert.ok(underlineIndex !== -1, "Should have h1 underline");
+
+			const afterHeading = plainLines.slice(underlineIndex + 1);
 			const emptyLineCount = afterHeading.findIndex((line) => line !== "");
 
 			assert.strictEqual(
@@ -968,7 +975,7 @@ bar`,
 
 			// Both lines should have the quote border
 			const plainLines = lines.map((line) => line.replace(/\x1b\[[0-9;]*m/g, ""));
-			const quotedLines = plainLines.filter((line) => line.startsWith("│ "));
+			const quotedLines = plainLines.filter((line) => line.startsWith("▌ "));
 			assert.strictEqual(quotedLines.length, 2, `Expected 2 quoted lines, got: ${JSON.stringify(plainLines)}`);
 
 			// Both lines should have italic (from theme.quote styling)
@@ -1002,7 +1009,7 @@ bar`,
 
 			// Both lines should have the quote border
 			const plainLines = lines.map((line) => line.replace(/\x1b\[[0-9;]*m/g, ""));
-			const quotedLines = plainLines.filter((line) => line.startsWith("│ "));
+			const quotedLines = plainLines.filter((line) => line.startsWith("▌ "));
 			assert.strictEqual(quotedLines.length, 2, `Expected 2 quoted lines, got: ${JSON.stringify(plainLines)}`);
 
 			// Both lines should have italic (from theme.quote styling)
@@ -1027,14 +1034,14 @@ bar`,
 
 			const lines = markdown.render(80);
 			const plainLines = lines.map((line) => line.replace(/\x1b\[[0-9;]*m/g, ""));
-			const quotedLines = plainLines.filter((line) => line.startsWith("│ "));
+			const quotedLines = plainLines.filter((line) => line.startsWith("▌ "));
 
 			assert.ok(
 				quotedLines.some((line) => line.includes("1. bla bla")),
 				`Missing ordered list item: ${JSON.stringify(quotedLines)}`,
 			);
 			assert.ok(
-				quotedLines.some((line) => line.includes("- nested bullet")),
+				quotedLines.some((line) => line.includes("• nested bullet")),
 				`Missing unordered list item: ${JSON.stringify(quotedLines)}`,
 			);
 		});
@@ -1055,7 +1062,7 @@ bar`,
 
 			// Every content line should start with the quote border
 			for (const line of contentLines) {
-				assert.ok(line.startsWith("│ "), `Wrapped line should have quote border: "${line}"`);
+				assert.ok(line.startsWith("▌ "), `Wrapped line should have quote border: "${line}"`);
 			}
 
 			// All content should be preserved
@@ -1085,7 +1092,7 @@ bar`,
 
 			// All lines should have the quote border
 			for (const line of contentLines) {
-				assert.ok(line.startsWith("│ "), `Line should have quote border: "${line}"`);
+				assert.ok(line.startsWith("▌ "), `Line should have quote border: "${line}"`);
 			}
 
 			// Check that italic is applied (from theme.quote)
@@ -1104,7 +1111,7 @@ bar`,
 
 			// Should have the quote border
 			assert.ok(
-				plainLines.some((line) => line.startsWith("│ ")),
+				plainLines.some((line) => line.startsWith("▌ ")),
 				"Should have quote border",
 			);
 
@@ -1167,10 +1174,10 @@ bar`,
 			assert.ok(afterCodeIndex > 0, "Should contain text after inline code");
 
 			const precedingChunk = joinedOutput.slice(Math.max(0, afterCodeIndex - 40), afterCodeIndex);
-			// H1 uses heading + bold + underline
+			// H1 uses heading + bold, followed by a separate divider line.
 			assert.ok(precedingChunk.includes("\x1b[1m"), `Should re-apply bold for h1: ${precedingChunk}`);
 			assert.ok(precedingChunk.includes("\x1b[36m"), `Should re-apply cyan for h1: ${precedingChunk}`);
-			assert.ok(precedingChunk.includes("\x1b[4m"), `Should re-apply underline for h1: ${precedingChunk}`);
+			assert.ok(lines.map(stripAnsi).some((line) => line.includes("━")), "Should render h1 divider line");
 		});
 
 		it("should not leak h1 underline into padding when inline code is the last token", async () => {
@@ -1382,27 +1389,47 @@ bar`,
 			const cases = [
 				{
 					input: "```ts\nconst x = 1;\n``",
-					expected: ["```ts", "  const x = 1;", "```"],
+					expected: [
+						"╭ ts ──────────────────────────────────────────────────────────────────────────╮",
+						"const x = 1;",
+						"╰──────────────────────────────────────────────────────────────────────────────╯",
+					],
 				},
 				{
 					input: "```md\nnot a closing fence:\n``\n```",
-					expected: ["```md", "  not a closing fence:", "  ``", "```"],
+					expected: [
+						"╭ md ──────────────────────────────────────────────────────────────────────────╮",
+						"not a closing fence:",
+						"``",
+						"╰──────────────────────────────────────────────────────────────────────────────╯",
+					],
 				},
 				{
 					input: "```ts\n``",
-					expected: ["```ts", "", "```"],
+					expected: [
+						"╭ ts ──────────────────────────────────────────────────────────────────────────╮",
+						"",
+						"╰──────────────────────────────────────────────────────────────────────────────╯",
+					],
 				},
 				{
 					input: "````\n```",
-					expected: ["```", "", "```"],
+					expected: [""],
 				},
 				{
 					input: "~~~~~\n~~~~",
-					expected: ["```", "", "```"],
+					expected: [""],
 				},
 				{
 					input: "```md\nnot a closing fence:\n``\n```\n\nafter",
-					expected: ["```md", "  not a closing fence:", "  ``", "```", "", "after"],
+					expected: [
+						"╭ md ──────────────────────────────────────────────────────────────────────────╮",
+						"not a closing fence:",
+						"``",
+						"╰──────────────────────────────────────────────────────────────────────────────╯",
+						"",
+						"after",
+					],
 				},
 			];
 
