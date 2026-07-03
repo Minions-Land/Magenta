@@ -376,6 +376,10 @@ export class InteractiveMode {
 	private streamingComponent: AssistantMessageComponent | undefined = undefined;
 	private streamingMessage: AssistantMessage | undefined = undefined;
 	private streamingToolGroup: ToolExecutionGroupComponent | undefined = undefined;
+	private streamingAnimationTimer: NodeJS.Timeout | undefined = undefined;
+
+	// Adaptive rendering: track message_update event rate to dynamically adjust render interval
+
 
 	// Tool execution tracking: toolCallId -> component
 	private pendingTools = new Map<string, ToolExecutionComponent>();
@@ -759,6 +763,7 @@ export class InteractiveMode {
 				hint("app.clear", "to clear"),
 				rawKeyHint(`${keyText("app.clear")} twice`, "to exit"),
 				hint("app.exit", "to exit (empty)"),
+				hint("app.restart", "to restart"),
 				hint("app.suspend", "to suspend"),
 				keyHint("tui.editor.deleteToLineEnd", "to delete to end"),
 				hint("app.thinking.cycle", "to cycle thinking level"),
@@ -1744,12 +1749,35 @@ export class InteractiveMode {
 		this.chatContainer.clear();
 		this.pendingMessagesContainer.clear();
 		this.compactionQueuedMessages = [];
+		this.stopStreamingAnimation();
 		this.streamingComponent = undefined;
 		this.streamingMessage = undefined;
 		this.streamingToolGroup = undefined;
 		this.pendingTools.clear();
 		this.pendingToolGroups.clear();
 		this.renderInitialMessages();
+	}
+
+	private startStreamingAnimation(): void {
+		if (this.streamingAnimationTimer) return;
+		this.streamingAnimationTimer = setInterval(() => {
+			if (this.streamingComponent) {
+				const hasMore = this.streamingComponent.advance();
+				if (hasMore) {
+					this.ui.requestRender();
+				} else {
+					// No more content to animate, stop timer
+					this.stopStreamingAnimation();
+				}
+			}
+		}, 16); // 60 FPS
+	}
+
+	private stopStreamingAnimation(): void {
+		if (this.streamingAnimationTimer) {
+			clearInterval(this.streamingAnimationTimer);
+			this.streamingAnimationTimer = undefined;
+		}
 	}
 
 	/**
@@ -1814,9 +1842,6 @@ export class InteractiveMode {
 		return this.registerToolInGroup(group, toolName, toolCallId, args);
 	}
 
-	/**
-	 * Set up keyboard shortcuts registered by extensions.
-	 */
 	private setupExtensionShortcuts(extensionRunner: ExtensionRunner): void {
 		const shortcuts = extensionRunner.getShortcuts(this.keybindings.getEffectiveConfig());
 		if (shortcuts.size === 0) return;
@@ -2446,9 +2471,15 @@ export class InteractiveMode {
 				if (!customEditor.onExtensionShortcut) {
 					customEditor.onExtensionShortcut = (data: string) => this.defaultEditor.onExtensionShortcut?.(data);
 				}
-				// Copy action handlers (clear, suspend, model switching, etc.)
+				// Copy action handlers (clear, suspend, model switching, etc.) through onAction when available
+				// so editor wrappers can forward them to the inner component that handles input.
 				for (const [action, handler] of this.defaultEditor.actionHandlers) {
-					(customEditor.actionHandlers as Map<string, () => void>).set(action, handler);
+					const onAction = customEditor.onAction;
+					if (typeof onAction === "function") {
+						onAction.call(customEditor, action, handler);
+					} else {
+						(customEditor.actionHandlers as Map<string, () => void>).set(action, handler);
+					}
 				}
 			}
 
@@ -2618,6 +2649,7 @@ export class InteractiveMode {
 		// Register app action handlers
 		this.defaultEditor.onAction("app.clear", () => this.handleCtrlC());
 		this.defaultEditor.onCtrlD = () => this.handleCtrlD();
+		this.defaultEditor.onAction("app.restart", () => this.handleRestart());
 		this.defaultEditor.onAction("app.suspend", () => this.handleCtrlZ());
 		this.defaultEditor.onAction("app.thinking.cycle", () => this.cycleThinkingLevel());
 		this.defaultEditor.onAction("app.model.cycleForward", () => this.cycleModel("forward"));
@@ -2677,6 +2709,10 @@ export class InteractiveMode {
 		this.defaultEditor.onSubmit = async (text: string) => {
 			text = text.trim();
 			if (!text) return;
+
+			// Apply command aliases (migrate from command-aliases extension)
+			if (text === "exit" || text === "quit") text = "/quit";
+			if (text === "clear") text = "/new";
 
 			// Handle commands
 			if (text === "/settings") {
@@ -2941,6 +2977,7 @@ export class InteractiveMode {
 					this.streamingMessage = event.message;
 					this.chatContainer.addChild(this.streamingComponent);
 					this.streamingComponent.updateContent(this.streamingMessage);
+					this.startStreamingAnimation();
 					this.ui.requestRender();
 				}
 				break;
@@ -2949,6 +2986,7 @@ export class InteractiveMode {
 				if (this.streamingComponent && event.message.role === "assistant") {
 					this.streamingMessage = event.message;
 					this.streamingComponent.updateContent(this.streamingMessage);
+					this.startStreamingAnimation(); // Restart animation if stopped
 
 					for (const content of this.streamingMessage.content) {
 						if (content.type === "toolCall") {
@@ -3012,6 +3050,7 @@ export class InteractiveMode {
 							component.setArgsComplete();
 						}
 					}
+					this.stopStreamingAnimation();
 					this.streamingComponent = undefined;
 					this.streamingMessage = undefined;
 					this.streamingToolGroup = undefined;
@@ -3070,6 +3109,7 @@ export class InteractiveMode {
 					this.statusContainer.clear();
 				}
 				if (this.streamingComponent) {
+					this.stopStreamingAnimation();
 					this.chatContainer.removeChild(this.streamingComponent);
 					this.streamingComponent = undefined;
 					this.streamingMessage = undefined;
@@ -3512,6 +3552,10 @@ export class InteractiveMode {
 		void this.shutdown();
 	}
 
+	private handleRestart(): void {
+		void this.restartProcess();
+	}
+
 	/**
 	 * Gracefully shutdown the agent.
 	 * Stops the TUI before emitting shutdown events so extension UI cleanup cannot
@@ -3557,6 +3601,35 @@ export class InteractiveMode {
 			process.stdout.write(`${chalk.dim("To resume this session:")} ${resumeCommand}\n`);
 		}
 
+		process.exit(0);
+	}
+
+	private async restartProcess(): Promise<void> {
+		if (this.isShuttingDown) return;
+		this.isShuttingDown = true;
+
+		// Clean shutdown before restart
+		this.themeController.disableAutoSync();
+		await this.ui.terminal.drainInput(1000);
+		this.stop();
+		await this.runtimeHost.dispose();
+
+		// Spawn new pi process with same arguments and environment
+		const { spawn } = await import("child_process");
+		const args = process.argv.slice(1); // Skip node executable path
+		
+		const child = spawn(process.argv[0], args, {
+			detached: false,
+			stdio: "inherit",
+			env: process.env,
+			cwd: process.cwd(),
+		});
+
+		child.on("exit", (code) => {
+			process.exit(code ?? 0);
+		});
+
+		// Exit current process after spawning replacement
 		process.exit(0);
 	}
 
@@ -4678,6 +4751,7 @@ export class InteractiveMode {
 				description: "/scoped-models",
 			},
 			{ value: "slash:compact", label: "Compact", aliases: ["compact"], description: "/compact" },
+			{ value: "slash:reload", label: "Reload", aliases: ["reload"], description: "/reload" },
 			{ value: "slash:tree", label: "Tree", aliases: ["tree"], description: "/tree" },
 			{ value: "slash:resume", label: "Resume", aliases: ["resume"], description: "/resume" },
 			{ value: "slash:trust", label: "Trust", aliases: ["trust"], description: "/trust" },
@@ -4753,6 +4827,9 @@ export class InteractiveMode {
 				return;
 			case "hotkeys":
 				this.handleHotkeysCommand();
+				return;
+			case "reload":
+				await this.handleReloadCommand();
 				return;
 			case "quit":
 				await this.shutdown();

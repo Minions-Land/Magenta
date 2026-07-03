@@ -45,13 +45,22 @@ export function formatSkillInvocation(skill: Skill, additionalInstructions?: str
 	return additionalInstructions ? `${skillBlock}\n\n${additionalInstructions}` : skillBlock;
 }
 
-/** Return the Harness-owned bundled skills directory for source and built packages. */
-export function getBundledSkillsDir(): string {
+/**
+ * Return the Harness-owned skills module root. Harness-native skills live at
+ * `skills/<capability>/<source>/SKILL.md`, mirroring the `tools/<name>/<source>/`
+ * convention. There is no separate "bundled" directory — a skill shipped by the
+ * harness is simply a capability that lives here.
+ */
+export function getHarnessSkillsDir(): string {
 	if (isBunBinary) {
-		return join(dirname(process.execPath), "skills", "bundled");
+		return join(dirname(process.execPath), "skills");
 	}
-	return join(__dirname, "bundled");
+	// __dirname is skills/pi (the pi-source loader lives here); the module root is its parent.
+	return join(__dirname, "..");
 }
+
+/** Canonical harness implementation sources; a skill's identity is its capability dir, not its source dir. */
+const SOURCE_DIR_NAMES = new Set(["pi", "codex", "jcode", "claude-code", "magenta"]);
 
 /**
  * Load skills from one or more directories.
@@ -269,7 +278,13 @@ export async function loadSkillFile(
 
 	const { frontmatter, body } = parsed.value;
 	const skillDir = dirnameEnvPath(filePath);
-	const parentDirName = basenameEnvPath(skillDir);
+	// A skill's canonical name is its capability directory. When the SKILL.md sits inside a
+	// `<capability>/<source>/` slot (harness-native layout), the immediate parent is the source
+	// (e.g. `pi`), so the capability name is the grandparent. Otherwise the parent dir names it.
+	const immediateParent = basenameEnvPath(skillDir);
+	const parentDirName = SOURCE_DIR_NAMES.has(immediateParent)
+		? basenameEnvPath(dirnameEnvPath(skillDir))
+		: immediateParent;
 	const description = typeof frontmatter.description === "string" ? frontmatter.description : undefined;
 
 	for (const error of validateDescription(description)) {

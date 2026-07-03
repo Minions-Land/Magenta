@@ -57,6 +57,11 @@ path = "tools/omics-preflight/omics-preflight.toml"
 
 [[components]]
 kind = "tool"
+name = "omics_install_env"
+path = "tools/omics-environment/omics-install.toml"
+
+[[components]]
+kind = "tool"
 name = "omics_compute"
 path = "tools/omics-compute/omics-compute.toml"
 

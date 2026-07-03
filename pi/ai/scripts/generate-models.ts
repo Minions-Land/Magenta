@@ -195,6 +195,47 @@ const ANT_LING_RING_THINKING_LEVEL_MAP = {
 	xhigh: "xhigh",
 } as const;
 
+// Standard Anthropic extended thinking models (low, medium, high, xhigh)
+const ANTHROPIC_EXTENDED_THINKING_LEVEL_MAP = {
+	off: null,
+	minimal: "low",
+	low: "low",
+	medium: "medium",
+	high: "high",
+	xhigh: "xhigh",
+} as const;
+
+// Anthropic models that support 'max' as an additional highest effort level
+// (Sonnet 5, Opus 4.x, Fable 5)
+const ANTHROPIC_MAX_THINKING_LEVEL_MAP = {
+	off: null,
+	minimal: "low",
+	low: "low",
+	medium: "medium",
+	high: "high",
+	xhigh: "xhigh",
+	max: "max",
+} as const;
+
+// Standard OpenAI reasoning effort levels (low, medium, high)
+const OPENAI_STANDARD_THINKING_LEVEL_MAP = {
+	off: null,
+	minimal: "low",
+	low: "low",
+	medium: "medium",
+	high: "high",
+} as const;
+
+// OpenAI models with xhigh support (GPT-5.2+)
+const OPENAI_XHIGH_THINKING_LEVEL_MAP = {
+	off: null,
+	minimal: "low",
+	low: "low",
+	medium: "medium",
+	high: "high",
+	xhigh: "xhigh",
+} as const;
+
 const OPENAI_RESPONSES_NONE_REASONING_MODELS = new Set([
 	"gpt-5.1",
 	"gpt-5.2",
@@ -268,7 +309,44 @@ function isAnthropicAdaptiveThinkingModel(modelId: string): boolean {
 		modelId.includes("opus-4.8") ||
 		modelId.includes("sonnet-4-6") ||
 		modelId.includes("sonnet-4.6") ||
+		modelId.includes("sonnet-5") ||
 		modelId.includes("fable-5")
+	);
+}
+
+function isAnthropicExtendedThinkingModel(modelId: string): boolean {
+	return (
+		modelId.includes("sonnet-3.7") ||
+		modelId.includes("sonnet-3-7") ||
+		modelId.includes("3-7-sonnet") ||
+		modelId.includes("3.7-sonnet") ||
+		modelId.includes("haiku-4-5") ||
+		modelId.includes("haiku-4.5") ||
+		modelId.includes("4-5-haiku") ||
+		modelId.includes("4.5-haiku") ||
+		modelId.includes("opus-4-0") ||
+		modelId.includes("opus-4.0") ||
+		modelId.includes("4-0-opus") ||
+		modelId.includes("opus-4-1") ||
+		modelId.includes("opus-4.1") ||
+		modelId.includes("4-1-opus") ||
+		modelId.includes("opus-4-2") ||
+		modelId.includes("opus-4.2") ||
+		modelId.includes("opus-4-3") ||
+		modelId.includes("opus-4.3") ||
+		modelId.includes("opus-4-4") ||
+		modelId.includes("opus-4.4") ||
+		modelId.includes("opus-4-5") ||
+		modelId.includes("opus-4.5") ||
+		modelId.includes("4-5-opus") ||
+		modelId.includes("sonnet-4-0") ||
+		modelId.includes("sonnet-4.0") ||
+		modelId.includes("4-0-sonnet") ||
+		modelId.includes("sonnet-4-5") ||
+		modelId.includes("sonnet-4.5") ||
+		modelId.includes("4-5-sonnet") ||
+		modelId.includes("sonnet-4-20") ||
+		modelId.includes("sonnet-4.20")
 	);
 }
 
@@ -440,6 +518,18 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 	) {
 		mergeThinkingLevelMap(model, { off: null });
 	}
+	// OpenAI reasoning models: systematic thinkingLevelMap configuration
+	if ((model.api === "openai-completions" || model.api === "openai-responses") && model.reasoning) {
+		if (model.provider === "openai" || model.provider === "openai-codex" || model.provider === "azure-openai-responses") {
+			if (supportsOpenAiXhigh(model.id)) {
+				// GPT-5.2+ supports xhigh
+				mergeThinkingLevelMap(model, OPENAI_XHIGH_THINKING_LEVEL_MAP);
+			} else {
+				// Standard OpenAI reasoning models (o1, o3, o4, gpt-5.1, etc.)
+				mergeThinkingLevelMap(model, OPENAI_STANDARD_THINKING_LEVEL_MAP);
+			}
+		}
+	}
 	if (model.provider === "github-copilot" && model.id.startsWith("gpt-5")) {
 		mergeThinkingLevelMap(model, { minimal: "low" });
 	}
@@ -450,31 +540,36 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 	) {
 		mergeThinkingLevelMap(model, { off: "none" });
 	}
-	if (supportsOpenAiXhigh(model.id)) {
-		mergeThinkingLevelMap(model, { xhigh: "xhigh" });
-	}
+	// Special case overrides for specific models
 	if (model.provider === "openai" && model.id === "gpt-5.5") {
 		mergeThinkingLevelMap(model, { minimal: null });
 	}
-	if (model.id.endsWith("gpt-5.5-pro")) {
+	if (model.id.includes("gpt-5.5-pro")) {
 		mergeThinkingLevelMap(model, { off: null, minimal: null, low: null });
 	}
-	if (model.id.includes("opus-4-6") || model.id.includes("opus-4.6")) {
-		mergeThinkingLevelMap(model, { xhigh: "max" });
+
+	// Anthropic models: systematic thinkingLevelMap configuration
+	if (model.api === "anthropic-messages" && model.reasoning) {
+		// Opus 4.x, Sonnet 5, Fable 5 support 'max' as highest effort level
+		if (model.id.includes("opus-4") || model.id.includes("sonnet-5") || model.id.includes("fable-5")) {
+			mergeThinkingLevelMap(model, ANTHROPIC_MAX_THINKING_LEVEL_MAP);
+		}
+		// Sonnet 4.x (except 5) also supports max
+		else if (model.id.includes("sonnet-4-6") || model.id.includes("sonnet-4.6")) {
+			mergeThinkingLevelMap(model, ANTHROPIC_MAX_THINKING_LEVEL_MAP);
+		}
+		// Other extended thinking models: Sonnet 3.7, Haiku 4.5, Sonnet 4.0-4.5
+		else if (isAnthropicExtendedThinkingModel(model.id)) {
+			mergeThinkingLevelMap(model, ANTHROPIC_EXTENDED_THINKING_LEVEL_MAP);
+		}
 	}
-	if (
-		model.id.includes("opus-4-7") ||
-		model.id.includes("opus-4.7") ||
-		model.id.includes("opus-4-8") ||
-		model.id.includes("opus-4.8")
-	) {
-		mergeThinkingLevelMap(model, { xhigh: "xhigh" });
-	}
-	if (
-		(model.api === "anthropic-messages" || model.api === "bedrock-converse-stream") &&
-		model.id.includes("fable-5")
-	) {
-		mergeThinkingLevelMap(model, { off: null, xhigh: "xhigh" });
+	// Bedrock Anthropic models
+	if (model.api === "bedrock-converse-stream" && model.reasoning && model.id.includes("anthropic")) {
+		if (model.id.includes("opus-4") || model.id.includes("sonnet-5") || model.id.includes("fable-5")) {
+			mergeThinkingLevelMap(model, ANTHROPIC_MAX_THINKING_LEVEL_MAP);
+		} else if (isAnthropicExtendedThinkingModel(model.id)) {
+			mergeThinkingLevelMap(model, ANTHROPIC_EXTENDED_THINKING_LEVEL_MAP);
+		}
 	}
 	if (model.api === "anthropic-messages" && isAnthropicAdaptiveThinkingModel(model.id)) {
 		mergeAnthropicMessagesCompat(model, { forceAdaptiveThinking: true });

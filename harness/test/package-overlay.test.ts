@@ -492,13 +492,30 @@ process.stdin.on("end", () => {
 		const assembly = await assemblePackageToolMagnets(overlay);
 
 		expect(assembly.diagnostics).toEqual([]);
-		expect(assembly.magnets.map((magnet) => magnet.kind)).toEqual(["python"]);
-		expect(assembly.tools.map((tool) => tool.name)).toEqual(["omics_compute"]);
-		expect(assembly.tools[0]?.parameters.properties).toMatchObject({
+		// omics_environment + omics_install_env are process tools (pixi CLI);
+		// omics_preflight and omics_compute are python-backed (aose_omics_runtime).
+		expect(assembly.magnets.map((magnet) => magnet.kind)).toEqual([
+			"process",
+			"python",
+			"process",
+			"python",
+		]);
+		expect(assembly.tools.map((tool) => tool.name)).toEqual([
+			"omics_environment",
+			"omics_preflight",
+			"omics_install_env",
+			"omics_compute",
+		]);
+		const compute = assembly.tools.find((tool) => tool.name === "omics_compute");
+		expect(compute?.parameters.properties).toMatchObject({
 			subcommand: {
 				enum: expect.arrayContaining(["summarize", "preprocess", "score"]),
 			},
 		});
+		// omics_install_env downloads packages and writes the env prefix, so it
+		// must land in the trusted sandbox (network + workspace write). Guard that.
+		const installIdx = assembly.tools.findIndex((tool) => tool.name === "omics_install_env");
+		expect(assembly.magnets[installIdx]?.spec.sandbox.selection.profile).toBe("trusted");
 	});
 
 	it("executes package-local python module runtime tools", async () => {

@@ -463,21 +463,6 @@ export function getBundledInteractiveAssetPath(name: string): string {
 	return join(getInteractiveAssetsDir(), name);
 }
 
-/**
- * Get path to bundled extensions.
- * - For Bun binary: extensions/ next to executable
- * - For Node.js (dist/): dist/extensions/
- * - For tsx/source checkout: src/extensions/
- */
-export function getBundledExtensionsDir(): string {
-	if (isBunBinary) {
-		return join(getPackageDir(), "extensions");
-	}
-	const packageDir = getPackageDir();
-	const srcOrDist = existsSync(join(packageDir, "src")) ? "src" : "dist";
-	return join(packageDir, srcOrDist, "extensions");
-}
-
 // =============================================================================
 // App Config (from package.json piConfig)
 // =============================================================================

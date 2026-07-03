@@ -191,9 +191,9 @@
     "general-harness:event:manager": {
       "state": "integrated",
       "component": {
-        "kind": "coding-agent-extension",
+        "kind": "harness-extension",
         "name": "background-events",
-        "path": "pi/coding-agent/src/extensions/background-events/event-monitor.ts"
+        "path": "extensions/pi/bundled/background-events/event-monitor.ts"
       },
       "relation": "covered-by-magenta3-lazypi-background-events-extension",
       "notes": "LazyPi Jobs manager has already been integrated in Magenta3 as Background Events: createEventsMonitor aggregates bg_shell/sub_agent sources, drives the /events overlay, and is bundled by pi/coding-agent/src/core/resource-loader.ts. This is outside harness/HCP provider registration."
@@ -201,9 +201,9 @@
     "general-harness:event-tool:bg_shell": {
       "state": "integrated",
       "component": {
-        "kind": "coding-agent-extension-tool",
+        "kind": "harness-extension-tool",
         "name": "bg_shell",
-        "path": "pi/coding-agent/src/extensions/background-events/background-shell.ts"
+        "path": "extensions/pi/bundled/background-events/background-shell.ts"
       },
       "relation": "covered-by-magenta3-lazypi-background-events-extension",
       "notes": "Magenta3 already registers the bg_shell extension tool for long-running shell commands as background events with start/status/wait/cancel/config actions."
@@ -211,9 +211,9 @@
     "general-harness:event-tool:sub_agent": {
       "state": "integrated",
       "component": {
-        "kind": "coding-agent-extension-tool",
+        "kind": "harness-extension-tool",
         "name": "sub_agent",
-        "path": "pi/coding-agent/src/extensions/background-events/sub-agents.ts"
+        "path": "extensions/pi/bundled/background-events/sub-agents.ts"
       },
       "relation": "covered-by-magenta3-lazypi-background-events-extension",
       "notes": "Magenta3 already registers the sub_agent extension tool for parallel headless Pi workers and connects it to the Background Events monitor."

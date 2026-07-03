@@ -1,4 +1,4 @@
-import { Editor, type EditorOptions, type EditorTheme, type TUI } from "@earendil-works/pi-tui";
+import { Editor, type EditorOptions, type EditorTheme, matchesKey, type TUI } from "@earendil-works/pi-tui";
 import type { AppKeybinding, KeybindingsManager } from "../../../core/keybindings.ts";
 
 /**
@@ -37,6 +37,18 @@ export class CustomEditor extends Editor {
 		if (this.keybindings.matches(data, "app.clipboard.pasteImage")) {
 			this.onPasteImage?.();
 			return;
+		}
+
+		// Autocomplete enhancement (migrated from command-aliases extension):
+		// When autocomplete is showing and Enter is pressed, treat it as Tab
+		if (matchesKey(data, "enter") && this.isShowingAutocomplete()) {
+			// Check if text ends with autocomplete trigger (@file or /command)
+			const text = this.getText().trimEnd();
+			if (/(^|\s)[\/@][^\s]*$/.test(text)) {
+				// Convert Enter to Tab to accept/cycle autocomplete
+				super.handleInput("\t");
+				return;
+			}
 		}
 
 		// Check app keybindings first

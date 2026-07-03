@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { ExtensionAPI } from "../src/core/extensions/types.ts";
 import { BUILTIN_SLASH_COMMANDS } from "../src/core/slash-commands.ts";
-import { applyAlias } from "../src/extensions/command-aliases.ts";
-import sideChatExtension, { SIDE_CHAT_COMMAND_NAMES } from "../src/extensions/side-chat.ts";
+import { applyAlias } from "../../../harness/extensions/pi/bundled/command-aliases.ts";
+import sideChatExtension, { SIDE_CHAT_COMMAND_NAMES } from "../../../harness/extensions/pi/bundled/side-chat.ts";
 
 describe("command links", () => {
 	it("maps bare quit and exit input to the quit slash command", () => {

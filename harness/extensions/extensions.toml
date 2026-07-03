@@ -24,7 +24,3 @@ path = "pi/bundled/ui-optimize/index.ts"
 name = "side-chat"
 path = "pi/bundled/side-chat.ts"
 commands = ["side", "btw", "s"]
-
-[[bundled_extensions]]
-name = "command-aliases"
-path = "pi/bundled/command-aliases.ts"

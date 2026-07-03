@@ -120,7 +120,7 @@ export const CLOUDFLARE_AI_GATEWAY_MODELS = {
 		baseUrl: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/anthropic",
 		compat: {"sendSessionAffinityHeaders":true,"forceAdaptiveThinking":true},
 		reasoning: true,
-		thinkingLevelMap: {"off":null,"xhigh":"xhigh"},
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high","xhigh":"xhigh","max":"max"},
 		input: ["text", "image"],
 		cost: {
 			input: 10,
@@ -139,6 +139,7 @@ export const CLOUDFLARE_AI_GATEWAY_MODELS = {
 		baseUrl: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/anthropic",
 		compat: {"sendSessionAffinityHeaders":true},
 		reasoning: true,
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high","xhigh":"xhigh"},
 		input: ["text", "image"],
 		cost: {
 			input: 1,
@@ -157,6 +158,7 @@ export const CLOUDFLARE_AI_GATEWAY_MODELS = {
 		baseUrl: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/anthropic",
 		compat: {"sendSessionAffinityHeaders":true},
 		reasoning: true,
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high","xhigh":"xhigh","max":"max"},
 		input: ["text", "image"],
 		cost: {
 			input: 15,
@@ -175,6 +177,7 @@ export const CLOUDFLARE_AI_GATEWAY_MODELS = {
 		baseUrl: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/anthropic",
 		compat: {"sendSessionAffinityHeaders":true},
 		reasoning: true,
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high","xhigh":"xhigh","max":"max"},
 		input: ["text", "image"],
 		cost: {
 			input: 15,
@@ -193,6 +196,7 @@ export const CLOUDFLARE_AI_GATEWAY_MODELS = {
 		baseUrl: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/anthropic",
 		compat: {"sendSessionAffinityHeaders":true},
 		reasoning: true,
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high","xhigh":"xhigh","max":"max"},
 		input: ["text", "image"],
 		cost: {
 			input: 5,
@@ -211,7 +215,7 @@ export const CLOUDFLARE_AI_GATEWAY_MODELS = {
 		baseUrl: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/anthropic",
 		compat: {"sendSessionAffinityHeaders":true,"forceAdaptiveThinking":true},
 		reasoning: true,
-		thinkingLevelMap: {"xhigh":"max"},
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high","xhigh":"xhigh","max":"max"},
 		input: ["text", "image"],
 		cost: {
 			input: 5,
@@ -230,7 +234,7 @@ export const CLOUDFLARE_AI_GATEWAY_MODELS = {
 		baseUrl: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/anthropic",
 		compat: {"sendSessionAffinityHeaders":true,"forceAdaptiveThinking":true,"supportsTemperature":false},
 		reasoning: true,
-		thinkingLevelMap: {"xhigh":"xhigh"},
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high","xhigh":"xhigh","max":"max"},
 		input: ["text", "image"],
 		cost: {
 			input: 5,
@@ -249,7 +253,7 @@ export const CLOUDFLARE_AI_GATEWAY_MODELS = {
 		baseUrl: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/anthropic",
 		compat: {"sendSessionAffinityHeaders":true,"forceAdaptiveThinking":true,"supportsTemperature":false},
 		reasoning: true,
-		thinkingLevelMap: {"xhigh":"xhigh"},
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high","xhigh":"xhigh","max":"max"},
 		input: ["text", "image"],
 		cost: {
 			input: 5,
@@ -286,6 +290,7 @@ export const CLOUDFLARE_AI_GATEWAY_MODELS = {
 		baseUrl: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/anthropic",
 		compat: {"sendSessionAffinityHeaders":true},
 		reasoning: true,
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high","xhigh":"xhigh"},
 		input: ["text", "image"],
 		cost: {
 			input: 3,
@@ -304,6 +309,7 @@ export const CLOUDFLARE_AI_GATEWAY_MODELS = {
 		baseUrl: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/anthropic",
 		compat: {"sendSessionAffinityHeaders":true,"forceAdaptiveThinking":true},
 		reasoning: true,
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high","xhigh":"xhigh","max":"max"},
 		input: ["text", "image"],
 		cost: {
 			input: 3,
@@ -320,8 +326,9 @@ export const CLOUDFLARE_AI_GATEWAY_MODELS = {
 		api: "anthropic-messages",
 		provider: "cloudflare-ai-gateway",
 		baseUrl: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/anthropic",
-		compat: {"sendSessionAffinityHeaders":true},
+		compat: {"sendSessionAffinityHeaders":true,"forceAdaptiveThinking":true},
 		reasoning: true,
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high","xhigh":"xhigh","max":"max"},
 		input: ["text", "image"],
 		cost: {
 			input: 2,
@@ -443,7 +450,7 @@ export const CLOUDFLARE_AI_GATEWAY_MODELS = {
 		provider: "cloudflare-ai-gateway",
 		baseUrl: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/openai",
 		reasoning: true,
-		thinkingLevelMap: {"off":null,"xhigh":"xhigh"},
+		thinkingLevelMap: {"off":null},
 		input: ["text", "image"],
 		cost: {
 			input: 1.75,
@@ -461,7 +468,7 @@ export const CLOUDFLARE_AI_GATEWAY_MODELS = {
 		provider: "cloudflare-ai-gateway",
 		baseUrl: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/openai",
 		reasoning: true,
-		thinkingLevelMap: {"off":null,"xhigh":"xhigh"},
+		thinkingLevelMap: {"off":null},
 		input: ["text", "image"],
 		cost: {
 			input: 1.75,
@@ -479,7 +486,7 @@ export const CLOUDFLARE_AI_GATEWAY_MODELS = {
 		provider: "cloudflare-ai-gateway",
 		baseUrl: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/openai",
 		reasoning: true,
-		thinkingLevelMap: {"off":null,"xhigh":"xhigh"},
+		thinkingLevelMap: {"off":null},
 		input: ["text", "image"],
 		cost: {
 			input: 1.75,
@@ -497,7 +504,7 @@ export const CLOUDFLARE_AI_GATEWAY_MODELS = {
 		provider: "cloudflare-ai-gateway",
 		baseUrl: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/openai",
 		reasoning: true,
-		thinkingLevelMap: {"off":null,"xhigh":"xhigh"},
+		thinkingLevelMap: {"off":null},
 		input: ["text", "image"],
 		cost: {
 			input: 2.5,
@@ -515,7 +522,7 @@ export const CLOUDFLARE_AI_GATEWAY_MODELS = {
 		provider: "cloudflare-ai-gateway",
 		baseUrl: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/openai",
 		reasoning: true,
-		thinkingLevelMap: {"off":null,"xhigh":"xhigh"},
+		thinkingLevelMap: {"off":null},
 		input: ["text", "image"],
 		cost: {
 			input: 5,

@@ -1,8 +1,8 @@
 kind = "tool"
 name = "omics_preflight"
-description = "Verify package-local omics implementation and environment readiness for a modality before compute."
-execution = "declarative"
+description = "Verify the pinned Pixi environment for an omics modality can import its required packages before compute. Runs `python -m aose_omics_runtime preflight` inside the modality's isolated environment, so a green result guarantees no ModuleNotFoundError at analysis time. Returns readiness, missing packages, a fix hint, and optional GPU availability."
 runtime = "aose_omics_runtime"
+module = "aose_omics_runtime"
 operation = "read"
 read_only = true
 destructive = false
@@ -13,20 +13,29 @@ source = "AOSE origin/main 57ae83b with UPDATING exclusions applied"
 implementation_path = "tools/omics-compute/python"
 env_manifest = "tools/omics-environment/pixi.toml"
 
+[metadata.pixi_environment_by_modality]
+scrna = "task1"
+spatial = "task2"
+scatac = "task4"
+multiome = "task3"
+
 [parameters]
 type = "object"
-required = ["modality"]
+required = ["subcommand", "modality"]
+
+[parameters.properties.subcommand]
+type = "string"
+enum = ["preflight"]
+default = "preflight"
+description = "Always 'preflight'."
 
 [parameters.properties.modality]
 type = "string"
 enum = ["scrna", "spatial", "scatac", "multiome"]
-description = "Omics modality to validate."
+description = "Omics modality to validate. Selects the pinned Pixi environment to probe."
 
 [parameters.properties.checkGpu]
 type = "boolean"
 default = false
-description = "Check GPU availability for GPU-dependent methods."
-
-[parameters.properties.pythonBin]
-type = "string"
-description = "Optional explicit Python interpreter."
+description = "Also probe GPU availability (torch.cuda with a RAPIDS fallback)."
+</content>

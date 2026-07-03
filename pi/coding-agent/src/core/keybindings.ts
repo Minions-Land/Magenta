@@ -14,6 +14,7 @@ export interface AppKeybindings {
 	"app.interrupt": true;
 	"app.clear": true;
 	"app.exit": true;
+	"app.restart": true;
 	"app.suspend": true;
 	"app.thinking.cycle": true;
 	"app.model.cycleForward": true;
@@ -65,6 +66,7 @@ export const KEYBINDINGS = {
 	"app.interrupt": { defaultKeys: "escape", description: "Cancel or abort" },
 	"app.clear": { defaultKeys: "ctrl+c", description: "Clear editor" },
 	"app.exit": { defaultKeys: "ctrl+d", description: "Exit when editor is empty" },
+	"app.restart": { defaultKeys: "ctrl+shift+r", description: "Restart pi" },
 	"app.suspend": {
 		defaultKeys: process.platform === "win32" ? [] : "ctrl+z",
 		description: "Suspend to background",

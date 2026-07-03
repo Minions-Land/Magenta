@@ -181,7 +181,7 @@ export const OPENAI_MODELS = {
 		provider: "openai",
 		baseUrl: "https://api.openai.com/v1",
 		reasoning: true,
-		thinkingLevelMap: {"off":null},
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high"},
 		input: ["text", "image"],
 		cost: {
 			input: 1.25,
@@ -217,7 +217,7 @@ export const OPENAI_MODELS = {
 		provider: "openai",
 		baseUrl: "https://api.openai.com/v1",
 		reasoning: true,
-		thinkingLevelMap: {"off":null},
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high"},
 		input: ["text", "image"],
 		cost: {
 			input: 1.25,
@@ -235,7 +235,7 @@ export const OPENAI_MODELS = {
 		provider: "openai",
 		baseUrl: "https://api.openai.com/v1",
 		reasoning: true,
-		thinkingLevelMap: {"off":null},
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high"},
 		input: ["text", "image"],
 		cost: {
 			input: 0.25,
@@ -253,7 +253,7 @@ export const OPENAI_MODELS = {
 		provider: "openai",
 		baseUrl: "https://api.openai.com/v1",
 		reasoning: true,
-		thinkingLevelMap: {"off":null},
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high"},
 		input: ["text", "image"],
 		cost: {
 			input: 0.05,
@@ -271,7 +271,7 @@ export const OPENAI_MODELS = {
 		provider: "openai",
 		baseUrl: "https://api.openai.com/v1",
 		reasoning: true,
-		thinkingLevelMap: {"off":null},
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high"},
 		input: ["text", "image"],
 		cost: {
 			input: 15,
@@ -289,7 +289,7 @@ export const OPENAI_MODELS = {
 		provider: "openai",
 		baseUrl: "https://api.openai.com/v1",
 		reasoning: true,
-		thinkingLevelMap: {"off":"none"},
+		thinkingLevelMap: {"off":"none","minimal":"low","low":"low","medium":"medium","high":"high"},
 		input: ["text", "image"],
 		cost: {
 			input: 1.25,
@@ -307,7 +307,7 @@ export const OPENAI_MODELS = {
 		provider: "openai",
 		baseUrl: "https://api.openai.com/v1",
 		reasoning: true,
-		thinkingLevelMap: {"off":null},
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high"},
 		input: ["text", "image"],
 		cost: {
 			input: 1.25,
@@ -325,7 +325,7 @@ export const OPENAI_MODELS = {
 		provider: "openai",
 		baseUrl: "https://api.openai.com/v1",
 		reasoning: true,
-		thinkingLevelMap: {"off":null},
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high"},
 		input: ["text", "image"],
 		cost: {
 			input: 1.25,
@@ -343,7 +343,7 @@ export const OPENAI_MODELS = {
 		provider: "openai",
 		baseUrl: "https://api.openai.com/v1",
 		reasoning: true,
-		thinkingLevelMap: {"off":null},
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high"},
 		input: ["text", "image"],
 		cost: {
 			input: 1.25,
@@ -361,7 +361,7 @@ export const OPENAI_MODELS = {
 		provider: "openai",
 		baseUrl: "https://api.openai.com/v1",
 		reasoning: true,
-		thinkingLevelMap: {"off":null},
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high"},
 		input: ["text", "image"],
 		cost: {
 			input: 0.25,
@@ -379,7 +379,7 @@ export const OPENAI_MODELS = {
 		provider: "openai",
 		baseUrl: "https://api.openai.com/v1",
 		reasoning: true,
-		thinkingLevelMap: {"off":"none","xhigh":"xhigh"},
+		thinkingLevelMap: {"off":"none","minimal":"low","low":"low","medium":"medium","high":"high","xhigh":"xhigh"},
 		input: ["text", "image"],
 		cost: {
 			input: 1.75,
@@ -397,7 +397,7 @@ export const OPENAI_MODELS = {
 		provider: "openai",
 		baseUrl: "https://api.openai.com/v1",
 		reasoning: true,
-		thinkingLevelMap: {"off":null,"xhigh":"xhigh"},
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high","xhigh":"xhigh"},
 		input: ["text", "image"],
 		cost: {
 			input: 1.75,
@@ -415,7 +415,7 @@ export const OPENAI_MODELS = {
 		provider: "openai",
 		baseUrl: "https://api.openai.com/v1",
 		reasoning: true,
-		thinkingLevelMap: {"off":null,"xhigh":"xhigh"},
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high","xhigh":"xhigh"},
 		input: ["text", "image"],
 		cost: {
 			input: 1.75,
@@ -433,7 +433,7 @@ export const OPENAI_MODELS = {
 		provider: "openai",
 		baseUrl: "https://api.openai.com/v1",
 		reasoning: true,
-		thinkingLevelMap: {"off":null,"xhigh":"xhigh"},
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high","xhigh":"xhigh"},
 		input: ["text", "image"],
 		cost: {
 			input: 21,
@@ -451,7 +451,7 @@ export const OPENAI_MODELS = {
 		provider: "openai",
 		baseUrl: "https://api.openai.com/v1",
 		reasoning: false,
-		thinkingLevelMap: {"off":null,"xhigh":"xhigh"},
+		thinkingLevelMap: {"off":null},
 		input: ["text", "image"],
 		cost: {
 			input: 1.75,
@@ -469,7 +469,7 @@ export const OPENAI_MODELS = {
 		provider: "openai",
 		baseUrl: "https://api.openai.com/v1",
 		reasoning: true,
-		thinkingLevelMap: {"off":"none","xhigh":"xhigh"},
+		thinkingLevelMap: {"off":"none","minimal":"low","low":"low","medium":"medium","high":"high","xhigh":"xhigh"},
 		input: ["text", "image"],
 		cost: {
 			input: 1.75,
@@ -487,7 +487,7 @@ export const OPENAI_MODELS = {
 		provider: "openai",
 		baseUrl: "https://api.openai.com/v1",
 		reasoning: true,
-		thinkingLevelMap: {"off":null,"xhigh":"xhigh"},
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high","xhigh":"xhigh"},
 		input: ["text", "image"],
 		cost: {
 			input: 1.75,
@@ -505,7 +505,7 @@ export const OPENAI_MODELS = {
 		provider: "openai",
 		baseUrl: "https://api.openai.com/v1",
 		reasoning: true,
-		thinkingLevelMap: {"off":"none","xhigh":"xhigh"},
+		thinkingLevelMap: {"off":"none","minimal":"low","low":"low","medium":"medium","high":"high","xhigh":"xhigh"},
 		input: ["text", "image"],
 		cost: {
 			input: 2.5,
@@ -523,7 +523,7 @@ export const OPENAI_MODELS = {
 		provider: "openai",
 		baseUrl: "https://api.openai.com/v1",
 		reasoning: true,
-		thinkingLevelMap: {"off":"none","xhigh":"xhigh"},
+		thinkingLevelMap: {"off":"none","minimal":"low","low":"low","medium":"medium","high":"high","xhigh":"xhigh"},
 		input: ["text", "image"],
 		cost: {
 			input: 0.75,
@@ -541,7 +541,7 @@ export const OPENAI_MODELS = {
 		provider: "openai",
 		baseUrl: "https://api.openai.com/v1",
 		reasoning: true,
-		thinkingLevelMap: {"off":"none","xhigh":"xhigh"},
+		thinkingLevelMap: {"off":"none","minimal":"low","low":"low","medium":"medium","high":"high","xhigh":"xhigh"},
 		input: ["text", "image"],
 		cost: {
 			input: 0.2,
@@ -559,7 +559,7 @@ export const OPENAI_MODELS = {
 		provider: "openai",
 		baseUrl: "https://api.openai.com/v1",
 		reasoning: true,
-		thinkingLevelMap: {"off":null,"xhigh":"xhigh"},
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high","xhigh":"xhigh"},
 		input: ["text", "image"],
 		cost: {
 			input: 30,
@@ -577,7 +577,7 @@ export const OPENAI_MODELS = {
 		provider: "openai",
 		baseUrl: "https://api.openai.com/v1",
 		reasoning: true,
-		thinkingLevelMap: {"off":"none","xhigh":"xhigh","minimal":null},
+		thinkingLevelMap: {"off":"none","minimal":null,"low":"low","medium":"medium","high":"high","xhigh":"xhigh"},
 		input: ["text", "image"],
 		cost: {
 			input: 5,
@@ -595,7 +595,7 @@ export const OPENAI_MODELS = {
 		provider: "openai",
 		baseUrl: "https://api.openai.com/v1",
 		reasoning: true,
-		thinkingLevelMap: {"off":null,"xhigh":"xhigh","minimal":null,"low":null},
+		thinkingLevelMap: {"off":null,"minimal":null,"low":null,"medium":"medium","high":"high","xhigh":"xhigh"},
 		input: ["text", "image"],
 		cost: {
 			input: 30,
@@ -613,6 +613,7 @@ export const OPENAI_MODELS = {
 		provider: "openai",
 		baseUrl: "https://api.openai.com/v1",
 		reasoning: true,
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high"},
 		input: ["text", "image"],
 		cost: {
 			input: 15,
@@ -630,6 +631,7 @@ export const OPENAI_MODELS = {
 		provider: "openai",
 		baseUrl: "https://api.openai.com/v1",
 		reasoning: true,
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high"},
 		input: ["text", "image"],
 		cost: {
 			input: 150,
@@ -647,6 +649,7 @@ export const OPENAI_MODELS = {
 		provider: "openai",
 		baseUrl: "https://api.openai.com/v1",
 		reasoning: true,
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high"},
 		input: ["text", "image"],
 		cost: {
 			input: 2,
@@ -664,6 +667,7 @@ export const OPENAI_MODELS = {
 		provider: "openai",
 		baseUrl: "https://api.openai.com/v1",
 		reasoning: true,
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high"},
 		input: ["text", "image"],
 		cost: {
 			input: 10,
@@ -681,6 +685,7 @@ export const OPENAI_MODELS = {
 		provider: "openai",
 		baseUrl: "https://api.openai.com/v1",
 		reasoning: true,
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high"},
 		input: ["text"],
 		cost: {
 			input: 1.1,
@@ -698,6 +703,7 @@ export const OPENAI_MODELS = {
 		provider: "openai",
 		baseUrl: "https://api.openai.com/v1",
 		reasoning: true,
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high"},
 		input: ["text", "image"],
 		cost: {
 			input: 20,
@@ -715,6 +721,7 @@ export const OPENAI_MODELS = {
 		provider: "openai",
 		baseUrl: "https://api.openai.com/v1",
 		reasoning: true,
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high"},
 		input: ["text", "image"],
 		cost: {
 			input: 1.1,
@@ -732,6 +739,7 @@ export const OPENAI_MODELS = {
 		provider: "openai",
 		baseUrl: "https://api.openai.com/v1",
 		reasoning: true,
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high"},
 		input: ["text", "image"],
 		cost: {
 			input: 2,

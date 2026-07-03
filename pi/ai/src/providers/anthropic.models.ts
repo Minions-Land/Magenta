@@ -45,6 +45,7 @@ export const ANTHROPIC_MODELS = {
 		provider: "anthropic",
 		baseUrl: "https://api.anthropic.com",
 		reasoning: true,
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high","xhigh":"xhigh"},
 		input: ["text", "image"],
 		cost: {
 			input: 3,
@@ -114,7 +115,7 @@ export const ANTHROPIC_MODELS = {
 		baseUrl: "https://api.anthropic.com",
 		compat: {"forceAdaptiveThinking":true},
 		reasoning: true,
-		thinkingLevelMap: {"off":null,"xhigh":"xhigh"},
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high","xhigh":"xhigh","max":"max"},
 		input: ["text", "image"],
 		cost: {
 			input: 10,
@@ -132,6 +133,7 @@ export const ANTHROPIC_MODELS = {
 		provider: "anthropic",
 		baseUrl: "https://api.anthropic.com",
 		reasoning: true,
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high","xhigh":"xhigh"},
 		input: ["text", "image"],
 		cost: {
 			input: 1,
@@ -149,6 +151,7 @@ export const ANTHROPIC_MODELS = {
 		provider: "anthropic",
 		baseUrl: "https://api.anthropic.com",
 		reasoning: true,
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high","xhigh":"xhigh"},
 		input: ["text", "image"],
 		cost: {
 			input: 1,
@@ -166,6 +169,7 @@ export const ANTHROPIC_MODELS = {
 		provider: "anthropic",
 		baseUrl: "https://api.anthropic.com",
 		reasoning: true,
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high","xhigh":"xhigh","max":"max"},
 		input: ["text", "image"],
 		cost: {
 			input: 15,
@@ -183,6 +187,7 @@ export const ANTHROPIC_MODELS = {
 		provider: "anthropic",
 		baseUrl: "https://api.anthropic.com",
 		reasoning: true,
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high","xhigh":"xhigh","max":"max"},
 		input: ["text", "image"],
 		cost: {
 			input: 15,
@@ -200,6 +205,7 @@ export const ANTHROPIC_MODELS = {
 		provider: "anthropic",
 		baseUrl: "https://api.anthropic.com",
 		reasoning: true,
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high","xhigh":"xhigh","max":"max"},
 		input: ["text", "image"],
 		cost: {
 			input: 15,
@@ -217,6 +223,7 @@ export const ANTHROPIC_MODELS = {
 		provider: "anthropic",
 		baseUrl: "https://api.anthropic.com",
 		reasoning: true,
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high","xhigh":"xhigh","max":"max"},
 		input: ["text", "image"],
 		cost: {
 			input: 15,
@@ -234,6 +241,7 @@ export const ANTHROPIC_MODELS = {
 		provider: "anthropic",
 		baseUrl: "https://api.anthropic.com",
 		reasoning: true,
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high","xhigh":"xhigh","max":"max"},
 		input: ["text", "image"],
 		cost: {
 			input: 5,
@@ -251,6 +259,7 @@ export const ANTHROPIC_MODELS = {
 		provider: "anthropic",
 		baseUrl: "https://api.anthropic.com",
 		reasoning: true,
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high","xhigh":"xhigh","max":"max"},
 		input: ["text", "image"],
 		cost: {
 			input: 5,
@@ -269,7 +278,7 @@ export const ANTHROPIC_MODELS = {
 		baseUrl: "https://api.anthropic.com",
 		compat: {"forceAdaptiveThinking":true},
 		reasoning: true,
-		thinkingLevelMap: {"xhigh":"max"},
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high","xhigh":"xhigh","max":"max"},
 		input: ["text", "image"],
 		cost: {
 			input: 5,
@@ -288,7 +297,7 @@ export const ANTHROPIC_MODELS = {
 		baseUrl: "https://api.anthropic.com",
 		compat: {"forceAdaptiveThinking":true,"supportsTemperature":false},
 		reasoning: true,
-		thinkingLevelMap: {"xhigh":"xhigh"},
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high","xhigh":"xhigh","max":"max"},
 		input: ["text", "image"],
 		cost: {
 			input: 5,
@@ -307,7 +316,7 @@ export const ANTHROPIC_MODELS = {
 		baseUrl: "https://api.anthropic.com",
 		compat: {"forceAdaptiveThinking":true,"supportsTemperature":false},
 		reasoning: true,
-		thinkingLevelMap: {"xhigh":"xhigh"},
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high","xhigh":"xhigh","max":"max"},
 		input: ["text", "image"],
 		cost: {
 			input: 5,
@@ -325,6 +334,7 @@ export const ANTHROPIC_MODELS = {
 		provider: "anthropic",
 		baseUrl: "https://api.anthropic.com",
 		reasoning: true,
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high","xhigh":"xhigh"},
 		input: ["text", "image"],
 		cost: {
 			input: 3,
@@ -342,6 +352,7 @@ export const ANTHROPIC_MODELS = {
 		provider: "anthropic",
 		baseUrl: "https://api.anthropic.com",
 		reasoning: true,
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high","xhigh":"xhigh"},
 		input: ["text", "image"],
 		cost: {
 			input: 3,
@@ -359,6 +370,7 @@ export const ANTHROPIC_MODELS = {
 		provider: "anthropic",
 		baseUrl: "https://api.anthropic.com",
 		reasoning: true,
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high","xhigh":"xhigh"},
 		input: ["text", "image"],
 		cost: {
 			input: 3,
@@ -376,6 +388,7 @@ export const ANTHROPIC_MODELS = {
 		provider: "anthropic",
 		baseUrl: "https://api.anthropic.com",
 		reasoning: true,
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high","xhigh":"xhigh"},
 		input: ["text", "image"],
 		cost: {
 			input: 3,
@@ -394,6 +407,7 @@ export const ANTHROPIC_MODELS = {
 		baseUrl: "https://api.anthropic.com",
 		compat: {"forceAdaptiveThinking":true},
 		reasoning: true,
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high","xhigh":"xhigh","max":"max"},
 		input: ["text", "image"],
 		cost: {
 			input: 3,
@@ -410,7 +424,9 @@ export const ANTHROPIC_MODELS = {
 		api: "anthropic-messages",
 		provider: "anthropic",
 		baseUrl: "https://api.anthropic.com",
+		compat: {"forceAdaptiveThinking":true},
 		reasoning: true,
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high","xhigh":"xhigh","max":"max"},
 		input: ["text", "image"],
 		cost: {
 			input: 2,

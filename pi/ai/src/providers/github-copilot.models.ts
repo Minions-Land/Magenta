@@ -32,6 +32,7 @@ export const GITHUB_COPILOT_MODELS = {
 		headers: {"User-Agent":"GitHubCopilotChat/0.35.0","Editor-Version":"vscode/1.107.0","Editor-Plugin-Version":"copilot-chat/0.35.0","Copilot-Integration-Id":"vscode-chat"},
 		compat: {"supportsEagerToolInputStreaming":false},
 		reasoning: true,
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high","xhigh":"xhigh"},
 		input: ["text", "image"],
 		cost: {
 			input: 1,
@@ -50,6 +51,7 @@ export const GITHUB_COPILOT_MODELS = {
 		baseUrl: "https://api.individual.githubcopilot.com",
 		headers: {"User-Agent":"GitHubCopilotChat/0.35.0","Editor-Version":"vscode/1.107.0","Editor-Plugin-Version":"copilot-chat/0.35.0","Copilot-Integration-Id":"vscode-chat"},
 		reasoning: true,
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high","xhigh":"xhigh","max":"max"},
 		input: ["text", "image"],
 		cost: {
 			input: 5,
@@ -69,7 +71,7 @@ export const GITHUB_COPILOT_MODELS = {
 		headers: {"User-Agent":"GitHubCopilotChat/0.35.0","Editor-Version":"vscode/1.107.0","Editor-Plugin-Version":"copilot-chat/0.35.0","Copilot-Integration-Id":"vscode-chat"},
 		compat: {"forceAdaptiveThinking":true},
 		reasoning: true,
-		thinkingLevelMap: {"xhigh":"max"},
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high","xhigh":"xhigh","max":"max"},
 		input: ["text", "image"],
 		cost: {
 			input: 5,
@@ -89,7 +91,7 @@ export const GITHUB_COPILOT_MODELS = {
 		headers: {"User-Agent":"GitHubCopilotChat/0.35.0","Editor-Version":"vscode/1.107.0","Editor-Plugin-Version":"copilot-chat/0.35.0","Copilot-Integration-Id":"vscode-chat"},
 		compat: {"forceAdaptiveThinking":true,"supportsTemperature":false},
 		reasoning: true,
-		thinkingLevelMap: {"xhigh":"xhigh","minimal":"low"},
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high","xhigh":"xhigh","max":"max"},
 		input: ["text", "image"],
 		cost: {
 			input: 5,
@@ -109,7 +111,7 @@ export const GITHUB_COPILOT_MODELS = {
 		headers: {"User-Agent":"GitHubCopilotChat/0.35.0","Editor-Version":"vscode/1.107.0","Editor-Plugin-Version":"copilot-chat/0.35.0","Copilot-Integration-Id":"vscode-chat"},
 		compat: {"forceAdaptiveThinking":true,"supportsTemperature":false},
 		reasoning: true,
-		thinkingLevelMap: {"xhigh":"xhigh","minimal":"low"},
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high","xhigh":"xhigh","max":"max"},
 		input: ["text", "image"],
 		cost: {
 			input: 5,
@@ -148,6 +150,7 @@ export const GITHUB_COPILOT_MODELS = {
 		headers: {"User-Agent":"GitHubCopilotChat/0.35.0","Editor-Version":"vscode/1.107.0","Editor-Plugin-Version":"copilot-chat/0.35.0","Copilot-Integration-Id":"vscode-chat"},
 		compat: {"supportsEagerToolInputStreaming":false},
 		reasoning: true,
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high","xhigh":"xhigh"},
 		input: ["text", "image"],
 		cost: {
 			input: 3,
@@ -167,7 +170,7 @@ export const GITHUB_COPILOT_MODELS = {
 		headers: {"User-Agent":"GitHubCopilotChat/0.35.0","Editor-Version":"vscode/1.107.0","Editor-Plugin-Version":"copilot-chat/0.35.0","Copilot-Integration-Id":"vscode-chat"},
 		compat: {"forceAdaptiveThinking":true},
 		reasoning: true,
-		thinkingLevelMap: {"minimal":"low","xhigh":"max"},
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high","xhigh":"max","max":"max"},
 		input: ["text", "image"],
 		cost: {
 			input: 3,
@@ -178,6 +181,25 @@ export const GITHUB_COPILOT_MODELS = {
 		contextWindow: 1000000,
 		maxTokens: 32000,
 	} satisfies Model<"anthropic-messages">,
+	"claude-sonnet-5": {
+		id: "claude-sonnet-5",
+		name: "Claude Sonnet 5",
+		api: "openai-completions",
+		provider: "github-copilot",
+		baseUrl: "https://api.individual.githubcopilot.com",
+		headers: {"User-Agent":"GitHubCopilotChat/0.35.0","Editor-Version":"vscode/1.107.0","Editor-Plugin-Version":"copilot-chat/0.35.0","Copilot-Integration-Id":"vscode-chat"},
+		compat: {"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false},
+		reasoning: true,
+		input: ["text", "image"],
+		cost: {
+			input: 2,
+			output: 10,
+			cacheRead: 0.2,
+			cacheWrite: 2.5,
+		},
+		contextWindow: 1000000,
+		maxTokens: 128000,
+	} satisfies Model<"openai-completions">,
 	"gemini-2.5-pro": {
 		id: "gemini-2.5-pro",
 		name: "Gemini 2.5 Pro",
@@ -300,7 +322,7 @@ export const GITHUB_COPILOT_MODELS = {
 		baseUrl: "https://api.individual.githubcopilot.com",
 		headers: {"User-Agent":"GitHubCopilotChat/0.35.0","Editor-Version":"vscode/1.107.0","Editor-Plugin-Version":"copilot-chat/0.35.0","Copilot-Integration-Id":"vscode-chat"},
 		reasoning: true,
-		thinkingLevelMap: {"off":null,"minimal":"low","xhigh":"xhigh"},
+		thinkingLevelMap: {"off":null,"minimal":"low"},
 		input: ["text", "image"],
 		cost: {
 			input: 1.75,
@@ -319,7 +341,7 @@ export const GITHUB_COPILOT_MODELS = {
 		baseUrl: "https://api.individual.githubcopilot.com",
 		headers: {"User-Agent":"GitHubCopilotChat/0.35.0","Editor-Version":"vscode/1.107.0","Editor-Plugin-Version":"copilot-chat/0.35.0","Copilot-Integration-Id":"vscode-chat"},
 		reasoning: true,
-		thinkingLevelMap: {"off":null,"minimal":"low","xhigh":"xhigh"},
+		thinkingLevelMap: {"off":null,"minimal":"low"},
 		input: ["text", "image"],
 		cost: {
 			input: 1.75,
@@ -338,7 +360,7 @@ export const GITHUB_COPILOT_MODELS = {
 		baseUrl: "https://api.individual.githubcopilot.com",
 		headers: {"User-Agent":"GitHubCopilotChat/0.35.0","Editor-Version":"vscode/1.107.0","Editor-Plugin-Version":"copilot-chat/0.35.0","Copilot-Integration-Id":"vscode-chat"},
 		reasoning: true,
-		thinkingLevelMap: {"off":null,"minimal":"low","xhigh":"xhigh"},
+		thinkingLevelMap: {"off":null,"minimal":"low"},
 		input: ["text", "image"],
 		cost: {
 			input: 1.75,
@@ -357,7 +379,7 @@ export const GITHUB_COPILOT_MODELS = {
 		baseUrl: "https://api.individual.githubcopilot.com",
 		headers: {"User-Agent":"GitHubCopilotChat/0.35.0","Editor-Version":"vscode/1.107.0","Editor-Plugin-Version":"copilot-chat/0.35.0","Copilot-Integration-Id":"vscode-chat"},
 		reasoning: true,
-		thinkingLevelMap: {"off":null,"minimal":"low","xhigh":"xhigh"},
+		thinkingLevelMap: {"off":null,"minimal":"low"},
 		input: ["text", "image"],
 		cost: {
 			input: 2.5,
@@ -376,7 +398,7 @@ export const GITHUB_COPILOT_MODELS = {
 		baseUrl: "https://api.individual.githubcopilot.com",
 		headers: {"User-Agent":"GitHubCopilotChat/0.35.0","Editor-Version":"vscode/1.107.0","Editor-Plugin-Version":"copilot-chat/0.35.0","Copilot-Integration-Id":"vscode-chat"},
 		reasoning: true,
-		thinkingLevelMap: {"off":null,"minimal":"low","xhigh":"xhigh"},
+		thinkingLevelMap: {"off":null,"minimal":"low"},
 		input: ["text", "image"],
 		cost: {
 			input: 0.75,
@@ -395,7 +417,7 @@ export const GITHUB_COPILOT_MODELS = {
 		baseUrl: "https://api.individual.githubcopilot.com",
 		headers: {"User-Agent":"GitHubCopilotChat/0.35.0","Editor-Version":"vscode/1.107.0","Editor-Plugin-Version":"copilot-chat/0.35.0","Copilot-Integration-Id":"vscode-chat"},
 		reasoning: true,
-		thinkingLevelMap: {"off":null,"minimal":"low","xhigh":"xhigh"},
+		thinkingLevelMap: {"off":null,"minimal":"low"},
 		input: ["text", "image"],
 		cost: {
 			input: 0.2,
@@ -414,7 +436,7 @@ export const GITHUB_COPILOT_MODELS = {
 		baseUrl: "https://api.individual.githubcopilot.com",
 		headers: {"User-Agent":"GitHubCopilotChat/0.35.0","Editor-Version":"vscode/1.107.0","Editor-Plugin-Version":"copilot-chat/0.35.0","Copilot-Integration-Id":"vscode-chat"},
 		reasoning: true,
-		thinkingLevelMap: {"off":null,"minimal":"low","xhigh":"xhigh"},
+		thinkingLevelMap: {"off":null,"minimal":"low"},
 		input: ["text", "image"],
 		cost: {
 			input: 5,
@@ -425,4 +447,42 @@ export const GITHUB_COPILOT_MODELS = {
 		contextWindow: 400000,
 		maxTokens: 128000,
 	} satisfies Model<"openai-responses">,
+	"kimi-k2.7-code": {
+		id: "kimi-k2.7-code",
+		name: "Kimi K2.7 Code",
+		api: "openai-completions",
+		provider: "github-copilot",
+		baseUrl: "https://api.individual.githubcopilot.com",
+		headers: {"User-Agent":"GitHubCopilotChat/0.35.0","Editor-Version":"vscode/1.107.0","Editor-Plugin-Version":"copilot-chat/0.35.0","Copilot-Integration-Id":"vscode-chat"},
+		compat: {"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false},
+		reasoning: true,
+		input: ["text", "image"],
+		cost: {
+			input: 0.95,
+			output: 4,
+			cacheRead: 0.19,
+			cacheWrite: 0,
+		},
+		contextWindow: 256000,
+		maxTokens: 32000,
+	} satisfies Model<"openai-completions">,
+	"mai-code-1-flash-picker": {
+		id: "mai-code-1-flash-picker",
+		name: "MAI-Code-1-Flash",
+		api: "openai-completions",
+		provider: "github-copilot",
+		baseUrl: "https://api.individual.githubcopilot.com",
+		headers: {"User-Agent":"GitHubCopilotChat/0.35.0","Editor-Version":"vscode/1.107.0","Editor-Plugin-Version":"copilot-chat/0.35.0","Copilot-Integration-Id":"vscode-chat"},
+		compat: {"supportsStore":false,"supportsDeveloperRole":false,"supportsReasoningEffort":false},
+		reasoning: true,
+		input: ["text"],
+		cost: {
+			input: 0.75,
+			output: 4.5,
+			cacheRead: 0.075,
+			cacheWrite: 0,
+		},
+		contextWindow: 256000,
+		maxTokens: 128000,
+	} satisfies Model<"openai-completions">,
 } as const;

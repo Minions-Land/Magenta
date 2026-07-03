@@ -223,10 +223,12 @@ describe("DefaultResourceLoader", () => {
 			for (const name of ["bg_shell", "sub_agent", "todo"]) {
 				expect(toolNames.has(name)).toBe(true);
 			}
-			for (const name of ["paper-analysis", "pptx"]) {
+			for (const name of ["paper-analysis", "pptx", "research-orchestration"]) {
 				expect(skillNames.has(name)).toBe(true);
 			}
-			for (const skill of skills.filter((candidate) => ["paper-analysis", "pptx"].includes(candidate.name))) {
+			for (const skill of skills.filter((candidate) =>
+				["paper-analysis", "pptx", "research-orchestration"].includes(candidate.name),
+			)) {
 				expect(skill.sourceInfo?.source).toBe("harness");
 				expect(skill.sourceInfo?.baseDir).toContain("skills");
 			}

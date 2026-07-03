@@ -14,6 +14,7 @@ const allowedTopLevel = new Set([
 	"context",
 	"docs",
 	"env",
+	"extensions",
 	"harness.toml",
 	"hooks",
 	"index.ts",
@@ -57,6 +58,7 @@ const sourceModuleDirs = [
 	"compaction",
 	"context",
 	"env",
+	"extensions",
 	"hooks",
 	"loop",
 	"memory",
@@ -282,7 +284,10 @@ function checkSupportLayout() {
 		}
 	}
 	if (existsSync(join(harnessRoot, "skills", "bundled"))) {
-		fail("harness/skills/bundled is invalid; bundled skills are owned by the pi source at harness/skills/pi/bundled");
+		fail("harness/skills/bundled is invalid; harness-native skills live at skills/<capability>/<source>/SKILL.md");
+	}
+	if (existsSync(join(harnessRoot, "skills", "pi", "bundled"))) {
+		fail("harness/skills/pi/bundled is retired; move skills to skills/<capability>/<source>/SKILL.md");
 	}
 }
 

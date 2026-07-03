@@ -168,6 +168,18 @@ def main():
     sub.add_argument("--ref-key", required=True, help="GOLD reference labeling (obs column or obsm key)")
     sub.add_argument("--metric", default="ari", choices=["ari", "nmi", "ami", "deconv_corr", "domain_ari"])
 
+    # --- environment ---
+    sub = subparsers.add_parser(
+        "preflight", help="Verify the active Pixi env has the packages a modality needs"
+    )
+    # modality is optional: the harness launcher consumes it to select the
+    # isolated env (--environment) and strips it from argv, so preflight falls
+    # back to deriving the modality from PIXI_ENVIRONMENT_NAME at run time.
+    sub.add_argument(
+        "--modality", choices=["scrna", "spatial", "scatac", "multiome"], default=None
+    )
+    sub.add_argument("--check-gpu", action="store_true", help="Also probe GPU availability")
+
     args = parser.parse_args()
 
     # Dispatch to the actual implementation
@@ -217,6 +229,9 @@ def main():
         elif args.subcommand == "score":
             from .shared import score
             score.main(args)
+        elif args.subcommand == "preflight":
+            from .shared import preflight
+            preflight.main(args)
         else:
             parser.error(f"Unknown subcommand: {args.subcommand}")
     except ImportError as e:

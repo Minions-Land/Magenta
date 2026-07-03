@@ -1,11 +1,13 @@
 kind = "tool"
 name = "omics_environment"
-description = "Describe the Pixi environments used by AutOmicScience omics tools."
-execution = "declarative"
-runtime = "pixi"
+description = "Describe the Pixi environments used by AutOmicScience omics tools. Returns the workspace's environments (name, features, dependencies, tasks) as JSON via `pixi info --json`. Map a modality to its pinned environment using metadata.environments_by_modality."
+runtime = "process"
+command = "pixi"
+args = ["info", "--json"]
 operation = "read"
 read_only = true
 destructive = false
+timeout_ms = 60000
 
 [metadata]
 package = "AutOmicScience"
@@ -21,13 +23,5 @@ scatac = "task4"
 
 [parameters]
 type = "object"
-
-[parameters.properties.modality]
-type = "string"
-enum = ["rna", "spatial", "multi_omics", "scatac"]
-description = "Optional modality to inspect."
-
-[parameters.properties.checkGpu]
-type = "boolean"
-default = false
-description = "Whether GPU-dependent packages should be considered by the caller."
+</content>
+</invoke>

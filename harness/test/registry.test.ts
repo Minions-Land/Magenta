@@ -171,23 +171,23 @@ describe("harness registry", () => {
 		expect(eventItems.find((item) => item.id === "general-harness:event:manager")).toMatchObject({
 			readiness: "ready",
 			component: {
-				kind: "coding-agent-extension",
+				kind: "harness-extension",
 				name: "background-events",
-				path: "pi/coding-agent/src/extensions/background-events/event-monitor.ts",
+				path: "extensions/pi/bundled/background-events/event-monitor.ts",
 			},
 		});
 		expect(eventItems.find((item) => item.id === "general-harness:event-tool:bg_shell")).toMatchObject({
 			component: {
-				kind: "coding-agent-extension-tool",
+				kind: "harness-extension-tool",
 				name: "bg_shell",
-				path: "pi/coding-agent/src/extensions/background-events/background-shell.ts",
+				path: "extensions/pi/bundled/background-events/background-shell.ts",
 			},
 		});
 		expect(eventItems.find((item) => item.id === "general-harness:event-tool:sub_agent")).toMatchObject({
 			component: {
-				kind: "coding-agent-extension-tool",
+				kind: "harness-extension-tool",
 				name: "sub_agent",
-				path: "pi/coding-agent/src/extensions/background-events/sub-agents.ts",
+				path: "extensions/pi/bundled/background-events/sub-agents.ts",
 			},
 		});
 	});

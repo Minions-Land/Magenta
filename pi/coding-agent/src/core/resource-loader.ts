@@ -1,13 +1,13 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 import chalk from "chalk";
-import { CONFIG_DIR_NAME, getBundledExtensionsDir } from "../config.ts";
+import { CONFIG_DIR_NAME } from "../config.ts";
 import { loadThemeFromPath, type Theme } from "../modes/interactive/theme/theme.ts";
 import type { ResourceDiagnostic } from "./diagnostics.ts";
 
 export type { ResourceCollision, ResourceDiagnostic } from "./diagnostics.ts";
 
-import { getBundledSkillsDir, type Skill as HarnessSkill } from "@magenta/harness";
+import { getBundledExtensionsDir, getHarnessSkillsDir, type Skill as HarnessSkill } from "@magenta/harness";
 import {
 	assemblePackageToolMagnets,
 	loadPackageOverlay,
@@ -160,24 +160,30 @@ function discoverBundledExtensionPaths(baseDir: string): string[] {
 	return BUNDLED_EXTENSION_ENTRIES.map((entry) => join(baseDir, entry)).filter((path) => existsSync(path));
 }
 
-function discoverBundledSkillPaths(baseDir: string): string[] {
+// Canonical harness implementation sources. A harness-native skill lives at
+// `skills/<capability>/<source>/SKILL.md`, mirroring `tools/<name>/<source>/`.
+const HARNESS_SOURCE_DIR_NAMES = new Set(["pi", "codex", "jcode", "claude-code", "magenta"]);
+
+function discoverHarnessSkillPaths(baseDir: string): string[] {
 	if (!existsSync(baseDir)) {
 		return [];
 	}
 	const paths: string[] = [];
 	try {
-		for (const entry of readdirSync(baseDir, { withFileTypes: true })) {
-			if (entry.name.startsWith(".")) {
+		for (const capability of readdirSync(baseDir, { withFileTypes: true })) {
+			if (capability.name.startsWith(".") || !capability.isDirectory()) {
 				continue;
 			}
-			const fullPath = join(baseDir, entry.name);
-			if (entry.isDirectory()) {
-				const skillFile = join(fullPath, "SKILL.md");
-				if (existsSync(skillFile)) {
-					paths.push(fullPath);
+			const capabilityPath = join(baseDir, capability.name);
+			// Each capability holds one or more `<source>/SKILL.md` slots.
+			for (const source of readdirSync(capabilityPath, { withFileTypes: true })) {
+				if (!source.isDirectory() || !HARNESS_SOURCE_DIR_NAMES.has(source.name)) {
+					continue;
 				}
-			} else if (entry.isFile() && entry.name.endsWith(".md")) {
-				paths.push(fullPath);
+				const skillFile = join(capabilityPath, source.name, "SKILL.md");
+				if (existsSync(skillFile)) {
+					paths.push(join(capabilityPath, source.name));
+				}
 			}
 		}
 	} catch {
@@ -553,14 +559,14 @@ export class DefaultResourceLoader implements ResourceLoader {
 		const cliEnabledPrompts = getEnabledPaths(cliExtensionPaths.prompts);
 		const cliEnabledThemes = getEnabledPaths(cliExtensionPaths.themes);
 		const bundledExtensionResources = this.noExtensions ? [] : this.getBundledExtensionResources();
-		const bundledSkillResources = this.noSkills ? [] : this.getBundledSkillResources();
-		for (const r of [...bundledExtensionResources, ...bundledSkillResources]) {
+		const harnessSkillResources = this.noSkills ? [] : this.getHarnessSkillResources();
+		for (const r of [...bundledExtensionResources, ...harnessSkillResources]) {
 			if (!metadataByPath.has(r.path)) {
 				metadataByPath.set(r.path, r.metadata);
 			}
 		}
 		const bundledExtensions = bundledExtensionResources.map((r) => r.path);
-		const bundledSkills = bundledSkillResources.map((r) => this.mapSkillPath(r, metadataByPath));
+		const harnessSkills = harnessSkillResources.map((r) => this.mapSkillPath(r, metadataByPath));
 
 		const extensionPaths = this.noExtensions
 			? cliEnabledExtensions
@@ -584,7 +590,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 					[
 						...cliEnabledSkills,
 						...packageSkillResources.map((resource) => this.mapSkillPath(resource, metadataByPath)),
-						...bundledSkills,
+						...harnessSkills,
 						...enabledSkills,
 					],
 					this.additionalSkillPaths,
@@ -781,11 +787,11 @@ export class DefaultResourceLoader implements ResourceLoader {
 		return discoverBundledExtensionPaths(baseDir).map((path) => ({ path, enabled: true, metadata }));
 	}
 
-	private getBundledSkillResources(): ResolvedResource[] {
+	private getHarnessSkillResources(): ResolvedResource[] {
 		if (!this.includeBundledResources) {
 			return [];
 		}
-		const baseDir = getBundledSkillsDir();
+		const baseDir = getHarnessSkillsDir();
 		if (!existsSync(baseDir)) {
 			return [];
 		}
@@ -795,7 +801,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 			origin: "top-level",
 			baseDir,
 		};
-		return discoverBundledSkillPaths(baseDir).map((path) => ({ path, enabled: true, metadata }));
+		return discoverHarnessSkillPaths(baseDir).map((path) => ({ path, enabled: true, metadata }));
 	}
 
 	private async loadHarnessPackageResources(): Promise<{

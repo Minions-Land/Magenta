@@ -27,6 +27,7 @@ export const COMMAND_DOCK_OVERLAY: OverlayOptions = {
 };
 
 const NAVIGATION_KEY_REPEAT_CADENCE_MS = 90;
+const NAVIGATION_KEY_KITTY_HOLD_DELAY_MS = 500;
 const NAVIGATION_KEY_HOLD_START_DELAY_MS = 180;
 const NAVIGATION_KEY_HOLD_START_MAX_MS = 1200;
 const NAVIGATION_KEY_UNMARKED_REPEAT_BURST_LIMIT = 12;
@@ -97,13 +98,13 @@ function padToWidth(text: string, width: number): string {
 function frameLine(content: string, width: number): string {
 	const innerWidth = Math.max(1, width - 4);
 	const line = padToWidth(truncateToWidth(content, innerWidth, ""), innerWidth);
-	return `${theme.fg("borderMuted", "| ")}${line}${theme.fg("borderMuted", " |")}`;
+	return `${theme.fg("borderMuted", "│ ")}${line}${theme.fg("borderMuted", " │")}`;
 }
 
 function horizontal(left: string, right: string, width: number, label = ""): string {
 	const safeLabel = truncateToWidth(label, Math.max(0, width - 2), "");
 	const available = Math.max(0, width - 2 - visibleWidth(safeLabel));
-	return `${theme.fg("borderMuted", left)}${safeLabel}${theme.fg("borderMuted", "-".repeat(available))}${theme.fg(
+	return `${theme.fg("borderMuted", left)}${safeLabel}${theme.fg("borderMuted", "─".repeat(available))}${theme.fg(
 		"borderMuted",
 		right,
 	)}`;
@@ -122,17 +123,17 @@ function renderFloatingFrame(options: {
 	const title = ` ${theme.fg("accent", theme.bold(options.title))}${
 		options.subtitle ? theme.fg("muted", ` · ${options.subtitle}`) : ""
 	} `;
-	const lines = [horizontal("+", "+", width, title)];
+	const lines = [horizontal("╭", "╮", width, title)];
 
 	for (const bodyLine of options.body) lines.push(frameLine(bodyLine, width));
 
 	const footerLines = Array.isArray(options.footer) ? options.footer : options.footer ? [options.footer] : [];
 	if (footerLines.length > 0) {
-		lines.push(horizontal("+", "+", width));
+		lines.push(horizontal("├", "┤", width));
 		for (const footerLine of footerLines) lines.push(frameLine(footerLine, width));
 	}
 
-	lines.push(horizontal("+", "+", width));
+	lines.push(horizontal("╰", "╯", width));
 	return lines;
 }
 
@@ -191,6 +192,7 @@ export class FloatingMenuBody implements FloatingOverlayBody {
 	private lastNavigationMoveAt = Number.NEGATIVE_INFINITY;
 	private navigationRapidTapCount = 0;
 	private navigationHeld = false;
+	private firstNavigationPressAt = Number.NEGATIVE_INFINITY;
 	private readonly options: FloatingMenuBodyOptions;
 	private readonly stack: Array<{
 		title: string;
@@ -311,11 +313,26 @@ export class FloatingMenuBody implements FloatingOverlayBody {
 		// Kitty terminals label repeats explicitly: a held key emits one press
 		// followed by repeat events. Suppress every repeat so a held key moves once.
 		if (isKeyRepeat(data)) {
+			const now = this.options.now?.() ?? Date.now();
+			if (this.lastNavigationKey !== action) {
+				// Different key started repeating: reset the press timestamp.
+				this.firstNavigationPressAt = now;
+				this.navigationRapidTapCount = 0;
+			}
 			this.lastNavigationKey = action;
-			this.lastNavigationEventAt = this.options.now?.() ?? Date.now();
-			this.navigationRapidTapCount = 0;
+			this.lastNavigationEventAt = now;
 			this.navigationHeld = true;
-			return true;
+
+			const cadenceMs = this.options.navigationRepeatDelayMs ?? NAVIGATION_KEY_REPEAT_CADENCE_MS;
+			const sincePressMs = now - this.firstNavigationPressAt;
+			if (sincePressMs < NAVIGATION_KEY_KITTY_HOLD_DELAY_MS) {
+				// Not held long enough yet: suppress the repeat.
+				return true;
+			}
+			// Held long enough: allow repeat but throttle to the cadence.
+			const shouldSuppress = now - this.lastNavigationMoveAt < cadenceMs;
+			if (!shouldSuppress) this.lastNavigationMoveAt = now;
+			return shouldSuppress;
 		}
 
 		const cadenceMs = this.options.navigationRepeatDelayMs ?? NAVIGATION_KEY_REPEAT_CADENCE_MS;
@@ -333,6 +350,7 @@ export class FloatingMenuBody implements FloatingOverlayBody {
 			// A different navigation key: start fresh, always let it move.
 			this.navigationRapidTapCount = 0;
 			this.navigationHeld = false;
+			this.firstNavigationPressAt = now;
 		} else if (this.navigationHeld) {
 			// Already recognized as a hold (no key metadata): throttle to one move
 			// per cadence so the cursor scrolls steadily instead of freezing.
@@ -373,6 +391,7 @@ export class FloatingMenuBody implements FloatingOverlayBody {
 		this.lastNavigationMoveAt = Number.NEGATIVE_INFINITY;
 		this.navigationRapidTapCount = 0;
 		this.navigationHeld = false;
+		this.firstNavigationPressAt = Number.NEGATIVE_INFINITY;
 	}
 
 	private selectIndex(index: number): true | undefined {

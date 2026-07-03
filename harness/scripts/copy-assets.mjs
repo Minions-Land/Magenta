@@ -12,6 +12,7 @@ const selectedTrees = [
 	"compaction",
 	"context",
 	"env",
+	"extensions",
 	"hooks",
 	"loop",
 	"memory",
@@ -37,8 +38,8 @@ function extensionOf(name) {
 	return index >= 0 ? name.slice(index) : "";
 }
 
-function shouldCopyFile(name) {
-	return copiedFileNames.has(name) || copiedExtensions.has(extensionOf(name));
+function shouldCopyFile(relativeDir, name) {
+	return copiedFileNames.has(name) || copiedExtensions.has(extensionOf(name)) || (relativeDir.startsWith("extensions") && extensionOf(name) === ".ts");
 }
 
 async function copyRelativeFile(relativePath) {
@@ -62,7 +63,7 @@ async function copySelectedTree(relativeDir) {
 		if (entry.isDirectory()) {
 			if (skippedDirs.has(entry.name)) continue;
 			await copySelectedTree(child);
-		} else if (entry.isFile() && shouldCopyFile(entry.name)) {
+		} else if (entry.isFile() && shouldCopyFile(relativeDir, entry.name)) {
 			await copyRelativeFile(child);
 		}
 	}

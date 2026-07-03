@@ -514,6 +514,25 @@ export const VERCEL_AI_GATEWAY_MODELS = {
 		contextWindow: 200000,
 		maxTokens: 8192,
 	} satisfies Model<"anthropic-messages">,
+	"anthropic/claude-fable-5": {
+		id: "anthropic/claude-fable-5",
+		name: "Claude Fable 5",
+		api: "anthropic-messages",
+		provider: "vercel-ai-gateway",
+		baseUrl: "https://ai-gateway.vercel.sh",
+		compat: {"forceAdaptiveThinking":true},
+		reasoning: true,
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high","xhigh":"xhigh","max":"max"},
+		input: ["text", "image"],
+		cost: {
+			input: 10,
+			output: 50,
+			cacheRead: 1,
+			cacheWrite: 12.5,
+		},
+		contextWindow: 1000000,
+		maxTokens: 128000,
+	} satisfies Model<"anthropic-messages">,
 	"anthropic/claude-haiku-4.5": {
 		id: "anthropic/claude-haiku-4.5",
 		name: "Claude Haiku 4.5",
@@ -521,6 +540,7 @@ export const VERCEL_AI_GATEWAY_MODELS = {
 		provider: "vercel-ai-gateway",
 		baseUrl: "https://ai-gateway.vercel.sh",
 		reasoning: true,
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high","xhigh":"xhigh"},
 		input: ["text", "image"],
 		cost: {
 			input: 1,
@@ -538,6 +558,7 @@ export const VERCEL_AI_GATEWAY_MODELS = {
 		provider: "vercel-ai-gateway",
 		baseUrl: "https://ai-gateway.vercel.sh",
 		reasoning: true,
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high","xhigh":"xhigh","max":"max"},
 		input: ["text", "image"],
 		cost: {
 			input: 15,
@@ -555,6 +576,7 @@ export const VERCEL_AI_GATEWAY_MODELS = {
 		provider: "vercel-ai-gateway",
 		baseUrl: "https://ai-gateway.vercel.sh",
 		reasoning: true,
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high","xhigh":"xhigh","max":"max"},
 		input: ["text", "image"],
 		cost: {
 			input: 15,
@@ -572,6 +594,7 @@ export const VERCEL_AI_GATEWAY_MODELS = {
 		provider: "vercel-ai-gateway",
 		baseUrl: "https://ai-gateway.vercel.sh",
 		reasoning: true,
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high","xhigh":"xhigh","max":"max"},
 		input: ["text", "image"],
 		cost: {
 			input: 5,
@@ -590,7 +613,7 @@ export const VERCEL_AI_GATEWAY_MODELS = {
 		baseUrl: "https://ai-gateway.vercel.sh",
 		compat: {"forceAdaptiveThinking":true},
 		reasoning: true,
-		thinkingLevelMap: {"xhigh":"max"},
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high","xhigh":"xhigh","max":"max"},
 		input: ["text", "image"],
 		cost: {
 			input: 5,
@@ -609,7 +632,7 @@ export const VERCEL_AI_GATEWAY_MODELS = {
 		baseUrl: "https://ai-gateway.vercel.sh",
 		compat: {"forceAdaptiveThinking":true,"supportsTemperature":false},
 		reasoning: true,
-		thinkingLevelMap: {"xhigh":"xhigh"},
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high","xhigh":"xhigh","max":"max"},
 		input: ["text", "image"],
 		cost: {
 			input: 5,
@@ -628,7 +651,7 @@ export const VERCEL_AI_GATEWAY_MODELS = {
 		baseUrl: "https://ai-gateway.vercel.sh",
 		compat: {"forceAdaptiveThinking":true,"supportsTemperature":false},
 		reasoning: true,
-		thinkingLevelMap: {"xhigh":"xhigh"},
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high","xhigh":"xhigh","max":"max"},
 		input: ["text", "image"],
 		cost: {
 			input: 5,
@@ -663,6 +686,7 @@ export const VERCEL_AI_GATEWAY_MODELS = {
 		provider: "vercel-ai-gateway",
 		baseUrl: "https://ai-gateway.vercel.sh",
 		reasoning: true,
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high","xhigh":"xhigh"},
 		input: ["text", "image"],
 		cost: {
 			input: 3,
@@ -681,6 +705,7 @@ export const VERCEL_AI_GATEWAY_MODELS = {
 		baseUrl: "https://ai-gateway.vercel.sh",
 		compat: {"forceAdaptiveThinking":true},
 		reasoning: true,
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high","xhigh":"xhigh","max":"max"},
 		input: ["text", "image"],
 		cost: {
 			input: 3,
@@ -697,7 +722,9 @@ export const VERCEL_AI_GATEWAY_MODELS = {
 		api: "anthropic-messages",
 		provider: "vercel-ai-gateway",
 		baseUrl: "https://ai-gateway.vercel.sh",
+		compat: {"forceAdaptiveThinking":true},
 		reasoning: true,
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high","xhigh":"xhigh","max":"max"},
 		input: ["text", "image"],
 		cost: {
 			input: 2,
@@ -2279,7 +2306,6 @@ export const VERCEL_AI_GATEWAY_MODELS = {
 		provider: "vercel-ai-gateway",
 		baseUrl: "https://ai-gateway.vercel.sh",
 		reasoning: true,
-		thinkingLevelMap: {"xhigh":"xhigh"},
 		input: ["text", "image"],
 		cost: {
 			input: 1.75,
@@ -2297,7 +2323,6 @@ export const VERCEL_AI_GATEWAY_MODELS = {
 		provider: "vercel-ai-gateway",
 		baseUrl: "https://ai-gateway.vercel.sh",
 		reasoning: false,
-		thinkingLevelMap: {"xhigh":"xhigh"},
 		input: ["text", "image"],
 		cost: {
 			input: 1.75,
@@ -2315,7 +2340,6 @@ export const VERCEL_AI_GATEWAY_MODELS = {
 		provider: "vercel-ai-gateway",
 		baseUrl: "https://ai-gateway.vercel.sh",
 		reasoning: true,
-		thinkingLevelMap: {"xhigh":"xhigh"},
 		input: ["text", "image"],
 		cost: {
 			input: 1.75,
@@ -2333,7 +2357,6 @@ export const VERCEL_AI_GATEWAY_MODELS = {
 		provider: "vercel-ai-gateway",
 		baseUrl: "https://ai-gateway.vercel.sh",
 		reasoning: true,
-		thinkingLevelMap: {"xhigh":"xhigh"},
 		input: ["text", "image"],
 		cost: {
 			input: 21,
@@ -2351,7 +2374,6 @@ export const VERCEL_AI_GATEWAY_MODELS = {
 		provider: "vercel-ai-gateway",
 		baseUrl: "https://ai-gateway.vercel.sh",
 		reasoning: false,
-		thinkingLevelMap: {"xhigh":"xhigh"},
 		input: ["text", "image"],
 		cost: {
 			input: 1.75,
@@ -2369,7 +2391,6 @@ export const VERCEL_AI_GATEWAY_MODELS = {
 		provider: "vercel-ai-gateway",
 		baseUrl: "https://ai-gateway.vercel.sh",
 		reasoning: true,
-		thinkingLevelMap: {"xhigh":"xhigh"},
 		input: ["text", "image"],
 		cost: {
 			input: 1.75,
@@ -2387,7 +2408,6 @@ export const VERCEL_AI_GATEWAY_MODELS = {
 		provider: "vercel-ai-gateway",
 		baseUrl: "https://ai-gateway.vercel.sh",
 		reasoning: true,
-		thinkingLevelMap: {"xhigh":"xhigh"},
 		input: ["text", "image"],
 		cost: {
 			input: 2.5,
@@ -2405,7 +2425,6 @@ export const VERCEL_AI_GATEWAY_MODELS = {
 		provider: "vercel-ai-gateway",
 		baseUrl: "https://ai-gateway.vercel.sh",
 		reasoning: true,
-		thinkingLevelMap: {"xhigh":"xhigh"},
 		input: ["text", "image"],
 		cost: {
 			input: 0.75,
@@ -2423,7 +2442,6 @@ export const VERCEL_AI_GATEWAY_MODELS = {
 		provider: "vercel-ai-gateway",
 		baseUrl: "https://ai-gateway.vercel.sh",
 		reasoning: true,
-		thinkingLevelMap: {"xhigh":"xhigh"},
 		input: ["text", "image"],
 		cost: {
 			input: 0.2,
@@ -2441,7 +2459,6 @@ export const VERCEL_AI_GATEWAY_MODELS = {
 		provider: "vercel-ai-gateway",
 		baseUrl: "https://ai-gateway.vercel.sh",
 		reasoning: true,
-		thinkingLevelMap: {"xhigh":"xhigh"},
 		input: ["text", "image"],
 		cost: {
 			input: 30,
@@ -2459,7 +2476,6 @@ export const VERCEL_AI_GATEWAY_MODELS = {
 		provider: "vercel-ai-gateway",
 		baseUrl: "https://ai-gateway.vercel.sh",
 		reasoning: true,
-		thinkingLevelMap: {"xhigh":"xhigh"},
 		input: ["text", "image"],
 		cost: {
 			input: 5,
@@ -2477,7 +2493,7 @@ export const VERCEL_AI_GATEWAY_MODELS = {
 		provider: "vercel-ai-gateway",
 		baseUrl: "https://ai-gateway.vercel.sh",
 		reasoning: true,
-		thinkingLevelMap: {"xhigh":"xhigh","off":null,"minimal":null,"low":null},
+		thinkingLevelMap: {"off":null,"minimal":null,"low":null},
 		input: ["text", "image"],
 		cost: {
 			input: 30,
@@ -3143,12 +3159,12 @@ export const VERCEL_AI_GATEWAY_MODELS = {
 		reasoning: true,
 		input: ["text"],
 		cost: {
-			input: 1.5,
-			output: 4.5,
-			cacheRead: 0.3,
+			input: 1.4,
+			output: 4.4,
+			cacheRead: 0.26,
 			cacheWrite: 0,
 		},
-		contextWindow: 1000000,
+		contextWindow: 1040000,
 		maxTokens: 128000,
 	} satisfies Model<"anthropic-messages">,
 	"zai/glm-5.2-fast": {

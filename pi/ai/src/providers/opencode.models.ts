@@ -22,6 +22,25 @@ export const OPENCODE_MODELS = {
 		contextWindow: 200000,
 		maxTokens: 32000,
 	} satisfies Model<"openai-completions">,
+	"claude-fable-5": {
+		id: "claude-fable-5",
+		name: "Claude Fable 5",
+		api: "anthropic-messages",
+		provider: "opencode",
+		baseUrl: "https://opencode.ai/zen",
+		compat: {"forceAdaptiveThinking":true},
+		reasoning: true,
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high","xhigh":"xhigh","max":"max"},
+		input: ["text", "image"],
+		cost: {
+			input: 10,
+			output: 50,
+			cacheRead: 1,
+			cacheWrite: 12.5,
+		},
+		contextWindow: 1000000,
+		maxTokens: 128000,
+	} satisfies Model<"anthropic-messages">,
 	"claude-haiku-4-5": {
 		id: "claude-haiku-4-5",
 		name: "Claude Haiku 4.5",
@@ -29,6 +48,7 @@ export const OPENCODE_MODELS = {
 		provider: "opencode",
 		baseUrl: "https://opencode.ai/zen",
 		reasoning: true,
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high","xhigh":"xhigh"},
 		input: ["text", "image"],
 		cost: {
 			input: 1,
@@ -46,6 +66,7 @@ export const OPENCODE_MODELS = {
 		provider: "opencode",
 		baseUrl: "https://opencode.ai/zen",
 		reasoning: true,
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high","xhigh":"xhigh","max":"max"},
 		input: ["text", "image"],
 		cost: {
 			input: 15,
@@ -63,6 +84,7 @@ export const OPENCODE_MODELS = {
 		provider: "opencode",
 		baseUrl: "https://opencode.ai/zen",
 		reasoning: true,
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high","xhigh":"xhigh","max":"max"},
 		input: ["text", "image"],
 		cost: {
 			input: 5,
@@ -81,7 +103,7 @@ export const OPENCODE_MODELS = {
 		baseUrl: "https://opencode.ai/zen",
 		compat: {"forceAdaptiveThinking":true},
 		reasoning: true,
-		thinkingLevelMap: {"xhigh":"max"},
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high","xhigh":"xhigh","max":"max"},
 		input: ["text", "image"],
 		cost: {
 			input: 5,
@@ -100,7 +122,7 @@ export const OPENCODE_MODELS = {
 		baseUrl: "https://opencode.ai/zen",
 		compat: {"forceAdaptiveThinking":true,"supportsTemperature":false},
 		reasoning: true,
-		thinkingLevelMap: {"xhigh":"xhigh"},
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high","xhigh":"xhigh","max":"max"},
 		input: ["text", "image"],
 		cost: {
 			input: 5,
@@ -119,7 +141,7 @@ export const OPENCODE_MODELS = {
 		baseUrl: "https://opencode.ai/zen",
 		compat: {"forceAdaptiveThinking":true,"supportsTemperature":false},
 		reasoning: true,
-		thinkingLevelMap: {"xhigh":"xhigh"},
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high","xhigh":"xhigh","max":"max"},
 		input: ["text", "image"],
 		cost: {
 			input: 5,
@@ -154,6 +176,7 @@ export const OPENCODE_MODELS = {
 		provider: "opencode",
 		baseUrl: "https://opencode.ai/zen",
 		reasoning: true,
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high","xhigh":"xhigh"},
 		input: ["text", "image"],
 		cost: {
 			input: 3,
@@ -172,6 +195,7 @@ export const OPENCODE_MODELS = {
 		baseUrl: "https://opencode.ai/zen",
 		compat: {"forceAdaptiveThinking":true},
 		reasoning: true,
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high","xhigh":"xhigh","max":"max"},
 		input: ["text", "image"],
 		cost: {
 			input: 3,
@@ -188,7 +212,9 @@ export const OPENCODE_MODELS = {
 		api: "anthropic-messages",
 		provider: "opencode",
 		baseUrl: "https://opencode.ai/zen",
+		compat: {"forceAdaptiveThinking":true},
 		reasoning: true,
+		thinkingLevelMap: {"off":null,"minimal":"low","low":"low","medium":"medium","high":"high","xhigh":"xhigh","max":"max"},
 		input: ["text", "image"],
 		cost: {
 			input: 2,
@@ -497,7 +523,7 @@ export const OPENCODE_MODELS = {
 		provider: "opencode",
 		baseUrl: "https://opencode.ai/zen/v1",
 		reasoning: true,
-		thinkingLevelMap: {"off":null,"xhigh":"xhigh"},
+		thinkingLevelMap: {"off":null},
 		input: ["text", "image"],
 		cost: {
 			input: 1.75,
@@ -515,7 +541,7 @@ export const OPENCODE_MODELS = {
 		provider: "opencode",
 		baseUrl: "https://opencode.ai/zen/v1",
 		reasoning: true,
-		thinkingLevelMap: {"off":null,"xhigh":"xhigh"},
+		thinkingLevelMap: {"off":null},
 		input: ["text", "image"],
 		cost: {
 			input: 1.75,
@@ -533,7 +559,7 @@ export const OPENCODE_MODELS = {
 		provider: "opencode",
 		baseUrl: "https://opencode.ai/zen/v1",
 		reasoning: true,
-		thinkingLevelMap: {"off":null,"xhigh":"xhigh"},
+		thinkingLevelMap: {"off":null},
 		input: ["text", "image"],
 		cost: {
 			input: 1.75,
@@ -551,7 +577,7 @@ export const OPENCODE_MODELS = {
 		provider: "opencode",
 		baseUrl: "https://opencode.ai/zen/v1",
 		reasoning: true,
-		thinkingLevelMap: {"off":null,"xhigh":"xhigh"},
+		thinkingLevelMap: {"off":null},
 		input: ["text", "image"],
 		cost: {
 			input: 2.5,
@@ -569,7 +595,7 @@ export const OPENCODE_MODELS = {
 		provider: "opencode",
 		baseUrl: "https://opencode.ai/zen/v1",
 		reasoning: true,
-		thinkingLevelMap: {"off":null,"xhigh":"xhigh"},
+		thinkingLevelMap: {"off":null},
 		input: ["text", "image"],
 		cost: {
 			input: 0.75,
@@ -587,7 +613,7 @@ export const OPENCODE_MODELS = {
 		provider: "opencode",
 		baseUrl: "https://opencode.ai/zen/v1",
 		reasoning: true,
-		thinkingLevelMap: {"off":null,"xhigh":"xhigh"},
+		thinkingLevelMap: {"off":null},
 		input: ["text", "image"],
 		cost: {
 			input: 0.2,
@@ -605,7 +631,7 @@ export const OPENCODE_MODELS = {
 		provider: "opencode",
 		baseUrl: "https://opencode.ai/zen/v1",
 		reasoning: true,
-		thinkingLevelMap: {"off":null,"xhigh":"xhigh"},
+		thinkingLevelMap: {"off":null},
 		input: ["text", "image"],
 		cost: {
 			input: 30,
@@ -623,7 +649,7 @@ export const OPENCODE_MODELS = {
 		provider: "opencode",
 		baseUrl: "https://opencode.ai/zen/v1",
 		reasoning: true,
-		thinkingLevelMap: {"off":null,"xhigh":"xhigh"},
+		thinkingLevelMap: {"off":null},
 		input: ["text", "image"],
 		cost: {
 			input: 5,
@@ -641,7 +667,7 @@ export const OPENCODE_MODELS = {
 		provider: "opencode",
 		baseUrl: "https://opencode.ai/zen/v1",
 		reasoning: true,
-		thinkingLevelMap: {"off":null,"xhigh":"xhigh","minimal":null,"low":null},
+		thinkingLevelMap: {"off":null,"minimal":null,"low":null},
 		input: ["text", "image"],
 		cost: {
 			input: 30,

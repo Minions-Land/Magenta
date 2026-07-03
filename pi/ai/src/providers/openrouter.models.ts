@@ -228,7 +228,6 @@ export const OPENROUTER_MODELS = {
 		baseUrl: "https://openrouter.ai/api/v1",
 		compat: {"thinkingFormat":"openrouter","cacheControlFormat":"anthropic"},
 		reasoning: true,
-		thinkingLevelMap: {"xhigh":"max"},
 		input: ["text", "image"],
 		cost: {
 			input: 5,
@@ -247,7 +246,6 @@ export const OPENROUTER_MODELS = {
 		baseUrl: "https://openrouter.ai/api/v1",
 		compat: {"thinkingFormat":"openrouter","cacheControlFormat":"anthropic"},
 		reasoning: true,
-		thinkingLevelMap: {"xhigh":"xhigh"},
 		input: ["text", "image"],
 		cost: {
 			input: 5,
@@ -266,7 +264,6 @@ export const OPENROUTER_MODELS = {
 		baseUrl: "https://openrouter.ai/api/v1",
 		compat: {"thinkingFormat":"openrouter","cacheControlFormat":"anthropic"},
 		reasoning: true,
-		thinkingLevelMap: {"xhigh":"xhigh"},
 		input: ["text", "image"],
 		cost: {
 			input: 30,
@@ -285,7 +282,6 @@ export const OPENROUTER_MODELS = {
 		baseUrl: "https://openrouter.ai/api/v1",
 		compat: {"thinkingFormat":"openrouter","cacheControlFormat":"anthropic"},
 		reasoning: true,
-		thinkingLevelMap: {"xhigh":"xhigh"},
 		input: ["text", "image"],
 		cost: {
 			input: 5,
@@ -304,7 +300,6 @@ export const OPENROUTER_MODELS = {
 		baseUrl: "https://openrouter.ai/api/v1",
 		compat: {"thinkingFormat":"openrouter","cacheControlFormat":"anthropic"},
 		reasoning: true,
-		thinkingLevelMap: {"xhigh":"xhigh"},
 		input: ["text", "image"],
 		cost: {
 			input: 10,
@@ -613,8 +608,8 @@ export const OPENROUTER_MODELS = {
 		reasoning: false,
 		input: ["text"],
 		cost: {
-			input: 0.2,
-			output: 0.77,
+			input: 0.24,
+			output: 0.9,
 			cacheRead: 0.135,
 			cacheWrite: 0,
 		},
@@ -740,9 +735,9 @@ export const OPENROUTER_MODELS = {
 		thinkingLevelMap: {"minimal":null,"low":null,"medium":null,"high":"high","xhigh":"xhigh"},
 		input: ["text"],
 		cost: {
-			input: 0.098,
-			output: 0.196,
-			cacheRead: 0.02,
+			input: 0.089,
+			output: 0.18,
+			cacheRead: 0.018,
 			cacheWrite: 0,
 		},
 		contextWindow: 1048576,
@@ -1373,12 +1368,12 @@ export const OPENROUTER_MODELS = {
 		input: ["text"],
 		cost: {
 			input: 0.255,
-			output: 1,
-			cacheRead: 0.03,
+			output: 1.02,
+			cacheRead: 0,
 			cacheWrite: 0,
 		},
 		contextWindow: 204800,
-		maxTokens: 196608,
+		maxTokens: 131072,
 	} satisfies Model<"openai-completions">,
 	"minimax/minimax-m2.1": {
 		id: "minimax/minimax-m2.1",
@@ -1390,13 +1385,13 @@ export const OPENROUTER_MODELS = {
 		reasoning: true,
 		input: ["text"],
 		cost: {
-			input: 0.29,
-			output: 0.95,
+			input: 0.3,
+			output: 1.2,
 			cacheRead: 0.03,
 			cacheWrite: 0,
 		},
 		contextWindow: 204800,
-		maxTokens: 196608,
+		maxTokens: 131072,
 	} satisfies Model<"openai-completions">,
 	"minimax/minimax-m2.5": {
 		id: "minimax/minimax-m2.5",
@@ -1806,11 +1801,11 @@ export const OPENROUTER_MODELS = {
 		cost: {
 			input: 0.6,
 			output: 2.5,
-			cacheRead: 0.6,
+			cacheRead: 0.15,
 			cacheWrite: 0,
 		},
 		contextWindow: 262144,
-		maxTokens: 262144,
+		maxTokens: 100352,
 	} satisfies Model<"openai-completions">,
 	"moonshotai/kimi-k2.5": {
 		id: "moonshotai/kimi-k2.5",
@@ -1840,9 +1835,9 @@ export const OPENROUTER_MODELS = {
 		reasoning: true,
 		input: ["text", "image"],
 		cost: {
-			input: 0.55,
-			output: 3.2,
-			cacheRead: 0.11,
+			input: 0.66,
+			output: 3.41,
+			cacheRead: 0.14,
 			cacheWrite: 0,
 		},
 		contextWindow: 262144,
@@ -2504,7 +2499,6 @@ export const OPENROUTER_MODELS = {
 		baseUrl: "https://openrouter.ai/api/v1",
 		compat: {"thinkingFormat":"openrouter"},
 		reasoning: true,
-		thinkingLevelMap: {"xhigh":"xhigh"},
 		input: ["text", "image"],
 		cost: {
 			input: 1.75,
@@ -2523,7 +2517,6 @@ export const OPENROUTER_MODELS = {
 		baseUrl: "https://openrouter.ai/api/v1",
 		compat: {"thinkingFormat":"openrouter"},
 		reasoning: false,
-		thinkingLevelMap: {"xhigh":"xhigh"},
 		input: ["text", "image"],
 		cost: {
 			input: 1.75,
@@ -2542,7 +2535,6 @@ export const OPENROUTER_MODELS = {
 		baseUrl: "https://openrouter.ai/api/v1",
 		compat: {"thinkingFormat":"openrouter"},
 		reasoning: true,
-		thinkingLevelMap: {"xhigh":"xhigh"},
 		input: ["text", "image"],
 		cost: {
 			input: 1.75,
@@ -2561,7 +2553,6 @@ export const OPENROUTER_MODELS = {
 		baseUrl: "https://openrouter.ai/api/v1",
 		compat: {"thinkingFormat":"openrouter"},
 		reasoning: true,
-		thinkingLevelMap: {"xhigh":"xhigh"},
 		input: ["text", "image"],
 		cost: {
 			input: 21,
@@ -2580,7 +2571,6 @@ export const OPENROUTER_MODELS = {
 		baseUrl: "https://openrouter.ai/api/v1",
 		compat: {"thinkingFormat":"openrouter"},
 		reasoning: false,
-		thinkingLevelMap: {"xhigh":"xhigh"},
 		input: ["text", "image"],
 		cost: {
 			input: 1.75,
@@ -2599,7 +2589,6 @@ export const OPENROUTER_MODELS = {
 		baseUrl: "https://openrouter.ai/api/v1",
 		compat: {"thinkingFormat":"openrouter"},
 		reasoning: true,
-		thinkingLevelMap: {"xhigh":"xhigh"},
 		input: ["text", "image"],
 		cost: {
 			input: 1.75,
@@ -2618,7 +2607,6 @@ export const OPENROUTER_MODELS = {
 		baseUrl: "https://openrouter.ai/api/v1",
 		compat: {"thinkingFormat":"openrouter"},
 		reasoning: true,
-		thinkingLevelMap: {"xhigh":"xhigh"},
 		input: ["text", "image"],
 		cost: {
 			input: 2.5,
@@ -2637,7 +2625,6 @@ export const OPENROUTER_MODELS = {
 		baseUrl: "https://openrouter.ai/api/v1",
 		compat: {"thinkingFormat":"openrouter"},
 		reasoning: true,
-		thinkingLevelMap: {"xhigh":"xhigh"},
 		input: ["text", "image"],
 		cost: {
 			input: 0.75,
@@ -2656,7 +2643,6 @@ export const OPENROUTER_MODELS = {
 		baseUrl: "https://openrouter.ai/api/v1",
 		compat: {"thinkingFormat":"openrouter"},
 		reasoning: true,
-		thinkingLevelMap: {"xhigh":"xhigh"},
 		input: ["text", "image"],
 		cost: {
 			input: 0.2,
@@ -2675,7 +2661,6 @@ export const OPENROUTER_MODELS = {
 		baseUrl: "https://openrouter.ai/api/v1",
 		compat: {"thinkingFormat":"openrouter"},
 		reasoning: true,
-		thinkingLevelMap: {"xhigh":"xhigh"},
 		input: ["text", "image"],
 		cost: {
 			input: 30,
@@ -2694,7 +2679,6 @@ export const OPENROUTER_MODELS = {
 		baseUrl: "https://openrouter.ai/api/v1",
 		compat: {"thinkingFormat":"openrouter"},
 		reasoning: true,
-		thinkingLevelMap: {"xhigh":"xhigh"},
 		input: ["text", "image"],
 		cost: {
 			input: 5,
@@ -2713,7 +2697,7 @@ export const OPENROUTER_MODELS = {
 		baseUrl: "https://openrouter.ai/api/v1",
 		compat: {"thinkingFormat":"openrouter"},
 		reasoning: true,
-		thinkingLevelMap: {"xhigh":"xhigh","off":null,"minimal":null,"low":null},
+		thinkingLevelMap: {"off":null,"minimal":null,"low":null},
 		input: ["text", "image"],
 		cost: {
 			input: 30,
@@ -3120,6 +3104,42 @@ export const OPENROUTER_MODELS = {
 		contextWindow: 262144,
 		maxTokens: 32768,
 	} satisfies Model<"openai-completions">,
+	"poolside/laguna-xs-2.1": {
+		id: "poolside/laguna-xs-2.1",
+		name: "Poolside: Laguna XS 2.1",
+		api: "openai-completions",
+		provider: "openrouter",
+		baseUrl: "https://openrouter.ai/api/v1",
+		compat: {"supportsDeveloperRole":false,"thinkingFormat":"openrouter"},
+		reasoning: true,
+		input: ["text"],
+		cost: {
+			input: 0.06,
+			output: 0.12,
+			cacheRead: 0.03,
+			cacheWrite: 0,
+		},
+		contextWindow: 262144,
+		maxTokens: 32768,
+	} satisfies Model<"openai-completions">,
+	"poolside/laguna-xs-2.1:free": {
+		id: "poolside/laguna-xs-2.1:free",
+		name: "Poolside: Laguna XS 2.1 (free)",
+		api: "openai-completions",
+		provider: "openrouter",
+		baseUrl: "https://openrouter.ai/api/v1",
+		compat: {"supportsDeveloperRole":false,"thinkingFormat":"openrouter"},
+		reasoning: true,
+		input: ["text"],
+		cost: {
+			input: 0,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+		},
+		contextWindow: 262144,
+		maxTokens: 32768,
+	} satisfies Model<"openai-completions">,
 	"poolside/laguna-xs.2": {
 		id: "poolside/laguna-xs.2",
 		name: "Poolside: Laguna XS.2",
@@ -3364,13 +3384,13 @@ export const OPENROUTER_MODELS = {
 		reasoning: true,
 		input: ["text"],
 		cost: {
-			input: 0.08,
-			output: 0.4,
-			cacheRead: 0.08,
+			input: 0.13,
+			output: 1.56,
+			cacheRead: 0,
 			cacheWrite: 0,
 		},
 		contextWindow: 131072,
-		maxTokens: 131072,
+		maxTokens: 32768,
 	} satisfies Model<"openai-completions">,
 	"qwen/qwen3-32b": {
 		id: "qwen/qwen3-32b",
@@ -3400,9 +3420,9 @@ export const OPENROUTER_MODELS = {
 		reasoning: true,
 		input: ["text"],
 		cost: {
-			input: 0.05,
-			output: 0.4,
-			cacheRead: 0.05,
+			input: 0.117,
+			output: 0.455,
+			cacheRead: 0,
 			cacheWrite: 0,
 		},
 		contextWindow: 131072,
@@ -3706,8 +3726,8 @@ export const OPENROUTER_MODELS = {
 		reasoning: false,
 		input: ["text", "image"],
 		cost: {
-			input: 0.08,
-			output: 0.5,
+			input: 0.117,
+			output: 0.455,
 			cacheRead: 0,
 			cacheWrite: 0,
 		},
@@ -4589,9 +4609,9 @@ export const OPENROUTER_MODELS = {
 		reasoning: true,
 		input: ["text", "image"],
 		cost: {
-			input: 0.55,
-			output: 3.2,
-			cacheRead: 0.11,
+			input: 0.66,
+			output: 3.41,
+			cacheRead: 0.14,
 			cacheWrite: 0,
 		},
 		contextWindow: 262144,

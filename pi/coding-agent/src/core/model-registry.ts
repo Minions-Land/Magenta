@@ -348,6 +348,60 @@ function applyModelOverride(model: Model<Api>, override: ModelOverride): Model<A
 export const clearApiKeyCache = clearConfigValueCache;
 
 /**
+ * Infer thinkingLevelMap for a model based on its ID and API type.
+ * Used when user doesn't explicitly configure thinkingLevelMap in models.json.
+ */
+function inferThinkingLevelMap(
+	modelId: string,
+	api: Api,
+	reasoning: boolean,
+): Model<Api>["thinkingLevelMap"] | undefined {
+	if (!reasoning) return undefined;
+
+	const id = modelId.toLowerCase();
+
+	// Anthropic models
+	if (api === "anthropic-messages") {
+		// Opus 4.x, Sonnet 5, Fable 5 support both 'xhigh' and 'max'
+		if (id.includes("opus-4") || id.includes("sonnet-5") || id.includes("fable-5")) {
+			return { off: null, minimal: "low", low: "low", medium: "medium", high: "high", xhigh: "xhigh", max: "max" };
+		}
+		// Other extended thinking models: Sonnet 3.7, 4.x (except 5), Haiku 4.5
+		if (
+			id.includes("3-7-sonnet") ||
+			id.includes("3.7-sonnet") ||
+			id.includes("sonnet-3-7") ||
+			id.includes("sonnet-3.7") ||
+			id.includes("sonnet-4") ||
+			id.includes("haiku-4-5") ||
+			id.includes("haiku-4.5") ||
+			id.includes("4-5-haiku")
+		) {
+			return { off: null, minimal: "low", low: "low", medium: "medium", high: "high", xhigh: "xhigh" };
+		}
+	}
+
+	// OpenAI models
+	if (api === "openai-completions" || api === "openai-responses") {
+		// GPT-5.2+ supports xhigh
+		if (
+			id.includes("gpt-5.2") ||
+			id.includes("gpt-5.3") ||
+			id.includes("gpt-5.4") ||
+			id.includes("gpt-5.5")
+		) {
+			return { off: null, minimal: "low", low: "low", medium: "medium", high: "high", xhigh: "xhigh" };
+		}
+		// Standard reasoning models (o1, o3, o4, gpt-5.1, etc.)
+		if (id.startsWith("o1") || id.startsWith("o3") || id.startsWith("o4") || id.includes("gpt-5")) {
+			return { off: null, minimal: "low", low: "low", medium: "medium", high: "high" };
+		}
+	}
+
+	return undefined;
+}
+
+/**
  * Model registry - loads and manages models, resolves API keys via AuthStorage.
  */
 export class ModelRegistry {
@@ -619,14 +673,17 @@ export class ModelRegistry {
 				this.storeModelHeaders(providerName, modelDef.id, modelDef.headers);
 
 				const defaultCost = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+					const reasoning = modelDef.reasoning ?? false;
+				const thinkingLevelMap =
+					modelDef.thinkingLevelMap ?? inferThinkingLevelMap(modelDef.id, api as Api, reasoning);
 				models.push({
 					id: modelDef.id,
 					name: modelDef.name ?? modelDef.id,
 					api: api as Api,
 					provider: providerName,
 					baseUrl,
-					reasoning: modelDef.reasoning ?? false,
-					thinkingLevelMap: modelDef.thinkingLevelMap,
+					reasoning,
+					thinkingLevelMap,
 					input: (modelDef.input ?? ["text"]) as ("text" | "image")[],
 					cost: modelDef.cost ?? defaultCost,
 					contextWindow: modelDef.contextWindow ?? 128000,
@@ -934,14 +991,16 @@ export class ModelRegistry {
 				const api = modelDef.api || config.api;
 				this.storeModelHeaders(providerName, modelDef.id, modelDef.headers);
 
-				this.models.push({
+				const thinkingLevelMap =
+				modelDef.thinkingLevelMap ?? inferThinkingLevelMap(modelDef.id, api as Api, modelDef.reasoning);
+			this.models.push({
 					id: modelDef.id,
 					name: modelDef.name,
 					api: api as Api,
 					provider: providerName,
 					baseUrl: modelDef.baseUrl ?? config.baseUrl!,
 					reasoning: modelDef.reasoning,
-					thinkingLevelMap: modelDef.thinkingLevelMap,
+					thinkingLevelMap,
 					input: modelDef.input as ("text" | "image")[],
 					cost: modelDef.cost,
 					contextWindow: modelDef.contextWindow,

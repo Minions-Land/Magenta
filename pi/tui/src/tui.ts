@@ -743,7 +743,8 @@ export class TUI extends Container {
 			return;
 		}
 		const elapsed = performance.now() - this.lastRenderAt;
-		const delay = Math.max(0, TUI.MIN_RENDER_INTERVAL_MS - elapsed);
+		const minInterval = TUI.MIN_RENDER_INTERVAL_MS;
+		const delay = Math.max(0, minInterval - elapsed);
 		this.renderTimer = setTimeout(() => {
 			this.renderTimer = undefined;
 			if (this.stopped || !this.renderRequested) {
