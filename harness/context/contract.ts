@@ -1,4 +1,4 @@
-import type { HcpTarget } from "../assembly/hcp/hcp.ts";
+import type { HcpServer } from "../assembly/hcp/hcp.ts";
 import type { ContextFile } from "./magenta/context.ts";
 
 /**
@@ -19,7 +19,7 @@ export interface ContextProvider {
 	 * registry. The target handles context:// URIs and exposes discover/read/status
 	 * operations.
 	 */
-	toHcpTarget(): HcpTarget;
+	toHcpServer(): HcpServer;
 }
 
 // Re-export supporting types for convenience

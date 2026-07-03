@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { HcpRegistry } from "../assembly/hcp/hcp.ts";
+import { HcpClient } from "../assembly/hcp/hcp.ts";
 import { getHarnessRegistryPath, loadRegistry } from "../assembly/registry/registry.ts";
 import { ApprovalPolicyProvider, decideApproval } from "../policy/magenta/approval.ts";
 import { ShellPolicyProvider, classifyShellCommand } from "../policy/magenta/shell-policy.ts";
@@ -52,9 +52,9 @@ describe("policy providers", () => {
 	});
 
 	it("dispatches approval and shell policy through HCP", async () => {
-		const hcp = new HcpRegistry()
-			.registerExact("approval://policy", new ApprovalPolicyProvider().toHcpTarget())
-			.registerExact("shell://policy", new ShellPolicyProvider().toHcpTarget());
+		const hcp = new HcpClient()
+			.registerExact("approval://policy", new ApprovalPolicyProvider().toHcpServer())
+			.registerExact("shell://policy", new ShellPolicyProvider().toHcpServer());
 
 		await expect(
 			hcp.dispatch({

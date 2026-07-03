@@ -1,4 +1,4 @@
-import type { HcpTarget } from "../assembly/hcp/hcp.ts";
+import type { HcpServer } from "../assembly/hcp/hcp.ts";
 
 export const APPROVAL_POLICY_TARGET = "approval://policy";
 export const SHELL_POLICY_TARGET = "shell://policy";
@@ -41,7 +41,7 @@ export interface ApprovalDecision {
 export interface ApprovalPolicyProviderContract {
 	decide(input: unknown): ApprovalDecision;
 	status(): ApprovalStatus;
-	toHcpTarget(): HcpTarget;
+	toHcpServer(): HcpServer;
 }
 
 export type ShellPolicyDecision = "allow" | "prompt" | "block";
@@ -79,12 +79,12 @@ export interface ShellPolicyClassification {
 export interface ShellPolicyProviderContract {
 	classify(input: unknown): ShellPolicyClassification;
 	status(): ShellPolicyStatus;
-	toHcpTarget(): HcpTarget;
+	toHcpServer(): HcpServer;
 }
 
-export interface PolicyHcpTargetBinding {
+export interface PolicyHcpServerBinding {
 	address: typeof APPROVAL_POLICY_TARGET | typeof SHELL_POLICY_TARGET;
-	target: HcpTarget;
+	target: HcpServer;
 }
 
 /**
@@ -97,5 +97,5 @@ export interface PolicyProviderContract {
 	shell: ShellPolicyProviderContract;
 	decideApproval(input: unknown): ApprovalDecision;
 	classifyShellCommand(input: unknown): ShellPolicyClassification;
-	toHcpTargets(): PolicyHcpTargetBinding[];
+	toHcpServers(): PolicyHcpServerBinding[];
 }

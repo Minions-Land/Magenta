@@ -26,9 +26,9 @@ describe("TodoMagnet", () => {
 		expect(tool.execute).toBeTypeOf("function");
 	});
 
-	it("should produce an HcpTarget", () => {
+	it("should produce an HcpServer", () => {
 		const magnet = createTodoMagnet("/tmp");
-		const target = magnet.toHcpTarget();
+		const target = magnet.toHcpServer();
 
 		expect(target.describe).toBeTypeOf("function");
 		expect(target.call).toBeTypeOf("function");

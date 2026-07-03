@@ -1,6 +1,6 @@
 // Re-export all harness capabilities
 
-// HCP / Magnet / Registry: the management + assembly layer (not the loop hot path).
+// HCP / HcpMagnet / Registry: the management + assembly layer (not the loop hot path).
 export * from "./assembly/hcp/hcp.ts";
 export * from "./assembly/magnet/factory.ts";
 export * from "./assembly/magnet/hcp-registry.ts";

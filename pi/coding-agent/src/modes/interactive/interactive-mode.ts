@@ -4528,7 +4528,7 @@ export class InteractiveMode {
 				...(bundleDiagnostics.length
 					? ["Bundle effects:", ...bundleDiagnostics.map((diagnostic) => `- ${diagnostic.message}`)]
 					: []),
-				"Reload completed; package tools were assembled through Magnet. No extra compile step was run.",
+				"Reload completed; package tools were assembled through HcpMagnet. No extra compile step was run.",
 			].join("\n"),
 		);
 	}

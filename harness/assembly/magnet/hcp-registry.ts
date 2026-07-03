@@ -1,49 +1,49 @@
-import type { HcpRegistry, HcpTargetDescription } from "../hcp/hcp.ts";
-import type { Magnet } from "./magnet.ts";
+import type { HcpClient, HcpServerDescription } from "../hcp/hcp.ts";
+import type { HcpMagnet } from "./magnet.ts";
 
-export type DuplicateMagnetHcpTargetPolicy = "error" | "replace" | "skip";
+export type DuplicateMagnetHcpServerPolicy = "error" | "replace" | "skip";
 
-export interface RegisterMagnetHcpTargetsOptions {
-	duplicates?: DuplicateMagnetHcpTargetPolicy;
+export interface RegisterMagnetHcpServersOptions {
+	duplicates?: DuplicateMagnetHcpServerPolicy;
 }
 
-export interface MagnetHcpTargetRegistration {
+export interface MagnetHcpServerRegistration {
 	target: string;
 	kind: string;
 	magnetKind: string;
-	description: HcpTargetDescription;
+	description: HcpServerDescription;
 }
 
-export interface MagnetHcpTargetSkip {
+export interface MagnetHcpServerSkip {
 	magnetKind: string;
 	reason: "no_hcp_target" | "duplicate";
 	target?: string;
 }
 
-export interface RegisterMagnetHcpTargetsResult {
-	registrations: MagnetHcpTargetRegistration[];
-	skipped: MagnetHcpTargetSkip[];
+export interface RegisterMagnetHcpServersResult {
+	registrations: MagnetHcpServerRegistration[];
+	skipped: MagnetHcpServerSkip[];
 }
 
 /**
- * Register the management side of a Magnet collection into an HCP registry.
+ * Register the management side of a HcpMagnet collection into an HCP registry.
  *
  * The agent loop still receives `magnet.toTool()` directly. This helper only
  * wires the assembly/control surface, using exact target addresses so multiple
  * tool magnets cannot accidentally shadow each other under the same prefix.
  */
-export function registerMagnetHcpTargets(
-	registry: HcpRegistry,
-	magnets: Iterable<Magnet>,
-	options: RegisterMagnetHcpTargetsOptions = {},
-): RegisterMagnetHcpTargetsResult {
+export function registerMagnetHcpServers(
+	registry: HcpClient,
+	magnets: Iterable<HcpMagnet>,
+	options: RegisterMagnetHcpServersOptions = {},
+): RegisterMagnetHcpServersResult {
 	const duplicatePolicy = options.duplicates ?? "error";
 	const registeredTargets = new Set(registry.addresses());
-	const registrations: MagnetHcpTargetRegistration[] = [];
-	const skipped: MagnetHcpTargetSkip[] = [];
+	const registrations: MagnetHcpServerRegistration[] = [];
+	const skipped: MagnetHcpServerSkip[] = [];
 
 	for (const magnet of magnets) {
-		const target = magnet.toHcpTarget?.();
+		const target = magnet.toHcpServer?.();
 		if (!target) {
 			skipped.push({ magnetKind: magnet.kind, reason: "no_hcp_target" });
 			continue;
@@ -51,7 +51,7 @@ export function registerMagnetHcpTargets(
 
 		const description = target.describe();
 		if (!description.target) {
-			throw new Error(`Magnet ${magnet.kind} returned an HCP target without an address`);
+			throw new Error(`HcpMagnet ${magnet.kind} returned an HCP target without an address`);
 		}
 
 		if (registeredTargets.has(description.target)) {
@@ -60,7 +60,7 @@ export function registerMagnetHcpTargets(
 				continue;
 			}
 			if (duplicatePolicy === "error") {
-				throw new Error(`Duplicate Magnet HCP target: ${description.target}`);
+				throw new Error(`Duplicate HcpMagnet HCP target: ${description.target}`);
 			}
 		}
 

@@ -12,7 +12,7 @@
  * Address prefix under which capability slots register. A capability slot named
  * `compaction` is reachable at `capability:compaction`; a named slot such as
  * `runtime:process` is reachable at `capability:runtime:process`. {@link
- * HcpRegistry.resolveCapability} builds this address from the slot name so
+ * HcpClient.resolveCapability} builds this address from the slot name so
  * consumers never spell out the convention (or a source).
  */
 export const capabilityPrefix = "capability";
@@ -31,10 +31,10 @@ export interface HcpContext {
 
 /**
  * A single management call. `target` is a URI-like address (for example
- * `"tool:read"` or `"native:tool/read"`); the {@link HcpRegistry} resolves it by
- * prefix to a registered {@link HcpTarget}.
+ * `"tool:read"` or `"native:tool/read"`); the {@link HcpClient} resolves it by
+ * prefix to a registered {@link HcpServer}.
  */
-export interface HcpCall {
+export interface HcpRequest {
 	/** URI-like target address. The portion before the first `:` is the prefix. */
 	target: string;
 	/** Operation to invoke on the target (for example `"describe"` or `"call"`). */
@@ -45,12 +45,21 @@ export interface HcpCall {
 	context?: HcpContext;
 }
 
+/**
+ * The result of handling an {@link HcpRequest}. Today HCP dispatch is in-process
+ * with no serialization boundary (spec §1/§5), so a response is simply the
+ * operation's return value. This alias names the request/response pair now so
+ * the vocabulary is stable; when §3's protocol envelope lands, this becomes a
+ * structured result type without renaming call sites.
+ */
+export type HcpResponse<T = unknown> = T;
+
 /** A component endpoint reachable over HCP. */
-export interface HcpTarget {
+export interface HcpServer {
 	/** Stable, machine-readable description of this target. */
-	describe(): HcpTargetDescription;
+	describe(): HcpServerDescription;
 	/** Handle a management call dispatched to this target. */
-	call(call: HcpCall): Promise<unknown> | unknown;
+	call(call: HcpRequest): Promise<unknown> | unknown;
 	/**
 	 * Assembly-time typed handoff: the selected source's in-process implementation
 	 * for this capability slot. HCP is the resolver — a consumer asks for a
@@ -63,8 +72,8 @@ export interface HcpTarget {
 	instance?<T = unknown>(): T | undefined;
 }
 
-/** Self-description returned by {@link HcpTarget.describe}. */
-export interface HcpTargetDescription {
+/** Self-description returned by {@link HcpServer.describe}. */
+export interface HcpServerDescription {
 	/** The target address this endpoint answers on. */
 	target: string;
 	/** Component kind (for example `"tool"`). */
@@ -78,30 +87,30 @@ export interface HcpTargetDescription {
 }
 
 /**
- * In-process registry of {@link HcpTarget}s, resolved by target prefix.
+ * In-process registry of {@link HcpServer}s, resolved by target prefix.
  *
  * The prefix is the substring before the first `:` in a target address. A target
  * registered under prefix `tool` handles every call whose `target` begins with
  * `tool:` unless a more specific exact-match target is registered.
  */
-export class HcpRegistry {
-	private readonly byPrefix = new Map<string, HcpTarget>();
-	private readonly byExact = new Map<string, HcpTarget>();
+export class HcpClient {
+	private readonly byPrefix = new Map<string, HcpServer>();
+	private readonly byExact = new Map<string, HcpServer>();
 
 	/** Register a target under a prefix (for example `"tool"`). */
-	register(prefix: string, target: HcpTarget): this {
+	register(prefix: string, target: HcpServer): this {
 		this.byPrefix.set(prefix, target);
 		return this;
 	}
 
 	/** Register a target under an exact address (for example `"tool:read"`). */
-	registerExact(address: string, target: HcpTarget): this {
+	registerExact(address: string, target: HcpServer): this {
 		this.byExact.set(address, target);
 		return this;
 	}
 
 	/** Resolve the target responsible for an address, or `undefined`. */
-	resolve(address: string): HcpTarget | undefined {
+	resolve(address: string): HcpServer | undefined {
 		const exact = this.byExact.get(address);
 		if (exact) return exact;
 		const prefix = address.split(":", 1)[0];
@@ -136,8 +145,8 @@ export class HcpRegistry {
 	}
 
 	/** Describe all exact and prefix targets currently registered. */
-	describeAll(): HcpTargetDescription[] {
-		const described = new Map<string, HcpTargetDescription>();
+	describeAll(): HcpServerDescription[] {
+		const described = new Map<string, HcpServerDescription>();
 		for (const [address, target] of this.byExact) {
 			described.set(address, target.describe());
 		}
@@ -148,7 +157,7 @@ export class HcpRegistry {
 	}
 
 	/** Dispatch a call to its resolved target. Throws if none is registered. */
-	async dispatch(call: HcpCall): Promise<unknown> {
+	async dispatch(call: HcpRequest): Promise<unknown> {
 		if (call.target === "hcp:registry") {
 			switch (call.op) {
 				case "list":

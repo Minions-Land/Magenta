@@ -1,4 +1,4 @@
-import type { HcpTarget } from "../assembly/hcp/hcp.ts";
+import type { HcpServer } from "../assembly/hcp/hcp.ts";
 import type { SandboxProfile } from "../sandbox/contract.ts";
 
 export interface ProcessRuntimeToolMetadata {
@@ -71,7 +71,7 @@ export interface ProcessRuntimeProviderContract {
 	exec(input: ProcessExecInput, signal?: AbortSignal): Promise<ProcessExecOutput>;
 	policyStatus(): RuntimePolicyStatus;
 	health(): Promise<Record<string, unknown>>;
-	toHcpTarget(): HcpTarget;
+	toHcpServer(): HcpServer;
 }
 
 export interface ScriptRuntimeInput {
@@ -113,5 +113,5 @@ export interface ScriptRuntimeProviderContract {
 	discover(): Record<string, unknown>;
 	describeRuntime(name: string): ScriptRuntimeDescription;
 	execRuntime(name: string, input: ScriptRuntimeInput, signal?: AbortSignal): Promise<ScriptRuntimeOutput>;
-	toHcpTarget(): HcpTarget;
+	toHcpServer(): HcpServer;
 }

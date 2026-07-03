@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { Magnet } from "./magnet.ts";
+import type { HcpMagnet } from "./magnet.ts";
 import { ProcessToolMagnet } from "./process.ts";
 import { PythonModuleToolMagnet, type PythonLauncherResolver } from "./python.ts";
 import { parametersFromToml } from "./schema.ts";
@@ -61,7 +61,7 @@ export interface CreatePackageToolMagnetOptions {
 }
 
 export interface CreatePackageToolMagnetResult {
-	magnet?: Magnet;
+	magnet?: HcpMagnet;
 	diagnostics: PackageToolMagnetDiagnostic[];
 }
 

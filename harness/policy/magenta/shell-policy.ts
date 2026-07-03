@@ -1,4 +1,4 @@
-import type { HcpCall, HcpTarget, HcpTargetDescription } from "../../assembly/hcp/hcp.ts";
+import type { HcpRequest, HcpServer, HcpServerDescription } from "../../assembly/hcp/hcp.ts";
 import {
 	SHELL_POLICY_TARGET,
 	type ShellPolicyClassification,
@@ -138,7 +138,7 @@ export class ShellPolicyProvider implements ShellPolicyProviderContract {
 		return shellPolicyStatus();
 	}
 
-	describe(): HcpTargetDescription {
+	describe(): HcpServerDescription {
 		return {
 			target: SHELL_POLICY_TARGET,
 			kind: "shell",
@@ -160,10 +160,10 @@ export class ShellPolicyProvider implements ShellPolicyProviderContract {
 		};
 	}
 
-	toHcpTarget(): HcpTarget {
+	toHcpServer(): HcpServer {
 		return {
 			describe: () => this.describe(),
-			call: (call: HcpCall): unknown => {
+			call: (call: HcpRequest): unknown => {
 				switch (call.op || "classify") {
 					case "discover":
 					case "list":

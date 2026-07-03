@@ -413,7 +413,7 @@ type = "object"
 		});
 	});
 
-	it("assembles script runtime package tools through the Magnet factory", async () => {
+	it("assembles script runtime package tools through the HcpMagnet factory", async () => {
 		await withTempRepo(async ({ repoRoot, packagesRoot }) => {
 			await writeText(
 				join(packagesRoot, "ScriptDomain", "package.toml"),

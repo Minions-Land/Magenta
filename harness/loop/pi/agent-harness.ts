@@ -11,7 +11,7 @@ import type {
 import { runAgentLoop } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, ImageContent, Model, Models, UserMessage } from "@earendil-works/pi-ai";
 import { buildDefaultCapabilityHcp } from "../../assembly/magnet/capability.ts";
-import type { HcpRegistry } from "../../assembly/hcp/hcp.ts";
+import type { HcpClient } from "../../assembly/hcp/hcp.ts";
 import { convertToLlm } from "../../messages/messages.ts";
 import { formatPromptTemplateInvocation } from "../../prompt-templates/pi/prompt-templates.ts";
 import { formatSkillInvocation } from "../../skills/pi/skills.ts";
@@ -174,7 +174,7 @@ export class AgentHarness<
 	private resources: AgentHarnessResources<TSkill, TPromptTemplate>;
 	/** Memoized fallback capability HCP, built lazily the first time compaction is
 	 *  resolved without an injected provider or resources.hcp. */
-	private defaultCapabilityHcpPromise?: Promise<HcpRegistry>;
+	private defaultCapabilityHcpPromise?: Promise<HcpClient>;
 	/**
 	 * Resolve the compaction capability by NAME, never by source. Priority:
 	 * 1. an explicitly injected provider (`resources.compaction`);

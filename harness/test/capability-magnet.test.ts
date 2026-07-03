@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { HcpRegistry } from "../assembly/hcp/hcp.ts";
+import { HcpClient } from "../assembly/hcp/hcp.ts";
 import { CapabilityMagnet } from "../assembly/magnet/universal.ts";
 import {
 	capabilityBindingKey,
@@ -87,8 +87,8 @@ describe("capability magnet infrastructure", () => {
 		expect(typeof magnet.toCapability).toBe("function");
 
 		// A capability registers under the `capability:<kind>` address convention,
-		// so HcpRegistry.resolveCapability(kind) finds it by slot name alone.
-		const hcp = new HcpRegistry().registerExact("capability:fixture-hcp", magnet.toHcpTarget!());
+		// so HcpClient.resolveCapability(kind) finds it by slot name alone.
+		const hcp = new HcpClient().registerExact("capability:fixture-hcp", magnet.toHcpServer!());
 		const description = await hcp.dispatch({ target: "capability:fixture-hcp", op: "describe" });
 		expect(description).toMatchObject({
 			target: "capability:fixture-hcp",
@@ -110,16 +110,16 @@ describe("capability magnet infrastructure", () => {
 			source: "pi",
 			instance: {},
 		});
-		const hcp = new HcpRegistry().register("fixture-notool", magnet.toHcpTarget());
+		const hcp = new HcpClient().register("fixture-notool", magnet.toHcpServer());
 		await expect(hcp.dispatch({ target: "fixture-notool://fixture-notool", op: "toTool" })).rejects.toThrow(
 			/does not produce an AgentTool/,
 		);
 	});
 });
 
-describe("HcpRegistry.resolveCapability", () => {
+describe("HcpClient.resolveCapability", () => {
 	// A minimal target that carries a typed instance — the shape a capability
-	// magnet's toHcpTarget() produces. Hand-built here so these tests are
+	// magnet's toHcpServer() produces. Hand-built here so these tests are
 	// independent of the capability-factory machinery.
 	function capabilityTarget<T>(name: string, instance: T) {
 		return {
@@ -131,14 +131,14 @@ describe("HcpRegistry.resolveCapability", () => {
 
 	it("resolves a slot name to the registered instance under capability:<name>", () => {
 		const impl = { compact: () => "done" };
-		const hcp = new HcpRegistry().registerExact("capability:compaction", capabilityTarget("compaction", impl));
+		const hcp = new HcpClient().registerExact("capability:compaction", capabilityTarget("compaction", impl));
 		// The consumer passes only the slot name — no address prefix, no source.
 		expect(hcp.resolveCapability<typeof impl>("compaction")).toBe(impl);
 	});
 
 	it("resolves a named slot under capability:<kind>:<name>", () => {
 		const impl = { runtime: "process" };
-		const hcp = new HcpRegistry().registerExact(
+		const hcp = new HcpClient().registerExact(
 			"capability:runtime:process",
 			capabilityTarget("runtime:process", impl),
 		);
@@ -147,12 +147,12 @@ describe("HcpRegistry.resolveCapability", () => {
 
 	it("accepts a bare-name registration as a fallback address", () => {
 		const impl = { note: "bare" };
-		const hcp = new HcpRegistry().registerExact("memory", capabilityTarget("memory", impl));
+		const hcp = new HcpClient().registerExact("memory", capabilityTarget("memory", impl));
 		expect(hcp.resolveCapability<typeof impl>("memory")).toBe(impl);
 	});
 
 	it("returns undefined when no target is registered for the name", () => {
-		const hcp = new HcpRegistry();
+		const hcp = new HcpClient();
 		expect(hcp.resolveCapability("absent")).toBeUndefined();
 	});
 
@@ -162,7 +162,7 @@ describe("HcpRegistry.resolveCapability", () => {
 			describe: () => ({ target: "capability:context", kind: "context", ops: ["describe"] }),
 			call: () => undefined,
 		};
-		const hcp = new HcpRegistry().registerExact("capability:context", inspectOnly);
+		const hcp = new HcpClient().registerExact("capability:context", inspectOnly);
 		expect(hcp.resolveCapability("context")).toBeUndefined();
 	});
 
@@ -170,7 +170,7 @@ describe("HcpRegistry.resolveCapability", () => {
 		// register() (prefix) rather than registerExact(): capability:* all route
 		// to this target, and instance() still hands back the typed impl.
 		const impl = { via: "prefix" };
-		const hcp = new HcpRegistry().register("capability", capabilityTarget("session", impl));
+		const hcp = new HcpClient().register("capability", capabilityTarget("session", impl));
 		expect(hcp.resolveCapability<typeof impl>("session")).toBe(impl);
 	});
 });
@@ -191,9 +191,9 @@ describe("context capability", () => {
 		const contextProvider = hcp.resolveCapability("context");
 		expect(contextProvider).toBeDefined();
 		expect(typeof contextProvider).toBe("object");
-		// The magenta ContextProvider has discoverContextFiles and toHcpTarget methods.
+		// The magenta ContextProvider has discoverContextFiles and toHcpServer methods.
 		expect(typeof (contextProvider as any).discoverContextFiles).toBe("function");
-		expect(typeof (contextProvider as any).toHcpTarget).toBe("function");
+		expect(typeof (contextProvider as any).toHcpServer).toBe("function");
 	});
 
 	it("assembles context from the magenta source and contributes no tools", async () => {
@@ -256,12 +256,12 @@ describe("memory capability", () => {
 		const memoryProvider = hcp.resolveCapability("memory");
 		expect(memoryProvider).toBeDefined();
 		expect(typeof memoryProvider).toBe("object");
-		// The magenta SessionGroundingMemoryProvider has read/retain/recall/reflect and toHcpTarget methods.
+		// The magenta SessionGroundingMemoryProvider has read/retain/recall/reflect and toHcpServer methods.
 		expect(typeof (memoryProvider as any).read).toBe("function");
 		expect(typeof (memoryProvider as any).retain).toBe("function");
 		expect(typeof (memoryProvider as any).recall).toBe("function");
 		expect(typeof (memoryProvider as any).reflect).toBe("function");
-		expect(typeof (memoryProvider as any).toHcpTarget).toBe("function");
+		expect(typeof (memoryProvider as any).toHcpServer).toBe("function");
 	});
 
 	it("assembles memory from the magenta source and contributes no tools", async () => {
@@ -292,7 +292,7 @@ describe("policy capability", () => {
 		expect(typeof policyProvider).toBe("object");
 		expect(typeof (policyProvider as any).decideApproval).toBe("function");
 		expect(typeof (policyProvider as any).classifyShellCommand).toBe("function");
-		expect(typeof (policyProvider as any).toHcpTargets).toBe("function");
+		expect(typeof (policyProvider as any).toHcpServers).toBe("function");
 		expect((policyProvider as any).decideApproval({ tool: { name: "Read", read_only: true } })).toMatchObject({
 			decision: "allow",
 			target: "approval://policy",
@@ -389,7 +389,7 @@ describe("runtime capability", () => {
 			name: "process",
 			source: "magenta",
 		});
-		expect(processResult.magnet?.toHcpTarget?.().describe()).toMatchObject({
+		expect(processResult.magnet?.toHcpServer?.().describe()).toMatchObject({
 			target: "capability:runtime:process",
 			kind: "runtime",
 		});
@@ -400,7 +400,7 @@ describe("runtime capability", () => {
 		});
 		expect(scripts.diagnostics).toEqual([]);
 		expect(scripts.magnet?.toTool).toBeUndefined();
-		expect(scripts.magnet?.toHcpTarget?.().describe()).toMatchObject({
+		expect(scripts.magnet?.toHcpServer?.().describe()).toMatchObject({
 			target: "capability:runtime:script-runtimes",
 			kind: "runtime",
 		});
@@ -418,7 +418,7 @@ describe("sandbox capability", () => {
 		expect(typeof sandboxProvider).toBe("object");
 		expect(typeof (sandboxProvider as any).list).toBe("function");
 		expect(typeof (sandboxProvider as any).resolve).toBe("function");
-		expect(typeof (sandboxProvider as any).toSandboxHcpTarget).toBe("function");
+		expect(typeof (sandboxProvider as any).toSandboxHcpServer).toBe("function");
 		expect((sandboxProvider as any).resolve({ tool: { read_only: true, tags: [] } })).toMatchObject({
 			selection: { profile: "readonly-fs" },
 		});

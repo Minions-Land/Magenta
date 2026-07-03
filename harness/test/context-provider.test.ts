@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { HcpRegistry } from "../assembly/hcp/hcp.ts";
+import { HcpClient } from "../assembly/hcp/hcp.ts";
 import { getHarnessRegistryPath, loadRegistry } from "../assembly/registry/registry.ts";
 import { ContextProvider, discoverContextFiles } from "../context/magenta/context.ts";
 
@@ -37,7 +37,7 @@ describe("context provider", () => {
 	it("serves context through context://workspace and context://project", async () => {
 		const dir = await mkdtemp(join(tmpdir(), "magenta-context-hcp-"));
 		await writeFile(join(dir, "AGENTS.md"), "Use HCP target runtime words.");
-		const hcp = new HcpRegistry().register("context", new ContextProvider({ workspaceRoot: dir }).toHcpTarget());
+		const hcp = new HcpClient().register("context", new ContextProvider({ workspaceRoot: dir }).toHcpServer());
 
 		await expect(hcp.dispatch({ target: "context://workspace", op: "status" })).resolves.toMatchObject({
 			target: "context://project",

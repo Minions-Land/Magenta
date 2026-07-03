@@ -1,4 +1,4 @@
-import type { HcpTarget } from "../assembly/hcp/hcp.ts";
+import type { HcpServer } from "../assembly/hcp/hcp.ts";
 
 export interface HookDescriptor {
 	name: string;
@@ -27,5 +27,5 @@ export interface HookProviderContract {
 	discover(): HookDiscoverResult;
 	describeHook(name: string): HookDescriptor;
 	run(name: string, input: unknown): HookResult | unknown;
-	toHcpTarget(): HcpTarget;
+	toHcpServer(): HcpServer;
 }

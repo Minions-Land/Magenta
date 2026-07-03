@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
-import type { HcpCall, HcpTarget, HcpTargetDescription } from "../../assembly/hcp/hcp.ts";
+import type { HcpRequest, HcpServer, HcpServerDescription } from "../../assembly/hcp/hcp.ts";
 import { parseToml, type TomlTable } from "../../assembly/registry/registry.ts";
 import type {
 	SandboxDiscoverResult,
@@ -175,9 +175,9 @@ export class SandboxProvider implements SandboxProviderContract {
 		};
 	}
 
-	toSandboxHcpTarget(): HcpTarget {
+	toSandboxHcpServer(): HcpServer {
 		return {
-			describe: (): HcpTargetDescription => ({
+			describe: (): HcpServerDescription => ({
 				target: "sandbox://*",
 				kind: "sandbox",
 				ops: ["discover", "describe", "get", "resolve"],
@@ -189,7 +189,7 @@ export class SandboxProvider implements SandboxProviderContract {
 					enforcement: "not-ported",
 				},
 			}),
-			call: (call: HcpCall): unknown => {
+			call: (call: HcpRequest): unknown => {
 				const name = targetName(call.target);
 				switch (call.op || "describe") {
 					case "discover":
@@ -207,9 +207,9 @@ export class SandboxProvider implements SandboxProviderContract {
 		};
 	}
 
-	toSandboxSelectHcpTarget(): HcpTarget {
+	toSandboxSelectHcpServer(): HcpServer {
 		return {
-			describe: (): HcpTargetDescription => ({
+			describe: (): HcpServerDescription => ({
 				target: "hook://sandbox-select",
 				kind: "hook",
 				ops: ["run", "call", "describe"],
@@ -221,10 +221,10 @@ export class SandboxProvider implements SandboxProviderContract {
 					output: "{ profile, reason }",
 				},
 			}),
-			call: (call: HcpCall): unknown => {
+			call: (call: HcpRequest): unknown => {
 				switch (call.op || "run") {
 					case "describe":
-						return this.toSandboxSelectHcpTarget().describe();
+						return this.toSandboxSelectHcpServer().describe();
 					case "run":
 					case "call":
 					case "select":

@@ -11,9 +11,9 @@ import {
 	createCapabilityMagnet,
 	type CapabilityMagnetDiagnosticCode,
 } from "../magnet/capability.ts";
-import { registerMagnetHcpTargets } from "../magnet/hcp-registry.ts";
-import type { CapabilityBinding, Magnet } from "../magnet/magnet.ts";
-import { HcpRegistry } from "../hcp/hcp.ts";
+import { registerMagnetHcpServers } from "../magnet/hcp-registry.ts";
+import type { CapabilityBinding, HcpMagnet } from "../magnet/magnet.ts";
+import { HcpClient } from "../hcp/hcp.ts";
 import { parseToml, type TomlTable, type TomlValue } from "../registry/registry.ts";
 
 export const PACKAGE_MANIFEST_FILE = "package.toml";
@@ -146,7 +146,7 @@ export interface PackageOverlay {
 }
 
 export interface PackageToolAssembly {
-	magnets: Magnet[];
+	magnets: HcpMagnet[];
 	tools: AgentTool[];
 	/**
 	 * Source-selected non-tool capability bindings, keyed by capability slot
@@ -162,7 +162,7 @@ export interface PackageToolAssembly {
 	 * resolved via `instance()`), so HCP is the single resolver. Additive field:
 	 * existing consumers that only read `tools`/`capabilities` are unaffected.
 	 */
-	hcp: HcpRegistry;
+	hcp: HcpClient;
 	diagnostics: PackageDiagnostic[];
 }
 
@@ -384,7 +384,7 @@ export const CAPABILITY_KINDS = new Set<string>([
 
 export async function assemblePackageToolMagnets(overlay: PackageOverlay): Promise<PackageToolAssembly> {
 	const diagnostics: PackageDiagnostic[] = [];
-	const magnets: Magnet[] = [];
+	const magnets: HcpMagnet[] = [];
 
 	for (const component of overlay.components) {
 		if (component.kind === "tool") {
@@ -422,7 +422,7 @@ export async function assemblePackageToolMagnets(overlay: PackageOverlay): Promi
 	for (const magnet of magnets) {
 		if (typeof magnet.toTool === "function" && typeof magnet.toCapability === "function") {
 			throw new Error(
-				`Magnet "${magnet.kind}" produces both a tool and a capability; a magnet must produce at most one.`,
+				`HcpMagnet "${magnet.kind}" produces both a tool and a capability; a magnet must produce at most one.`,
 			);
 		}
 	}
@@ -430,8 +430,8 @@ export async function assemblePackageToolMagnets(overlay: PackageOverlay): Promi
 	// The one HCP. Every magnet's management + resolution surface registers here;
 	// `tools` and `capabilities` are then DERIVED by resolving through it, so HCP
 	// is the single resolver rather than a bypassed bystander.
-	const hcp = new HcpRegistry();
-	const registration = registerMagnetHcpTargets(hcp, magnets);
+	const hcp = new HcpClient();
+	const registration = registerMagnetHcpServers(hcp, magnets);
 
 	const tools: AgentTool[] = [];
 	const capabilities = new Map<string, CapabilityBinding>();
@@ -475,7 +475,7 @@ async function createCapabilityMagnetFromDescriptor(options: {
 		components: PackageResolvedComponent[];
 		componentMap: Map<string, PackageResolvedComponent>;
 	};
-}): Promise<{ magnet?: Magnet; diagnostics: PackageDiagnostic[] }> {
+}): Promise<{ magnet?: HcpMagnet; diagnostics: PackageDiagnostic[] }> {
 	const { component, context } = options;
 	const diagnostics: PackageDiagnostic[] = [];
 

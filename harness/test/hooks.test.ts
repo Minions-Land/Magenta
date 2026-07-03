@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { HcpRegistry } from "../assembly/hcp/hcp.ts";
+import { HcpClient } from "../assembly/hcp/hcp.ts";
 import { getHarnessRegistryPath, loadRegistry } from "../assembly/registry/registry.ts";
 import { HookProvider } from "../hooks/magenta/hooks.ts";
 
@@ -19,7 +19,7 @@ describe("hook provider", () => {
 	});
 
 	it("runs pre-tool hook as declarative sandbox/approval/shell-policy actions", async () => {
-		const hcp = new HcpRegistry().register("hook", new HookProvider().toHcpTarget());
+		const hcp = new HcpClient().register("hook", new HookProvider().toHcpServer());
 
 		await expect(
 			hcp.dispatch({
@@ -48,7 +48,7 @@ describe("hook provider", () => {
 	});
 
 	it("runs init and workflow hooks as action envelopes", async () => {
-		const hcp = new HcpRegistry().register("hook", new HookProvider().toHcpTarget());
+		const hcp = new HcpClient().register("hook", new HookProvider().toHcpServer());
 
 		await expect(
 			hcp.dispatch({

@@ -1,6 +1,6 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import type { HcpCall, HcpTarget, HcpTargetDescription } from "../hcp/hcp.ts";
-import type { CapabilityBinding, Magnet } from "./magnet.ts";
+import type { HcpRequest, HcpServer, HcpServerDescription } from "../hcp/hcp.ts";
+import type { CapabilityBinding, HcpMagnet } from "./magnet.ts";
 
 export interface UniversalMagnetState {
 	enabled: boolean;
@@ -28,7 +28,7 @@ export interface UniversalMagnetOptions {
  * This keeps selectors and assembly code from caring whether an implementation is
  * native TS, a Rust process tool, a JSONL HCP process, MCP, WASM, or a remote API.
  */
-export abstract class UniversalMagnet implements Magnet {
+export abstract class UniversalMagnet implements HcpMagnet {
 	readonly kind: string;
 	protected readonly descriptor: UniversalMagnetDescriptor;
 	protected readonly state: UniversalMagnetState;
@@ -42,7 +42,7 @@ export abstract class UniversalMagnet implements Magnet {
 		};
 	}
 
-	describe(): HcpTargetDescription {
+	describe(): HcpServerDescription {
 		return {
 			target: this.descriptor.target,
 			kind: this.descriptor.kind,
@@ -90,10 +90,10 @@ export abstract class UniversalMagnet implements Magnet {
 		};
 	}
 
-	toHcpTarget(): HcpTarget {
-		const base: HcpTarget = {
+	toHcpServer(): HcpServer {
+		const base: HcpServer = {
 			describe: () => this.describe(),
-			call: async (call: HcpCall): Promise<unknown> => {
+			call: async (call: HcpRequest): Promise<unknown> => {
 				switch (call.op) {
 					case "describe":
 						return this.describe();
@@ -113,7 +113,7 @@ export abstract class UniversalMagnet implements Magnet {
 						}
 						return this.toTool();
 					default:
-						return this.handleHcpCall(call);
+						return this.handleHcpRequest(call);
 				}
 			},
 		};
@@ -143,7 +143,7 @@ export abstract class UniversalMagnet implements Magnet {
 		}
 	}
 
-	protected handleHcpCall(call: HcpCall): Promise<unknown> | unknown {
+	protected handleHcpRequest(call: HcpRequest): Promise<unknown> | unknown {
 		throw new Error(`${this.descriptor.name}: unsupported op "${call.op}"`);
 	}
 
@@ -191,7 +191,7 @@ export class CapabilityMagnet<T = unknown> extends UniversalMagnet {
 
 	/**
 	 * The selected-source implementation this capability carries. Exposing it via
-	 * {@link UniversalMagnet.hcpInstance} makes `toHcpTarget().instance()` and
+	 * {@link UniversalMagnet.hcpInstance} makes `toHcpServer().instance()` and
 	 * `toCapability().instance` the SAME object — so HCP is the one resolver: a
 	 * consumer asking HCP to resolve this capability by name gets exactly what the
 	 * binding holds.

@@ -1,6 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
-import type { HcpCall, HcpTarget, HcpTargetDescription } from "../../assembly/hcp/hcp.ts";
+import type { HcpRequest, HcpServer, HcpServerDescription } from "../../assembly/hcp/hcp.ts";
 import type {
 	MemoryProvider,
 	MemoryReadResult,
@@ -198,7 +198,7 @@ export class SessionGroundingMemoryProvider implements MemoryProvider {
 		};
 	}
 
-	async call(call: HcpCall): Promise<unknown> {
+	async call(call: HcpRequest): Promise<unknown> {
 		switch (call.op) {
 			case "discover":
 			case "list":
@@ -220,9 +220,9 @@ export class SessionGroundingMemoryProvider implements MemoryProvider {
 		}
 	}
 
-	toHcpTarget(): HcpTarget {
+	toHcpServer(): HcpServer {
 		return {
-			describe: (): HcpTargetDescription => ({
+			describe: (): HcpServerDescription => ({
 				target: "memory://session-grounding",
 				kind: "memory",
 				ops: ["read", "retain", "recall", "reflect", "describe"],

@@ -4,7 +4,7 @@ import {
 	type HcpProcessMagnet,
 	type HcpProcessMagnetOptions,
 } from "./hcp-process.ts";
-import type { Magnet } from "./magnet.ts";
+import type { HcpMagnet } from "./magnet.ts";
 import {
 	createProcessToolMagnetFromCatalogEntry,
 	type ProcessToolMagnet,
@@ -17,7 +17,7 @@ export interface CatalogMagnetFactoryOptions {
 	commandOverride?: string;
 }
 
-export type CatalogMagnet = ProcessToolMagnet | HcpProcessMagnet | Magnet;
+export type CatalogMagnet = ProcessToolMagnet | HcpProcessMagnet | HcpMagnet;
 
 function isMagentaProcessToolPath(path: string | undefined): boolean {
 	return /^tools\/[^/]+\/magenta\/[^/]+\.toml$/.test(path ?? "");
@@ -30,7 +30,7 @@ export function canCreateMagnetFromCatalogEntry(entry: HarnessCatalogEntry): boo
 }
 
 /**
- * Build a Magnet from a selected catalog entry when Magenta3 has a generic
+ * Build a HcpMagnet from a selected catalog entry when Magenta3 has a generic
  * adapter for that implementation family.
  */
 export async function createMagnetFromCatalogEntry(
@@ -55,5 +55,5 @@ export async function createMagnetFromCatalogEntry(
 		return createProcessToolMagnetFromCatalogEntry(catalog, entry, processOptions);
 	}
 
-	throw new Error(`No generic Magnet is available for catalog entry ${entry.id} (${entry.kind}/${entry.type})`);
+	throw new Error(`No generic HcpMagnet is available for catalog entry ${entry.id} (${entry.kind}/${entry.type})`);
 }

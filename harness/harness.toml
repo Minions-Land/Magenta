@@ -1,5 +1,5 @@
 name = "magenta-harness"
-description = "Magenta3 harness component registry: pure-execution tools plus the HCP/Magnet assembly layer."
+description = "Magenta3 harness component registry: pure-execution tools plus the HCP/HcpMagnet assembly layer."
 
 [[components]]
 kind = "tool"

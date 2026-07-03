@@ -2,7 +2,7 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { HcpRegistry } from "../assembly/hcp/hcp.ts";
+import { HcpClient } from "../assembly/hcp/hcp.ts";
 import { execProcess, ProcessRuntimeProvider } from "../runtime/magenta/process-runtime.ts";
 import { loadSandboxProviderFromPack } from "../sandbox/magenta/sandbox.ts";
 
@@ -130,7 +130,7 @@ process.stdin.on("end", () => {
 
 	it("dispatches through HCP", async () => {
 		const dir = await mkdtemp(join(tmpdir(), "magenta-runtime-hcp-"));
-		const hcp = new HcpRegistry().register("runtime", new ProcessRuntimeProvider().toHcpTarget());
+		const hcp = new HcpClient().register("runtime", new ProcessRuntimeProvider().toHcpServer());
 
 		await expect(hcp.dispatch({ target: "runtime://process", op: "policy" })).resolves.toMatchObject({
 			production_audit: { os_egress_allowlist: false },

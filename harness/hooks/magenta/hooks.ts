@@ -1,4 +1,4 @@
-import type { HcpCall, HcpTarget, HcpTargetDescription } from "../../assembly/hcp/hcp.ts";
+import type { HcpRequest, HcpServer, HcpServerDescription } from "../../assembly/hcp/hcp.ts";
 import type { HookDescriptor, HookDiscoverResult, HookProviderContract, HookResult } from "../contract.ts";
 import { decideApproval } from "../../policy/magenta/approval.ts";
 import type { ShellPolicyClassification } from "../../policy/contract.ts";
@@ -238,7 +238,7 @@ export class HookProvider implements HookProviderContract {
 		return hook;
 	}
 
-	describe(): HcpTargetDescription {
+	describe(): HcpServerDescription {
 		return {
 			target: "hook://*",
 			kind: "hook",
@@ -252,10 +252,10 @@ export class HookProvider implements HookProviderContract {
 		};
 	}
 
-	toHcpTarget(): HcpTarget {
+	toHcpServer(): HcpServer {
 		return {
 			describe: () => this.describe(),
-			call: (call: HcpCall): unknown => {
+			call: (call: HcpRequest): unknown => {
 				const name = targetName(call.target);
 				const hook = this.describeHook(name);
 				switch (call.op || "run") {

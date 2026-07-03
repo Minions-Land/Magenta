@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { access, realpath } from "node:fs/promises";
 import { delimiter, isAbsolute, join, normalize, resolve } from "node:path";
-import type { HcpCall, HcpTarget, HcpTargetDescription } from "../../assembly/hcp/hcp.ts";
+import type { HcpRequest, HcpServer, HcpServerDescription } from "../../assembly/hcp/hcp.ts";
 import type {
 	ProcessExecInput,
 	ProcessExecOutput,
@@ -412,7 +412,7 @@ async function commandExists(command: string): Promise<boolean> {
 }
 
 export class ProcessRuntimeProvider implements ProcessRuntimeProviderContract {
-	describe(): HcpTargetDescription {
+	describe(): HcpServerDescription {
 		return {
 			target: "runtime://process",
 			kind: "runtime",
@@ -453,10 +453,10 @@ export class ProcessRuntimeProvider implements ProcessRuntimeProviderContract {
 		};
 	}
 
-	toHcpTarget(): HcpTarget {
+	toHcpServer(): HcpServer {
 		return {
 			describe: () => this.describe(),
-			call: async (call: HcpCall): Promise<unknown> => {
+			call: async (call: HcpRequest): Promise<unknown> => {
 				switch (call.op || "exec") {
 					case "discover":
 						return this.discover();

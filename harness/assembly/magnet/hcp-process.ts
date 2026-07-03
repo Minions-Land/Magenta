@@ -8,7 +8,7 @@ import {
 	type ProcessRuntimeToolMetadata,
 } from "../../runtime/magenta/process-runtime.ts";
 import type { SandboxProfile } from "../../sandbox/contract.ts";
-import type { HcpCall } from "../hcp/hcp.ts";
+import type { HcpRequest } from "../hcp/hcp.ts";
 import { parseToml, type TomlTable } from "../registry/registry.ts";
 import { UniversalMagnet } from "./universal.ts";
 
@@ -239,7 +239,7 @@ function parseJsonlResponse(manifest: HcpProcessManifest, request: HcpJsonlReque
 }
 
 /**
- * Magnet for external processes that speak Magenta HCP over JSONL stdio.
+ * HcpMagnet for external processes that speak Magenta HCP over JSONL stdio.
  *
  * This is a management/process boundary, not an AgentTool by default. A specific
  * HCP process can still expose tools through its own HCP targets. Process
@@ -295,7 +295,7 @@ export class HcpProcessMagnet extends UniversalMagnet {
 		};
 	}
 
-	protected override async handleHcpCall(call: HcpCall): Promise<unknown> {
+	protected override async handleHcpRequest(call: HcpRequest): Promise<unknown> {
 		switch (call.op) {
 			case "proxy":
 				return this.send(
@@ -323,7 +323,7 @@ export class HcpProcessMagnet extends UniversalMagnet {
 					context: call.context,
 				});
 			default:
-				return super.handleHcpCall(call);
+				return super.handleHcpRequest(call);
 		}
 	}
 

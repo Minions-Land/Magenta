@@ -1,6 +1,6 @@
 import { readFile, realpath, stat } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
-import type { HcpCall, HcpTarget, HcpTargetDescription } from "../../assembly/hcp/hcp.ts";
+import type { HcpRequest, HcpServer, HcpServerDescription } from "../../assembly/hcp/hcp.ts";
 import type { ContextProvider as IContextProvider } from "../contract.ts";
 
 const CONTEXT_TARGETS = ["context://workspace", "context://project"] as const;
@@ -208,7 +208,7 @@ export class ContextProvider implements IContextProvider {
 		return discoverContextFiles(workspaceRoot);
 	}
 
-	describe(): HcpTargetDescription {
+	describe(): HcpServerDescription {
 		return {
 			target: "context://{workspace,project}",
 			kind: "context",
@@ -263,10 +263,10 @@ export class ContextProvider implements IContextProvider {
 		};
 	}
 
-	toHcpTarget(): HcpTarget {
+	toHcpServer(): HcpServer {
 		return {
 			describe: () => this.describe(),
-			call: async (call: HcpCall): Promise<unknown> => {
+			call: async (call: HcpRequest): Promise<unknown> => {
 				const name = targetName(call.target);
 				if (name !== "workspace" && name !== "project") {
 					throw new Error(`unknown context target: ${call.target}`);

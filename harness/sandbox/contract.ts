@@ -1,4 +1,4 @@
-import type { HcpTarget } from "../assembly/hcp/hcp.ts";
+import type { HcpServer } from "../assembly/hcp/hcp.ts";
 
 export type SandboxNetworkPolicy = "deny" | "allowlist" | "allow" | string;
 
@@ -56,6 +56,6 @@ export interface SandboxProviderContract {
 	list(): SandboxProfile[];
 	discover(): SandboxDiscoverResult;
 	resolve(input: unknown, fallbackName?: string): { selection: SandboxSelection; profile: SandboxProfile };
-	toSandboxHcpTarget(): HcpTarget;
-	toSandboxSelectHcpTarget(): HcpTarget;
+	toSandboxHcpServer(): HcpServer;
+	toSandboxSelectHcpServer(): HcpServer;
 }

@@ -18,7 +18,7 @@ import {
 } from "../../sandbox/magenta/sandbox.ts";
 import type { SandboxProfile, SandboxSelection } from "../../sandbox/contract.ts";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, type TruncationResult } from "../../utils/pi/truncate.ts";
-import type { HcpCall } from "../hcp/hcp.ts";
+import type { HcpRequest } from "../hcp/hcp.ts";
 import { parseToml, type TomlTable } from "../registry/registry.ts";
 import { UniversalMagnet } from "./universal.ts";
 
@@ -314,7 +314,7 @@ async function ensureCommandReady(command: string): Promise<void> {
 }
 
 /**
- * Magnet for Magenta1-style Rust process tools.
+ * HcpMagnet for Magenta1-style Rust process tools.
  *
  * Protocol: execute `command args...` through `runtime://process`, write JSON
  * params to stdin, read stdout as the tool result. The Rust binary still owns
@@ -417,14 +417,14 @@ export class ProcessToolMagnet<TParameters extends TSchema = TSchema> extends Un
 		};
 	}
 
-	protected override async handleHcpCall(call: HcpCall): Promise<unknown> {
+	protected override async handleHcpRequest(call: HcpRequest): Promise<unknown> {
 		switch (call.op) {
 			case "call":
 			case "run":
 			case "execute":
 				return this.executeProcess(call.input, undefined);
 			default:
-				return super.handleHcpCall(call);
+				return super.handleHcpRequest(call);
 		}
 	}
 

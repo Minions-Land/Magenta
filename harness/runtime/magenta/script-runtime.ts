@@ -1,4 +1,4 @@
-import type { HcpCall, HcpTarget, HcpTargetDescription } from "../../assembly/hcp/hcp.ts";
+import type { HcpRequest, HcpServer, HcpServerDescription } from "../../assembly/hcp/hcp.ts";
 import type {
 	RuntimeSpec,
 	ScriptRuntimeDescription,
@@ -104,7 +104,7 @@ export async function execScriptRuntime(
 }
 
 export class ScriptRuntimeProvider implements ScriptRuntimeProviderContract {
-	describe(): HcpTargetDescription {
+	describe(): HcpServerDescription {
 		return {
 			target: "runtime://{shell,python,node,r,julia}",
 			kind: "runtime",
@@ -149,10 +149,10 @@ export class ScriptRuntimeProvider implements ScriptRuntimeProviderContract {
 		return execScriptRuntime(spec, input, signal);
 	}
 
-	toHcpTarget(): HcpTarget {
+	toHcpServer(): HcpServer {
 		return {
 			describe: () => this.describe(),
-			call: async (call: HcpCall): Promise<unknown> => {
+			call: async (call: HcpRequest): Promise<unknown> => {
 				const name = runtimeNameFromTarget(call.target);
 				switch (call.op || "exec") {
 					case "discover":

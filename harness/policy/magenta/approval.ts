@@ -1,4 +1,4 @@
-import type { HcpCall, HcpTarget, HcpTargetDescription } from "../../assembly/hcp/hcp.ts";
+import type { HcpRequest, HcpServer, HcpServerDescription } from "../../assembly/hcp/hcp.ts";
 import {
 	APPROVAL_POLICY_TARGET,
 	type ApprovalDecision,
@@ -195,7 +195,7 @@ export class ApprovalPolicyProvider implements ApprovalPolicyProviderContract {
 		return approvalStatus();
 	}
 
-	describe(): HcpTargetDescription {
+	describe(): HcpServerDescription {
 		return {
 			target: APPROVAL_POLICY_TARGET,
 			kind: "approval",
@@ -217,10 +217,10 @@ export class ApprovalPolicyProvider implements ApprovalPolicyProviderContract {
 		};
 	}
 
-	toHcpTarget(): HcpTarget {
+	toHcpServer(): HcpServer {
 		return {
 			describe: () => this.describe(),
-			call: (call: HcpCall): unknown => {
+			call: (call: HcpRequest): unknown => {
 				switch (call.op || "decide") {
 					case "discover":
 					case "list":

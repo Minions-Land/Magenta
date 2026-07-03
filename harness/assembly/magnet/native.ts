@@ -1,8 +1,8 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { TSchema } from "typebox";
 import { createReadExecute, type ReadToolOptions, readSchema } from "../../tools/index.ts";
-import type { HcpCall, HcpTarget, HcpTargetDescription } from "../hcp/hcp.ts";
-import type { Magnet } from "./magnet.ts";
+import type { HcpRequest, HcpServer, HcpServerDescription } from "../hcp/hcp.ts";
+import type { HcpMagnet } from "./magnet.ts";
 import type { UniversalMagnetState } from "./universal.ts";
 
 /**
@@ -24,12 +24,12 @@ export interface NativeToolSpec<TParameters extends TSchema = TSchema, TDetails 
 }
 
 /**
- * A `native` Magnet: wraps a native TS tool factory (from `harness/tools/pi`)
- * into a {@link Magnet} that yields a loop-ready {@link AgentTool} and an
- * {@link HcpTarget} for management. This is assembly-layer wiring only; the
+ * A `native` HcpMagnet: wraps a native TS tool factory (from `harness/tools/pi`)
+ * into a {@link HcpMagnet} that yields a loop-ready {@link AgentTool} and an
+ * {@link HcpServer} for management. This is assembly-layer wiring only; the
  * produced tool is what the loop calls in-process.
  */
-export class NativeToolMagnet<TParameters extends TSchema = TSchema, TDetails = any> implements Magnet {
+export class NativeToolMagnet<TParameters extends TSchema = TSchema, TDetails = any> implements HcpMagnet {
 	readonly kind = "native";
 	private readonly spec: NativeToolSpec<TParameters, TDetails>;
 	private readonly cwd: string;
@@ -64,12 +64,12 @@ export class NativeToolMagnet<TParameters extends TSchema = TSchema, TDetails = 
 	}
 
 	/** Produce an HCP management endpoint describing/dispatching this tool. */
-	toHcpTarget(): HcpTarget {
+	toHcpServer(): HcpServer {
 		const spec = this.spec;
 		const self = this;
 		const buildTool = () => this.toTool();
 		return {
-			describe(): HcpTargetDescription {
+			describe(): HcpServerDescription {
 				return {
 					target: `tool:${spec.name}`,
 					kind: "tool",
@@ -82,7 +82,7 @@ export class NativeToolMagnet<TParameters extends TSchema = TSchema, TDetails = 
 					},
 				};
 			},
-			call(call: HcpCall): unknown {
+			call(call: HcpRequest): unknown {
 				switch (call.op) {
 					case "describe":
 						return this.describe();
@@ -118,7 +118,7 @@ export class NativeToolMagnet<TParameters extends TSchema = TSchema, TDetails = 
 
 /**
  * Proof wiring: the `read` tool from `harness/tools/pi` connected as a native
- * Magnet. Demonstrates the assembly path end to end (pure execute + schema +
+ * HcpMagnet. Demonstrates the assembly path end to end (pure execute + schema +
  * description -> AgentTool) without pulling in any pi rendering concerns.
  */
 export function createReadMagnet(cwd: string, options?: ReadToolOptions): NativeToolMagnet<typeof readSchema> {

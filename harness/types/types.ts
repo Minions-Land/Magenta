@@ -1,7 +1,7 @@
 import type { AgentEvent, AgentMessage, AgentTool, QueueMode, ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { ImageContent, Model, Models, SimpleStreamOptions, TextContent, Transport } from "@earendil-works/pi-ai";
 import type { CompactionPreparation, CompactionProvider } from "../compaction/contract.ts";
-import type { HcpRegistry } from "../assembly/hcp/hcp.ts";
+import type { HcpClient } from "../assembly/hcp/hcp.ts";
 import type { Session } from "../session/pi/session.ts";
 
 /** Result of a fallible operation. Expected failures are returned as `ok: false` instead of thrown. */
@@ -96,7 +96,7 @@ export interface AgentHarnessResources<
 	 * directly on the runtime hot path, so HCP stays off it and stays invisible to
 	 * the LLM's tool-call path.
 	 */
-	hcp?: HcpRegistry;
+	hcp?: HcpClient;
 }
 
 /** Curated provider request options owned by the harness and snapshotted per turn. */

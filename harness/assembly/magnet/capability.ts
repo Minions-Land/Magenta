@@ -1,8 +1,8 @@
 import { fileURLToPath } from "node:url";
-import { capabilityPrefix, HcpRegistry } from "../hcp/hcp.ts";
-import { registerMagnetHcpTargets } from "./hcp-registry.ts";
+import { capabilityPrefix, HcpClient } from "../hcp/hcp.ts";
+import { registerMagnetHcpServers } from "./hcp-registry.ts";
 import { CapabilityMagnet } from "./universal.ts";
-import type { Magnet } from "./magnet.ts";
+import type { HcpMagnet } from "./magnet.ts";
 
 /**
  * Context passed to a capability factory at assembly time. Mirrors the
@@ -183,7 +183,7 @@ export interface CapabilityMagnetDiagnostic {
 }
 
 export interface CreateCapabilityMagnetResult {
-	magnet?: Magnet;
+	magnet?: HcpMagnet;
 	diagnostics: CapabilityMagnetDiagnostic[];
 }
 
@@ -192,7 +192,7 @@ export interface CreateCapabilityMagnetResult {
  * factory for its declared `source`, building the implementation instance, and
  * wrapping it with the shared HCP management surface. The HCP target is
  * `${capabilityPrefix}:${kind}` (e.g. `capability:compaction`), so the
- * capability resolves by slot name via {@link HcpRegistry.resolveCapability}
+ * capability resolves by slot name via {@link HcpClient.resolveCapability}
  * without ever appearing on the LLM tool hot path.
  */
 export async function createCapabilityMagnet(
@@ -290,12 +290,12 @@ export async function createCapabilityMagnet(
 export async function buildDefaultCapabilityHcp(
 	context: { repoRoot: string; packagesRoot: string },
 	options?: { builders?: CapabilityBuilderTable; defaults?: Record<string, string> },
-): Promise<{ hcp: HcpRegistry; diagnostics: CapabilityMagnetDiagnostic[] }> {
+): Promise<{ hcp: HcpClient; diagnostics: CapabilityMagnetDiagnostic[] }> {
 	const builders = options?.builders ?? BUILTIN_CAPABILITY_BUILDERS;
 	const defaults = options?.defaults ?? DEFAULT_CAPABILITY_SOURCES;
-	const hcp = new HcpRegistry();
+	const hcp = new HcpClient();
 	const diagnostics: CapabilityMagnetDiagnostic[] = [];
-	const magnets: Magnet[] = [];
+	const magnets: HcpMagnet[] = [];
 
 	for (const [slot, source] of Object.entries(defaults)) {
 		const { kind, name } = parseCapabilitySlot(slot);
@@ -308,6 +308,6 @@ export async function buildDefaultCapabilityHcp(
 		if (result.magnet) magnets.push(result.magnet);
 	}
 
-	registerMagnetHcpTargets(hcp, magnets);
+	registerMagnetHcpServers(hcp, magnets);
 	return { hcp, diagnostics };
 }
