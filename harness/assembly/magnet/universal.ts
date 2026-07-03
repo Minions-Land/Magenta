@@ -1,6 +1,6 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { HcpRequest, HcpServer, HcpServerDescription } from "../hcp/hcp.ts";
-import type { CapabilityBinding, HcpMagnet } from "./magnet.ts";
+import type { CapabilityBinding, HcpMagnet, HcpResource, ResourceMergeMode } from "./magnet.ts";
 
 export interface UniversalMagnetState {
 	enabled: boolean;
@@ -198,5 +198,65 @@ export class CapabilityMagnet<T = unknown> extends UniversalMagnet {
 	 */
 	protected override hcpInstance(): unknown {
 		return this.instance;
+	}
+}
+
+export interface ResourceMagnetOptions extends UniversalMagnetOptions {
+	/** Selected source that supplied the content, e.g. `"pi"`, `"AutOmicScience"`. */
+	source: string;
+	/** How this resource combines with others in the same slot. Defaults to `replace`. */
+	mergeMode?: ResourceMergeMode;
+	/** Absolute path the content was loaded from, when file-backed. */
+	contentPath?: string;
+	/** Inline content, when the resource carries data directly rather than a path. */
+	content?: string;
+}
+
+/**
+ * A {@link UniversalMagnet} for the Resource primitive (spec §5): injected
+ * context **data** such as a package's `SYSTEM.md` system-prompt content. It
+ * carries inert, source-selected content (path or inline) and exposes it as a
+ * {@link HcpResource} for the resource layer to inject or override — it is NOT
+ * a code provider and never lands on the LLM tool hot path.
+ *
+ * Invariant (magnet one-of): this class deliberately implements neither
+ * `toTool` nor `toCapability`; it only implements `toResource`. This is the
+ * structural guard against the §5.1 category error (a content-only resource
+ * being mis-routed through capability code-builder resolution).
+ */
+export class ResourceMagnet extends UniversalMagnet {
+	private readonly source: string;
+	private readonly mergeMode: ResourceMergeMode;
+	private readonly contentPath?: string;
+	private readonly content?: string;
+
+	constructor(options: ResourceMagnetOptions) {
+		super(options);
+		this.source = options.source;
+		this.mergeMode = options.mergeMode ?? "replace";
+		this.contentPath = options.contentPath;
+		this.content = options.content;
+	}
+
+	toResource(): HcpResource {
+		this.assertEnabled();
+		return {
+			kind: this.descriptor.kind,
+			name: this.descriptor.name,
+			source: this.source,
+			mergeMode: this.mergeMode,
+			contentPath: this.contentPath,
+			content: this.content,
+		};
+	}
+
+	/**
+	 * A Resource has no live instance to hand back on the hot path — it is data,
+	 * not a callable. `toHcpServer().instance()` therefore resolves to the
+	 * resource binding itself, so HCP can surface the content through the same
+	 * single-resolver path without inventing a code provider.
+	 */
+	protected override hcpInstance(): unknown {
+		return this.toResource();
 	}
 }

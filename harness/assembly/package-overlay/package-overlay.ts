@@ -418,11 +418,19 @@ export async function assemblePackageToolMagnets(overlay: PackageOverlay): Promi
 	}
 
 	// Enforce the magnet one-of invariant before anything reaches HCP: a magnet
-	// yields at most one of a tool or a capability.
+	// yields at most one of a tool, a capability, or a resource (spec §5). This is
+	// the structural guard that keeps tools off the capability map, capabilities
+	// off the LLM hot path, and content-only resources out of code-builder
+	// resolution (the §5.1 category error).
 	for (const magnet of magnets) {
-		if (typeof magnet.toTool === "function" && typeof magnet.toCapability === "function") {
+		const products = [
+			typeof magnet.toTool === "function" ? "tool" : undefined,
+			typeof magnet.toCapability === "function" ? "capability" : undefined,
+			typeof magnet.toResource === "function" ? "resource" : undefined,
+		].filter((p): p is string => p !== undefined);
+		if (products.length > 1) {
 			throw new Error(
-				`HcpMagnet "${magnet.kind}" produces both a tool and a capability; a magnet must produce at most one.`,
+				`HcpMagnet "${magnet.kind}" produces multiple primitives (${products.join(", ")}); a magnet must produce at most one.`,
 			);
 		}
 	}
