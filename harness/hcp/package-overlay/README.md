@@ -145,7 +145,7 @@ references that escape `packages/<PackageName>/` are invalid.
 
 ## Tool Assembly
 
-Package `tool` components are descriptors. At assembly time, `assemblePackageToolMagnets()` passes those descriptors to `assembly/magnet/pi/package-tool.ts`, which chooses the appropriate Magnet cable:
+Package `tool` components are descriptors. At assembly time, `assemblePackageToolMagnets()` passes those descriptors to `hcp/magnet/package-tool.ts`, which chooses the appropriate Magnet cable:
 
 ```toml
 kind = "tool"

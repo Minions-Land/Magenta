@@ -249,7 +249,7 @@ must be a dedicated, isolated step (no behavior change in the same commit).
 ## 8. Magnet relocation — dissolve the central table
 
 Today magnets are a central table `BUILTIN_CAPABILITY_BUILDERS` in
-`assembly/magnet/capability.ts` (`"memory:magenta": async () => …`). That table
+`hcp/magnet/capability.ts` (`"memory:magenta": async () => …`). That table
 is a **second registry** in spirit and contradicts "exactly one HCP" and "Magnet
 lives in the source folder".
 
