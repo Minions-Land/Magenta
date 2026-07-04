@@ -1,0 +1,29 @@
+kind = "process"
+name = "analyze_plot"
+description = "Analyze a scientific plot image for quality metrics including axes detection, label presence, edge density, and color diversity. Returns quality score (0-1), detected issues, and improvement suggestions."
+command = "packages/AutOmicScience/tools/visual-inspector/target/release/visual-inspector"
+args = ["analyze_plot"]
+operation = "read"
+read_only = true
+destructive = false
+version = "0.1.0"
+tags = ["image", "analysis", "quality", "visualization"]
+capabilities = ["edge-detection", "color-histogram", "quality-metrics"]
+
+[metadata]
+package = "AutOmicScience"
+source = "BioAgent/AutOmicScience plugins/aose-visual-inspector"
+implementation_path = "tools/visual-inspector"
+
+[parameters]
+type = "object"
+required = ["image_path"]
+
+[parameters.properties.image_path]
+type = "string"
+description = "Path to the plot image file (PNG, JPEG, BMP, or TIFF)"
+
+[parameters.properties.plot_type]
+type = "string"
+enum = ["scatter", "heatmap", "violin", "box"]
+description = "Optional plot type for specialized validation rules"
