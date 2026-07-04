@@ -103,6 +103,8 @@ function getPiDocsClassification(absolutePath: string): CompactReadClassificatio
 	return undefined;
 }
 
+const SOURCE_DIR_NAMES = new Set(["pi", "codex", "jcode", "claude-code", "magenta"]);
+
 function getCompactReadClassification(
 	args: ReadRenderArgs | undefined,
 	cwd: string,
@@ -113,7 +115,13 @@ function getCompactReadClassification(
 	const absolutePath = resolveToCwd(rawPath, cwd);
 	const fileName = basename(absolutePath);
 	if (fileName === "SKILL.md") {
-		return { kind: "skill", label: basename(dirname(absolutePath)) || fileName };
+		// Handle <capability>/<source>/SKILL.md structure
+		const skillDir = dirname(absolutePath);
+		const immediateParent = basename(skillDir);
+		const skillName = SOURCE_DIR_NAMES.has(immediateParent)
+			? basename(dirname(skillDir))
+			: immediateParent;
+		return { kind: "skill", label: skillName || fileName };
 	}
 
 	const docsClassification = getPiDocsClassification(absolutePath);

@@ -39,7 +39,8 @@ export interface SystemPromptProviderContract {
 
 const DEFAULT_SKILLS_INTRO_LINES = [
 	"The following skills provide specialized instructions for specific tasks.",
-	"Read the full skill file when the task matches its description.",
+	"Use the read tool to load the full skill file when the task matches its description.",
+	"After loading a skill, follow its instructions precisely. Skills define mandatory workflows, constraints, and execution patterns that override default behavior.",
 	"When a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.",
 ];
 

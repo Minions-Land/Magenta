@@ -6,6 +6,7 @@ Use this package for single-cell and spatial omics work. Treat its tools and ski
 - Use `omics_compute` for standardized AOSE/scverse compute paths instead of ad hoc subprocess calls.
 - Treat top-level `modality` as an execution-layer environment selector, not as a biological conclusion.
 - Read the relevant package skill before choosing method details: `omics-shared`, then `rna`, `spatial`, `scatac-seq`, or `multi-omics`.
+- For non-trivial analysis proposals or multi-step investigations, also load the `research-orchestration` skill alongside the domain skill to make the plan → implement → observe → reflect → refine loop explicit.
 - Ground every quantitative claim in tool output, saved reports, observed figures, or explicit evidence records.
 - If a dataset violates the default assumptions, such as too few genes for fixed scRNA QC, stop and explain the constraint or choose explicit parameters. Do not fake a successful analysis.
 - Preserve raw counts and provenance when preprocessing; report filtering thresholds, retained cells/features, embeddings written, and warnings.
