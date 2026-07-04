@@ -1,0 +1,28 @@
+{
+  "name": "@magenta/harness-mcp",
+  "version": "0.1.0",
+  "description": "Model Context Protocol integration for Magenta3 harness",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "clean": "rm -rf dist"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "magenta",
+    "harness"
+  ],
+  "author": "Magenta3",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0"
+  }
+}
