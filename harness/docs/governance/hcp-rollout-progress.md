@@ -103,11 +103,48 @@ diagnostics (incl. runtime's two slots via `defaultSlotNames`). +3 lock-in tests
 exercises the relocated magnets end-to-end. 239 tests, structure check, pi build
 all green. `system-prompt` stays OUT of `CAPABILITY_KINDS` (§5.1) — unchanged.
 
-### Step E — §9 hotSwappable + §6 Tool Search  [TODO]
-Highest risk; new features.
-- `hotSwappable: boolean` per slot (Tools/Skills yes; Memory etc. no).
-- `bundledWith` already exists (Codex bundles) — align naming/semantics.
-- Tool Search: MCP-style deferral (lazy schema loading), needs pi loop changes.
+### Step E — §9 hotSwappable + §6 Tool Search  [DONE]
+
+**§9 hotSwappable (commit 66a28a8):** added optional per-node
+`hotSwappable: boolean` to `CapabilitySourceMagnet` + the capability component;
+derived into the magnet's `describe()` metadata (`hotSwappable` key) via a
+`HOTSWAPPABLE_CAPABILITY_SOURCES` map keyed by `kind:source`, alongside the
+existing builder/default derivations. Defaults to frozen (`false`) so stateful
+capabilities are safe by omission; all 9 built-ins are stateful and stay frozen.
+Distinct from `bundledWith`/`bundles` (the selection-graph EDGES in the package
+overlay), per §9. +4 tests.
+
+**§6 Tool Search:** new self-contained assembly module
+`assembly/tool-search/tool-search.ts`:
+- `buildToolSearchManifest(magnets)` — extracts name+description from tool
+  magnets' CHEAP `describe()` (never realizes a schema), skipping non-tool
+  magnets.
+- `createToolSearchTool({ manifest, onActivate, alwaysActive, name?, limit? })`
+  — a normal `AgentTool` (`tool_search`) that ranks manifest entries by keyword
+  (name match > description match; every token must match), supports explicit
+  `activate: [...]`, a `preview` mode, and activates matches by calling back
+  into `onActivate` (wired to `AgentHarness.setActiveTools`, always preserving
+  the always-active set).
+
+**Key feasibility finding (verified in code):** NO pi fork needed. The harness
+already separates the full tool `Map` from the `activeTools` subset the model
+sees; `prepareNextTurn` (`agent-harness.ts:466`) rebuilds turn state each turn
+from `this.activeToolNames`, so a tool-call that calls `setActiveTools` takes
+effect on the NEXT model turn. Only `activeTools` are serialized
+(`createContext` → `tools: turnState.activeTools.slice()`), so deferral is purely
+a function of which tools are active — not of tool-object construction.
+
+**Opt-in / behavior-preserving:** nothing defers unless a consumer wires the
+meta-tool in and seeds a reduced initial active set. Proven end-to-end through
+the real `AgentHarness` + faux provider: turn 1 the model sees only
+`tool_search`; it activates `calculate`; turn 2 the model sees
+`[calculate, tool_search]`. +12 tests (incl. the e2e loop test). 255 tests,
+structure, pi build all green.
+
+**Open (deferred, not blocking):** wiring Tool Search into the actual coding-
+agent assembly (choosing the always-active core set + seeding the deferred
+manifest) is a product/config decision left to the assembly entry point; the
+mechanism is complete and tested.
 
 ## Log
 - 2026-07-03: Grounding + baseline done. Checkpoint committed
@@ -130,3 +167,12 @@ Highest risk; new features.
   derived builder/default tables in `capability.ts`. Runtime-verified from built
   dist (10/10 slots, 0 diagnostics). 239 tests + structure + pi build green.
   Next: Step E (§9 hotSwappable node attribute; §6 Tool Search).
+- 2026-07-04: Step E DONE. §9 hotSwappable node attribute (commit 66a28a8) +
+  §6 Tool Search. Tool Search built entirely in harness
+  (`assembly/tool-search/`) as an opt-in meta-tool — verified NO pi fork needed
+  because `prepareNextTurn` rebuilds the active tool set each turn, so
+  `setActiveTools` from a tool-call lands on the next turn. Proven e2e through
+  AgentHarness + faux provider. 255 tests, structure, pi build green.
+  Remaining: wire Tool Search into the coding-agent assembly entry point
+  (always-active core set + deferred manifest) — a config decision; and work
+  item #8 (re-align old #21–#29 tasks to this contract).
