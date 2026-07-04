@@ -2,7 +2,7 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { HcpClient } from "../assembly/hcp/hcp.ts";
+import { HcpClient } from "../hcp/hcp/hcp.ts";
 import { execProcess, ProcessRuntimeProvider } from "../runtime/magenta/process-runtime.ts";
 import { loadSandboxProviderFromPack } from "../sandbox/magenta/sandbox.ts";
 

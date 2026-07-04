@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { CapabilityMagnet, ResourceMagnet } from "../assembly/magnet/universal.ts";
-import type { UniversalMagnetDescriptor } from "../assembly/magnet/universal.ts";
+import { CapabilityMagnet, ResourceMagnet } from "../hcp/magnet/universal.ts";
+import type { UniversalMagnetDescriptor } from "../hcp/magnet/universal.ts";
 
 function descriptor(kind: string, name: string): UniversalMagnetDescriptor {
 	return {

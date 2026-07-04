@@ -2,17 +2,14 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { execScriptRuntime, type RuntimeSpec, SCRIPT_RUNTIME_SPECS } from "../../runtime/magenta/script-runtime.ts";
+import type { SandboxProfile, SandboxSelection } from "../../sandbox/contract.ts";
+import { loadSandboxProviderFromPack, selectSandboxProfile } from "../../sandbox/magenta/sandbox.ts";
+import { parseToml, type TomlTable } from "../registry/registry.ts";
 import type { HcpMagnet } from "./magnet.ts";
 import { ProcessToolMagnet } from "./process.ts";
-import { PythonModuleToolMagnet, type PythonLauncherResolver } from "./python.ts";
+import { type PythonLauncherResolver, PythonModuleToolMagnet } from "./python.ts";
 import { parametersFromToml } from "./schema.ts";
-import { parseToml, type TomlTable } from "../registry/registry.ts";
-import { execScriptRuntime, SCRIPT_RUNTIME_SPECS, type RuntimeSpec } from "../../runtime/magenta/script-runtime.ts";
-import {
-	loadSandboxProviderFromPack,
-	selectSandboxProfile,
-} from "../../sandbox/magenta/sandbox.ts";
-import type { SandboxProfile, SandboxSelection } from "../../sandbox/contract.ts";
 
 export type PackageToolMagnetDiagnosticCode =
 	| "package_tool_descriptor_missing"
@@ -194,16 +191,16 @@ export async function createPackageToolMagnet(
 			diagnostics,
 			magnet: new ProcessToolMagnet(
 				{
-						name,
-						description,
-						parameters,
-						buildInvocation: (params) => ({
-							command: scriptSpec.command,
-							args: fixedArgs,
-							cwd: dirname(descriptorPath),
-							workspaceRoot: context.repoRoot,
-							policyInput: params ?? {},
-							timeoutMs: asNumber(descriptor.timeout_ms),
+					name,
+					description,
+					parameters,
+					buildInvocation: (params) => ({
+						command: scriptSpec.command,
+						args: fixedArgs,
+						cwd: dirname(descriptorPath),
+						workspaceRoot: context.repoRoot,
+						policyInput: params ?? {},
+						timeoutMs: asNumber(descriptor.timeout_ms),
 					}),
 					toolMetadata,
 					sandbox,

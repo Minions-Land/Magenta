@@ -46,10 +46,7 @@ export interface HcpProcessMagnetOptions {
 	cwd: string;
 	env?: NodeJS.ProcessEnv;
 	maxOutputBytes?: number;
-	runtimeExec?: (
-		input: Parameters<typeof execProcess>[0],
-		signal?: AbortSignal,
-	) => Promise<ProcessExecOutput>;
+	runtimeExec?: (input: Parameters<typeof execProcess>[0], signal?: AbortSignal) => Promise<ProcessExecOutput>;
 }
 
 function asString(value: unknown): string | undefined {
@@ -213,13 +210,15 @@ function runtimeToolMetadata(manifest: HcpProcessManifest): ProcessRuntimeToolMe
 	};
 }
 
-function parseJsonlResponse(manifest: HcpProcessManifest, request: HcpJsonlRequest, output: ProcessExecOutput): unknown {
+function parseJsonlResponse(
+	manifest: HcpProcessManifest,
+	request: HcpJsonlRequest,
+	output: ProcessExecOutput,
+): unknown {
 	if (output.status !== 0 && output.status !== null) {
 		throw new Error(`HCP process ${manifest.name} exited with status ${output.status}\n${output.stderr}`);
 	}
-	const line = output.stdout
-		.split(/\r?\n/)
-		.find((candidate) => candidate.trim().length > 0);
+	const line = output.stdout.split(/\r?\n/).find((candidate) => candidate.trim().length > 0);
 	if (!line) {
 		throw new Error(`HCP process ${manifest.name} exited without a response\n${output.stderr}`);
 	}

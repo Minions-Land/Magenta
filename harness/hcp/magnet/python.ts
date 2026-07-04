@@ -37,9 +37,10 @@ export class PythonModuleToolMagnet<TParameters extends TSchema = TSchema> exten
 					const input = isRecord(params) ? params : {};
 					const specLauncher =
 						typeof spec.pythonLauncher === "function" ? spec.pythonLauncher(input) : spec.pythonLauncher;
-					const launcher = pythonLauncherFromInput(input) ?? specLauncher ?? {
-						command: spec.pythonBin ?? "python3",
-					};
+					const launcher = pythonLauncherFromInput(input) ??
+						specLauncher ?? {
+							command: spec.pythonBin ?? "python3",
+						};
 					const moduleRoot = spec.modulePath ? resolve(spec.packageDir, spec.modulePath) : undefined;
 					return {
 						command: launcher.command,

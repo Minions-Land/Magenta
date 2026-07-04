@@ -6,8 +6,8 @@ const harnessRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const distRoot = join(harnessRoot, "dist");
 
 const selectedTrees = [
-	"assembly/hcp-process",
-	"assembly/package-overlay",
+	"hcp/hcp-process",
+	"hcp/package-overlay",
 	"catalog",
 	"compaction",
 	"context",

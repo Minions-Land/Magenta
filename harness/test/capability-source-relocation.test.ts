@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { buildDefaultCapabilityHcp, createCapabilityMagnet } from "../assembly/magnet/capability.ts";
-import { CAPABILITY_SOURCE_MAGNETS } from "../assembly/magnet/sources.ts";
+import { buildDefaultCapabilityHcp, createCapabilityMagnet } from "../hcp/magnet/capability.ts";
+import { CAPABILITY_SOURCE_MAGNETS } from "../hcp/magnet/sources.ts";
 
 /**
  * Locks in the spec §8 Magnet relocation: the central `BUILTIN_CAPABILITY_BUILDERS`

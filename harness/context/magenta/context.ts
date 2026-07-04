@@ -1,6 +1,6 @@
 import { readFile, realpath, stat } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
-import type { HcpRequest, HcpServer, HcpServerDescription } from "../../assembly/hcp/hcp.ts";
+import type { HcpRequest, HcpServer, HcpServerDescription } from "../../hcp/hcp/hcp.ts";
 import type { ContextProvider as IContextProvider } from "../contract.ts";
 
 const CONTEXT_TARGETS = ["context://workspace", "context://project"] as const;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CAPABILITY_KINDS } from "../assembly/package-overlay/package-overlay.ts";
+import { CAPABILITY_KINDS } from "../hcp/package-overlay/package-overlay.ts";
 
 /**
  * Regression lock for spec §5.1.

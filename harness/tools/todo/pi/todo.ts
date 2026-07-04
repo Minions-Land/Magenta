@@ -11,8 +11,8 @@
 import { StringEnum } from "@earendil-works/pi-ai";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
-import type { NativeToolSpec } from "../../../assembly/magnet/native.ts";
-import { NativeToolMagnet } from "../../../assembly/magnet/native.ts";
+import type { NativeToolSpec } from "../../../hcp/magnet/native.ts";
+import { NativeToolMagnet } from "../../../hcp/magnet/native.ts";
 
 // Type definitions
 interface Todo {

@@ -1,18 +1,18 @@
 // Re-export all harness capabilities
 
 // HCP / HcpMagnet / Registry: the management + assembly layer (not the loop hot path).
-export * from "./assembly/hcp/hcp.ts";
-export * from "./assembly/magnet/factory.ts";
-export * from "./assembly/magnet/hcp-registry.ts";
-export * from "./assembly/magnet/hcp-process.ts";
-export * from "./assembly/magnet/magnet.ts";
-export * from "./assembly/magnet/native.ts";
-export * from "./assembly/magnet/package-tool.ts";
-export * from "./assembly/magnet/process.ts";
-export * from "./assembly/magnet/python.ts";
-export * from "./assembly/magnet/schema.ts";
-export * from "./assembly/magnet/universal.ts";
-export * from "./assembly/registry/registry.ts";
+export * from "./hcp/hcp/hcp.ts";
+export * from "./hcp/magnet/factory.ts";
+export * from "./hcp/magnet/hcp-registry.ts";
+export * from "./hcp/magnet/hcp-process.ts";
+export * from "./hcp/magnet/magnet.ts";
+export * from "./hcp/magnet/native.ts";
+export * from "./hcp/magnet/package-tool.ts";
+export * from "./hcp/magnet/process.ts";
+export * from "./hcp/magnet/python.ts";
+export * from "./hcp/magnet/schema.ts";
+export * from "./hcp/magnet/universal.ts";
+export * from "./hcp/registry/registry.ts";
 export * from "./catalog/pi/catalog.ts";
 export * from "./compaction/contract.ts";
 export * from "./compaction/pi/branch-summarization.ts";
@@ -34,7 +34,7 @@ export * from "./policy/contract.ts";
 export * from "./policy/magenta/policy.ts";
 export * from "./policy/magenta/approval.ts";
 export * from "./policy/magenta/shell-policy.ts";
-export * from "./assembly/package-overlay/package-overlay.ts";
+export * from "./hcp/package-overlay/package-overlay.ts";
 export * from "./prompt-templates/contract.ts";
 export * from "./prompt-templates/pi/prompt-templates.ts";
 export * from "./runtime/contract.ts";

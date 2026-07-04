@@ -1,4 +1,4 @@
-import type { HcpRequest, HcpServer, HcpServerDescription } from "../../assembly/hcp/hcp.ts";
+import type { HcpRequest, HcpServer, HcpServerDescription } from "../../hcp/hcp/hcp.ts";
 import {
 	SHELL_POLICY_TARGET,
 	type ShellPolicyClassification,

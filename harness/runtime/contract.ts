@@ -1,4 +1,4 @@
-import type { HcpServer } from "../assembly/hcp/hcp.ts";
+import type { HcpServer } from "../hcp/hcp/hcp.ts";
 import type { SandboxProfile } from "../sandbox/contract.ts";
 
 export interface ProcessRuntimeToolMetadata {

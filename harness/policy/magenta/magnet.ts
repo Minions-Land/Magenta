@@ -1,4 +1,4 @@
-import type { CapabilitySourceMagnet } from "../../assembly/magnet/source-magnet.ts";
+import type { CapabilitySourceMagnet } from "../../hcp/magnet/source-magnet.ts";
 import { PolicyProvider } from "./policy.ts";
 
 /** The magenta source's binding for the `policy` capability (spec §8). */

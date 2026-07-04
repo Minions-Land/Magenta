@@ -1,5 +1,5 @@
 import { fileURLToPath } from "node:url";
-import type { CapabilitySourceMagnet } from "../../assembly/magnet/source-magnet.ts";
+import type { CapabilitySourceMagnet } from "../../hcp/magnet/source-magnet.ts";
 import { loadSandboxProviderFromPack } from "./sandbox.ts";
 
 /** The magenta source's binding for the `sandbox` capability (spec §8). */

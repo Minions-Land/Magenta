@@ -12,11 +12,8 @@ import {
 	type ProcessRuntimeToolMetadata,
 	type RuntimePolicyReport,
 } from "../../runtime/magenta/process-runtime.ts";
-import {
-	loadSandboxProviderFromPack,
-	selectSandboxProfile,
-} from "../../sandbox/magenta/sandbox.ts";
 import type { SandboxProfile, SandboxSelection } from "../../sandbox/contract.ts";
+import { loadSandboxProviderFromPack, selectSandboxProfile } from "../../sandbox/magenta/sandbox.ts";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, type TruncationResult } from "../../utils/pi/truncate.ts";
 import type { HcpRequest } from "../hcp/hcp.ts";
 import { parseToml, type TomlTable } from "../registry/registry.ts";
@@ -405,7 +402,9 @@ export class ProcessToolMagnet<TParameters extends TSchema = TSchema> extends Un
 	override toTool(): AgentTool<TParameters, ProcessToolDetails> {
 		const manifest = this.manifestOptions?.manifest;
 		const parameters = (
-			manifest ? ((manifest.parameters as TParameters | undefined) ?? defaultParameters()) : this.requireSpec().parameters
+			manifest
+				? ((manifest.parameters as TParameters | undefined) ?? defaultParameters())
+				: this.requireSpec().parameters
 		) as TParameters;
 		return {
 			name: this.toolName,
@@ -569,7 +568,9 @@ export class ProcessToolMagnet<TParameters extends TSchema = TSchema> extends Un
 
 export const PROCESS_TOOL_DESCRIPTION = `Execute a package-declared process tool. Returns combined stdout/stderr. Output is truncated to last ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB.`;
 
-function isProcessToolMagnetOptions(value: ProcessToolMagnetOptions | ProcessToolSpec): value is ProcessToolMagnetOptions {
+function isProcessToolMagnetOptions(
+	value: ProcessToolMagnetOptions | ProcessToolSpec,
+): value is ProcessToolMagnetOptions {
 	return "manifest" in value;
 }
 

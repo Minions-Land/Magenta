@@ -122,7 +122,7 @@ export abstract class UniversalMagnet implements HcpMagnet {
 		// the product THROUGH HCP rather than off the raw magnet. Management-only
 		// magnets return undefined here, which resolveCapability / the assembly
 		// loop treat as "no instance".
-		base.instance = <U,>(): U => this.hcpInstance() as U;
+		base.instance = <U>(): U => this.hcpInstance() as U;
 		return base;
 	}
 

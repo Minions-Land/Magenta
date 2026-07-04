@@ -6,6 +6,6 @@
 		"declaration": true,
 		"declarationMap": true
 	},
-	"include": ["./**/*", "../assembly/hcp/hcp.ts"],
+	"include": ["./**/*", "../hcp/hcp/hcp.ts"],
 	"exclude": ["dist", "node_modules", "**/*.test.ts"]
 }

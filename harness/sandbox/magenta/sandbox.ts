@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
-import type { HcpRequest, HcpServer, HcpServerDescription } from "../../assembly/hcp/hcp.ts";
-import { parseToml, type TomlTable } from "../../assembly/registry/registry.ts";
+import type { HcpRequest, HcpServer, HcpServerDescription } from "../../hcp/hcp/hcp.ts";
+import { parseToml, type TomlTable } from "../../hcp/registry/registry.ts";
 import type {
 	SandboxDiscoverResult,
 	SandboxProfile,

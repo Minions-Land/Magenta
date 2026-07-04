@@ -1,7 +1,7 @@
 import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import { type Static, Type } from "typebox";
-import type { HcpServer } from "../assembly/hcp/hcp.ts";
-import type { HcpMagnet } from "../assembly/magnet/magnet.ts";
+import type { HcpServer } from "../hcp/hcp/hcp.ts";
+import type { HcpMagnet } from "../hcp/magnet/magnet.ts";
 
 /**
  * Tool Search — MCP-style deferral of tool schemas (spec §6).

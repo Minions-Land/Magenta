@@ -71,7 +71,7 @@ path = "tools/web-search/web-search.toml"
 kind = "hcp-process"
 name = "hcp-process"
 description = "HCP JSONL process manifests migrated from Magenta1 general-harness."
-path = "assembly/hcp-process/hcp-process.toml"
+path = "hcp/hcp-process/hcp-process.toml"
 
 [[components]]
 kind = "sandbox"
@@ -180,7 +180,7 @@ path = "memory/memory.toml"
 kind = "assembly"
 name = "package-overlay"
 description = "Harness package overlay discovery and profile selection. Actual package contents live in the repository-level packages/ root."
-path = "assembly/package-overlay/package-overlay.toml"
+path = "hcp/package-overlay/package-overlay.toml"
 
 [[components]]
 kind = "catalog"
@@ -193,19 +193,19 @@ path = "catalog/catalog.toml"
 kind = "assembly"
 name = "hcp"
 description = "Harness Component Protocol - management and discovery layer."
-path = "assembly/hcp/hcp.toml"
+path = "hcp/hcp/hcp.toml"
 
 [[components]]
 kind = "assembly"
 name = "magnet"
 description = "Connectors that wrap implementations as AgentTools or HCP targets."
-path = "assembly/magnet/magnet.toml"
+path = "hcp/magnet/magnet.toml"
 
 [[components]]
 kind = "assembly"
 name = "registry"
 description = "TOML registry loader and component discovery."
-path = "assembly/registry/registry.toml"
+path = "hcp/registry/registry.toml"
 
 # Selectable component catalogs. These are inventories, not automatically
 # loop-ready implementations.

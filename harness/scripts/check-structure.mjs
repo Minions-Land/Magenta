@@ -8,7 +8,7 @@ const notes = [];
 
 const allowedTopLevel = new Set([
 	"README.md",
-	"assembly",
+	"hcp",
 	"catalog",
 	"compaction",
 	"context",
@@ -53,7 +53,7 @@ const foldedToolModuleNames = new Set([
 	"read-url",
 ]);
 const sourceModuleDirs = [
-	"assembly",
+	"hcp",
 	"catalog",
 	"compaction",
 	"context",

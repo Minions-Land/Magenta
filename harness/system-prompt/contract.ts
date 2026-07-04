@@ -1,4 +1,4 @@
-import type { TomlTable } from "../assembly/registry/registry.ts";
+import type { TomlTable } from "../hcp/registry/registry.ts";
 import type { Skill } from "../types/types.ts";
 
 /** Options to customize the skills system-prompt block wording without changing its XML structure. */

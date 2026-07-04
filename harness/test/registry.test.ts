@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { getHarnessRegistryPath, listHarnessSelectionItems, loadRegistry } from "../assembly/registry/registry.ts";
 import { filterHarnessCatalogEntries, summarizeHarnessCatalogEntries } from "../catalog/pi/catalog.ts";
+import { getHarnessRegistryPath, listHarnessSelectionItems, loadRegistry } from "../hcp/registry/registry.ts";
 
 describe("harness registry", () => {
 	it("locates and loads the package registry", async () => {
@@ -51,7 +51,7 @@ describe("harness registry", () => {
 		expect(descriptor?.catalog.summary.module_count).toBe(13);
 		expect(descriptor?.catalog.entries).toHaveLength(111);
 		expect(descriptor?.catalog.summary.by_source).toMatchObject({
-			"magenta": 72,
+			magenta: 72,
 			"domain-pack": 17,
 			"oh-my-pi": 12,
 			lazypi: 4,
@@ -99,14 +99,12 @@ describe("harness registry", () => {
 			kind: "tool",
 			path: "tools/grep/magenta/ast-grep.toml",
 		});
-		expect(availableProcessTools.find((item) => item.id === "general-harness:mcp:AstGrep")?.readiness).toBe(
-			"ready",
-		);
+		expect(availableProcessTools.find((item) => item.id === "general-harness:mcp:AstGrep")?.readiness).toBe("ready");
 		expect(
 			availableProcessTools.find((item) => item.id === "general-harness:hcp-process:echo-jsonl")?.component,
 		).toMatchObject({
 			kind: "hcp-process",
-			path: "assembly/hcp-process/magenta/echo-jsonl.toml",
+			path: "hcp/hcp-process/magenta/echo-jsonl.toml",
 		});
 		expect(
 			availableProcessTools.find((item) => item.id === "general-harness:hcp-process:echo-jsonl")?.readiness,

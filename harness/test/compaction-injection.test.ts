@@ -12,7 +12,7 @@ import {
 	buildDefaultCapabilityHcp,
 	type CapabilityBuilderTable,
 	createCapabilityMagnet,
-} from "../assembly/magnet/capability.ts";
+} from "../hcp/magnet/capability.ts";
 
 const models = createModels();
 

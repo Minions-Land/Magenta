@@ -1,6 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
-import type { HcpRequest, HcpServer, HcpServerDescription } from "../../assembly/hcp/hcp.ts";
+import type { HcpRequest, HcpServer, HcpServerDescription } from "../../hcp/hcp/hcp.ts";
 import type {
 	MemoryProvider,
 	MemoryReadResult,

@@ -109,8 +109,8 @@ export interface Registry {
 /**
  * Locate the top-level harness registry file from either source or built output.
  *
- * Source builds execute this module from `harness/assembly/registry`; compiled
- * builds execute it from `harness/dist/assembly/registry`. Package installs
+ * Source builds execute this module from `harness/hcp/registry`; compiled
+ * builds execute it from `harness/dist/hcp/registry`. Package installs
  * keep `harness.toml` at the package root, so we try each layout explicitly.
  */
 export function getHarnessRegistryPath(): string {
@@ -332,13 +332,7 @@ function parseCatalogRefs(indexTable: TomlTable): CatalogRef[] {
 		: [];
 }
 
-const KNOWN_IMPLEMENTATION_SOURCES = new Set([
-	"pi",
-	"codex",
-	"jcode",
-	"claude-code",
-	"magenta",
-]);
+const KNOWN_IMPLEMENTATION_SOURCES = new Set(["pi", "codex", "jcode", "claude-code", "magenta"]);
 
 const CORE_EXCEPTION_MODULE_IDS = new Set(["assembly/hcp", "assembly/magnet"]);
 

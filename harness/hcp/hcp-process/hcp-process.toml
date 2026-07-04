@@ -4,4 +4,4 @@ description = "HCP JSONL process manifests migrated from Magenta1 general-harnes
 source = "magenta"
 origin = "magenta1-general-harness"
 origin_rel = "migrated/adapted"
-manifests = ["assembly/hcp-process/magenta/*.toml"]
+manifests = ["hcp/hcp-process/magenta/*.toml"]

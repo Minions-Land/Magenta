@@ -1,4 +1,4 @@
-import type { HcpServer } from "../assembly/hcp/hcp.ts";
+import type { HcpServer } from "../hcp/hcp/hcp.ts";
 
 export type SandboxNetworkPolicy = "deny" | "allowlist" | "allow" | string;
 

@@ -1,7 +1,7 @@
 import type { AgentEvent, AgentMessage, AgentTool, QueueMode, ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { ImageContent, Model, Models, SimpleStreamOptions, TextContent, Transport } from "@earendil-works/pi-ai";
 import type { CompactionPreparation, CompactionProvider } from "../compaction/contract.ts";
-import type { HcpClient } from "../assembly/hcp/hcp.ts";
+import type { HcpClient } from "../hcp/hcp/hcp.ts";
 import type { Session } from "../session/pi/session.ts";
 
 /** Result of a fallible operation. Expected failures are returned as `ok: false` instead of thrown. */

@@ -1,10 +1,14 @@
-# Assembly Layer
+# HCP Layer (Harness Component Protocol)
 
-The **assembly layer** is where components are discovered, adapted, and wired together at startup. It consists of three modules working in concert:
+The **HCP layer** (directory `hcp/`) is where components are discovered, adapted, and wired together at startup. It is the harness's assembly/management layer — the analogue of MCP, generalized from tools to every harness primitive. It consists of the following modules working in concert:
 
 - **Registry** — Discovers available components from TOML files
-- **Magnet** — Adapts implementations into uniform interfaces
-- **HCP** — Manages component lifecycle and configuration
+- **Magnet** — Adapts implementations into uniform interfaces (`HcpMagnet`)
+- **HCP** (client/server) — Manages component lifecycle, discovery, and configuration
+- **Package overlay** — Profile/source selection over the discovered components
+- **HCP-process** — Out-of-process component implementations
+
+Components here carry `kind = "assembly"` (their role), which is why their module ids remain `assembly/hcp`, `assembly/magnet`, etc. even though they live under `hcp/`. The directory name reflects the mechanism (HCP); the kind reflects the role (assembly/management layer).
 
 ---
 
@@ -298,17 +302,17 @@ All three modules are registered in `harness/harness.toml`:
 [[components]]
 kind = "assembly"
 name = "hcp"
-path = "assembly/hcp/hcp.toml"
+path = "hcp/hcp/hcp.toml"
 
 [[components]]
 kind = "assembly"
 name = "magnet"
-path = "assembly/magnet/magnet.toml"
+path = "hcp/magnet/magnet.toml"
 
 [[components]]
 kind = "assembly"
 name = "registry"
-path = "assembly/registry/registry.toml"
+path = "hcp/registry/registry.toml"
 ```
 
 ---
@@ -335,4 +339,4 @@ import { HcpRegistry, HcpTarget, HcpCall, HcpContext } from "@magenta/harness";
 3. **Unified interface**: All tools (TypeScript/MCP/Rust) expose the same AgentTool interface
 4. **Declarative discovery**: Add components by editing TOML, not code
 
-The assembly layer is the **wiring infrastructure** that makes the harness extensible without sacrificing execution speed.
+The HCP layer is the **wiring infrastructure** that makes the harness extensible without sacrificing execution speed.
