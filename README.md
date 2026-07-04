@@ -29,7 +29,7 @@ export ANTHROPIC_API_KEY=sk-ant-xxx
 ./bin/magenta  # Automatically uses external credentials
 ```
 
-See [AUTHENTICATION.md](./AUTHENTICATION.md) for detailed setup instructions.
+See [docs/AUTHENTICATION.md](./docs/AUTHENTICATION.md) for detailed setup instructions.
 
 ### Basic Usage
 

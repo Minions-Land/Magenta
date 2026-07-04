@@ -1,3 +1,10 @@
+<!--
+  VENDORED UPSTREAM README from the pi-mono project (https://pi.dev).
+  Kept for reference only. Links below point to the UPSTREAM repo layout
+  (packages/, CONTRIBUTING.md, ...) and do not resolve inside Magenta3.
+  For Magenta3 docs start at ../README.md and ../docs/README.md.
+-->
+
 <p align="center">
   <a href="https://pi.dev">
     <img alt="pi logo" src="https://pi.dev/logo-auto.svg" width="128">

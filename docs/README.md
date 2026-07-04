@@ -7,8 +7,13 @@ Magenta3 is an AI coding assistant forked from Pi, with enhanced modular archite
 ## Documentation Structure
 
 ### Architecture
+- **[ARCHITECTURE.md](./ARCHITECTURE.md)** - Layered package architecture (pi-ai / agent-core / harness)
 - **[BRANDING.md](./BRANDING.md)** - Brand system and multi-brand support
 - **[specs/](./specs/)** - Technical specifications and design decisions
+- **[../harness/docs/DEVELOPING.md](../harness/docs/DEVELOPING.md)** - Developer onboarding: how to add tools, capabilities, resources, and packages
+
+### Setup
+- **[AUTHENTICATION.md](./AUTHENTICATION.md)** - External auth (Claude Code / Codex credential auto-detect)
 
 ### Features
 - **[features/](./features/)** - Planned and in-progress features
@@ -17,7 +22,7 @@ Magenta3 is an AI coding assistant forked from Pi, with enhanced modular archite
 ### Project Information
 - **[../README.md](../README.md)** - Project overview and quick start
 - **[../harness/README.md](../harness/README.md)** - Harness architecture
-- **[../harness/assembly/README.md](../harness/assembly/README.md)** - Assembly layer (HCP/Magnet/Registry)
+- **[../harness/hcp/README.md](../harness/hcp/README.md)** - Assembly layer (HCP/Magnet/Registry)
 
 ## Key Concepts
 
@@ -25,10 +30,10 @@ Magenta3 is an AI coding assistant forked from Pi, with enhanced modular archite
 Magenta uses a neutral brand registry allowing multiple brands (Magenta, Pi, custom) to coexist. See [BRANDING.md](./BRANDING.md).
 
 ### Harness Architecture
-Modular component system with source separation (pi/, rust/, mcp/) plus the Magenta memory package. See [harness/README.md](../harness/README.md).
+Modular component system with source separation by origin agent (`pi/`, `magenta/`, `codex/`, `claude-code/`) plus the Magenta memory package. See [harness/README.md](../harness/README.md).
 
 ### Assembly Layer
-Component discovery, adaptation, and management at startup. See [harness/assembly/README.md](../harness/assembly/README.md).
+Component discovery, adaptation, and management at startup. See [harness/hcp/README.md](../harness/hcp/README.md).
 
 ## Version Strategy
 
