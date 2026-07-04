@@ -227,3 +227,16 @@
 - Kept: `hcp-architecture.md`, `hcp-rollout-progress.md`, `contract.md`
   (refreshed `assembly/` → `hcp/` paths), this `log.md` (append-only history),
   and the `docs/design/` extension-migration records (self-marked Complete/Archived).
+
+### Repo cleanup — stale intermediate reports + artifacts removed
+
+- Follow-up to the earlier 2026-07-04 entry: the `docs/design/` extension-migration
+  records (previously "kept") were subsequently deleted. The migration is complete
+  and its outcome is captured in the code + this log; the archived planning/summary
+  reports were intermediate products with no ongoing reference value.
+- Also removed: root-level `SONNET5_MAX_FIX.md` / `THINKING_LEVEL_FIX.md` /
+  `MODEL_DISCOVERY_EXPLAINED.md` (7/3 pi fix reports; changes already in code),
+  `plans/automicscience-tool-migration-research.md` (implemented), `runs/omics/*.h5ad`
+  (generated analysis outputs, not fixtures), and untracked `pi/coding-agent/demo-rich-content.*`.
+- `.gitignore`: added `.pixi/`, `packages/**/.pixi/` (13 GB of materialized conda
+  envs that were untracked but unignored — accidental-commit risk), and `runs/`.
