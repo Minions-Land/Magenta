@@ -32,6 +32,7 @@ Builds on `omics-shared` (loaded automatically — its rules apply here). Run co
 | Cell-type annotation (reference pipeline) | **PARTIAL** | `run_annotation_pipeline` (Route 2) | `method/annotation.md` |
 | Pathway / TF activity, enrichment, perturbation | **READY** | `omics_compute pathway_activity` / `enrichment` / `perturbation` | `method/functional.md` |
 | Cross-condition DE (pseudobulk DESeq2) | **REFERENCE** | hand-rolled in `run_python` | `method/markers_de.md` |
+| Compositional analysis (cell type abundance) | **REFERENCE** | hand-rolled (scCODA / Milo) | `method/composition.md` |
 | Trajectory / RNA velocity / fate | **REFERENCE** | hand-rolled (scVelo / CellRank) | `method/trajectory.md` |
 | Cell-cell communication | **REFERENCE** | hand-rolled (LIANA) | `method/ccc.md` |
 
