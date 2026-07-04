@@ -1,9 +1,11 @@
 # HCP — Unified Architecture & Naming Contract
 
 Date: 2026-07-03
-Status: **AUTHORITATIVE.** Supersedes `hcp-capability-resolver-contract.md` (the
-resolver-model doc) where they differ. All rollout tasks, generators, and
-evaluators conform to THIS document.
+Status: **AUTHORITATIVE.** This is the single source of truth for the HCP
+layer. It absorbed and retired the earlier resolver-model draft
+(`hcp-capability-resolver-contract.md`, deleted 2026-07-04); the three-role
+naming and protocol-standard framing below supersede it. All rollout tasks,
+generators, and evaluators conform to THIS document.
 
 This contract is the product of a design conversation that settled four
 load-bearing decisions:

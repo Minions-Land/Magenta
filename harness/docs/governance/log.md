@@ -190,3 +190,40 @@
 - Evaluator: harness structure/build/test/inspect passed; coding-agent build,
   focused resource-loader/skills tests, full coding-agent tests, and
   `--harness-list` text/JSON passed.
+
+## 2026-07-04
+
+### Directory rename: `assembly/` → `hcp/`
+
+- Decision: the directory formerly named `assembly/` contains, in its entirety,
+  the HCP mechanism (registry, magnet, hcp client/server, package-overlay,
+  hcp-process). Renamed the directory to `hcp/` so the name reflects the
+  mechanism. Pure path rename; the `kind = "assembly"` component label is a
+  semantic role, not a path, so module ids remain `assembly/hcp`,
+  `assembly/magnet` (CORE_EXCEPTION_MODULE_IDS unchanged).
+- `scripts/` and `utils/` deliberately kept at top level: `scripts/` is
+  build/lint tooling (the structure-check referee, cross-module); `utils/` is a
+  runtime shared library reused by 8 tools. Neither belongs inside the HCP
+  mechanism.
+
+### Tool Search promoted to top-level `tools-search/`
+
+- Moved `tool-search` out of `assembly/` into its own top-level module
+  `harness/tools-search/`. Tool Search is a Harness capability in its own right
+  (an aggregator above the per-tool magnets: enumerate cheap name+description
+  metadata, materialize full schemas on demand), not assembly-time wiring — the
+  first concrete instance of the broader Harness Search idea.
+
+### Docs cleanup — superseded governance/status files removed
+
+- Deleted as fully superseded by `hcp-architecture.md` (authoritative) +
+  `hcp-rollout-progress.md` (live tracker):
+  `hcp-capability-resolver-contract.md` (self-declared SUPERSEDED, old resolver
+  model + retired HcpTarget/HcpRegistry names), `progress.md` (second progress
+  tracker competing with rollout-progress), `module-layout-plan.md` (its
+  `assembly/` open questions are resolved by the rename), and repo-root
+  `HCP_MAGNET_STATUS.md` / `HCP_MAGNET_SUMMARY.md` (7/3 codex-session snapshots
+  absorbed into the authoritative docs).
+- Kept: `hcp-architecture.md`, `hcp-rollout-progress.md`, `contract.md`
+  (refreshed `assembly/` → `hcp/` paths), this `log.md` (append-only history),
+  and the `docs/design/` extension-migration records (self-marked Complete/Archived).
