@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { harnessRoot, isInside, pathLabel, readToml, repoRoot } from "./lib/files.mjs";
 
@@ -326,6 +326,52 @@ function checkToolLayout() {
 	}
 }
 
+function checkCapabilitySourceMagnets() {
+	// Every `<module>/<source>/magnet.ts` that declares a CapabilitySourceMagnet
+	// must be listed in the static aggregation barrel hcp-client/assembly/sources.ts.
+	// A static import list is required (computed dynamic imports break the bun
+	// single-file binary), so this check guards against silently forgetting to
+	// register a new capability source there.
+	const discovered = [];
+	const skipDirs = new Set(["dist", "node_modules", "target", ".git"]);
+
+	function scan(directory) {
+		for (const entry of readdirSync(directory, { withFileTypes: true })) {
+			if (entry.isDirectory()) {
+				if (!skipDirs.has(entry.name)) scan(join(directory, entry.name));
+				continue;
+			}
+			if (entry.name !== "magnet.ts") continue;
+			const filePath = join(directory, entry.name);
+			const text = readFileSync(filePath, "utf8");
+			const match = text.match(/export const (\w+)\s*:\s*CapabilitySourceMagnet\s*=/);
+			if (match) discovered.push({ name: match[1], path: filePath });
+		}
+	}
+
+	scan(harnessRoot);
+
+	const sourcesPath = join(harnessRoot, "hcp-client", "assembly", "sources.ts");
+	if (!existsSync(sourcesPath)) {
+		fail("missing capability source barrel: harness/hcp-client/assembly/sources.ts");
+		return;
+	}
+	const sourcesText = readFileSync(sourcesPath, "utf8");
+	const arrayMatch = sourcesText.match(/CAPABILITY_SOURCE_MAGNETS[^=]*=\s*\[([\s\S]*?)\]/);
+	const arrayBody = arrayMatch ? arrayMatch[1] : "";
+
+	for (const { name, path } of discovered) {
+		const importPattern = new RegExp(`import\\s*{[^}]*\\b${name}\\b[^}]*}`);
+		const inArray = new RegExp(`(^|[\\s,])${name}([\\s,]|$)`).test(arrayBody);
+		if (!importPattern.test(sourcesText) || !inArray) {
+			fail(
+				`capability source ${name} (${pathLabel(path)}) is not registered in ` +
+					`hcp-client/assembly/sources.ts (CAPABILITY_SOURCE_MAGNETS)`,
+			);
+		}
+	}
+}
+
 function checkGeneratedNoise() {
 	const generated = [
 		join(harnessRoot, "dist"),
@@ -353,6 +399,7 @@ checkRegistry();
 checkRepoPackages();
 checkSupportLayout();
 checkToolLayout();
+checkCapabilitySourceMagnets();
 checkGeneratedNoise();
 
 for (const message of notes) console.log(`note: ${message}`);
