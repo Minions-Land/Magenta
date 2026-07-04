@@ -1,7 +1,7 @@
 /**
  * Adapter that bridges pi's skills loading interface to the harness async abstraction.
  *
- * Architecture (mirrors the HCP/Magnet split studied in the Magenta repo): the harness provides
+ * Architecture (mirrors the HCP/HcpMagnet split studied in the Magenta repo): the harness provides
  * capability *primitives* — `loadSkills(env, dirs)` walks a directory, `loadSkillFile(env, path)`
  * loads a single `.md` file — both through the `ExecutionEnv` abstraction. The *policy* of how pi
  * discovers skills, classifies file-vs-directory paths, attaches provenance, and resolves name

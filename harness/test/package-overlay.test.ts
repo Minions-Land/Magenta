@@ -9,7 +9,7 @@ import {
 	discoverHarnessPackages,
 	loadPackageOverlay,
 	parsePackageSelector,
-} from "../assembly/package-overlay/pi/package-overlay.ts";
+} from "../hcp/package-overlay/package-overlay.ts";
 import { loadSkills } from "../skills/pi/skills.ts";
 
 const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
@@ -413,7 +413,7 @@ type = "object"
 		});
 	});
 
-	it("assembles script runtime package tools through the Magnet factory", async () => {
+	it("assembles script runtime package tools through the HcpMagnet factory", async () => {
 		await withTempRepo(async ({ repoRoot, packagesRoot }) => {
 			await writeText(
 				join(packagesRoot, "ScriptDomain", "package.toml"),
@@ -752,6 +752,137 @@ type = "object"
 					packageId: "NoEnvDomain",
 				}),
 			]);
+		});
+	});
+
+	it("derives tools and capabilities through the one HCP registry", async () => {
+		await withTempRepo(async ({ repoRoot, packagesRoot }) => {
+			await writeText(
+				join(packagesRoot, "HcpDomain", "package.toml"),
+				`schema_version = "magenta.package.v1"
+id = "HcpDomain"
+name = "HcpDomain"
+default_profiles = ["general"]
+
+[[profiles]]
+name = "general"
+harness = "general/harness.toml"
+`,
+			);
+			await writeText(
+				join(packagesRoot, "HcpDomain", "general", "harness.toml"),
+				`name = "hcp-general"
+
+[[components]]
+kind = "tool"
+name = "echo_process"
+path = "tools/echo-process.toml"
+
+[[components]]
+kind = "compaction"
+name = "compaction"
+path = "capabilities/compaction.toml"
+`,
+			);
+			await writeText(
+				join(packagesRoot, "HcpDomain", "general", "tools", "echo-process.toml"),
+				`kind = "tool"
+name = "echo_process"
+description = "Echo a value through a process runtime."
+runtime = "process"
+command = "node"
+args = ["echo-process.mjs"]
+
+[parameters]
+type = "object"
+`,
+			);
+			await writeText(
+				join(packagesRoot, "HcpDomain", "general", "capabilities", "compaction.toml"),
+				`kind = "compaction"
+name = "compaction"
+description = "Context compaction."
+source = "pi"
+`,
+			);
+
+			const overlay = await loadPackageOverlay({ repoRoot, selections: ["HcpDomain"] });
+			const assembly = await assemblePackageToolMagnets(overlay);
+			expect(assembly.diagnostics).toEqual([]);
+
+			// The tool in assembly.tools was derived by resolving THROUGH the
+			// registry at its address — re-resolving yields an equivalent AgentTool
+			// (toTool builds fresh each call, so compare by value, not identity).
+			const toolTarget = assembly.hcp.resolve("tool://echo_process");
+			expect((toolTarget?.instance?.() as { name: string }).name).toBe("echo_process");
+			expect(assembly.tools[0]?.name).toBe("echo_process");
+
+			// The capability is resolvable by slot name and IS the injected binding's
+			// instance. Consumer code passes only "compaction" — no source.
+			const resolved = assembly.hcp.resolveCapability("compaction");
+			expect(resolved).toBe(assembly.capabilities.get("compaction")?.instance);
+			expect(resolved).toBeDefined();
+			// The capability never leaks onto the tool hot path.
+			expect(assembly.tools.map((t) => t.name)).toEqual(["echo_process"]);
+		});
+	});
+
+	it("applies component source bundles and reports conflicts", async () => {
+		await withTempRepo(async ({ repoRoot, packagesRoot }) => {
+			await writeText(
+				join(packagesRoot, "BundleDomain", "package.toml"),
+				`schema_version = "magenta.package.v1"
+id = "BundleDomain"
+name = "BundleDomain"
+default_profiles = ["general"]
+
+[[profiles]]
+name = "general"
+harness = "general/harness.toml"
+`,
+			);
+			await writeText(
+				join(packagesRoot, "BundleDomain", "general", "harness.toml"),
+				`name = "bundle-general"
+
+[[components]]
+kind = "sandbox"
+name = "workspace"
+path = "sandbox/workspace.toml"
+
+[[components]]
+kind = "runtime"
+name = "process"
+path = "runtime/process.toml"
+`,
+			);
+			await writeText(
+				join(packagesRoot, "BundleDomain", "general", "sandbox", "workspace.toml"),
+				`kind = "sandbox"
+name = "workspace"
+source = "magenta"
+bundles = ["runtime:magenta"]
+`,
+			);
+			await writeText(
+				join(packagesRoot, "BundleDomain", "general", "runtime", "process.toml"),
+				`kind = "runtime"
+name = "process"
+source = "pi"
+`,
+			);
+
+			const overlay = await loadPackageOverlay({ repoRoot, selections: ["BundleDomain"] });
+
+			expect(overlay.componentMap.get("sandbox:workspace")?.source).toBe("magenta");
+			expect(overlay.componentMap.get("runtime:process")?.source).toBe("magenta");
+			expect(overlay.diagnostics).toContainEqual(
+				expect.objectContaining({
+					type: "warning",
+					code: "package_bundle_conflict",
+					message: expect.stringContaining("runtime:magenta"),
+				}),
+			);
 		});
 	});
 

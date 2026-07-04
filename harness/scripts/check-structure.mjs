@@ -8,13 +8,12 @@ const notes = [];
 
 const allowedTopLevel = new Set([
 	"README.md",
-	"assembly",
+	"hcp",
 	"catalog",
 	"compaction",
 	"context",
 	"docs",
 	"env",
-	"extensions",
 	"harness.toml",
 	"hooks",
 	"index.ts",
@@ -32,6 +31,7 @@ const allowedTopLevel = new Set([
 	"system-prompt",
 	"test",
 	"tools",
+	"tools-search",
 	"tsconfig.build.json",
 	"tsconfig.json",
 	"types",
@@ -53,12 +53,11 @@ const foldedToolModuleNames = new Set([
 	"read-url",
 ]);
 const sourceModuleDirs = [
-	"assembly",
+	"hcp",
 	"catalog",
 	"compaction",
 	"context",
 	"env",
-	"extensions",
 	"hooks",
 	"loop",
 	"memory",
@@ -72,6 +71,7 @@ const sourceModuleDirs = [
 	"system-prompt",
 	"test",
 	"tools",
+	"tools-search",
 	"types",
 	"utils",
 ];

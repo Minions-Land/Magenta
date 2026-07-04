@@ -1,7 +1,7 @@
 /**
  * Adapter that bridges pi's prompt-template loading interface to the harness async abstraction.
  *
- * Architecture (mirrors the HCP/Magnet split and the skills adapter): the harness provides the
+ * Architecture (mirrors the HCP/HcpMagnet split and the skills adapter): the harness provides the
  * capability *primitives* — `loadPromptTemplates(env, paths)` and `loadSourcedPromptTemplates(...)`
  * walk directories / load `.md` files through the `ExecutionEnv` abstraction, and the pure
  * `parseCommandArgs` / `substituteArgs` / `expandPromptTemplate` helpers. The *policy* of how pi
@@ -9,10 +9,9 @@
  *
  * pi's `PromptTemplate` extends the harness template with a required `sourceInfo` (provenance) and a
  * required `filePath`; the harness loader already populates `filePath` and `argumentHint`, so this
- * adapter only injects `sourceInfo` via the `mapPromptTemplate` hook (the Magnet seam).
+ * adapter only injects `sourceInfo` via the `mapPromptTemplate` hook (the HcpMagnet seam).
  */
-import type { PromptTemplate as HarnessPromptTemplate } from "@magenta/harness";
-import { loadSourcedPromptTemplates, NodeExecutionEnv } from "@magenta/harness";
+import { loadSourcedPromptTemplates, NodeExecutionEnv, type PromptTemplate as HarnessPromptTemplate } from "@magenta/harness";
 import { join, resolve, sep } from "path";
 import { CONFIG_DIR_NAME } from "../config.ts";
 import { resolvePath } from "../utils/paths.ts";

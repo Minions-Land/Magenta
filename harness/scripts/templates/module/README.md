@@ -11,11 +11,22 @@ harness/<module-name>/
   <module-name>.toml    — Registration metadata (kind, name, description, source)
   pi/                   — Pi-sourced implementations (TypeScript)
     *.ts                — Implementation files
+    magnet.ts           — Capability modules only: the source's HcpMagnet binding
   magenta/              — Magenta-sourced implementations, possibly Rust/MCP-backed
+    magnet.ts           — (per source, for capability modules)
   codex/                — (future) Codex-sourced implementations
   claude-code/          — (future) Claude Code-sourced implementations
   README.md             — Module documentation
 ```
+
+> **Capability modules need a Magnet per source (spec §8).** A capability
+> module (e.g. `compaction`, `context`, `memory`, `policy`, `runtime`,
+> `sandbox`) is a *slot* that can bind several sources. Each source binds itself
+> into that slot with a thin `<module>/<source>/magnet.ts` exporting a
+> `CapabilitySourceMagnet`, and registers it in the dumb barrel
+> `harness/hcp/magnet/sources.ts`. Tools, Resources (e.g. `system-prompt`), and
+> pure contract modules do **not** use a capability magnet — see the Magnet
+> section below.
 
 ## Key Principles
 
@@ -62,6 +73,44 @@ harness/<module-name>/
    ```typescript
    export * from "./my-module/pi/my-module.js";
    ```
+
+## Capability Magnet (spec §8)
+
+If your module is a **capability** — a slot resolved by the HcpClient at
+assembly time (`compaction`, `context`, `hook`, `memory`, `policy`, `runtime`,
+`sandbox`) — each source must bind itself into the slot with a thin Magnet.
+
+1. Add `harness/my-module/<source>/magnet.ts`:
+   ```typescript
+   import type { CapabilitySourceMagnet } from "../../hcp/magnet/source-magnet.ts";
+   import { MyProvider } from "./my-module.ts";
+
+   /** The <source> source's binding for the `my-module` capability (spec §8). */
+   export const myModuleMagnet: CapabilitySourceMagnet = {
+     kind: "my-module",       // the capability kind (matches the .toml kind)
+     source: "pi",            // origin-agent source name
+     isDefault: true,         // is this the default source for the slot?
+     // hotSwappable: true,   // opt in only if the provider is stateless (§9); omit = frozen
+     build: () => new MyProvider({}),
+   };
+   ```
+
+2. Register it in the dumb barrel `harness/hcp/magnet/sources.ts` (a static
+   re-export list, NO selection logic — selection is the HcpClient's job). The
+   builder table, default-source map, and hotSwappable map are DERIVED from this
+   barrel in `hcp/magnet/capability.ts`; do not hand-maintain a central builder
+   literal.
+
+**Keep the Magnet thin.** It is a last-inch adapter: binding + (for tools)
+transport selection only, never business logic. A magnet produces at most ONE
+of tool / capability / resource (the one-of invariant).
+
+## Resources are not capabilities
+
+Content-only components (`system-prompt` via `content_path`, `skill`, `prompt`,
+`theme`, `brand`) are **Resources**, not capabilities. They flow through the
+resource path and must NOT be added to `CAPABILITY_KINDS` or given a code
+builder — doing so triggers a `capability_factory_missing` error (spec §5.1).
 
 ## Tools Exception
 

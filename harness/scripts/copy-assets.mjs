@@ -6,13 +6,12 @@ const harnessRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const distRoot = join(harnessRoot, "dist");
 
 const selectedTrees = [
-	"assembly/hcp-process",
-	"assembly/package-overlay",
+	"hcp/hcp-process",
+	"hcp/package-overlay",
 	"catalog",
 	"compaction",
 	"context",
 	"env",
-	"extensions",
 	"hooks",
 	"loop",
 	"memory",
@@ -39,7 +38,7 @@ function extensionOf(name) {
 }
 
 function shouldCopyFile(relativeDir, name) {
-	return copiedFileNames.has(name) || copiedExtensions.has(extensionOf(name)) || (relativeDir.startsWith("extensions") && extensionOf(name) === ".ts");
+	return copiedFileNames.has(name) || copiedExtensions.has(extensionOf(name));
 }
 
 async function copyRelativeFile(relativePath) {

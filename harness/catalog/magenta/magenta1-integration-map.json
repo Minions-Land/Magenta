@@ -260,7 +260,7 @@
     },
     "general-harness:hcp-process:echo-jsonl": {
       "state": "available",
-      "component": { "kind": "hcp-process", "name": "echo-jsonl", "path": "assembly/hcp-process/magenta/echo-jsonl.toml" },
+      "component": { "kind": "hcp-process", "name": "echo-jsonl", "path": "hcp/hcp-process/magenta/echo-jsonl.toml" },
       "relation": "migrated-hcp-jsonl-process",
       "notes": "HCP JSONL process manifest is available locally through HcpProcessMagnet, but not mounted into the default AgentSession."
     },

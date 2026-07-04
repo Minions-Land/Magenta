@@ -1,4 +1,0 @@
-kind = "assembly"
-name = "hcp"
-description = "Harness Component Protocol - management and discovery layer (not on execution hot path)"
-source = "pi"

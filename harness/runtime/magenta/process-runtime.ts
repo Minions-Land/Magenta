@@ -1,59 +1,23 @@
 import { spawn } from "node:child_process";
 import { access, realpath } from "node:fs/promises";
 import { delimiter, isAbsolute, join, normalize, resolve } from "node:path";
-import type { HcpCall, HcpTarget, HcpTargetDescription } from "../../assembly/hcp/pi/hcp.ts";
-import type { SandboxProfile } from "../../sandbox/magenta/sandbox.ts";
+import type { HcpRequest, HcpServer, HcpServerDescription } from "../../hcp/hcp/hcp.ts";
+import type {
+	ProcessExecInput,
+	ProcessExecOutput,
+	ProcessRuntimeProviderContract,
+	ProcessRuntimeToolMetadata,
+	RuntimePolicyReport,
+	RuntimePolicyStatus,
+} from "../contract.ts";
 
-export interface ProcessExecInput {
-	command: string;
-	args?: string[];
-	stdin?: string;
-	stdin_json?: unknown;
-	cwd?: string;
-	workspace_root?: string;
-	sandbox?: { profile?: SandboxProfile } | SandboxProfile | null;
-	tool?: ProcessRuntimeToolMetadata | null;
-	allow_direct_exec?: boolean;
-	env_overrides?: Record<string, string>;
-	max_output_bytes?: number;
-	timeout_ms?: number;
-}
-
-export interface ProcessRuntimeToolMetadata {
-	name?: string;
-	operation?: string;
-	read_only?: boolean;
-	destructive?: boolean;
-	tags?: string[];
-	network?: unknown;
-	network_targets?: unknown;
-}
-
-export interface RuntimePolicyReport {
-	workspace_root: string;
-	process_cwd: string;
-	fs_read: string[];
-	fs_write: string[];
-	network: string;
-	network_allowlist: string[];
-	max_wall_seconds: number;
-	max_memory_mb: number;
-	backend: string;
-	resolved_backend: "none";
-	os_enforced: false;
-	backend_reason: string;
-}
-
-export interface ProcessExecOutput {
-	stdout: string;
-	stderr: string;
-	status: number | null;
-	policy: RuntimePolicyReport;
-	truncated: {
-		stdout: boolean;
-		stderr: boolean;
-	};
-}
+export type {
+	ProcessExecInput,
+	ProcessExecOutput,
+	ProcessRuntimeToolMetadata,
+	RuntimePolicyReport,
+	RuntimePolicyStatus,
+} from "../contract.ts";
 
 interface RuntimePolicy {
 	workspaceRoot: string;
@@ -325,7 +289,7 @@ function redactedEnv(allowlist: string[], overrides: Record<string, string> | un
 	return env;
 }
 
-export function runtimePolicyStatus(): Record<string, unknown> {
+export function runtimePolicyStatus(): RuntimePolicyStatus {
 	return {
 		portable_guards: [
 			"direct-exec gate",
@@ -447,8 +411,8 @@ async function commandExists(command: string): Promise<boolean> {
 	return false;
 }
 
-export class ProcessRuntimeProvider {
-	describe(): HcpTargetDescription {
+export class ProcessRuntimeProvider implements ProcessRuntimeProviderContract {
+	describe(): HcpServerDescription {
 		return {
 			target: "runtime://process",
 			kind: "runtime",
@@ -471,20 +435,28 @@ export class ProcessRuntimeProvider {
 		};
 	}
 
+	exec(input: ProcessExecInput, signal?: AbortSignal): Promise<ProcessExecOutput> {
+		return execProcess(input, signal);
+	}
+
+	policyStatus(): RuntimePolicyStatus {
+		return runtimePolicyStatus();
+	}
+
 	async health(): Promise<Record<string, unknown>> {
 		return {
 			status: "ok",
 			target: "runtime://process",
 			implementation: "native-ts",
-			policy: runtimePolicyStatus(),
+			policy: this.policyStatus(),
 			node: await commandExists(process.execPath),
 		};
 	}
 
-	toHcpTarget(): HcpTarget {
+	toHcpServer(): HcpServer {
 		return {
 			describe: () => this.describe(),
-			call: async (call: HcpCall): Promise<unknown> => {
+			call: async (call: HcpRequest): Promise<unknown> => {
 				switch (call.op || "exec") {
 					case "discover":
 						return this.discover();
@@ -492,12 +464,12 @@ export class ProcessRuntimeProvider {
 						return this.describe();
 					case "policy":
 					case "status":
-						return runtimePolicyStatus();
+						return this.policyStatus();
 					case "health":
 						return this.health();
 					case "exec":
 					case "call":
-						return execProcess(call.input as ProcessExecInput);
+						return this.exec(call.input as ProcessExecInput);
 					default:
 						throw new Error(`unsupported runtime operation ${call.op}`);
 				}

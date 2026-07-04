@@ -36,5 +36,5 @@ Rules:
   defaults.
 
 Use `packages/AutOmicScience/` and
-`harness/assembly/package-overlay/README.md` as the current executable
+`harness/hcp/package-overlay/README.md` as the current executable
 reference.

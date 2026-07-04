@@ -10,8 +10,8 @@ import type {
 } from "@earendil-works/pi-agent-core";
 import { runAgentLoop } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, ImageContent, Model, Models, UserMessage } from "@earendil-works/pi-ai";
-import { collectEntriesForBranchSummary, generateBranchSummary } from "../../compaction/pi/branch-summarization.ts";
-import { compact, DEFAULT_COMPACTION_SETTINGS, prepareCompaction } from "../../compaction/pi/compaction.ts";
+import { buildDefaultCapabilityHcp } from "../../hcp/magnet/capability.ts";
+import type { HcpClient } from "../../hcp/hcp/hcp.ts";
 import { convertToLlm } from "../../messages/messages.ts";
 import { formatPromptTemplateInvocation } from "../../prompt-templates/pi/prompt-templates.ts";
 import { formatSkillInvocation } from "../../skills/pi/skills.ts";
@@ -25,6 +25,7 @@ import type {
 	AgentHarnessResources,
 	AgentHarnessStreamOptions,
 	AgentHarnessStreamOptionsPatch,
+	CompactionProvider,
 	ExecutionEnv,
 	NavigateTreeResult,
 	PendingSessionWrite,
@@ -171,6 +172,37 @@ export class AgentHarness<
 	private systemPrompt: AgentHarnessOptions<TSkill, TPromptTemplate, TTool>["systemPrompt"];
 	private streamOptions: AgentHarnessStreamOptions;
 	private resources: AgentHarnessResources<TSkill, TPromptTemplate>;
+	/** Memoized fallback capability HCP, built lazily the first time compaction is
+	 *  resolved without an injected provider or resources.hcp. */
+	private defaultCapabilityHcpPromise?: Promise<HcpClient>;
+	/**
+	 * Resolve the compaction capability by NAME, never by source. Priority:
+	 * 1. an explicitly injected provider (`resources.compaction`);
+	 * 2. the capability HCP the assembly layer wired in (`resources.hcp`);
+	 * 3. the assembly layer's built-in default capability HCP.
+	 *
+	 * The consumer names no source — which implementation answers is decided by
+	 * package selection (cases 1–2) or the assembly default (case 3). This runs at
+	 * setup/compaction time only; the resolved provider is invoked directly, so the
+	 * LLM tool-call hot path is untouched.
+	 */
+	private async resolveCompaction(): Promise<CompactionProvider> {
+		if (this.resources.compaction) return this.resources.compaction;
+		const injected = this.resources.hcp?.resolveCapability<CompactionProvider>("compaction");
+		if (injected) return injected;
+		if (!this.defaultCapabilityHcpPromise) {
+			const cwd = this.env.cwd;
+			this.defaultCapabilityHcpPromise = buildDefaultCapabilityHcp({ repoRoot: cwd, packagesRoot: cwd }).then(
+				(built) => built.hcp,
+			);
+		}
+		const hcp = await this.defaultCapabilityHcpPromise;
+		const provider = hcp.resolveCapability<CompactionProvider>("compaction");
+		if (!provider) {
+			throw new AgentHarnessError("invalid_state", "No compaction capability is available");
+		}
+		return provider;
+	}
 	private tools = new Map<string, TTool>();
 	private activeToolNames: string[];
 	private steerQueue: UserMessage[] = [];
@@ -691,8 +723,9 @@ export class AgentHarness<
 		try {
 			const model = this.model;
 			if (!model) throw new AgentHarnessError("invalid_state", "No model set for compaction");
+			const compaction = await this.resolveCompaction();
 			const branchEntries = await this.session.getBranch();
-			const preparationResult = prepareCompaction(branchEntries, DEFAULT_COMPACTION_SETTINGS);
+			const preparationResult = compaction.prepareCompaction(branchEntries, compaction.defaultSettings);
 			if (!preparationResult.ok) throw preparationResult.error;
 			const preparation = preparationResult.value;
 			if (!preparation) throw new AgentHarnessError("compaction", "Nothing to compact");
@@ -707,7 +740,7 @@ export class AgentHarness<
 			const provided = hookResult?.compaction;
 			const compactResult = provided
 				? { ok: true as const, value: provided }
-				: await compact(preparation, this.models, model, customInstructions, undefined, this.thinkingLevel);
+				: await compaction.compact(preparation, this.models, model, customInstructions, undefined, this.thinkingLevel);
 			if (!compactResult.ok) throw compactResult.error;
 			const result = compactResult.value;
 			const entryId = await this.session.appendCompaction(
@@ -740,7 +773,8 @@ export class AgentHarness<
 			if (oldLeafId === targetId) return { cancelled: false };
 			const targetEntry = await this.session.getEntry(targetId);
 			if (!targetEntry) throw new AgentHarnessError("invalid_argument", `Entry ${targetId} not found`);
-			const { entries, commonAncestorId } = await collectEntriesForBranchSummary(this.session, oldLeafId, targetId);
+			const compaction = await this.resolveCompaction();
+			const { entries, commonAncestorId } = await compaction.collectEntriesForBranchSummary(this.session, oldLeafId, targetId);
 			const preparation = {
 				targetId,
 				oldLeafId,
@@ -760,7 +794,7 @@ export class AgentHarness<
 			if (!summaryText && options?.summarize && entries.length > 0) {
 				const model = this.model;
 				if (!model) throw new AgentHarnessError("invalid_state", "No model set for branch summary");
-				const branchSummary = await generateBranchSummary(entries, {
+				const branchSummary = await compaction.generateBranchSummary(entries, {
 					models: this.models,
 					model,
 					signal: new AbortController().signal,
@@ -947,6 +981,10 @@ export class AgentHarness<
 		return {
 			skills: this.resources.skills?.slice(),
 			promptTemplates: this.resources.promptTemplates?.slice(),
+			// Capabilities are singletons selected at setup, not per-turn collections;
+			// carry them by reference so setResources round-trips don't drop them.
+			compaction: this.resources.compaction,
+			hcp: this.resources.hcp,
 		};
 	}
 
@@ -955,6 +993,12 @@ export class AgentHarness<
 		this.resources = {
 			skills: resources.skills?.slice(),
 			promptTemplates: resources.promptTemplates?.slice(),
+			// Capabilities are setup-time wiring, not the per-turn skill/template set
+			// setResources swaps. Carry the existing selection forward unless the
+			// caller explicitly supplies a replacement, so a skills swap can't
+			// silently unwire compaction.
+			compaction: resources.compaction ?? this.resources.compaction,
+			hcp: resources.hcp ?? this.resources.hcp,
 		};
 		await this.emitOwn({ type: "resources_update", resources: this.getResources(), previousResources });
 	}

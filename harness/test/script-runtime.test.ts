@@ -2,8 +2,8 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { HcpRegistry } from "../assembly/hcp/pi/hcp.ts";
-import { getHarnessRegistryPath, loadRegistry } from "../assembly/registry/pi/registry.ts";
+import { HcpClient } from "../hcp/hcp/hcp.ts";
+import { getHarnessRegistryPath, loadRegistry } from "../hcp/registry/registry.ts";
 import { ScriptRuntimeProvider } from "../runtime/magenta/script-runtime.ts";
 import { loadSandboxProviderFromPack } from "../sandbox/magenta/sandbox.ts";
 
@@ -27,7 +27,7 @@ describe("script runtime provider", () => {
 	it("executes shell and node code through runtime://process", async () => {
 		const dir = await mkdtemp(join(tmpdir(), "magenta-script-runtime-"));
 		const sandbox = await loadSandboxProviderFromPack(new URL("../sandbox/sandbox.toml", import.meta.url).pathname);
-		const hcp = new HcpRegistry().register("runtime", new ScriptRuntimeProvider().toHcpTarget());
+		const hcp = new HcpClient().register("runtime", new ScriptRuntimeProvider().toHcpServer());
 
 		await expect(
 			hcp.dispatch({
@@ -70,7 +70,7 @@ describe("script runtime provider", () => {
 	});
 
 	it("rejects empty script runtime input", async () => {
-		const hcp = new HcpRegistry().register("runtime", new ScriptRuntimeProvider().toHcpTarget());
+		const hcp = new HcpClient().register("runtime", new ScriptRuntimeProvider().toHcpServer());
 
 		await expect(
 			hcp.dispatch({
@@ -83,7 +83,7 @@ describe("script runtime provider", () => {
 
 	it("passes timeout overrides through to runtime://process", async () => {
 		const dir = await mkdtemp(join(tmpdir(), "magenta-script-runtime-timeout-"));
-		const hcp = new HcpRegistry().register("runtime", new ScriptRuntimeProvider().toHcpTarget());
+		const hcp = new HcpClient().register("runtime", new ScriptRuntimeProvider().toHcpServer());
 
 		await expect(
 			hcp.dispatch({

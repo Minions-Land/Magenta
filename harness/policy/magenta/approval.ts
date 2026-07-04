@@ -1,10 +1,15 @@
-import type { HcpCall, HcpTarget, HcpTargetDescription } from "../../assembly/hcp/pi/hcp.ts";
+import type { HcpRequest, HcpServer, HcpServerDescription } from "../../hcp/hcp/hcp.ts";
+import {
+	APPROVAL_POLICY_TARGET,
+	type ApprovalDecision,
+	type ApprovalDecisionKind,
+	type ApprovalMode,
+	type ApprovalPolicyProviderContract,
+	type ApprovalStatus,
+	type ApprovalTier,
+} from "../contract.ts";
 
-const APPROVAL_TARGET = "approval://policy";
-
-type ApprovalTier = "read" | "write" | "exec";
-type ApprovalMode = "always-ask" | "write" | "yolo";
-type UserDecision = "allow" | "deny" | "prompt";
+type UserDecision = ApprovalDecisionKind;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -114,9 +119,9 @@ function userPolicy(input: Record<string, unknown>, toolName: string): UserDecis
 	);
 }
 
-export function approvalStatus(): Record<string, unknown> {
+export function approvalStatus(): ApprovalStatus {
 	return {
-		target: APPROVAL_TARGET,
+		target: APPROVAL_POLICY_TARGET,
 		mode_default: "yolo",
 		contract: {
 			audience: "operator",
@@ -140,7 +145,7 @@ export function approvalStatus(): Record<string, unknown> {
 	};
 }
 
-export function decideApproval(rawInput: unknown): Record<string, unknown> {
+export function decideApproval(rawInput: unknown): ApprovalDecision {
 	const input = isRecord(rawInput) ? rawInput : {};
 	const tool = toolRecord(input);
 	const name = asString(tool.name) ?? asString(input.tool_name) ?? "unknown";
@@ -161,7 +166,7 @@ export function decideApproval(rawInput: unknown): Record<string, unknown> {
 				: (policyDecision ?? (modeAutoApproves(mode, tier) ? "allow" : "prompt"));
 
 	return {
-		target: APPROVAL_TARGET,
+		target: APPROVAL_POLICY_TARGET,
 		tool: name,
 		tier,
 		mode,
@@ -181,10 +186,18 @@ export function decideApproval(rawInput: unknown): Record<string, unknown> {
 	};
 }
 
-export class ApprovalPolicyProvider {
-	describe(): HcpTargetDescription {
+export class ApprovalPolicyProvider implements ApprovalPolicyProviderContract {
+	decide(input: unknown): ApprovalDecision {
+		return decideApproval(input);
+	}
+
+	status(): ApprovalStatus {
+		return approvalStatus();
+	}
+
+	describe(): HcpServerDescription {
 		return {
-			target: APPROVAL_TARGET,
+			target: APPROVAL_POLICY_TARGET,
 			kind: "approval",
 			ops: ["discover", "describe", "decide", "call", "status"],
 			description: "Resolve tool approval decisions from tool tier, session mode, user policy, and safety override.",
@@ -199,15 +212,15 @@ export class ApprovalPolicyProvider {
 	discover(): Record<string, unknown> {
 		return {
 			provider: "approval-policy",
-			targets: [APPROVAL_TARGET],
+			targets: [APPROVAL_POLICY_TARGET],
 			operations: ["decide", "status"],
 		};
 	}
 
-	toHcpTarget(): HcpTarget {
+	toHcpServer(): HcpServer {
 		return {
 			describe: () => this.describe(),
-			call: (call: HcpCall): unknown => {
+			call: (call: HcpRequest): unknown => {
 				switch (call.op || "decide") {
 					case "discover":
 					case "list":
@@ -215,7 +228,7 @@ export class ApprovalPolicyProvider {
 					case "describe":
 						return {
 							name: "approval-policy",
-							target: APPROVAL_TARGET,
+							target: APPROVAL_POLICY_TARGET,
 							description: this.describe().description,
 							operations: ["decide", "status"],
 							default_mode: "yolo",
@@ -224,9 +237,9 @@ export class ApprovalPolicyProvider {
 						};
 					case "decide":
 					case "call":
-						return decideApproval(call.input);
+						return this.decide(call.input);
 					case "status":
-						return approvalStatus();
+						return this.status();
 					default:
 						throw new Error(`unsupported approval operation ${call.op}`);
 				}

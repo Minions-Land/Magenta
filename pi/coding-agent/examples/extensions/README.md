@@ -40,7 +40,7 @@ cp permission-gate.ts ~/.pi/agent/extensions/
 | `built-in-tool-renderer.ts` | Custom compact rendering for built-in tools (read, bash, edit, write) while keeping original behavior |
 | `minimal-mode.ts` | Override built-in tool rendering for minimal display (only tool calls, no output in collapsed mode) |
 | `truncated-tool.ts` | Wraps ripgrep with proper output truncation (50KB/2000 lines) |
-| `ssh.ts` | Delegate all tools to a remote machine via SSH using pluggable operations |
+| `ssh.ts` | Example remote-machine tool adapter using pluggable operations (`--example-ssh`; built-in Pi remote mode uses `--ssh`) |
 | `subagent/` | Delegate tasks to specialized subagents with isolated context windows |
 
 ### Commands & UI

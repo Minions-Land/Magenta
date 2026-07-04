@@ -33,7 +33,7 @@ package overlays, process runtimes, and UI selection keep evolving.
   Python, HCP JSONL, and script-backed tools must not bypass its sandbox and
   policy checks.
 - Repository-level `packages/` is the only package content root. The harness
-  module for package discovery and profile expansion is `harness/assembly/package-overlay`;
+  module for package discovery and profile expansion is `harness/hcp/package-overlay`;
   there must not be a second content root under `harness/packages`.
 - Harness Source names are origin-agent names, not programming languages or
   runtime mechanisms. Magenta/Magenta1-related material uses `magenta`; Pi uses
@@ -66,8 +66,8 @@ package overlays, process runtimes, and UI selection keep evolving.
 Manage `harness/` as four layers:
 
 1. Protocol and assembly:
-   `assembly/hcp`, `assembly/magnet`, `assembly/registry`,
-   `assembly/package-overlay`.
+   `hcp/hcp`, `hcp/magnet`, `hcp/registry`,
+   `hcp/package-overlay`.
 2. Runtime guardrails:
    `runtime`, `sandbox`, `policy`, `hooks`.
 3. Capability modules:

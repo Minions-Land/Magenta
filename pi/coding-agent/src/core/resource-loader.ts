@@ -7,7 +7,7 @@ import type { ResourceDiagnostic } from "./diagnostics.ts";
 
 export type { ResourceCollision, ResourceDiagnostic } from "./diagnostics.ts";
 
-import { getBundledExtensionsDir, getHarnessSkillsDir, type Skill as HarnessSkill } from "@magenta/harness";
+import { getHarnessSkillsDir, type Skill as HarnessSkill } from "@magenta/harness";
 import {
 	assemblePackageToolMagnets,
 	loadPackageOverlay,
@@ -136,8 +136,6 @@ export function loadProjectContextFiles(options: {
 	return contextFiles;
 }
 
-const BUNDLED_EXTENSION_ENTRIES = ["ssh.ts"] as const;
-
 const BUILTIN_BACKGROUND_WORK_PROMPT = `# Background Work
 
 Treat background shell events and sub-agents as built-in Magenta agent-loop infrastructure.
@@ -147,10 +145,6 @@ Treat background shell events and sub-agents as built-in Magenta agent-loop infr
 - After starting background shell work, either wait/check status before relying on the result, or set returnToMain=true so completed results return to the main agent automatically.
 - Use sub_agent for independent parallel analysis, review, research, or planning subtasks; synthesize the results yourself before reporting to the user.
 - User-visible event controls live under /events. Do not ask the user to manually manage event ids unless direct intervention is actually required.`;
-
-function discoverBundledExtensionPaths(baseDir: string): string[] {
-	return BUNDLED_EXTENSION_ENTRIES.map((entry) => join(baseDir, entry)).filter((path) => existsSync(path));
-}
 
 // Canonical harness implementation sources. A harness-native skill lives at
 // `skills/<capability>/<source>/SKILL.md`, mirroring `tools/<name>/<source>/`.
@@ -313,6 +307,13 @@ export class DefaultResourceLoader implements ResourceLoader {
 	private themeDiagnostics: ResourceDiagnostic[];
 	private packageOverlay?: PackageOverlay;
 	private packageTools: AgentTool[];
+	/**
+	 * The one HCP registry the package overlay assembled tools and capabilities
+	 * through. Surfaced so a loop consumer can resolve non-tool capabilities
+	 * (e.g. compaction) by name instead of importing a source. Undefined until a
+	 * package overlay is assembled.
+	 */
+	private packageHcp?: PackageToolAssembly["hcp"];
 	private packageDiagnostics: ResourceDiagnostic[];
 	private agentsFiles: Array<{ path: string; content: string }>;
 	private systemPrompt?: string;
@@ -399,6 +400,15 @@ export class DefaultResourceLoader implements ResourceLoader {
 
 	getPackageTools(): { tools: AgentTool[]; diagnostics: ResourceDiagnostic[] } {
 		return { tools: this.packageTools, diagnostics: this.packageDiagnostics };
+	}
+
+	/**
+	 * The capability HCP assembled from the package overlay, or undefined when no
+	 * package was selected. A loop consumer passes this as `resources.hcp` so
+	 * non-tool capabilities resolve by name; tools remain in {@link getPackageTools}.
+	 */
+	getPackageHcp(): PackageToolAssembly["hcp"] | undefined {
+		return this.packageHcp;
 	}
 
 	getHarnessPackageSelectors(): string[] {
@@ -763,20 +773,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 	}
 
 	private getBundledExtensionResources(): ResolvedResource[] {
-		if (!this.includeBundledResources) {
-			return [];
-		}
-		const baseDir = getBundledExtensionsDir();
-		if (!existsSync(baseDir)) {
-			return [];
-		}
-		const metadata: PathMetadata = {
-			source: "bundled",
-			scope: "temporary",
-			origin: "top-level",
-			baseDir,
-		};
-		return discoverBundledExtensionPaths(baseDir).map((path) => ({ path, enabled: true, metadata }));
+		return [];
 	}
 
 	private getHarnessSkillResources(): ResolvedResource[] {
@@ -805,6 +802,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 	}> {
 		this.packageOverlay = undefined;
 		this.packageTools = [];
+		this.packageHcp = undefined;
 		this.packageDiagnostics = [];
 
 		if (this.harnessPackages.length === 0) {
@@ -822,6 +820,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 			const assembly: PackageToolAssembly = await assemblePackageToolMagnets(overlay);
 			this.packageDiagnostics.push(...assembly.diagnostics.map(packageDiagnosticToResourceDiagnostic));
 			this.packageTools = assembly.tools;
+			this.packageHcp = assembly.hcp;
 
 			return {
 				skillPaths: overlay.resources.skillPaths,

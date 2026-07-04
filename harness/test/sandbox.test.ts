@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { HcpRegistry } from "../assembly/hcp/pi/hcp.ts";
-import { getHarnessRegistryPath, loadRegistry } from "../assembly/registry/pi/registry.ts";
+import { HcpClient } from "../hcp/hcp/hcp.ts";
+import { getHarnessRegistryPath, loadRegistry } from "../hcp/registry/registry.ts";
 import { loadSandboxProviderFromPack, selectSandboxProfile } from "../sandbox/magenta/sandbox.ts";
 
 describe("sandbox provider", () => {
@@ -52,9 +52,9 @@ describe("sandbox provider", () => {
 
 	it("registers sandbox and sandbox-select as HCP targets", async () => {
 		const provider = await loadSandboxProviderFromPack(new URL("../sandbox/sandbox.toml", import.meta.url).pathname);
-		const hcp = new HcpRegistry()
-			.register("sandbox", provider.toSandboxHcpTarget())
-			.registerExact("hook://sandbox-select", provider.toSandboxSelectHcpTarget());
+		const hcp = new HcpClient()
+			.register("sandbox", provider.toSandboxHcpServer())
+			.registerExact("hook://sandbox-select", provider.toSandboxSelectHcpServer());
 
 		await expect(hcp.dispatch({ target: "sandbox://readonly-fs", op: "describe" })).resolves.toMatchObject({
 			name: "readonly-fs",

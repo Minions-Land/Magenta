@@ -1,0 +1,7 @@
+kind = "hcp-process"
+name = "hcp-process"
+description = "HCP JSONL process manifests migrated from Magenta1 general-harness."
+source = "magenta"
+origin = "magenta1-general-harness"
+origin_rel = "migrated/adapted"
+manifests = ["hcp/hcp-process/magenta/*.toml"]

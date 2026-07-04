@@ -51,6 +51,8 @@ export {
 	lsSchema,
 } from "./ls/pi/ls.ts";
 export * from "./read/pi/read.ts";
+export * from "./show/pi/show.ts";
+export * from "./ssh/magenta/ssh.ts";
 // Shared utility modules live under utils/pi, not tools/<tool>. Re-export them
 // here for the existing @magenta/harness tool-facing public surface.
 export * from "../utils/pi/edit-diff.ts";

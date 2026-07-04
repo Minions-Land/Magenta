@@ -1,32 +1,20 @@
-import type { HcpCall, HcpTarget, HcpTargetDescription } from "../../assembly/hcp/pi/hcp.ts";
-import { execProcess, type ProcessExecInput, type ProcessExecOutput } from "./process-runtime.ts";
+import type { HcpRequest, HcpServer, HcpServerDescription } from "../../hcp/hcp/hcp.ts";
+import type {
+	RuntimeSpec,
+	ScriptRuntimeDescription,
+	ScriptRuntimeInput,
+	ScriptRuntimeOutput,
+	ScriptRuntimeProviderContract,
+} from "../contract.ts";
+import { execProcess } from "./process-runtime.ts";
 
-export interface ScriptRuntimeInput {
-	code?: string;
-	script?: string;
-	args?: string[];
-	stdin_json?: unknown;
-	cwd?: string;
-	workspace_root?: string;
-	sandbox?: ProcessExecInput["sandbox"];
-	tool?: ProcessExecInput["tool"];
-	allow_direct_exec?: boolean;
-	env_overrides?: Record<string, string>;
-	max_output_bytes?: number;
-	timeout_ms?: number;
-}
-
-export interface RuntimeSpec {
-	name: string;
-	command: string;
-	execFlag: string;
-	description: string;
-}
-
-export interface ScriptRuntimeOutput extends ProcessExecOutput {
-	runtime: string;
-	compiled_to: "runtime://process";
-}
+export type {
+	RuntimeSpec,
+	ScriptRuntimeDescription,
+	ScriptRuntimeInput,
+	ScriptRuntimeOutput,
+	ScriptRuntimeProviderContract,
+} from "../contract.ts";
 
 export const SCRIPT_RUNTIME_SPECS: readonly RuntimeSpec[] = [
 	{
@@ -115,8 +103,8 @@ export async function execScriptRuntime(
 	};
 }
 
-export class ScriptRuntimeProvider {
-	describe(): HcpTargetDescription {
+export class ScriptRuntimeProvider implements ScriptRuntimeProviderContract {
+	describe(): HcpServerDescription {
 		return {
 			target: "runtime://{shell,python,node,r,julia}",
 			kind: "runtime",
@@ -139,7 +127,7 @@ export class ScriptRuntimeProvider {
 		};
 	}
 
-	describeRuntime(name: string): Record<string, unknown> {
+	describeRuntime(name: string): ScriptRuntimeDescription {
 		const spec = runtimeSpec(name);
 		if (!spec) {
 			throw new Error(`unknown runtime target: runtime://${name}`);
@@ -153,10 +141,18 @@ export class ScriptRuntimeProvider {
 		};
 	}
 
-	toHcpTarget(): HcpTarget {
+	execRuntime(name: string, input: ScriptRuntimeInput, signal?: AbortSignal): Promise<ScriptRuntimeOutput> {
+		const spec = runtimeSpec(name);
+		if (!spec) {
+			throw new Error(`unknown runtime target: runtime://${name}`);
+		}
+		return execScriptRuntime(spec, input, signal);
+	}
+
+	toHcpServer(): HcpServer {
 		return {
 			describe: () => this.describe(),
-			call: async (call: HcpCall): Promise<unknown> => {
+			call: async (call: HcpRequest): Promise<unknown> => {
 				const name = runtimeNameFromTarget(call.target);
 				switch (call.op || "exec") {
 					case "discover":
@@ -166,13 +162,8 @@ export class ScriptRuntimeProvider {
 						return this.describeRuntime(name);
 					case "exec":
 					case "call":
-					case "run": {
-						const spec = runtimeSpec(name);
-						if (!spec) {
-							throw new Error(`unknown runtime target: runtime://${name}`);
-						}
-						return execScriptRuntime(spec, normalizeInput(call.input));
-					}
+					case "run":
+						return this.execRuntime(name, normalizeInput(call.input));
 					default:
 						throw new Error(`unsupported script runtime operation ${call.op}`);
 				}

@@ -2,10 +2,10 @@
 	"extends": "../../tsconfig.base.json",
 	"compilerOptions": {
 		"outDir": "./dist",
-		"rootDir": ".",
+		"rootDir": "..",
 		"declaration": true,
 		"declarationMap": true
 	},
-	"include": ["./**/*"],
+	"include": ["./**/*", "../hcp/hcp/hcp.ts"],
 	"exclude": ["dist", "node_modules", "**/*.test.ts"]
 }

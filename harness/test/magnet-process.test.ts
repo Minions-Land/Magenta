@@ -2,11 +2,11 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { HcpRegistry } from "../assembly/hcp/pi/hcp.ts";
-import { createMagnetFromCatalogEntry } from "../assembly/magnet/pi/factory.ts";
-import { registerMagnetHcpTargets } from "../assembly/magnet/pi/hcp-registry.ts";
-import { HcpProcessMagnet } from "../assembly/magnet/pi/hcp-process.ts";
-import { ProcessToolMagnet } from "../assembly/magnet/pi/process.ts";
+import { HcpClient } from "../hcp/hcp/hcp.ts";
+import { createMagnetFromCatalogEntry } from "../hcp/magnet/factory.ts";
+import { registerMagnetHcpServers } from "../hcp/magnet/hcp-registry.ts";
+import { HcpProcessMagnet } from "../hcp/magnet/hcp-process.ts";
+import { ProcessToolMagnet } from "../hcp/magnet/process.ts";
 import { loadHarnessComponentCatalog } from "../catalog/pi/catalog.ts";
 
 async function writeExecutableScript(dir: string, name: string, source: string): Promise<string> {
@@ -72,7 +72,7 @@ process.stdin.on("end", () => {
 				args: ["--version"],
 			},
 		});
-		const target = magnet.toHcpTarget();
+		const target = magnet.toHcpServer();
 
 		expect(target.describe().ops).toContain("disable");
 		expect(await target.call({ target: "tool://ManagedTool", op: "disable" })).toMatchObject({ enabled: false });
@@ -80,7 +80,7 @@ process.stdin.on("end", () => {
 		expect(await target.call({ target: "tool://ManagedTool", op: "enable" })).toMatchObject({ enabled: true });
 	});
 
-	it("registers Magnet management targets into HCP exactly once", async () => {
+	it("registers HcpMagnet management targets into HCP exactly once", async () => {
 		const dir = await mkdtemp(join(tmpdir(), "magenta-process-hcp-registry-"));
 		const first = new ProcessToolMagnet({
 			cwd: dir,
@@ -114,9 +114,9 @@ process.stdin.on("end", () => {
 				args: ["--version"],
 			},
 		});
-		const hcp = new HcpRegistry();
+		const hcp = new HcpClient();
 
-		const result = registerMagnetHcpTargets(hcp, [first, second]);
+		const result = registerMagnetHcpServers(hcp, [first, second]);
 		expect(result.registrations.map((registration) => registration.target).sort()).toEqual([
 			"hcp-process://managed-jsonl",
 			"tool://ManagedOne",
@@ -128,8 +128,8 @@ process.stdin.on("end", () => {
 			"tool://ManagedOne",
 			"hcp-process://managed-jsonl",
 		]);
-		expect(() => registerMagnetHcpTargets(hcp, [duplicate])).toThrow(/Duplicate Magnet HCP target/);
-		expect(registerMagnetHcpTargets(hcp, [duplicate], { duplicates: "skip" }).skipped).toEqual([
+		expect(() => registerMagnetHcpServers(hcp, [duplicate])).toThrow(/Duplicate HcpMagnet HCP target/);
+		expect(registerMagnetHcpServers(hcp, [duplicate], { duplicates: "skip" }).skipped).toEqual([
 			{ magnetKind: "process", reason: "duplicate", target: "tool://ManagedOne" },
 		]);
 	});
@@ -219,7 +219,7 @@ rl.on("line", line => {
 			},
 		});
 
-		await expect(magnet.toHcpTarget().call({ target: "hcp-process://echo-env-jsonl", op: "health" })).resolves.toMatchObject({
+		await expect(magnet.toHcpServer().call({ target: "hcp-process://echo-env-jsonl", op: "health" })).resolves.toMatchObject({
 			runtime: "runtime://process",
 			envAllowlist: ["PATH", "MAGENTA_HCP_ALLOWED"],
 			maxWallSeconds: 30,
@@ -251,7 +251,7 @@ rl.on("line", line => {
 		expect(hcpProcess).toBeDefined();
 
 		const processMagnet = await createMagnetFromCatalogEntry(catalog, astGrep!, { cwd: process.cwd() });
-		const processTarget = processMagnet.toHcpTarget?.();
+		const processTarget = processMagnet.toHcpServer?.();
 		expect(processTarget).toBeDefined();
 		const processDescription = processTarget?.describe();
 		expect(processDescription).toMatchObject({
@@ -268,7 +268,7 @@ rl.on("line", line => {
 		});
 
 		const hcpMagnet = await createMagnetFromCatalogEntry(catalog, hcpProcess!, { cwd: process.cwd() });
-		const hcpTarget = hcpMagnet.toHcpTarget?.();
+		const hcpTarget = hcpMagnet.toHcpServer?.();
 		expect(hcpTarget).toBeDefined();
 		expect(hcpTarget?.describe()).toMatchObject({
 			target: "hcp-process://echo-jsonl",

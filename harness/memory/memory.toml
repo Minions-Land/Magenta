@@ -1,4 +1,4 @@
 kind = "memory"
 name = "memory"
-description = "Embedding-based semantic memory storage and retrieval"
-source = "pi"
+description = "Session-grounding memory: retains and recalls local facts across sessions"
+source = "magenta"

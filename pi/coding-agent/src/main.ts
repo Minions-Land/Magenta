@@ -7,6 +7,7 @@
 
 import { createInterface } from "node:readline";
 import { type ImageContent, modelsAreEqual } from "@earendil-works/pi-ai";
+import { resolveSshTarget, type SshTarget } from "@magenta/harness";
 import chalk from "chalk";
 import { type Args, type Mode, parseArgs, printHelp } from "./cli/args.ts";
 import { processFileArguments } from "./cli/file-processor.ts";
@@ -725,6 +726,18 @@ export async function main(args: string[], options?: MainOptions) {
 			}
 		}
 
+		let sshTarget: SshTarget | undefined;
+		if (parsed.ssh) {
+			try {
+				sshTarget = await resolveSshTarget(parsed.ssh);
+			} catch (error) {
+				diagnostics.push({
+					type: "error",
+					message: `Failed to initialize --ssh ${parsed.ssh}: ${error instanceof Error ? error.message : String(error)}`,
+				});
+			}
+		}
+
 		const created = await createAgentSessionFromServices({
 			services,
 			sessionManager,
@@ -736,6 +749,7 @@ export async function main(args: string[], options?: MainOptions) {
 			excludeTools: sessionOptions.excludeTools,
 			noTools: sessionOptions.noTools,
 			customTools: sessionOptions.customTools,
+			sshTarget,
 		});
 		const cliThinkingOverride = parsed.thinking !== undefined || cliThinkingFromModel;
 		if (created.session.model && cliThinkingOverride) {

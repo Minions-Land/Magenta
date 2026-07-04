@@ -1,6 +1,11 @@
 node_modules/
 dist/
 *.log
+# Stray compiled artifacts emitted outside dist/ (source dirs must stay .ts-only)
+harness/**/*.js
+harness/**/*.js.map
+harness/**/*.d.ts
+harness/**/*.d.ts.map
 .DS_Store
 *.tsbuildinfo
 __pycache__/
@@ -41,6 +46,11 @@ test-external-auth.mjs
 *~
 
 # Package specific
+# Pixi materialized environments (multi-GB conda envs — never commit)
+.pixi/
+packages/**/.pixi/
+# Omics run outputs (generated analysis artifacts, not fixtures)
+runs/
 .npm/
 coverage/
 .nyc_output/

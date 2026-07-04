@@ -1,11 +1,11 @@
-# Bundled Extensions Moved
+# Bundled Extensions Retired
 
-Bundled extension implementations are harness-owned assets now.
+Pi no longer loads built-in extensions from this directory.
 
-Use:
+Current ownership:
 
-```text
-harness/extensions/pi/bundled
-```
+- user and project extensions are still loaded through `src/core/extensions`
+- former built-in UX features now live in Pi core/TUI
+- SSH remote workspace support now uses `@magenta/harness` from `harness/tools/ssh`
 
-The coding-agent runtime loads built-in extensions through `getBundledExtensionsDir()` exported by `@magenta/harness`. Keep concrete bundled implementations in harness; keep only coding-agent extension APIs and loaders under `src/core/extensions`.
+Keep only extension API and loader code under `src/core/extensions`.

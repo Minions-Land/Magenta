@@ -24,6 +24,7 @@ import type {
 	ThinkingLevel,
 } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, ImageContent, Message, Model, TextContent } from "@earendil-works/pi-ai/compat";
+import { createSshToolOperations, type SshTarget, type SshToolOperations } from "@magenta/harness";
 import {
 	clampThinkingLevel,
 	cleanupSessionResources,
@@ -172,6 +173,8 @@ export interface AgentSessionConfig {
 	resourceLoader: ResourceLoader;
 	/** SDK custom tools registered outside extensions */
 	customTools?: ToolDefinition[];
+	/** Optional SSH remote workspace target for built-in read/write/edit/bash tools. */
+	sshTarget?: SshTarget;
 	/** Model registry for API key resolution and model discovery */
 	modelRegistry: ModelRegistry;
 	/** Initial active built-in tool names. Default: [read, bash, edit, write] */
@@ -328,6 +331,8 @@ export class AgentSession {
 	private _subAgents: SubAgentController;
 	private _toolProgressTracker: ToolProgressTracker;
 	private _sideChat: SideChatManager;
+	private _sshTarget?: SshTarget;
+	private _sshOperations?: SshToolOperations;
 
 	// Model registry for API key resolution
 	private _modelRegistry: ModelRegistry;
@@ -350,6 +355,8 @@ export class AgentSession {
 		this._resourceLoader = config.resourceLoader;
 		this._customTools = config.customTools ?? [];
 		this._cwd = config.cwd;
+		this._sshTarget = config.sshTarget;
+		this._sshOperations = this._sshTarget ? createSshToolOperations(this._sshTarget, this._cwd) : undefined;
 		this._modelRegistry = config.modelRegistry;
 		this._extensionRunnerRef = config.extensionRunnerRef;
 		this._initialActiveToolNames = config.initialActiveToolNames;
@@ -897,6 +904,10 @@ export class AgentSession {
 		return this._scopedModels;
 	}
 
+	get sshTarget(): SshTarget | undefined {
+		return this._sshTarget;
+	}
+
 	/** Update scoped models for cycling */
 	setScopedModels(scopedModels: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel }>): void {
 		this._scopedModels = scopedModels;
@@ -955,7 +966,9 @@ export class AgentSession {
 		const loadedContextFiles = this._resourceLoader.getAgentsFiles().agentsFiles;
 
 		this._baseSystemPromptOptions = {
-			cwd: this._cwd,
+			cwd: this._sshTarget
+				? `${this._sshTarget.remoteCwd} (via SSH: ${this._sshTarget.remote})`
+				: this._cwd,
 			skills: loadedSkills,
 			contextFiles: loadedContextFiles,
 			customPrompt: loaderSystemPrompt,
@@ -2498,8 +2511,10 @@ export class AgentSession {
 					]),
 				)
 			: (createAllToolDefinitions(this._cwd, {
-					read: { autoResizeImages },
-					bash: { commandPrefix: shellCommandPrefix, shellPath },
+					read: { autoResizeImages, operations: this._sshOperations?.read },
+					bash: { commandPrefix: shellCommandPrefix, shellPath, operations: this._sshOperations?.bash },
+					write: { operations: this._sshOperations?.write },
+					edit: { operations: this._sshOperations?.edit },
 				}) as Record<string, ToolDefinition>);
 		if (!this._baseToolsOverride) {
 			baseToolDefinitions.bg_shell = this._backgroundShell.createToolDefinition() as ToolDefinition;
@@ -2546,6 +2561,8 @@ export class AgentSession {
 		await this.settingsManager.reload();
 		this.syncQueueModesFromSettings();
 		resetApiProviders();
+		// Refresh model registry to reload models.json and provider configurations
+		this._modelRegistry.refresh();
 		await this._resourceLoader.reload();
 		this._buildRuntime({
 			activeToolNames: this.getActiveToolNames(),
@@ -2702,7 +2719,7 @@ export class AgentSession {
 			const result = await executeBashWithOperations(
 				resolvedCommand,
 				this.sessionManager.getCwd(),
-				options?.operations ?? createLocalBashOperations({ shellPath }),
+				options?.operations ?? this._sshOperations?.bash ?? createLocalBashOperations({ shellPath }),
 				{
 					onChunk,
 					signal: this._bashAbortController.signal,

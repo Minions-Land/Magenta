@@ -2,7 +2,7 @@ import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { HcpRegistry } from "../assembly/hcp/pi/hcp.ts";
+import { HcpClient } from "../hcp/hcp/hcp.ts";
 import { SessionGroundingMemoryProvider } from "../memory/magenta/session-grounding.ts";
 
 describe("session grounding memory provider", () => {
@@ -14,7 +14,7 @@ describe("session grounding memory provider", () => {
 			storePath,
 			now: () => 42,
 		});
-		const hcp = new HcpRegistry().register("memory", provider.toHcpTarget());
+		const hcp = new HcpClient().register("memory", provider.toHcpServer());
 
 		await expect(hcp.dispatch({ target: "memory://session-grounding", op: "read" })).resolves.toMatchObject({
 			name: "session-grounding",

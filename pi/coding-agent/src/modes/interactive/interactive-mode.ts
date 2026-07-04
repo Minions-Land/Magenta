@@ -136,8 +136,15 @@ import {
 	COMMAND_DOCK_OVERLAY,
 	FloatingMenuBody,
 	type FloatingMenuItem,
+	type FloatingOverlayBody,
 	FloatingOverlayContainer,
 } from "./components/floating-menu.ts";
+import {
+	buildOverlayOptions,
+	type CentralOverlayConfig,
+	createCentralOverlayAdapter,
+	initializeFocus,
+} from "./components/central-overlay.ts";
 import { FooterComponent } from "./components/footer.ts";
 import { formatKeyText, keyDisplayText, keyHint, keyText, rawKeyHint } from "./components/keybinding-hints.ts";
 import { LoginDialogComponent } from "./components/login-dialog.ts";
@@ -1708,6 +1715,11 @@ export class InteractiveMode {
 
 		setRegisteredThemes(this.session.resourceLoader.getThemes().themes);
 		this.setupAutocompleteProvider();
+		const sshTarget = this.session.sshTarget;
+		this.setExtensionStatus(
+			"ssh",
+			sshTarget ? theme.fg("accent", `SSH: ${sshTarget.remote}:${sshTarget.remoteCwd}`) : undefined,
+		);
 
 		const extensionRunner = this.session.extensionRunner;
 		this.setupExtensionShortcuts(extensionRunner);
@@ -1791,6 +1803,11 @@ export class InteractiveMode {
 		if (this.streamingAnimationTimer) {
 			clearInterval(this.streamingAnimationTimer);
 			this.streamingAnimationTimer = undefined;
+		}
+		// Ensure all content is displayed before stopping
+		if (this.streamingComponent) {
+			this.streamingComponent.finishAnimation();
+			this.ui.requestRender();
 		}
 	}
 
@@ -4208,20 +4225,47 @@ export class InteractiveMode {
 	// =========================================================================
 
 	/**
-	 * Shows a selector component in place of the editor.
+	 * 统一的中央浮动窗口入口 - 唯一的显示函数
+	 * 通过配置和模板系统适配不同类型的内容
 	 * @param create Factory that receives a `done` callback and returns the component and focus target
+	 * @param config 中央浮动窗口配置
 	 */
-	private showSelector(create: (done: () => void) => { component: Component; focus: Component }): void {
+	private showCentralOverlay(
+		create: (done: () => void) => { component: Component; focus: Component },
+		config?: CentralOverlayConfig,
+	): void {
+		let handle: OverlayHandle | undefined;
 		const done = () => {
-			this.editorContainer.clear();
-			this.editorContainer.addChild(this.editor);
+			handle?.hide();
 			this.ui.setFocus(this.editor);
 		};
 		const { component, focus } = create(done);
-		this.editorContainer.clear();
-		this.editorContainer.addChild(component);
-		this.ui.setFocus(focus);
+
+		// 初始化焦点状态
+		initializeFocus(focus);
+
+		// 创建适配器，将组件包装为 FloatingOverlayBody
+		const body = createCentralOverlayAdapter(component, focus, config ?? {});
+
+		// 构建 overlay 配置
+		const overlayOptions = buildOverlayOptions(config ?? {});
+
+		// 创建并显示浮动窗口
+		const overlay = new FloatingOverlayContainer(body, done);
+		handle = this.ui.showOverlay(overlay, overlayOptions);
+		handle.focus();
 		this.ui.requestRender();
+	}
+
+	/**
+	 * 显示选择器（保持向后兼容，内部调用 showCentralOverlay）
+	 * @deprecated 使用 showCentralOverlay 替代
+	 */
+	private showSelector(create: (done: () => void) => { component: Component; focus: Component }): void {
+		this.showCentralOverlay(create, {
+			type: "selector",
+			size: "large",
+		});
 	}
 
 	private async loadHarnessRegistryView(): Promise<HarnessRegistryView> {
@@ -4471,6 +4515,7 @@ export class InteractiveMode {
 		const nextSelectors = this.getHarnessPackageSelectors();
 		const nextOverlay = loader.getPackageOverlay();
 		const packageTools = loader.getPackageTools();
+		const bundleDiagnostics = packageTools.diagnostics.filter((diagnostic) => /\bbundle\b/i.test(diagnostic.message));
 		this.showSystemMessage(
 			[
 				"Harness package selection changed.",
@@ -4480,7 +4525,10 @@ export class InteractiveMode {
 				this.formatHarnessPackageSelection(nextSelectors, nextOverlay),
 				`Package tools: ${packageTools.tools.length ? packageTools.tools.map((tool) => tool.name).join(", ") : "none"}`,
 				`Diagnostics: ${packageTools.diagnostics.length}`,
-				"Reload completed; package tools were assembled through Magnet. No extra compile step was run.",
+				...(bundleDiagnostics.length
+					? ["Bundle effects:", ...bundleDiagnostics.map((diagnostic) => `- ${diagnostic.message}`)]
+					: []),
+				"Reload completed; package tools were assembled through HcpMagnet. No extra compile step was run.",
 			].join("\n"),
 		);
 	}
@@ -6576,6 +6624,7 @@ export class InteractiveMode {
 
 		this.resetExtensionUI();
 
+		// Create loading overlay
 		const reloadBox = new Container();
 		const borderColor = (s: string) => theme.fg("border", s);
 		reloadBox.addChild(new DynamicBorder(borderColor));
@@ -6584,17 +6633,45 @@ export class InteractiveMode {
 		reloadBox.addChild(new Spacer(1));
 		reloadBox.addChild(new DynamicBorder(borderColor));
 
-		const previousEditor = this.editor;
-		this.editorContainer.clear();
-		this.editorContainer.addChild(reloadBox);
-		this.ui.setFocus(reloadBox);
+		const body: FloatingOverlayBody = {
+			closeOnQ: false,
+			handleInput: () => undefined,
+			render: (width: number) => {
+				const rendered = reloadBox.render(width);
+				return {
+					title: "",
+					body: rendered,
+				};
+			},
+		};
+		const uiWithOverlay = this.ui as typeof this.ui & {
+			showOverlay?: (component: Component, options?: OverlayOptions) => OverlayHandle;
+		};
+		const handle =
+			typeof uiWithOverlay.showOverlay === "function"
+				? uiWithOverlay.showOverlay(new FloatingOverlayContainer(body, () => {}), {
+						anchor: "center",
+						width: "50%",
+						minWidth: 40,
+						margin: 1,
+					})
+				: undefined;
+		if (!handle) {
+			this.editorContainer.clear();
+			this.editorContainer.addChild(reloadBox);
+			this.ui.setFocus(reloadBox);
+		}
 		this.ui.requestRender(true);
 		await new Promise((resolve) => process.nextTick(resolve));
 
-		const dismissReloadBox = (editor: Component) => {
-			this.editorContainer.clear();
-			this.editorContainer.addChild(editor);
-			this.ui.setFocus(editor);
+		const dismissReloadBox = () => {
+			if (handle) {
+				handle.hide();
+			} else {
+				this.editorContainer.clear();
+				this.editorContainer.addChild(this.editor);
+			}
+			this.ui.setFocus(this.editor);
 			this.ui.requestRender();
 		};
 
@@ -6645,12 +6722,12 @@ export class InteractiveMode {
 			this.showStatus(
 				savedImplicitProjectTrust ? "Reloaded Magenta runtime; saved project trust" : "Reloaded Magenta runtime",
 			);
-			dismissReloadBox(this.editor as Component);
+			dismissReloadBox();
 			reloadBoxDismissed = true;
 			return true;
 		} catch (error) {
 			if (!reloadBoxDismissed) {
-				dismissReloadBox(previousEditor as Component);
+				dismissReloadBox();
 			}
 			this.showError(`Reload failed: ${error instanceof Error ? error.message : String(error)}`);
 			return false;

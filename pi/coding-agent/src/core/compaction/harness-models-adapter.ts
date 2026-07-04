@@ -2,7 +2,7 @@
  * Adapter that bridges pi's free-function completion transport to the harness
  * `Models` provider abstraction used by harness compaction / branch-summarization.
  *
- * Architecture (mirrors harness-skills-adapter.ts and the HCP/Magnet split): the
+ * Architecture (mirrors harness-skills-adapter.ts and the HCP/HcpMagnet split): the
  * harness concrete impl calls only `models.completeSimple(model, context, options)`.
  * pi historically completes via the free `completeSimple` from
  * "@earendil-works/pi-ai/compat" (plus an optional `streamFn` transport), and injects
