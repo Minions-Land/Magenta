@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { HcpClient } from "../hcp/hcp/hcp.ts";
-import { getHarnessRegistryPath, loadRegistry } from "../hcp/registry/registry.ts";
+import { HcpClient } from "../hcp-client/hcp-client.ts";
+import { getHarnessRegistryPath, loadRegistry } from "../hcp-client/registry/registry.ts";
 import { HookProvider } from "../hooks/magenta/hooks.ts";
 
 describe("hook provider", () => {

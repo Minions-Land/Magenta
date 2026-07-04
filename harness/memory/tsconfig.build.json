@@ -6,6 +6,6 @@
 		"declaration": true,
 		"declarationMap": true
 	},
-	"include": ["./**/*", "../hcp/hcp/hcp.ts"],
+	"include": ["./**/*", "../hcp-contract/hcp-server.ts", "../hcp-contract/hcp-magnet.ts"],
 	"exclude": ["dist", "node_modules", "**/*.test.ts"]
 }

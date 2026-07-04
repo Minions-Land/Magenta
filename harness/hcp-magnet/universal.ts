@@ -1,6 +1,6 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import type { HcpRequest, HcpServer, HcpServerDescription } from "../hcp/hcp.ts";
-import type { CapabilityBinding, HcpMagnet, HcpResource, ResourceMergeMode } from "./magnet.ts";
+import type { HcpRequest, HcpServer, HcpServerDescription } from "../hcp-contract/hcp-server.ts";
+import type { CapabilityBinding, HcpMagnet, HcpResource, ResourceMergeMode } from "../hcp-contract/hcp-magnet.ts";
 
 export interface UniversalMagnetState {
 	enabled: boolean;

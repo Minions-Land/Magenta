@@ -2,8 +2,8 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { HcpClient } from "../hcp/hcp/hcp.ts";
-import { getHarnessRegistryPath, loadRegistry } from "../hcp/registry/registry.ts";
+import { HcpClient } from "../hcp-client/hcp-client.ts";
+import { getHarnessRegistryPath, loadRegistry } from "../hcp-client/registry/registry.ts";
 import { ScriptRuntimeProvider } from "../runtime/magenta/script-runtime.ts";
 import { loadSandboxProviderFromPack } from "../sandbox/magenta/sandbox.ts";
 

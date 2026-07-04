@@ -2,11 +2,11 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { HcpClient } from "../hcp/hcp/hcp.ts";
-import { createMagnetFromCatalogEntry } from "../hcp/magnet/factory.ts";
-import { registerMagnetHcpServers } from "../hcp/magnet/hcp-registry.ts";
-import { HcpProcessMagnet } from "../hcp/magnet/hcp-process.ts";
-import { ProcessToolMagnet } from "../hcp/magnet/process.ts";
+import { HcpClient } from "../hcp-client/hcp-client.ts";
+import { createMagnetFromCatalogEntry } from "../hcp-client/assembly/factory.ts";
+import { registerMagnetHcpServers } from "../hcp-client/assembly/register-servers.ts";
+import { HcpProcessMagnet } from "../hcp-magnet/hcp-process.ts";
+import { ProcessToolMagnet } from "../hcp-magnet/process.ts";
 import { loadHarnessComponentCatalog } from "../catalog/pi/catalog.ts";
 
 async function writeExecutableScript(dir: string, name: string, source: string): Promise<string> {

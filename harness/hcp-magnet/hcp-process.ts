@@ -1,15 +1,15 @@
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
-import type { HarnessCatalogEntry, HarnessComponentCatalog } from "../../catalog/pi/catalog.ts";
+import type { HarnessCatalogEntry, HarnessComponentCatalog } from "../catalog/pi/catalog.ts";
 import {
 	execProcess,
 	type ProcessExecOutput,
 	type ProcessRuntimeToolMetadata,
-} from "../../runtime/magenta/process-runtime.ts";
-import type { SandboxProfile } from "../../sandbox/contract.ts";
-import type { HcpRequest } from "../hcp/hcp.ts";
-import { parseToml, type TomlTable } from "../registry/registry.ts";
+} from "../runtime/magenta/process-runtime.ts";
+import type { SandboxProfile } from "../sandbox/contract.ts";
+import type { HcpRequest } from "../hcp-contract/hcp-server.ts";
+import { parseToml, type TomlTable } from "../hcp-client/registry/registry.ts";
 import { UniversalMagnet } from "./universal.ts";
 
 export interface HcpProcessManifest {

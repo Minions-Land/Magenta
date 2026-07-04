@@ -3,13 +3,13 @@ import {
 	createHcpProcessMagnetFromCatalogEntry,
 	type HcpProcessMagnet,
 	type HcpProcessMagnetOptions,
-} from "./hcp-process.ts";
-import type { HcpMagnet } from "./magnet.ts";
+} from "../../hcp-magnet/hcp-process.ts";
+import type { HcpMagnet } from "../../hcp-contract/hcp-magnet.ts";
 import {
 	createProcessToolMagnetFromCatalogEntry,
 	type ProcessToolMagnet,
 	type ProcessToolMagnetOptions,
-} from "./process.ts";
+} from "../../hcp-magnet/process.ts";
 
 export interface CatalogMagnetFactoryOptions {
 	cwd: string;

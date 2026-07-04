@@ -1,4 +1,4 @@
-import type { HcpRequest, HcpServer, HcpServerDescription } from "../../hcp/hcp/hcp.ts";
+import type { HcpRequest, HcpServer, HcpServerDescription } from "../../hcp-contract/hcp-server.ts";
 import type { HookDescriptor, HookDiscoverResult, HookProviderContract, HookResult } from "../contract.ts";
 import { decideApproval } from "../../policy/magenta/approval.ts";
 import type { ShellPolicyClassification } from "../../policy/contract.ts";

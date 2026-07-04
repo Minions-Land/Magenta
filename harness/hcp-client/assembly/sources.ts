@@ -7,7 +7,7 @@ import { promptTemplatePiMagnet } from "../../prompt-templates/pi/magnet.ts";
 import { runtimeMagentaMagnet } from "../../runtime/magenta/magnet.ts";
 import { sandboxMagentaMagnet } from "../../sandbox/magenta/magnet.ts";
 import { systemPromptPiMagnet } from "../../system-prompt/pi/magnet.ts";
-import type { CapabilitySourceMagnet } from "./source-magnet.ts";
+import type { CapabilitySourceMagnet } from "../../hcp-contract/hcp-magnet.ts";
 
 /**
  * The dumb aggregation barrel of capability source magnets (spec §8).

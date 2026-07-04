@@ -2,8 +2,8 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { HcpClient } from "../hcp/hcp/hcp.ts";
-import { getHarnessRegistryPath, loadRegistry } from "../hcp/registry/registry.ts";
+import { HcpClient } from "../hcp-client/hcp-client.ts";
+import { getHarnessRegistryPath, loadRegistry } from "../hcp-client/registry/registry.ts";
 import { ContextProvider, discoverContextFiles } from "../context/magenta/context.ts";
 
 describe("context provider", () => {

@@ -1,4 +1,4 @@
-import type { HcpRequest, HcpServer, HcpServerDescription } from "../../hcp/hcp/hcp.ts";
+import type { HcpRequest, HcpServer, HcpServerDescription } from "../../hcp-contract/hcp-server.ts";
 import type {
 	RuntimeSpec,
 	ScriptRuntimeDescription,

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { filterHarnessCatalogEntries, summarizeHarnessCatalogEntries } from "../catalog/pi/catalog.ts";
-import { getHarnessRegistryPath, listHarnessSelectionItems, loadRegistry } from "../hcp/registry/registry.ts";
+import { getHarnessRegistryPath, listHarnessSelectionItems, loadRegistry } from "../hcp-client/registry/registry.ts";
 
 describe("harness registry", () => {
 	it("locates and loads the package registry", async () => {
@@ -104,7 +104,7 @@ describe("harness registry", () => {
 			availableProcessTools.find((item) => item.id === "general-harness:hcp-process:echo-jsonl")?.component,
 		).toMatchObject({
 			kind: "hcp-process",
-			path: "hcp/hcp-process/magenta/echo-jsonl.toml",
+			path: "hcp-client/hcp-process/magenta/echo-jsonl.toml",
 		});
 		expect(
 			availableProcessTools.find((item) => item.id === "general-harness:hcp-process:echo-jsonl")?.readiness,

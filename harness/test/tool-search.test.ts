@@ -7,8 +7,8 @@ import {
 	fauxToolCall,
 } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
-import type { HcpMagnet } from "../hcp/magnet/magnet.ts";
-import { createReadMagnet } from "../hcp/magnet/native.ts";
+import type { HcpMagnet } from "../hcp-contract/hcp-magnet.ts";
+import { createReadMagnet } from "../hcp-magnet/native.ts";
 import { NodeExecutionEnv } from "../env/pi/nodejs.ts";
 import { AgentHarness } from "../loop/pi/agent-harness.ts";
 import { InMemorySessionStorage } from "../session/pi/memory-storage.ts";

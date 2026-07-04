@@ -2,18 +2,18 @@ import { existsSync } from "node:fs";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import { HcpClient } from "../hcp/hcp.ts";
+import { HcpClient } from "../hcp-client.ts";
 import {
 	type CapabilityMagnetDiagnosticCode,
 	capabilityBindingKey,
 	createCapabilityMagnet,
-} from "../magnet/capability.ts";
-import { registerMagnetHcpServers } from "../magnet/hcp-registry.ts";
-import type { CapabilityBinding, HcpMagnet } from "../magnet/magnet.ts";
+} from "../assembly/capability.ts";
+import { registerMagnetHcpServers } from "../assembly/register-servers.ts";
+import type { CapabilityBinding, HcpMagnet } from "../../hcp-contract/hcp-magnet.ts";
 import {
 	createPackageToolMagnet as createPackageToolMagnetFromDescriptor,
 	type PackageToolMagnetDiagnosticCode,
-} from "../magnet/package-tool.ts";
+} from "../../hcp-magnet/package-tool.ts";
 import { parseToml, type TomlTable, type TomlValue } from "../registry/registry.ts";
 
 export const PACKAGE_MANIFEST_FILE = "package.toml";

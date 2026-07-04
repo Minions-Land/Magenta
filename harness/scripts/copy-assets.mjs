@@ -6,8 +6,9 @@ const harnessRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const distRoot = join(harnessRoot, "dist");
 
 const selectedTrees = [
-	"hcp/hcp-process",
-	"hcp/package-overlay",
+	"hcp-client",
+	"hcp-magnet",
+	"hcp-contract",
 	"catalog",
 	"compaction",
 	"context",

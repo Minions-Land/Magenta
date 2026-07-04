@@ -10,8 +10,8 @@ import type {
 } from "@earendil-works/pi-agent-core";
 import { runAgentLoop } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, ImageContent, Model, Models, UserMessage } from "@earendil-works/pi-ai";
-import { buildDefaultCapabilityHcp } from "../../hcp/magnet/capability.ts";
-import type { HcpClient } from "../../hcp/hcp/hcp.ts";
+import { buildDefaultCapabilityHcp } from "../../hcp-client/assembly/capability.ts";
+import type { HcpClient } from "../../hcp-client/hcp-client.ts";
 import { convertToLlm } from "../../messages/messages.ts";
 import { formatPromptTemplateInvocation } from "../../prompt-templates/pi/prompt-templates.ts";
 import { formatSkillInvocation } from "../../skills/pi/skills.ts";

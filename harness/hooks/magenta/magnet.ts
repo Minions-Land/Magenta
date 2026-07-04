@@ -1,4 +1,4 @@
-import type { CapabilitySourceMagnet } from "../../hcp/magnet/source-magnet.ts";
+import type { CapabilitySourceMagnet } from "../../hcp-contract/hcp-magnet.ts";
 import { HookProvider } from "./hooks.ts";
 
 /** The magenta source's binding for the `hook` capability (spec §8). */

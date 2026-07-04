@@ -1,18 +1,22 @@
 // Re-export all harness capabilities
 
-// HCP / HcpMagnet / Registry: the management + assembly layer (not the loop hot path).
-export * from "./hcp/hcp/hcp.ts";
-export * from "./hcp/magnet/factory.ts";
-export * from "./hcp/magnet/hcp-registry.ts";
-export * from "./hcp/magnet/hcp-process.ts";
-export * from "./hcp/magnet/magnet.ts";
-export * from "./hcp/magnet/native.ts";
-export * from "./hcp/magnet/package-tool.ts";
-export * from "./hcp/magnet/process.ts";
-export * from "./hcp/magnet/python.ts";
-export * from "./hcp/magnet/schema.ts";
-export * from "./hcp/magnet/universal.ts";
-export * from "./hcp/registry/registry.ts";
+// HCP layer (management + assembly, not the loop hot path):
+//   hcp-contract/  — the three-role contracts (HcpServer, HcpMagnet, ...)
+//   hcp-client/    — HcpClient router + assembly (sources/capability/factory), registry, overlay
+//   hcp-magnet/    — the HcpMagnet transport framework (native/process/python/...)
+export * from "./hcp-contract/hcp-server.ts";
+export * from "./hcp-contract/hcp-magnet.ts";
+export * from "./hcp-client/hcp-client.ts";
+export * from "./hcp-client/assembly/factory.ts";
+export * from "./hcp-client/assembly/register-servers.ts";
+export * from "./hcp-magnet/hcp-process.ts";
+export * from "./hcp-magnet/native.ts";
+export * from "./hcp-magnet/package-tool.ts";
+export * from "./hcp-magnet/process.ts";
+export * from "./hcp-magnet/python.ts";
+export * from "./hcp-magnet/schema.ts";
+export * from "./hcp-magnet/universal.ts";
+export * from "./hcp-client/registry/registry.ts";
 export * from "./catalog/pi/catalog.ts";
 export * from "./compaction/contract.ts";
 export * from "./compaction/pi/branch-summarization.ts";
@@ -34,7 +38,7 @@ export * from "./policy/contract.ts";
 export * from "./policy/magenta/policy.ts";
 export * from "./policy/magenta/approval.ts";
 export * from "./policy/magenta/shell-policy.ts";
-export * from "./hcp/package-overlay/package-overlay.ts";
+export * from "./hcp-client/overlay/package-overlay.ts";
 export * from "./prompt-templates/contract.ts";
 export * from "./prompt-templates/pi/prompt-templates.ts";
 export * from "./runtime/contract.ts";

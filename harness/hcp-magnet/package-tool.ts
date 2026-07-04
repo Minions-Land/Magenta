@@ -2,11 +2,11 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { execScriptRuntime, type RuntimeSpec, SCRIPT_RUNTIME_SPECS } from "../../runtime/magenta/script-runtime.ts";
-import type { SandboxProfile, SandboxSelection } from "../../sandbox/contract.ts";
-import { loadSandboxProviderFromPack, selectSandboxProfile } from "../../sandbox/magenta/sandbox.ts";
-import { parseToml, type TomlTable } from "../registry/registry.ts";
-import type { HcpMagnet } from "./magnet.ts";
+import { execScriptRuntime, type RuntimeSpec, SCRIPT_RUNTIME_SPECS } from "../runtime/magenta/script-runtime.ts";
+import type { SandboxProfile, SandboxSelection } from "../sandbox/contract.ts";
+import { loadSandboxProviderFromPack, selectSandboxProfile } from "../sandbox/magenta/sandbox.ts";
+import { parseToml, type TomlTable } from "../hcp-client/registry/registry.ts";
+import type { HcpMagnet } from "../hcp-contract/hcp-magnet.ts";
 import { ProcessToolMagnet } from "./process.ts";
 import { type PythonLauncherResolver, PythonModuleToolMagnet } from "./python.ts";
 import { parametersFromToml } from "./schema.ts";
@@ -373,6 +373,7 @@ function resolveSandboxPackPath(repoRoot: string): string {
 	const here = dirname(fileURLToPath(import.meta.url));
 	const candidates = [
 		resolve(repoRoot, "harness", "sandbox", "sandbox.toml"),
+		resolve(here, "../sandbox/sandbox.toml"),
 		resolve(here, "../../sandbox/sandbox.toml"),
 		resolve(here, "../../../sandbox/sandbox.toml"),
 		resolve(here, "../../../../sandbox/sandbox.toml"),

@@ -8,7 +8,9 @@ const notes = [];
 
 const allowedTopLevel = new Set([
 	"README.md",
-	"hcp",
+	"hcp-client",
+	"hcp-contract",
+	"hcp-magnet",
 	"catalog",
 	"compaction",
 	"context",
@@ -53,7 +55,9 @@ const foldedToolModuleNames = new Set([
 	"read-url",
 ]);
 const sourceModuleDirs = [
-	"hcp",
+	"hcp-client",
+	"hcp-contract",
+	"hcp-magnet",
 	"catalog",
 	"compaction",
 	"context",

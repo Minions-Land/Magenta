@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { HcpClient } from "../hcp/hcp/hcp.ts";
-import { CapabilityMagnet } from "../hcp/magnet/universal.ts";
+import { HcpClient } from "../hcp-client/hcp-client.ts";
+import { CapabilityMagnet } from "../hcp-magnet/universal.ts";
 import {
 	capabilityBindingKey,
 	createCapabilityMagnet,
 	type CapabilityBuilderTable,
 	buildDefaultCapabilityHcp,
-} from "../hcp/magnet/capability.ts";
+} from "../hcp-client/assembly/capability.ts";
 
 const CONTEXT = { repoRoot: "/repo", packagesRoot: "/repo/packages" };
 

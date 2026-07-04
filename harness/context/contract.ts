@@ -1,4 +1,4 @@
-import type { HcpServer } from "../hcp/hcp/hcp.ts";
+import type { HcpServer } from "../hcp-contract/hcp-server.ts";
 import type { ContextFile } from "./magenta/context.ts";
 
 /**

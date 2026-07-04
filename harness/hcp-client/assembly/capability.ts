@@ -1,26 +1,15 @@
-import { capabilityPrefix, HcpClient } from "../hcp/hcp.ts";
-import { registerMagnetHcpServers } from "./hcp-registry.ts";
-import type { HcpMagnet } from "./magnet.ts";
+import { capabilityPrefix } from "../../hcp-contract/hcp-server.ts";
+import { HcpClient } from "../hcp-client.ts";
+import { registerMagnetHcpServers } from "./register-servers.ts";
+import type { HcpMagnet } from "../../hcp-contract/hcp-magnet.ts";
 import { CAPABILITY_SOURCE_MAGNETS } from "./sources.ts";
-import { CapabilityMagnet } from "./universal.ts";
+import { CapabilityMagnet } from "../../hcp-magnet/universal.ts";
+import type { CapabilityFactoryContext } from "../../hcp-contract/hcp-server.ts";
 
-/**
- * Context passed to a capability factory at assembly time. Mirrors the
- * tool-magnet context so a capability implementation can locate its own module
- * tree, sibling components, and the repo root if it needs them.
- */
-export interface CapabilityFactoryContext {
-	repoRoot: string;
-	packagesRoot: string;
-	/** Component kind being built (e.g. "runtime"). */
-	kind: string;
-	/** Component name being built (e.g. "process"). */
-	name: string;
-	/** Absolute path to the module's TOML descriptor (e.g. compaction/compaction.toml). */
-	descriptorPath?: string;
-	/** The selected source for this component (e.g. "pi", "magenta"). */
-	source: string;
-}
+// CapabilityFactoryContext is defined in hcp-contract/hcp-server.ts (the shared
+// contract, because CapabilitySourceMagnet.build depends on it). Re-exported
+// here so existing `assembly/capability.ts` consumers keep working.
+export type { CapabilityFactoryContext };
 
 /**
  * Builds the source-selected, in-process implementation object for a capability.

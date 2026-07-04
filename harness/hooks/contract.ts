@@ -1,4 +1,4 @@
-import type { HcpServer } from "../hcp/hcp/hcp.ts";
+import type { HcpServer } from "../hcp-contract/hcp-server.ts";
 
 export interface HookDescriptor {
 	name: string;

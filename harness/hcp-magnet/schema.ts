@@ -1,5 +1,5 @@
 import { type TSchema, Type } from "typebox";
-import type { TomlTable, TomlValue } from "../registry/registry.ts";
+import type { TomlTable, TomlValue } from "../hcp-client/registry/registry.ts";
 
 export type JsonSchema = TSchema & Record<string, unknown>;
 

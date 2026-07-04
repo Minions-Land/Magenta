@@ -1,4 +1,4 @@
-import type { HcpServer } from "../hcp/hcp/hcp.ts";
+import type { HcpServer } from "../hcp-contract/hcp-server.ts";
 
 export const APPROVAL_POLICY_TARGET = "approval://policy";
 export const SHELL_POLICY_TARGET = "shell://policy";
