@@ -9,15 +9,11 @@ import {
 import { describe, expect, it } from "vitest";
 import type { HcpMagnet } from "../assembly/magnet/magnet.ts";
 import { createReadMagnet } from "../assembly/magnet/native.ts";
-import {
-	buildToolSearchManifest,
-	createToolSearchTool,
-	type ToolSearchEntry,
-} from "../assembly/tool-search/tool-search.ts";
 import { NodeExecutionEnv } from "../env/pi/nodejs.ts";
 import { AgentHarness } from "../loop/pi/agent-harness.ts";
 import { InMemorySessionStorage } from "../session/pi/memory-storage.ts";
 import { Session } from "../session/pi/session.ts";
+import { buildToolSearchManifest, createToolSearchTool, type ToolSearchEntry } from "../tools-search/tool-search.ts";
 
 /**
  * Tool Search (spec §6) — MCP-style deferral of tool schemas. These tests pin

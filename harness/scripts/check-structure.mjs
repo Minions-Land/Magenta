@@ -31,6 +31,7 @@ const allowedTopLevel = new Set([
 	"system-prompt",
 	"test",
 	"tools",
+	"tools-search",
 	"tsconfig.build.json",
 	"tsconfig.json",
 	"types",
@@ -70,6 +71,7 @@ const sourceModuleDirs = [
 	"system-prompt",
 	"test",
 	"tools",
+	"tools-search",
 	"types",
 	"utils",
 ];

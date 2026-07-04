@@ -114,8 +114,11 @@ capabilities are safe by omission; all 9 built-ins are stateful and stay frozen.
 Distinct from `bundledWith`/`bundles` (the selection-graph EDGES in the package
 overlay), per §9. +4 tests.
 
-**§6 Tool Search:** new self-contained assembly module
-`assembly/tool-search/tool-search.ts`:
+**§6 Tool Search:** self-contained module, now at TOP-LEVEL
+`harness/tools-search/tool-search.ts` (moved out of `assembly/` per the decision
+that Tool Search is a Harness capability in its own right — an aggregator above
+the per-tool magnets — not assembly-time wiring). Registered in the structure
+check (`allowedTopLevel` + `sourceModuleDirs`) with a README.
 - `buildToolSearchManifest(magnets)` — extracts name+description from tool
   magnets' CHEAP `describe()` (never realizes a schema), skipping non-tool
   magnets.
@@ -141,10 +144,21 @@ the real `AgentHarness` + faux provider: turn 1 the model sees only
 `[calculate, tool_search]`. +12 tests (incl. the e2e loop test). 255 tests,
 structure, pi build all green.
 
-**Open (deferred, not blocking):** wiring Tool Search into the actual coding-
-agent assembly (choosing the always-active core set + seeding the deferred
-manifest) is a product/config decision left to the assembly entry point; the
-mechanism is complete and tested.
+**Open (deferred, not blocking):**
+- Wiring Tool Search into the actual coding-agent assembly (choosing the
+  always-active core set + seeding the deferred manifest) is a product/config
+  decision left to the assembly entry point; the mechanism is complete/tested.
+- **Harness Search / pluggable search strategy.** Research of Claude's tool
+  search (platform docs, fetched via proxy) confirmed search strategy is NOT
+  singular: Claude ships `regex` + `bm25` server-side variants plus a
+  client-side custom hook (embeddings/semantic). MCP is the *transport*; the
+  ranker is a *separate substitutable concern*. Our keyword ranker is the
+  built-in default; a future `ToolSearchStrategy` seam lets BM25/regex/embedding
+  plug in without touching the deferral mechanism or meta-tool contract. This
+  generalizes to "Harness Search": the enumerate-now/materialize-on-demand
+  pattern MCP applies to tools, HCP faces for every numerous, runtime-discovered
+  implementation (tools yes; capabilities no — §6: few, model-invisible,
+  resolved once at assembly).
 
 ## Log
 - 2026-07-03: Grounding + baseline done. Checkpoint committed
