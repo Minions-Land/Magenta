@@ -2698,6 +2698,7 @@ export class InteractiveMode {
 		this.defaultEditor.onAction("app.session.tree", () => this.showTreeSelector());
 		this.defaultEditor.onAction("app.session.fork", () => this.showUserMessageSelector());
 		this.defaultEditor.onAction("app.session.resume", () => this.showSessionSelector());
+		this.defaultEditor.onAction("app.mcp.manage", () => this.showMcpManager());
 
 		this.defaultEditor.onChange = (text: string) => {
 			const wasBashMode = this.isBashMode;
@@ -4131,6 +4132,7 @@ export class InteractiveMode {
 		const spaceIndex = text.indexOf(" ");
 		const commandName = spaceIndex === -1 ? text.slice(1) : text.slice(1, spaceIndex);
 		if (commandName === "events") return true;
+		if (commandName === "mcp") return true;
 		if (commandName === "side" || commandName === "btw" || commandName === "s") return true;
 		return !!extensionRunner.getCommand(commandName);
 	}
@@ -4808,6 +4810,7 @@ export class InteractiveMode {
 				children: (await this.harnessMenuItems()).children,
 			},
 			{ value: "slash:settings", label: "Settings", aliases: ["settings"], description: "/settings" },
+			{ value: "slash:mcp", label: "MCP Servers", aliases: ["mcp"], description: "/mcp" },
 			{ value: "slash:events", label: "Events", aliases: ["events"], description: "/events" },
 			{ value: "slash:side", label: "Side Chat", aliases: ["side", "btw", "s"], description: "/side" },
 			{
@@ -4869,6 +4872,9 @@ export class InteractiveMode {
 		switch (command) {
 			case "settings":
 				this.showSettingsSelector();
+				return;
+			case "mcp":
+				this.showMcpManager();
 				return;
 			case "events":
 				await this.session.prompt("/events");
@@ -6127,6 +6133,23 @@ export class InteractiveMode {
 				initialFilterMode,
 			);
 			return { component: selector, focus: selector };
+		});
+	}
+
+	private showMcpManager(): void {
+		this.showSelector((done) => {
+			const { createMcpOverlay } = require("./components/mcp-overlay.ts");
+			const overlay = createMcpOverlay(
+				(selectedId: string) => {
+					done();
+					this.showStatus(`Selected MCP server: ${selectedId}`);
+				},
+				() => {
+					done();
+					this.showStatus("MCP manager closed");
+				}
+			);
+			return { component: overlay, focus: overlay };
 		});
 	}
 
