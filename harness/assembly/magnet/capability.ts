@@ -84,6 +84,20 @@ function defaultsFromSourceMagnets(): Record<string, string> {
 }
 
 /**
+ * Hot-swap node attribute (spec §9) derived from source magnets, keyed by
+ * `${kind}:${source}` (the same key space as the builder table). Only sources
+ * that opt in via `hotSwappable: true` appear here; everything else is frozen
+ * after assembly, which is the safe default for stateful capabilities.
+ */
+function hotSwappableFromSourceMagnets(): Record<string, boolean> {
+	const map: Record<string, boolean> = {};
+	for (const magnet of CAPABILITY_SOURCE_MAGNETS) {
+		if (magnet.hotSwappable) map[builderKey(magnet.kind, magnet.source)] = true;
+	}
+	return map;
+}
+
+/**
  * The built-in capability builder table, DERIVED entirely from the source
  * magnets in the `sources.ts` barrel (spec §8). The old central
  * `BUILTIN_CAPABILITY_BUILDERS` literal is fully dissolved: each source owns its
@@ -99,6 +113,12 @@ const BUILTIN_CAPABILITY_BUILDERS: CapabilityBuilderTable = buildersFromSourceMa
  * merely collected here — not decided by a hand-maintained central table.
  */
 const DEFAULT_CAPABILITY_SOURCES: Record<string, string> = defaultsFromSourceMagnets();
+
+/**
+ * The hot-swap node-attribute map (spec §9), DERIVED from source magnets' own
+ * `hotSwappable` declarations — keyed by `${kind}:${source}`. Absent = frozen.
+ */
+const HOTSWAPPABLE_CAPABILITY_SOURCES: Record<string, boolean> = hotSwappableFromSourceMagnets();
 
 /** The sources a table offers for a kind (for diagnostics / switchability). */
 function sourcesForKind(table: CapabilityBuilderTable, kind: string): string[] {
@@ -117,6 +137,13 @@ export interface CreateCapabilityMagnetComponent {
 	path?: string;
 	/** Selected source (from the component TOML `source` field). */
 	source: string;
+	/**
+	 * Node attribute (spec §9): may this slot's selection change mid-session?
+	 * Defaults to frozen (`false`) when omitted — the safe default for stateful
+	 * capabilities. Surfaced on the magnet's `describe()` metadata as
+	 * `hotSwappable`.
+	 */
+	hotSwappable?: boolean;
 }
 
 export interface CreateCapabilityMagnetOptions {
@@ -228,7 +255,7 @@ export async function createCapabilityMagnet(
 			name: component.name,
 			implementation: `capability:${component.source}`,
 			description: component.description,
-			metadata: { source: component.source },
+			metadata: { source: component.source, hotSwappable: component.hotSwappable === true },
 		},
 		source: component.source,
 		instance,
@@ -251,10 +278,15 @@ export async function createCapabilityMagnet(
  */
 export async function buildDefaultCapabilityHcp(
 	context: { repoRoot: string; packagesRoot: string },
-	options?: { builders?: CapabilityBuilderTable; defaults?: Record<string, string> },
+	options?: {
+		builders?: CapabilityBuilderTable;
+		defaults?: Record<string, string>;
+		hotSwappable?: Record<string, boolean>;
+	},
 ): Promise<{ hcp: HcpClient; diagnostics: CapabilityMagnetDiagnostic[] }> {
 	const builders = options?.builders ?? BUILTIN_CAPABILITY_BUILDERS;
 	const defaults = options?.defaults ?? DEFAULT_CAPABILITY_SOURCES;
+	const hotSwappable = options?.hotSwappable ?? HOTSWAPPABLE_CAPABILITY_SOURCES;
 	const hcp = new HcpClient();
 	const diagnostics: CapabilityMagnetDiagnostic[] = [];
 	const magnets: HcpMagnet[] = [];
@@ -262,7 +294,7 @@ export async function buildDefaultCapabilityHcp(
 	for (const [slot, source] of Object.entries(defaults)) {
 		const { kind, name } = parseCapabilitySlot(slot);
 		const result = await createCapabilityMagnet({
-			component: { kind, name, source },
+			component: { kind, name, source, hotSwappable: hotSwappable[builderKey(kind, source)] === true },
 			context,
 			builders,
 		});

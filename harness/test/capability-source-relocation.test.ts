@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildDefaultCapabilityHcp } from "../assembly/magnet/capability.ts";
+import { buildDefaultCapabilityHcp, createCapabilityMagnet } from "../assembly/magnet/capability.ts";
 import { CAPABILITY_SOURCE_MAGNETS } from "../assembly/magnet/sources.ts";
 
 /**
@@ -59,5 +59,49 @@ describe("§8 capability source-magnet relocation", () => {
 		for (const slot of expectedSlots) {
 			expect(hcp.resolveCapability(slot), `slot ${slot}`).toBeDefined();
 		}
+	});
+});
+
+/**
+ * Locks in the spec §9 `hotSwappable` node attribute. It is a per-node boolean
+ * that surfaces on the magnet's `describe()` metadata; it defaults to frozen
+ * (`false`) so stateful capabilities are safe by omission, and it is distinct
+ * from the `bundledWith`/`bundles` selection-graph edges (modeled elsewhere).
+ */
+describe("§9 hotSwappable node attribute", () => {
+	const CONTEXT = { repoRoot: process.cwd(), packagesRoot: process.cwd() };
+
+	it("every built-in capability source is frozen (stateful) by default", () => {
+		for (const magnet of CAPABILITY_SOURCE_MAGNETS) {
+			expect(magnet.hotSwappable ?? false, `${magnet.kind}:${magnet.source} hotSwappable`).toBe(false);
+		}
+	});
+
+	it("surfaces hotSwappable:false on a frozen capability's describe() metadata", async () => {
+		const { magnet, diagnostics } = await createCapabilityMagnet({
+			component: { kind: "memory", name: "memory", source: "magenta" },
+			context: CONTEXT,
+		});
+		expect(diagnostics).toEqual([]);
+		expect(magnet?.toHcpServer?.().describe().metadata).toMatchObject({ hotSwappable: false });
+	});
+
+	it("surfaces hotSwappable:true when a component opts in", async () => {
+		const { magnet, diagnostics } = await createCapabilityMagnet({
+			component: { kind: "fixture-hot", name: "fixture-hot", source: "x", hotSwappable: true },
+			context: CONTEXT,
+			builders: { "fixture-hot:x": () => ({}) },
+		});
+		expect(diagnostics).toEqual([]);
+		expect(magnet?.toHcpServer?.().describe().metadata).toMatchObject({ hotSwappable: true });
+	});
+
+	it("defaults to frozen when hotSwappable is omitted on the component", async () => {
+		const { magnet } = await createCapabilityMagnet({
+			component: { kind: "fixture-cold", name: "fixture-cold", source: "x" },
+			context: CONTEXT,
+			builders: { "fixture-cold:x": () => ({}) },
+		});
+		expect(magnet?.toHcpServer?.().describe().metadata).toMatchObject({ hotSwappable: false });
 	});
 });

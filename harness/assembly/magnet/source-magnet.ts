@@ -37,6 +37,17 @@ export interface CapabilitySourceMagnet<T = unknown> {
 	 * `capabilitySlotName(kind, n)` entry in the derived default map.
 	 */
 	defaultSlotNames?: readonly string[];
+	/**
+	 * Node attribute (spec §9): may this slot's source selection change
+	 * mid-session? Stateful capabilities (memory, context, policy, runtime,
+	 * sandbox, ...) are frozen after assembly and MUST stay `false`/unset. Tools
+	 * and skills, which can come and go with Tool Search deferral, are the
+	 * hot-swappable ones. Capability magnets default to NOT hot-swappable, so a
+	 * source that omits this is safely frozen. This is a per-node boolean and is
+	 * distinct from `bundledWith`/`bundles` (the selection-graph EDGES, modeled
+	 * separately in the package overlay).
+	 */
+	hotSwappable?: boolean;
 	/** Build the source-selected, in-process implementation instance. */
 	build(context: CapabilityFactoryContext): T | Promise<T>;
 }
