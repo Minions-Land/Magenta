@@ -1,8 +1,8 @@
-import { fileURLToPath } from "node:url";
 import { capabilityPrefix, HcpClient } from "../hcp/hcp.ts";
 import { registerMagnetHcpServers } from "./hcp-registry.ts";
-import { CapabilityMagnet } from "./universal.ts";
 import type { HcpMagnet } from "./magnet.ts";
+import { CAPABILITY_SOURCE_MAGNETS } from "./sources.ts";
+import { CapabilityMagnet } from "./universal.ts";
 
 /**
  * Context passed to a capability factory at assembly time. Mirrors the
@@ -27,9 +27,7 @@ export interface CapabilityFactoryContext {
  * The assembly layer picks one builder per capability by the component's
  * declared `source`; the builder returns the concrete implementation.
  */
-export type CapabilityBuilder<T = unknown> = (
-	context: CapabilityFactoryContext,
-) => T | Promise<T>;
+export type CapabilityBuilder<T = unknown> = (context: CapabilityFactoryContext) => T | Promise<T>;
 
 /** A `${kind}:${source}` → builder selection table. */
 export type CapabilityBuilderTable = Record<string, CapabilityBuilder>;
@@ -58,85 +56,49 @@ function parseCapabilitySlot(slot: string): { kind: string; name: string } {
 }
 
 /**
- * The ONE static capability selection table.
- *
- * This is the assembly-layer analogue of the tool catalog: it enumerates every
- * `${kind}:${source}` the harness can supply and is where "which source runs
- * this capability" is decided. It is a plain `const` literal — NOT a mutable
- * registry populated by import-time side effects — so it does not constitute a
- * second global registry competing with HCP (contract: exactly one HCP). Source
- * modules are pulled in lazily via `import()` at build time, keeping this
- * low-level assembly module free of static dependencies on consumer code.
- *
- * Rollout adds one entry per (kind, source) as each non-tool module moves onto
- * source-selected capability injection.
+ * Builder-table entries derived from the relocated source magnets (§8 barrel).
+ * Every built-in capability source now lives in `<module>/<source>/magnet.ts`
+ * and is collected by the dumb `sources.ts` barrel; there is no central builder
+ * table left. The barrel makes no selection decisions, so it is not a second
+ * selection registry (invariant §10.1).
  */
-const BUILTIN_CAPABILITY_BUILDERS: CapabilityBuilderTable = {
-	"compaction:pi": async () => (await import("../../compaction/pi/provider.ts")).piCompactionProvider,
-	"context:magenta": async () => {
-		const { ContextProvider } = await import("../../context/magenta/context.ts");
-		return new ContextProvider({});
-	},
-	"hook:magenta": async () => {
-		const { HookProvider } = await import("../../hooks/magenta/hooks.ts");
-		return new HookProvider();
-	},
-	"memory:magenta": async (context) => {
-		const { SessionGroundingMemoryProvider } = await import("../../memory/magenta/session-grounding.ts");
-		return new SessionGroundingMemoryProvider({ workspaceRoot: context.repoRoot });
-	},
-	"policy:magenta": async () => {
-		const { PolicyProvider } = await import("../../policy/magenta/policy.ts");
-		return new PolicyProvider();
-	},
-	"prompt-template:pi": async () => {
-		const { PromptTemplateProvider } = await import("../../prompt-templates/pi/prompt-templates.ts");
-		return new PromptTemplateProvider();
-	},
-	"runtime:magenta": async (context) => {
-		if (context.name === "process") {
-			const { ProcessRuntimeProvider } = await import("../../runtime/magenta/process-runtime.ts");
-			return new ProcessRuntimeProvider();
+function buildersFromSourceMagnets(): CapabilityBuilderTable {
+	const table: CapabilityBuilderTable = {};
+	for (const magnet of CAPABILITY_SOURCE_MAGNETS) {
+		table[builderKey(magnet.kind, magnet.source)] = (context) => magnet.build(context);
+	}
+	return table;
+}
+
+/** Default-source entries derived from relocated source magnets' `isDefault`. */
+function defaultsFromSourceMagnets(): Record<string, string> {
+	const defaults: Record<string, string> = {};
+	for (const magnet of CAPABILITY_SOURCE_MAGNETS) {
+		if (!magnet.isDefault) continue;
+		const slotNames = [magnet.name ?? magnet.kind, ...(magnet.defaultSlotNames ?? [])];
+		for (const slotName of slotNames) {
+			defaults[capabilitySlotName(magnet.kind, slotName)] = magnet.source;
 		}
-		if (context.name === "script-runtimes") {
-			const { ScriptRuntimeProvider } = await import("../../runtime/magenta/script-runtime.ts");
-			return new ScriptRuntimeProvider();
-		}
-		throw new Error(`unknown magenta runtime capability: ${context.name}`);
-	},
-	"sandbox:magenta": async (context) => {
-		const { loadSandboxProviderFromPack } = await import("../../sandbox/magenta/sandbox.ts");
-		return loadSandboxProviderFromPack(
-			context.descriptorPath ?? fileURLToPath(new URL("../../sandbox/sandbox.toml", import.meta.url)),
-		);
-	},
-	"system-prompt:pi": async () => {
-		const { SystemPromptProvider } = await import("../../system-prompt/pi/provider.ts");
-		return new SystemPromptProvider();
-	},
-};
+	}
+	return defaults;
+}
 
 /**
- * The default source per capability kind, used when no package selects one.
- *
- * This — the assembly/selection layer — is the ONE place a source name is
- * allowed for a defaulted capability. Consumers (the loop, session, ...) resolve
- * capabilities by name through HCP and never see a source; the default they get
- * is decided HERE, not by a source-specific import in consumer code. Rollout
- * adds one entry per kind as each module gains a default source.
+ * The built-in capability builder table, DERIVED entirely from the source
+ * magnets in the `sources.ts` barrel (spec §8). The old central
+ * `BUILTIN_CAPABILITY_BUILDERS` literal is fully dissolved: each source owns its
+ * build logic next to its implementation. Consumers still receive one table via
+ * this const; it just is no longer hand-maintained here.
  */
-const DEFAULT_CAPABILITY_SOURCES: Record<string, string> = {
-	compaction: "pi",
-	context: "magenta",
-	hook: "magenta",
-	memory: "magenta",
-	policy: "magenta",
-	"prompt-template": "pi",
-	"runtime:process": "magenta",
-	"runtime:script-runtimes": "magenta",
-	sandbox: "magenta",
-	"system-prompt": "pi",
-};
+const BUILTIN_CAPABILITY_BUILDERS: CapabilityBuilderTable = buildersFromSourceMagnets();
+
+/**
+ * The default-source map, DERIVED from source magnets' `isDefault` declarations
+ * (spec §8). Consumers resolve capabilities by name through HCP and never see a
+ * source; the default they get is declared by each SOURCE (via `isDefault`) and
+ * merely collected here — not decided by a hand-maintained central table.
+ */
+const DEFAULT_CAPABILITY_SOURCES: Record<string, string> = defaultsFromSourceMagnets();
 
 /** The sources a table offers for a kind (for diagnostics / switchability). */
 function sourcesForKind(table: CapabilityBuilderTable, kind: string): string[] {

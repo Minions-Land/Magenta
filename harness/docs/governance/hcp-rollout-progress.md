@@ -73,41 +73,35 @@ empty diagnostics). Added `system-prompt-resource-regression.test.ts` guard
 classified as capabilities. The pi `SystemPromptProvider` remains a legitimate
 Capability (`system-prompt:pi` builder) — the two faces coexist per §5.
 
-### Step D — §8 Magnet relocation  [BLOCKED — design decision needed]
-Dissolve `BUILTIN_CAPABILITY_BUILDERS` / `DEFAULT_CAPABILITY_SOURCES` /
-`CAPABILITY_KINDS` central tables in `assembly/magnet/capability.ts`. Each source
-owns `<module>/<source>/magnet.ts`; package overlay discovers + constructs during
-selection.
+### Step D — §8 Magnet relocation  [DONE — barrel approach]
+Dissolved `BUILTIN_CAPABILITY_BUILDERS` / `DEFAULT_CAPABILITY_SOURCES` central
+literals in `assembly/magnet/capability.ts`. Each source now owns
+`<module>/<source>/magnet.ts` (literal sibling import of its provider, survives
+the build extension rewrite) exporting a `CapabilitySourceMagnet` descriptor
+`{ kind, name?, source, isDefault?, defaultSlotNames?, build() }`. A dumb
+aggregation barrel `assembly/magnet/sources.ts` statically re-exports the 9
+source magnets with ZERO selection logic; `capability.ts` DERIVES the builder
+table + default-source map from it (`buildersFromSourceMagnets` /
+`defaultsFromSourceMagnets`). New `assembly/magnet/source-magnet.ts` holds the
+descriptor type.
 
-**Build constraint found (verified 2026-07-03):** the central table only works
-because it uses LITERAL `import("...provider.ts")` specifiers, which tsc
-`rewriteRelativeImportExtensions` turns into `.js` for dist (confirmed in
-`dist/assembly/magnet/capability.js`). dist ships `.js` only. There are ZERO
-computed dynamic imports in the codebase. A discovery-driven `import(computed)`
-would NOT be extension-rewritten and would break in dist. So we cannot have both
-"no central static import list" AND "no computed dynamic imports".
+**User decision (confirmed):** barrel is an acceptable reading of "no central
+builder map" — the invariant §10.1 protects is "no second SELECTION registry",
+and a dumb collection makes no selection decisions. The alternative (runtime
+computed imports) was rejected: it would pass tests + dist but break the bun
+single-file binary (project ships one; see `skills.ts` `$bunfs` detection).
 
-**Recommended approach (satisfies §8/§10.1 spirit within the constraint):**
-1. Each source owns `<module>/<source>/magnet.ts` exporting a
-   `CapabilitySourceMagnet` descriptor `{ kind, name?, source, primitive,
-   defaultSource?, hotSwappable?, build(context) }`, importing its provider via a
-   LITERAL sibling import (survives the build).
-2. Replace the *builder table with logic* by a DUMB aggregation barrel that
-   statically re-exports each source magnet (literal specifiers). No kind→source
-   selection logic lives there — that is the real "second registry" §10.1
-   forbids; a dumb collection is not.
-3. Derive `DEFAULT_CAPABILITY_SOURCES` / `CAPABILITY_KINDS` from the collected
-   descriptors' declared metadata instead of hand-maintained tables.
-4. Keep `createCapabilityMagnet` / `buildDefaultCapabilityHcp` public API stable
-   (consumers: agent-harness.ts:195, overlay) so this stays behavior-preserving.
-5. De-risk via pilot: convert `compaction` (simplest single-source capability)
-   first, prove build+full-suite+pi green, THEN fan out the other 9 builders.
+**User decision (confirmed):** barrel must live INSIDE the harness package —
+placing it outside (sibling / top-level `.harness`) is impossible under the build
+(`rootDir: .` forbids importing package-external source; dist ships only
+`harness/dist`, so an external barrel would not be packaged and would crash at
+runtime). Landed at `harness/assembly/magnet/sources.ts`.
 
-**Open interpretation for the user:** is the "dumb aggregation barrel" (a
-central static import list with no selection logic) an acceptable reading of
-"there is no central builder map"? The alternative — runtime computed imports —
-requires solving the extension problem (directory/package-main resolution or
-runtime .ts/.js detection) and is materially riskier. Recommend the barrel.
+Runtime-verified from BUILT dist: all 10 capability slots resolve with 0
+diagnostics (incl. runtime's two slots via `defaultSlotNames`). +3 lock-in tests
+(`capability-source-relocation.test.ts`); the existing per-capability suite now
+exercises the relocated magnets end-to-end. 239 tests, structure check, pi build
+all green. `system-prompt` stays OUT of `CAPABILITY_KINDS` (§5.1) — unchanged.
 
 ### Step E — §9 hotSwappable + §6 Tool Search  [TODO]
 Highest risk; new features.
@@ -130,3 +124,9 @@ Highest risk; new features.
   barrel-based approach + pilot plan. Paused for user confirmation on the
   "is a dumb aggregation barrel an acceptable reading of 'no central builder
   map'" interpretation before executing the large refactor.
+- 2026-07-04: Step D DONE. User confirmed barrel approach + inside-harness
+  placement. Relocated all 9 capability sources to `<module>/<source>/magnet.ts`,
+  added `source-magnet.ts` (descriptor type) + `sources.ts` (dumb barrel),
+  derived builder/default tables in `capability.ts`. Runtime-verified from built
+  dist (10/10 slots, 0 diagnostics). 239 tests + structure + pi build green.
+  Next: Step E (§9 hotSwappable node attribute; §6 Tool Search).
