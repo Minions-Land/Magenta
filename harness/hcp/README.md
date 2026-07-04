@@ -76,8 +76,8 @@ console.log(registry.components);
 
 **The adapter pattern**:
 ```typescript
-// Magnet = data cable with two ends
-const magnet = new NativeMagnet({
+// HcpMagnet = data cable with two ends
+const magnet = new NativeToolMagnet({
   name: "read",
   execute: createReadExecute(cwd),  // ← This end connects to the product
   schema: readSchema
@@ -85,20 +85,21 @@ const magnet = new NativeMagnet({
 
 // The other end provides two interfaces:
 const agentTool = magnet.toTool();       // → Standard interface for Agent Loop
-const hcpTarget = magnet.toHcpTarget();  // → Management interface for HCP
+const hcpServer = magnet.toHcpServer();  // → Management interface for HCP
 ```
 
 **Why "Magnet"?**
 
 Like a magnet attracting metal, it **attracts implementations** into the harness regardless of their source:
-- Today: **NativeMagnet** wraps TypeScript tools
-- Future: **McpMagnet** wraps MCP tools
-- Future: **RustMagnet** wraps Rust tools
-- Future: **RemoteMagnet** wraps HTTP/RPC tools
+- **NativeToolMagnet** wraps in-process TypeScript tools
+- **ProcessToolMagnet** wraps process/CLI-backed tools
+- **HcpProcessMagnet** wraps out-of-process (JSONL) tools
+- **CapabilityMagnet** / **ResourceMagnet** bind loop capabilities and resources
+- Future: **RemoteMagnet** could wrap HTTP/RPC tools
 
 **Key feature**: Dual interface output
 - `toTool()` → Execution interface (for direct calls)
-- `toHcpTarget()` → Management interface (for discovery/configuration)
+- `toHcpServer()` → Management interface (for discovery/configuration)
 
 **Analogy**: Like a data cable connecting different devices (USB-C, Lightning, Micro-USB) to a universal port.
 
@@ -122,11 +123,11 @@ Runtime: Agent Loop → tool.execute() (direct call, fast)
 
 **Usage**:
 ```typescript
-const hcp = new HcpRegistry();
+const hcp = new HcpClient();
 const magnets = [bashMagnet, readMagnet];
 
 // Register magnet management endpoints by exact target address.
-registerMagnetHcpTargets(hcp, magnets);
+registerMagnetHcpServers(hcp, magnets);
 
 // Unified management interface
 await hcp.dispatch({
@@ -163,8 +164,8 @@ await hcp.dispatch({
    
 2. Magnet creates data cables
    ↓
-   NativeMagnet.wrap(bashExecute) → AgentTool
-   NativeMagnet.wrap(readExecute) → AgentTool
+   NativeToolMagnet.wrap(bashExecute) → AgentTool
+   NativeToolMagnet.wrap(readExecute) → AgentTool
    ...
    
 3. HCP registers management endpoints
@@ -201,13 +202,17 @@ Return result
 
 ---
 
-## Example: Adding a New MCP Tool
+## Example: Adding a New MCP Tool (illustrative)
+
+> `McpMagnet` is illustrative — it shows how a future transport-backed magnet
+> would slot in. The shipping magnets are `NativeToolMagnet`, `ProcessToolMagnet`,
+> and `HcpProcessMagnet`.
 
 ```typescript
 // 1. Product arrives (MCP tool implementation)
 const mcpTool = new McpClient("http://localhost:3000/database");
 
-// 2. Create data cable (Magnet)
+// 2. Create data cable (HcpMagnet)
 const mcpMagnet = new McpMagnet({
   client: mcpTool,
   toolName: "query-database"
@@ -215,7 +220,7 @@ const mcpMagnet = new McpMagnet({
 
 // 3. One end connects to product
 const agentTool = mcpMagnet.toTool();      // Execution interface
-const hcpTarget = mcpMagnet.toHcpTarget(); // Management interface
+const hcpServer = mcpMagnet.toHcpServer(); // Management interface
 
 // 4. Management end plugs into adapter (HCP)
 hcp.register("tool:database", hcpTarget);
@@ -234,18 +239,16 @@ await agentTool.execute({
 ## Directory Structure
 
 ```
-harness/assembly/
+harness/hcp/
   hcp/
     hcp.toml
-    pi/
-      hcp.ts           — HcpRegistry, HcpTarget, HcpCall
+    hcp.ts             — HcpClient, HcpServer, HcpRequest
     README.md
   
   magnet/
     magnet.toml
-    pi/
-      magnet.ts        — Magnet interface
-      native.ts        — NativeMagnet implementation
+    magnet.ts          — HcpMagnet interface
+    native.ts          — NativeToolMagnet implementation
     README.md
   
   registry/
@@ -279,7 +282,7 @@ const magnets = registry.components.map(comp =>
   createMagnet(comp)                                  // Magnet
 );
 const tools = magnets.map(m => m.toTool());
-registerMagnetHcpTargets(hcp, magnets);               // HCP
+registerMagnetHcpServers(hcp, magnets);               // HCP
 loop.setTools(tools);
 
 // Adding new tools → just add TOML declaration
@@ -323,11 +326,11 @@ path = "hcp/registry/registry.toml"
 // Registry
 import { loadRegistry, ComponentDescriptor, Registry } from "@magenta/harness";
 
-// Magnet
-import { Magnet, NativeMagnet } from "@magenta/harness";
+// Magnet (HcpMagnet interface + concrete magnets)
+import { HcpMagnet, NativeToolMagnet, CapabilityMagnet, ResourceMagnet } from "@magenta/harness";
 
-// HCP
-import { HcpRegistry, HcpTarget, HcpCall, HcpContext } from "@magenta/harness";
+// HCP (three roles: client / server / request)
+import { HcpClient, HcpServer, HcpRequest, HcpContext } from "@magenta/harness";
 ```
 
 ---

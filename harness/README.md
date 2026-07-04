@@ -78,13 +78,14 @@ Magenta3 only registers currently assembled implementations under
 - **utils** — Shared utilities (shell output formatting, truncation)
 - **catalog** — Component inventories and integration maps for selector UIs
 
-### Assembly Layer
+### Assembly Layer (the `hcp/` directory)
 
 - **hcp** — Harness Component Protocol (management/discovery, NOT on the hot path)
-- **magnet** — Connectors that wrap implementations as AgentTools or HCP targets
-- **registry** — TOML registry loader and component discovery
+- **magnet** (`hcp/magnet/`) — Connectors that wrap implementations as AgentTools or HcpServers
+- **registry** (`hcp/registry/`) — TOML registry loader and component discovery
+- **package-overlay** (`hcp/package-overlay/`) — profile/source selection over discovered components
 
-See `assembly/README.md` for the complete story of how these work together.
+See `hcp/README.md` for the complete story of how these work together.
 
 ### Contract Modules (flat, no pi/)
 
@@ -159,7 +160,14 @@ This separation keeps the loop fast (direct calls) while providing extensibility
    export * from "./my-module/pi/my-module.js";
    ```
 
-See `scripts/templates/module/README.md` for the complete pattern.
+7. **Bind a Magnet** (capability modules only): add
+   `my-module/<source>/magnet.ts` exporting a `CapabilitySourceMagnet` and
+   register it in the barrel `hcp/magnet/sources.ts`. Tools and Resources
+   (e.g. `system-prompt`) do not use a capability magnet.
+
+See `scripts/templates/module/README.md` for the complete pattern, including the
+Magnet + Resource rules. For a task-oriented walkthrough (add a tool, add a
+capability source, ship a package), see `docs/DEVELOPING.md`.
 
 ## Public API
 
