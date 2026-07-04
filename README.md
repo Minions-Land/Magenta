@@ -1,34 +1,78 @@
 # Magenta3
 
+<p align="center">
+  <img alt="Built on Pi" src="https://img.shields.io/badge/built%20on-Pi-8250df">
+  <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-3178c6?logo=typescript&logoColor=white">
+  <img alt="HCP Protocol" src="https://img.shields.io/badge/HCP-protocol-2da44e">
+  <img alt="License" src="https://img.shields.io/badge/license-MIT-blue">
+</p>
+
+<p align="center">
+  <a href="#quick-start">Quick Start</a> |
+  <a href="#architecture">Architecture</a> |
+  <a href="#packages-shippable-domains">Packages</a> |
+  <a href="#documentation">Documentation</a> |
+  <a href="./harness/docs/DEVELOPING.md">Contributing</a>
+</p>
+
 Magenta3 is an AI coding assistant built **on top of [Pi](https://pi.dev)**. It
 keeps Pi's agent loop, TUI, and multi-provider LLM layer as the foundation, and
 adds a **Harness** — a modular, source-separated component system — plus the
 **HCP** assembly protocol and a **package** system that lets whole domains
 (tools + skills + prompts + brand + runtime) be dropped in as a unit.
 
+> [!NOTE]
 > Pi holds the abstractions (loop, rendering, providers). Magenta holds the
 > reusable execution layer (tools, capabilities, packages) and the assembly
 > protocol that wires them together.
 
+The upstream Pi README is preserved at [`pi/README-upstream.md`](./pi/README-upstream.md) for reference.
+
 ---
 
-## What we changed on top of Pi
+## Quick Start
+
+### Install & build
+
+```bash
+npm install
+npm run build          # build pi packages + harness
+```
+
+### Launch
+
+```bash
+./bin/magenta          # interactive TUI
+./bin/magenta --version
+./bin/magenta --help   # full flag reference
+```
+
+> [!TIP]
+> `bin/magenta` autodetects credentials from Claude Code, Codex, or environment variables — no manual configuration needed for most setups.
+
+See [`docs/AUTHENTICATION.md`](./docs/AUTHENTICATION.md) for detailed credential setup.
+
+---
+
+## Architecture
+
+### What we changed on top of Pi
 
 | Area | Pi (upstream) | Magenta3 adds |
 |---|---|---|
-| Tool execution | Bundled in the agent | Extracted into `harness/` as source-separated modules |
-| Component wiring | Ad-hoc | **HCP** protocol: `HcpClient → HcpServer → HcpMagnet` |
-| Extensibility | Extensions | **Packages** — shippable domain bundles under `packages/` |
-| Identity/theming | Single brand | **Brand registry** (`brands/`) with multi-brand sync |
-| Auth | API key | Auto-detects Claude Code / Codex credentials |
-| Terminology | "job" | "event" (`/events`, `BackgroundEvent`, …) |
+| 🛠️ Tool execution | Bundled in the agent | Extracted into `harness/` as source-separated modules |
+| 🔌 Component wiring | Ad-hoc | **HCP** protocol: `HcpClient → HcpServer → HcpMagnet` |
+| 📦 Extensibility | Extensions | **Packages** — shippable domain bundles under `packages/` |
+| 🎨 Identity/theming | Single brand | **Brand registry** (`brands/`) with multi-brand sync |
+| 🔐 Auth | API key | Auto-detects Claude Code / Codex credentials |
+| 📋 Terminology | "job" | "event" (`/events`, `BackgroundEvent`, …) |
 
-The upstream Pi README is preserved at
-[`pi/README-upstream.md`](./pi/README-upstream.md) for reference.
+The upstream Pi README is preserved at [`pi/README-upstream.md`](./pi/README-upstream.md) for reference.
 
----
+### Repository structure
 
-## How the repository is organized
+> [!TIP]
+> The architecture diagram below shows how Pi (agent loop), Harness (tools & capabilities), and Packages (domain bundles) work together through the HCP assembly protocol.
 
 ```
 Magenta3/
@@ -54,6 +98,8 @@ source**. A *module* is a mechanism the loop needs; a *source* is who implements
 it, named by **origin agent** (`pi/`, `magenta/`, `codex/`, `claude-code/`) —
 never by language or runtime. Rust/Python/process/MCP details live *inside* a
 source directory, they never become one.
+
+</details>
 
 ```mermaid
 graph TD
@@ -82,14 +128,13 @@ graph TD
     TUI --- LOOP
 ```
 
----
+<details>
+<summary>📁 Detailed directory structure</summary>
 
 ## The HCP protocol: `HcpClient → HcpServer → HcpMagnet`
 
-HCP (Harness Component Protocol) is Magenta's **assembly layer** — the analogue
-of MCP, generalized from tools to every harness primitive. Its defining
-principle: **HCP runs at assembly time, never on the execution hot path.** Once
-a component is resolved, the loop calls it directly.
+> [!IMPORTANT]
+> HCP (Harness Component Protocol) is Magenta's **assembly layer** — the analogue of MCP, generalized from tools to every harness primitive. Its defining principle: **HCP runs at assembly time, never on the execution hot path.** Once a component is resolved, the loop calls it directly.
 
 The three roles form a chain from concrete implementation up to the loop:
 
@@ -124,14 +169,13 @@ Built-in capability slots and their default sources:
 
 | Slot | Default source | Slot | Default source |
 |---|---|---|---|
-| `compaction` | pi | `runtime` | magenta |
-| `context` | magenta | `sandbox` | magenta |
-| `memory` | magenta | `hook` | magenta |
-| `policy` | magenta | `system-prompt` (resource) | pi |
+| 📦 `compaction` | pi | ⚡ `runtime` | magenta |
+| 📄 `context` | magenta | 🛡️ `sandbox` | magenta |
+| 🧠 `memory` | magenta | 🪝 `hook` | magenta |
+| 🛡️ `policy` | magenta | 📜 `system-prompt` (resource) | pi |
 
-> **One rule that bites people:** a `system-prompt`/`skill`/`brand` is a
-> **Resource** (content, referenced) — not a Capability (code, called). It flows
-> through the resource path and never gets a code builder.
+> [!WARNING]
+> **One rule that bites people:** a `system-prompt`/`skill`/`brand` is a **Resource** (content, referenced) — not a Capability (code, called). It flows through the resource path and never gets a code builder.
 
 See [`harness/hcp/README.md`](./harness/hcp/README.md) for the full walkthrough
 and [`harness/docs/governance/hcp-architecture.md`](./harness/docs/governance/hcp-architecture.md)
@@ -146,6 +190,8 @@ root `package.toml` manifest. It can carry tools, skills, a system prompt, a
 brand, and — for process/Python tools — its own pinned runtime and environment.
 Packages are selected *above* the built-in harness and override lower layers by
 `kind:name`.
+
+### Package structure
 
 ```mermaid
 graph LR
@@ -168,11 +214,12 @@ assembly. You **declare**, the overlay **wires**.
 
 ### Available packages
 
-- **[AutOmicScience](./packages/AutOmicScience/)** — single-cell and spatial
-  **omics** domain (migrated from the AOSE `optimize_omics` harness). Ships a
-  Nature-inspired brand, modality skills (RNA, spatial, scATAC-seq, multi-omics),
-  and Python-backed tools (`omics_compute`, `omics_environment`,
-  `omics_preflight`) running in a pinned Pixi environment.
+| Package | Domain | Tools | Skills | Runtime |
+|---|---|---|---|---|
+| 🧬 **[AutOmicScience](./packages/AutOmicScience/)** | Single-cell & spatial omics | `omics_compute`<br/>`omics_environment`<br/>`omics_preflight` | RNA, spatial,<br/>scATAC-seq,<br/>multi-omics | Python + Pixi |
+
+> [!NOTE]
+> AutOmicScience migrated from the AOSE `optimize_omics` harness and ships a Nature-inspired brand with modality-specific skills.
 
 To create your own, copy [`packages/templates/harness-package/`](./packages/templates/harness-package/)
 and follow [`harness/docs/DEVELOPING.md`](./harness/docs/DEVELOPING.md).
@@ -286,15 +333,15 @@ The agent calls these directly (they live in `harness/tools/`):
 
 | Tool | Purpose | Tool | Purpose |
 |---|---|---|---|
-| `read` | Read files/images | `write` | Create/overwrite files |
-| `edit` | Exact-match edits | `bash` | Run shell commands |
-| `grep` | Search contents | `find` | Find files by glob |
-| `ls` | List directories | `show` | Render/inspect content |
-| `lsp` | Language-server queries | `web-search` | Web lookup |
-| `todo` | Task tracking | `ssh` | Remote workspace ops |
+| 📝 `read` | Read files/images | ✨ `write` | Create/overwrite files |
+| ✏️ `edit` | Exact-match edits | 💻 `bash` | Run shell commands |
+| 🔍 `grep` | Search contents | 📁 `find` | Find files by glob |
+| 📊 `ls` | List directories | 🎨 `show` | Render/inspect content |
+| 🔧 `lsp` | Language-server queries | 🌐 `web-search` | Web lookup |
+| ☑️ `todo` | Task tracking | 🔐 `ssh` | Remote workspace ops |
 
-Packages add more (e.g. AutOmicScience contributes `omics_compute`,
-`omics_environment`, `omics_preflight`).
+> [!TIP]
+> Packages add more tools — e.g. AutOmicScience contributes `omics_compute`, `omics_environment`, `omics_preflight`.
 
 ### Common project tasks
 
