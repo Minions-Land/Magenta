@@ -26,7 +26,7 @@ If a step fails twice, STOP and diagnose root cause; do not keep patching.
   appears already fixed — Step C only needs a lock-in test.
 - New role names (`HcpClient`/`HcpServer`/`HcpMagnet`) occur ONLY in the two
   governance docs; zero code collisions.
-- Stray compiled artifacts (`harness/assembly/hcp/hcp.js|.d.ts|.map`) removed;
+- Stray compiled artifacts (`harness/hcp/hcp/hcp.js|.d.ts|.map`) removed;
   `.gitignore` now blocks `harness/**/*.{js,d.ts,...}` outside dist.
 
 ## Occurrence counts (harness + pi; .ts/.toml/.md) — for §7
@@ -75,14 +75,14 @@ Capability (`system-prompt:pi` builder) — the two faces coexist per §5.
 
 ### Step D — §8 Magnet relocation  [DONE — barrel approach]
 Dissolved `BUILTIN_CAPABILITY_BUILDERS` / `DEFAULT_CAPABILITY_SOURCES` central
-literals in `assembly/magnet/capability.ts`. Each source now owns
+literals in `hcp/magnet/capability.ts`. Each source now owns
 `<module>/<source>/magnet.ts` (literal sibling import of its provider, survives
 the build extension rewrite) exporting a `CapabilitySourceMagnet` descriptor
 `{ kind, name?, source, isDefault?, defaultSlotNames?, build() }`. A dumb
-aggregation barrel `assembly/magnet/sources.ts` statically re-exports the 9
+aggregation barrel `hcp/magnet/sources.ts` statically re-exports the 9
 source magnets with ZERO selection logic; `capability.ts` DERIVES the builder
 table + default-source map from it (`buildersFromSourceMagnets` /
-`defaultsFromSourceMagnets`). New `assembly/magnet/source-magnet.ts` holds the
+`defaultsFromSourceMagnets`). New `hcp/magnet/source-magnet.ts` holds the
 descriptor type.
 
 **User decision (confirmed):** barrel is an acceptable reading of "no central
@@ -95,7 +95,7 @@ single-file binary (project ships one; see `skills.ts` `$bunfs` detection).
 placing it outside (sibling / top-level `.harness`) is impossible under the build
 (`rootDir: .` forbids importing package-external source; dist ships only
 `harness/dist`, so an external barrel would not be packaged and would crash at
-runtime). Landed at `harness/assembly/magnet/sources.ts`.
+runtime). Landed at `harness/hcp/magnet/sources.ts`.
 
 Runtime-verified from BUILT dist: all 10 capability slots resolve with 0
 diagnostics (incl. runtime's two slots via `defaultSlotNames`). +3 lock-in tests
@@ -115,7 +115,7 @@ Distinct from `bundledWith`/`bundles` (the selection-graph EDGES in the package
 overlay), per §9. +4 tests.
 
 **§6 Tool Search:** self-contained module, now at TOP-LEVEL
-`harness/tools-search/tool-search.ts` (moved out of `assembly/` per the decision
+`harness/tools-search/tool-search.ts` (moved out of the HCP layer per the decision
 that Tool Search is a Harness capability in its own right — an aggregator above
 the per-tool magnets — not assembly-time wiring). Registered in the structure
 check (`allowedTopLevel` + `sourceModuleDirs`) with a README.
@@ -183,7 +183,7 @@ structure, pi build all green.
   Next: Step E (§9 hotSwappable node attribute; §6 Tool Search).
 - 2026-07-04: Step E DONE. §9 hotSwappable node attribute (commit 66a28a8) +
   §6 Tool Search. Tool Search built entirely in harness
-  (`assembly/tool-search/`) as an opt-in meta-tool — verified NO pi fork needed
+  (later moved to top-level `tools-search/`) as an opt-in meta-tool — verified NO pi fork needed
   because `prepareNextTurn` rebuilds the active tool set each turn, so
   `setActiveTools` from a tool-call lands on the next turn. Proven e2e through
   AgentHarness + faux provider. 255 tests, structure, pi build green.
