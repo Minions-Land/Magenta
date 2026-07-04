@@ -3,9 +3,21 @@ import { join } from "node:path";
 import ts from "typescript";
 
 const ignoredDirectories = new Set([".git", "coverage", "dist", "node_modules"]);
+// TODO(mcp-magnet): harness/mcp is a standalone NodeNext subpackage (own
+// package.json + tsconfig) whose relative ".js" import specifiers are required
+// by NodeNext, not the repo's bundler convention. Temporarily exempt it here.
+// Remove this once MCP is folded into hcp-magnet/ as a proper magnet connector.
+const ignoredPathSuffixes = [join("harness", "mcp")];
 const files = [];
 
+function isIgnoredPath(directory) {
+	return ignoredPathSuffixes.some(
+		(suffix) => directory === suffix || directory.endsWith(`${"/"}${suffix}`) || directory.endsWith(`\\${suffix}`),
+	);
+}
+
 function collectTypescriptFiles(directory) {
+	if (isIgnoredPath(directory)) return;
 	for (const entry of readdirSync(directory, { withFileTypes: true })) {
 		if (entry.isDirectory()) {
 			if (!ignoredDirectories.has(entry.name)) {

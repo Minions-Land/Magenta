@@ -8,6 +8,10 @@ const notes = [];
 
 const allowedTopLevel = new Set([
 	"README.md",
+	// TODO(mcp-magnet): harness/mcp is a standalone NodeNext subpackage,
+	// temporarily allowed at top level. Fold it into hcp-magnet/ as an MCP
+	// magnet connector, then remove this entry and the checkSupportLayout skip.
+	"mcp",
 	"hcp-client",
 	"hcp-contract",
 	"hcp-magnet",
@@ -281,7 +285,9 @@ function checkRepoPackageTemplates(packagesRoot) {
 }
 
 function checkSupportLayout() {
-	for (const name of ["mcp", "template"]) {
+	// TODO(mcp-magnet): "mcp" intentionally omitted here while it lives as a
+	// standalone subpackage; see allowedTopLevel. "template" remains forbidden.
+	for (const name of ["template"]) {
 		const dir = join(harnessRoot, name);
 		if (existsSync(dir)) {
 			fail(`harness/${name} is invalid as a top-level placeholder; support-only material must live under docs/ or scripts/`);
