@@ -1943,13 +1943,13 @@ export const OPENROUTER_MODELS = {
 		reasoning: true,
 		input: ["text"],
 		cost: {
-			input: 0.085,
-			output: 0.4,
+			input: 0.08,
+			output: 0.45,
 			cacheRead: 0,
 			cacheWrite: 0,
 		},
 		contextWindow: 1000000,
-		maxTokens: 16384,
+		maxTokens: 4096,
 	} satisfies Model<"openai-completions">,
 	"nvidia/nemotron-3-super-120b-a12b:free": {
 		id: "nvidia/nemotron-3-super-120b-a12b:free",
@@ -3908,7 +3908,7 @@ export const OPENROUTER_MODELS = {
 		cost: {
 			input: 0.285,
 			output: 2.4,
-			cacheRead: 0,
+			cacheRead: 0.15,
 			cacheWrite: 0,
 		},
 		contextWindow: 262144,
@@ -4465,13 +4465,13 @@ export const OPENROUTER_MODELS = {
 		thinkingLevelMap: {"xhigh":"xhigh"},
 		input: ["text"],
 		cost: {
-			input: 0.93,
-			output: 3,
-			cacheRead: 0.18,
+			input: 0.91,
+			output: 2.86,
+			cacheRead: 0.169,
 			cacheWrite: 0,
 		},
 		contextWindow: 1048576,
-		maxTokens: 32768,
+		maxTokens: 128000,
 	} satisfies Model<"openai-completions">,
 	"z-ai/glm-5v-turbo": {
 		id: "z-ai/glm-5v-turbo",
