@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { HcpClient } from "../hcp-client/hcp-client.ts";
 import { getHarnessRegistryPath, loadRegistry } from "../hcp-client/registry/registry.ts";
-import { ApprovalPolicyProvider, decideApproval } from "../policy/magenta/approval.ts";
-import { ShellPolicyProvider, classifyShellCommand } from "../policy/magenta/shell-policy.ts";
+import { ApprovalPolicyProvider, decideApproval } from "../modules/policy/magenta/approval.ts";
+import { ShellPolicyProvider, classifyShellCommand } from "../modules/policy/magenta/shell-policy.ts";
 
 describe("policy providers", () => {
 	it("decides approval from mode, tier, override, and user policy", () => {
@@ -84,11 +84,11 @@ describe("policy providers", () => {
 
 		expect(catalog.entries.find((entry) => entry.id === "runtime-provider:approval:policy")?.migration).toMatchObject({
 			state: "integrated",
-			component: { kind: "approval", name: "policy", path: "policy/policy.toml" },
+			component: { kind: "approval", name: "policy", path: "modules/policy/policy.toml" },
 		});
 		expect(catalog.entries.find((entry) => entry.id === "runtime-provider:shell:policy")?.migration).toMatchObject({
 			state: "integrated",
-			component: { kind: "shell", name: "policy", path: "policy/policy.toml" },
+			component: { kind: "shell", name: "policy", path: "modules/policy/policy.toml" },
 		});
 	});
 });

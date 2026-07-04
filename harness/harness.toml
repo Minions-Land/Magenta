@@ -5,67 +5,67 @@ description = "Magenta3 harness component registry: pure-execution tools plus th
 kind = "tool"
 name = "bash"
 description = "Execute a bash command in the current working directory."
-path = "tools/bash/bash.toml"
+path = "modules/tools/bash/bash.toml"
 
 [[components]]
 kind = "tool"
 name = "edit"
 description = "Apply one or more targeted text replacements to a file."
-path = "tools/edit/edit.toml"
+path = "modules/tools/edit/edit.toml"
 
 [[components]]
 kind = "tool"
 name = "read"
 description = "Read the contents of a file with optional line offset/limit."
-path = "tools/read/read.toml"
+path = "modules/tools/read/read.toml"
 
 [[components]]
 kind = "tool"
 name = "write"
 description = "Write content to a file, creating parent directories as needed."
-path = "tools/write/write.toml"
+path = "modules/tools/write/write.toml"
 
 [[components]]
 kind = "tool"
 name = "grep"
 description = "Search file contents for a pattern (respects .gitignore)."
-path = "tools/grep/grep.toml"
+path = "modules/tools/grep/grep.toml"
 
 [[components]]
 kind = "tool"
 name = "find"
 description = "Find files matching a glob pattern."
-path = "tools/find/find.toml"
+path = "modules/tools/find/find.toml"
 
 [[components]]
 kind = "tool"
 name = "ls"
 description = "List directory entries."
-path = "tools/ls/ls.toml"
+path = "modules/tools/ls/ls.toml"
 
 [[components]]
 kind = "tool"
 name = "lsp"
 description = "LSP-style language intelligence queries using the Magenta process-tool source."
-path = "tools/lsp/lsp.toml"
+path = "modules/tools/lsp/lsp.toml"
 
 [[components]]
 kind = "tool"
 name = "todo"
 description = "Manage a session-scoped todo list with branching support."
-path = "tools/todo/todo.toml"
+path = "modules/tools/todo/todo.toml"
 
 [[components]]
 kind = "tool"
 name = "ssh"
 description = "SSH-backed remote workspace operations for read, write, edit, and bash."
-path = "tools/ssh/ssh.toml"
+path = "modules/tools/ssh/ssh.toml"
 
 [[components]]
 kind = "tool"
 name = "web-search"
 description = "Search the web using the Magenta process-tool source."
-path = "tools/web-search/web-search.toml"
+path = "modules/tools/web-search/web-search.toml"
 
 [[components]]
 kind = "hcp-process"
@@ -77,62 +77,62 @@ path = "hcp-client/hcp-process/hcp-process.toml"
 kind = "sandbox"
 name = "sandbox"
 description = "Sandbox profiles and selection provider migrated from Magenta1 general-harness."
-path = "sandbox/sandbox.toml"
+path = "modules/sandbox/sandbox.toml"
 
 [[components]]
 kind = "runtime"
 name = "process"
 description = "Process runtime provider with portable sandbox guardrails."
-path = "runtime/runtime.toml"
+path = "modules/runtime/runtime.toml"
 
 [[components]]
 kind = "runtime"
 name = "script-runtimes"
 description = "Shell/Python/Node/R/Julia runtime wrappers compiled to runtime://process."
-path = "runtime/script-runtimes.toml"
+path = "modules/runtime/script-runtimes.toml"
 
 [[components]]
 kind = "hook"
 name = "hooks"
 description = "Lifecycle hook provider migrated from Magenta1 general-harness."
-path = "hooks/hooks.toml"
+path = "modules/hooks/hooks.toml"
 
 [[components]]
 kind = "policy"
 name = "policy"
 description = "Approval and shell policy providers migrated from Magenta1 general-harness."
-path = "policy/policy.toml"
+path = "modules/policy/policy.toml"
 
 [[components]]
 kind = "context"
 name = "workspace"
 description = "Workspace context provider migrated from Magenta1 general-harness."
-path = "context/context.toml"
+path = "modules/context/context.toml"
 
 # Core modules
 [[components]]
 kind = "compaction"
 name = "compaction"
 description = "Branch summarization and context compaction for agent loop memory management."
-path = "compaction/compaction.toml"
+path = "modules/compaction/compaction.toml"
 
 [[components]]
 kind = "prompt-template"
 name = "prompt-templates"
 description = "Reusable prompt templates with parameter substitution and formatting."
-path = "prompt-templates/prompt-templates.toml"
+path = "modules/prompt-templates/prompt-templates.toml"
 
 [[components]]
 kind = "skill"
 name = "skills"
 description = "Agent skills - user-invocable capabilities via /skill command."
-path = "skills/skills.toml"
+path = "modules/skills/skills.toml"
 
 [[components]]
 kind = "system-prompt"
 name = "system-prompt"
 description = "System prompt construction and templating for agent context."
-path = "system-prompt/system-prompt.toml"
+path = "modules/system-prompt/system-prompt.toml"
 
 [[components]]
 kind = "loop"
@@ -174,7 +174,7 @@ path = "types/types.toml"
 kind = "memory"
 name = "memory"
 description = "Embedding-based semantic memory storage and retrieval."
-path = "memory/memory.toml"
+path = "modules/memory/memory.toml"
 
 [[components]]
 kind = "assembly"

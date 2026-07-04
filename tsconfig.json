@@ -14,8 +14,8 @@
 			"@earendil-works/pi-coding-agent/*": ["./pi/coding-agent/src/*"],
 			"@magenta/harness": ["./harness/index.ts"],
 			"@magenta/harness/*": ["./harness/*"],
-			"@magenta/memory": ["./harness/memory/pi/index.ts"],
-			"@magenta/memory/*": ["./harness/memory/pi/*"],
+			"@magenta/memory": ["./harness/modules/memory/pi/index.ts"],
+			"@magenta/memory/*": ["./harness/modules/memory/pi/*"],
 			"typebox": ["./node_modules/typebox"],
 			"@earendil-works/pi-tui": ["./pi/tui/src/index.ts"],
 			"@earendil-works/pi-tui/*": ["./pi/tui/src/*"]

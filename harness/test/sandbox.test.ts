@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { HcpClient } from "../hcp-client/hcp-client.ts";
 import { getHarnessRegistryPath, loadRegistry } from "../hcp-client/registry/registry.ts";
-import { loadSandboxProviderFromPack, selectSandboxProfile } from "../sandbox/magenta/sandbox.ts";
+import { loadSandboxProviderFromPack, selectSandboxProfile } from "../modules/sandbox/magenta/sandbox.ts";
 
 describe("sandbox provider", () => {
 	it("loads migrated Magenta1 sandbox profiles", async () => {
-		const provider = await loadSandboxProviderFromPack(new URL("../sandbox/sandbox.toml", import.meta.url).pathname);
+		const provider = await loadSandboxProviderFromPack(new URL("../modules/sandbox/sandbox.toml", import.meta.url).pathname);
 		const discovered = provider.discover();
 
 		expect(discovered.targets).toEqual([
@@ -51,7 +51,7 @@ describe("sandbox provider", () => {
 	});
 
 	it("registers sandbox and sandbox-select as HCP targets", async () => {
-		const provider = await loadSandboxProviderFromPack(new URL("../sandbox/sandbox.toml", import.meta.url).pathname);
+		const provider = await loadSandboxProviderFromPack(new URL("../modules/sandbox/sandbox.toml", import.meta.url).pathname);
 		const hcp = new HcpClient()
 			.register("sandbox", provider.toSandboxHcpServer())
 			.registerExact("hook://sandbox-select", provider.toSandboxSelectHcpServer());
@@ -95,11 +95,11 @@ describe("sandbox provider", () => {
 
 		expect(readonly?.migration).toMatchObject({
 			state: "integrated",
-			component: { kind: "sandbox", name: "readonly-fs", path: "sandbox/magenta/readonly-fs.toml" },
+			component: { kind: "sandbox", name: "readonly-fs", path: "modules/sandbox/magenta/readonly-fs.toml" },
 		});
 		expect(hook?.migration).toMatchObject({
 			state: "integrated",
-			component: { kind: "hook", name: "sandbox-select", path: "sandbox/magenta/sandbox.ts" },
+			component: { kind: "hook", name: "sandbox-select", path: "modules/sandbox/magenta/sandbox.ts" },
 		});
 	});
 });

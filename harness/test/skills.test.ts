@@ -2,7 +2,7 @@ import { symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { NodeExecutionEnv } from "../env/pi/nodejs.ts";
-import { loadSkills, loadSourcedSkills } from "../skills/pi/skills.ts";
+import { loadSkills, loadSourcedSkills } from "../modules/skills/pi/skills.ts";
 import { createTempDir } from "./session-test-utils.ts";
 
 describe("loadSkills", () => {

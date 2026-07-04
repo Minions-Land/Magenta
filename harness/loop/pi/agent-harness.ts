@@ -13,8 +13,8 @@ import type { AssistantMessage, ImageContent, Model, Models, UserMessage } from 
 import { buildDefaultCapabilityHcp } from "../../hcp-client/assembly/capability.ts";
 import type { HcpClient } from "../../hcp-client/hcp-client.ts";
 import { convertToLlm } from "../../messages/messages.ts";
-import { formatPromptTemplateInvocation } from "../../prompt-templates/pi/prompt-templates.ts";
-import { formatSkillInvocation } from "../../skills/pi/skills.ts";
+import { formatPromptTemplateInvocation } from "../../modules/prompt-templates/pi/prompt-templates.ts";
+import { formatSkillInvocation } from "../../modules/skills/pi/skills.ts";
 import type {
 	AbortResult,
 	AgentHarnessEvent,

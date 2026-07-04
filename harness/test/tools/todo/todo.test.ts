@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { createTodoMagnet } from "../../../tools/todo/pi/todo.ts";
+import { createTodoMagnet } from "../../../modules/tools/todo/pi/todo.ts";
 
 // Helper to extract text from tool result
 function getText(result: { content: Array<{ type: string; text?: string }> }): string {

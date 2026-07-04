@@ -25,7 +25,7 @@ import {
 	prepareCompaction,
 	serializeConversation,
 	shouldCompact,
-} from "../compaction/pi/compaction.ts";
+} from "../modules/compaction/pi/compaction.ts";
 import { buildSessionContext } from "../session/pi/session.ts";
 import type {
 	BranchSummaryEntry,

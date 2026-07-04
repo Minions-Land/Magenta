@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { HcpClient } from "../hcp-client/hcp-client.ts";
-import { SessionGroundingMemoryProvider } from "../memory/magenta/session-grounding.ts";
+import { SessionGroundingMemoryProvider } from "../modules/memory/magenta/session-grounding.ts";
 
 describe("session grounding memory provider", () => {
 	it("serves Magenta1 session-grounding memory and retains local facts", async () => {

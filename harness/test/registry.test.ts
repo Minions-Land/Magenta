@@ -97,7 +97,7 @@ describe("harness registry", () => {
 		});
 		expect(availableProcessTools.find((item) => item.id === "general-harness:mcp:AstGrep")?.component).toMatchObject({
 			kind: "tool",
-			path: "tools/grep/magenta/ast-grep.toml",
+			path: "modules/tools/grep/magenta/ast-grep.toml",
 		});
 		expect(availableProcessTools.find((item) => item.id === "general-harness:mcp:AstGrep")?.readiness).toBe("ready");
 		expect(
@@ -154,7 +154,7 @@ describe("harness registry", () => {
 			component: {
 				kind: "memory",
 				name: "session-grounding",
-				path: "memory/magenta/session-grounding.ts",
+				path: "modules/memory/magenta/session-grounding.ts",
 			},
 		});
 	});

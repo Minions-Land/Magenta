@@ -16,28 +16,17 @@ const allowedTopLevel = new Set([
 	"hcp-contract",
 	"hcp-magnet",
 	"catalog",
-	"compaction",
-	"context",
 	"docs",
 	"env",
 	"harness.toml",
-	"hooks",
 	"index.ts",
 	"loop",
-	"memory",
 	"messages",
+	"modules",
 	"package.json",
-	"policy",
-	"prompt-templates",
-	"runtime",
-	"sandbox",
 	"scripts",
 	"session",
-	"skills",
-	"system-prompt",
 	"test",
-	"tools",
-	"tools-search",
 	"tsconfig.build.json",
 	"tsconfig.json",
 	"types",
@@ -63,23 +52,23 @@ const sourceModuleDirs = [
 	"hcp-contract",
 	"hcp-magnet",
 	"catalog",
-	"compaction",
-	"context",
+	"modules/compaction",
+	"modules/context",
 	"env",
-	"hooks",
+	"modules/hooks",
 	"loop",
-	"memory",
+	"modules/memory",
 	"messages",
-	"policy",
-	"prompt-templates",
-	"runtime",
-	"sandbox",
+	"modules/policy",
+	"modules/prompt-templates",
+	"modules/runtime",
+	"modules/sandbox",
 	"session",
-	"skills",
-	"system-prompt",
+	"modules/skills",
+	"modules/system-prompt",
 	"test",
-	"tools",
-	"tools-search",
+	"modules/tools",
+	"modules/tools-search",
 	"types",
 	"utils",
 ];
@@ -293,35 +282,39 @@ function checkSupportLayout() {
 			fail(`harness/${name} is invalid as a top-level placeholder; support-only material must live under docs/ or scripts/`);
 		}
 	}
-	if (existsSync(join(harnessRoot, "skills", "bundled"))) {
-		fail("harness/skills/bundled is invalid; harness-native skills live at skills/<capability>/<source>/SKILL.md");
+	if (existsSync(join(harnessRoot, "modules", "skills", "bundled"))) {
+		fail("harness/modules/skills/bundled is invalid; harness-native skills live at modules/skills/<capability>/<source>/SKILL.md");
 	}
-	if (existsSync(join(harnessRoot, "skills", "pi", "bundled"))) {
-		fail("harness/skills/pi/bundled is retired; move skills to skills/<capability>/<source>/SKILL.md");
+	if (existsSync(join(harnessRoot, "modules", "skills", "pi", "bundled"))) {
+		fail("harness/modules/skills/pi/bundled is retired; move skills to modules/skills/<capability>/<source>/SKILL.md");
 	}
 }
 
 function checkToolLayout() {
-	const processDir = join(harnessRoot, "tools", "process");
-	if (existsSync(processDir)) {
-		fail("harness/tools/process is invalid; process-backed implementations must live under tools/<tool>/<source>/");
+	const toolsRoot = join(harnessRoot, "modules", "tools");
+	if (!existsSync(toolsRoot)) {
+		fail("missing harness/modules/tools directory");
+		return;
 	}
-	const supportDir = join(harnessRoot, "tools", "support");
+	const processDir = join(toolsRoot, "process");
+	if (existsSync(processDir)) {
+		fail("harness/modules/tools/process is invalid; process-backed implementations must live under modules/tools/<tool>/<source>/");
+	}
+	const supportDir = join(toolsRoot, "support");
 	if (existsSync(supportDir)) {
-		fail("harness/tools/support is invalid; shared utility code must live under harness/utils/<source>/");
+		fail("harness/modules/tools/support is invalid; shared utility code must live under harness/utils/<source>/");
 	}
 	for (const name of foldedToolModuleNames) {
-		const dir = join(harnessRoot, "tools", name);
+		const dir = join(toolsRoot, name);
 		if (existsSync(dir)) {
-			fail(`harness/tools/${name} is a folded tool sub-operation; keep it under the owning tool source directory`);
+			fail(`harness/modules/tools/${name} is a folded tool sub-operation; keep it under the owning tool source directory`);
 		}
 	}
-	const toolsRoot = join(harnessRoot, "tools");
 	for (const entry of readdirSync(toolsRoot, { withFileTypes: true })) {
 		if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
 		const descriptorPath = join(toolsRoot, entry.name, `${entry.name}.toml`);
 		if (!existsSync(descriptorPath)) {
-			fail(`harness/tools/${entry.name} is not a valid tool slot; missing tools/${entry.name}/${entry.name}.toml`);
+			fail(`harness/modules/tools/${entry.name} is not a valid tool slot; missing modules/tools/${entry.name}/${entry.name}.toml`);
 		}
 	}
 }
@@ -378,7 +371,7 @@ function checkGeneratedNoise() {
 		join(harnessRoot, "node_modules"),
 		join(harnessRoot, "memory", "dist"),
 	];
-	const toolsRoot = join(harnessRoot, "tools");
+	const toolsRoot = join(harnessRoot, "modules", "tools");
 	if (existsSync(toolsRoot)) {
 		for (const entry of readdirSync(toolsRoot, { withFileTypes: true })) {
 			if (!entry.isDirectory()) continue;

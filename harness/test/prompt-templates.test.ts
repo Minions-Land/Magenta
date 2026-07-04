@@ -6,7 +6,7 @@ import {
 	formatPromptTemplateInvocation,
 	loadPromptTemplates,
 	loadSourcedPromptTemplates,
-} from "../prompt-templates/pi/prompt-templates.ts";
+} from "../modules/prompt-templates/pi/prompt-templates.ts";
 import { createTempDir } from "./session-test-utils.ts";
 
 describe("loadPromptTemplates", () => {

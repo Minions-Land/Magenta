@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { HcpClient } from "../hcp-client/hcp-client.ts";
 import { getHarnessRegistryPath, loadRegistry } from "../hcp-client/registry/registry.ts";
-import { ContextProvider, discoverContextFiles } from "../context/magenta/context.ts";
+import { ContextProvider, discoverContextFiles } from "../modules/context/magenta/context.ts";
 
 describe("context provider", () => {
 	it("discovers selected and sticky context files with local imports", async () => {
@@ -57,7 +57,7 @@ describe("context provider", () => {
 
 		expect(catalog.entries.find((entry) => entry.id === "runtime-provider:context:workspace")?.migration).toMatchObject({
 			state: "integrated",
-			component: { kind: "context", name: "workspace", path: "context/context.toml" },
+			component: { kind: "context", name: "workspace", path: "modules/context/context.toml" },
 		});
 	});
 });

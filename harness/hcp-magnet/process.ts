@@ -11,9 +11,9 @@ import {
 	type ProcessExecOutput,
 	type ProcessRuntimeToolMetadata,
 	type RuntimePolicyReport,
-} from "../runtime/magenta/process-runtime.ts";
-import type { SandboxProfile, SandboxSelection } from "../sandbox/contract.ts";
-import { loadSandboxProviderFromPack, selectSandboxProfile } from "../sandbox/magenta/sandbox.ts";
+} from "../modules/runtime/magenta/process-runtime.ts";
+import type { SandboxProfile, SandboxSelection } from "../modules/sandbox/contract.ts";
+import { loadSandboxProviderFromPack, selectSandboxProfile } from "../modules/sandbox/magenta/sandbox.ts";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, type TruncationResult } from "../utils/pi/truncate.ts";
 import type { HcpRequest } from "../hcp-contract/hcp-server.ts";
 import { parseToml, type TomlTable } from "../hcp-client/registry/registry.ts";
@@ -216,7 +216,7 @@ async function loadCatalogSandboxProfile(
 	catalog: HarnessComponentCatalog,
 	manifest: ProcessToolManifest,
 ): Promise<SandboxProfile | undefined> {
-	const packPath = resolve(resolveCatalogLocalRoot(catalog), "sandbox/sandbox.toml");
+	const packPath = resolve(resolveCatalogLocalRoot(catalog), "modules/sandbox/sandbox.toml");
 	if (!(await fileExists(packPath))) return undefined;
 	const provider = await loadSandboxProviderFromPack(packPath);
 	const selection = selectSandboxProfile({

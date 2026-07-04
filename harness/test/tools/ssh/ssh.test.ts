@@ -4,7 +4,7 @@ import {
 	createSshToolOperations,
 	resolveSshTarget,
 	type SshCommandRunner,
-} from "../../../tools/ssh/magenta/ssh.ts";
+} from "../../../modules/tools/ssh/magenta/ssh.ts";
 
 function createRunner(
 	handler: (remote: string, command: string, options?: Parameters<SshCommandRunner>[2]) => Partial<Awaited<ReturnType<SshCommandRunner>>>,

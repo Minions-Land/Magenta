@@ -19,5 +19,13 @@
 		"@types/node": "24.12.4",
 		"typescript": "5.9.3",
 		"vitest": "4.1.9"
-	}
+	},
+	"description": "**Harness** is the modular component system for Magenta3. It provides: - Pure-execution implementations of tools, skills, compaction, prompt templates, and system prompts - A registry-based architecture for discovering and assembling components - Source separation: implementations organized by origin agent/source (pi, codex, claude-code, magenta, etc.) - HCP/Magnet assembly layer for connecting components to the agent loop",
+	"directories": {
+		"doc": "docs",
+		"test": "test"
+	},
+	"keywords": [],
+	"author": "",
+	"license": "ISC"
 }

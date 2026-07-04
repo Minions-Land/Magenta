@@ -3,8 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { NodeExecutionEnv } from "../env/pi/nodejs.ts";
-import { loadSystemPromptDescriptor } from "../system-prompt/pi/descriptor.ts";
-import { formatSkillsForSystemPrompt } from "../system-prompt/pi/system-prompt.ts";
+import { loadSystemPromptDescriptor } from "../modules/system-prompt/pi/descriptor.ts";
+import { formatSkillsForSystemPrompt } from "../modules/system-prompt/pi/system-prompt.ts";
 
 const visibleSkill = {
 	name: "visible",
@@ -72,7 +72,7 @@ When a skill file references a relative path, resolve it against the skill direc
 
 describe("loadSystemPromptDescriptor", () => {
 	it("loads harness module descriptors without content paths", async () => {
-		const result = await loadSystemPromptDescriptor(join(process.cwd(), "system-prompt", "system-prompt.toml"));
+		const result = await loadSystemPromptDescriptor(join(process.cwd(), "modules", "system-prompt", "system-prompt.toml"));
 
 		expect(result.diagnostics).toEqual([]);
 		expect(result.descriptor).toMatchObject({

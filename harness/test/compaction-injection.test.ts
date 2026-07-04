@@ -6,7 +6,7 @@ import { NodeExecutionEnv } from "../env/pi/nodejs.ts";
 import { AgentHarness } from "../loop/pi/agent-harness.ts";
 import { InMemorySessionStorage } from "../session/pi/memory-storage.ts";
 import { Session } from "../session/pi/session.ts";
-import { piCompactionProvider, type CompactionProvider } from "../compaction/pi/provider.ts";
+import { piCompactionProvider, type CompactionProvider } from "../modules/compaction/pi/provider.ts";
 import { ok, type CompactionPreparation, type CompactionResult } from "../types/types.ts";
 import {
 	buildDefaultCapabilityHcp,

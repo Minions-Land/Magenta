@@ -10,7 +10,7 @@ import {
 	loadPackageOverlay,
 	parsePackageSelector,
 } from "../hcp-client/overlay/package-overlay.ts";
-import { loadSkills } from "../skills/pi/skills.ts";
+import { loadSkills } from "../modules/skills/pi/skills.ts";
 
 const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
 

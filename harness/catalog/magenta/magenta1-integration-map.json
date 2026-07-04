@@ -4,49 +4,49 @@
   "entries": {
     "general-harness:mcp:Read": {
       "state": "integrated",
-      "component": { "kind": "tool", "name": "read", "path": "tools/read/read.toml" },
+      "component": { "kind": "tool", "name": "read", "path": "modules/tools/read/read.toml" },
       "relation": "superseded-by-native-ts-tool",
       "notes": "Magenta3 uses the pi-sourced native TypeScript read tool instead of the Magenta1 process-tool magnet."
     },
     "general-harness:mcp:Write": {
       "state": "integrated",
-      "component": { "kind": "tool", "name": "write", "path": "tools/write/write.toml" },
+      "component": { "kind": "tool", "name": "write", "path": "modules/tools/write/write.toml" },
       "relation": "superseded-by-native-ts-tool",
       "notes": "Magenta3 uses the pi-sourced native TypeScript write tool instead of the Magenta1 process-tool magnet."
     },
     "general-harness:mcp:Edit": {
       "state": "integrated",
-      "component": { "kind": "tool", "name": "edit", "path": "tools/edit/edit.toml" },
+      "component": { "kind": "tool", "name": "edit", "path": "modules/tools/edit/edit.toml" },
       "relation": "superseded-by-native-ts-tool",
       "notes": "Magenta3 uses the pi-sourced native TypeScript edit tool instead of the Magenta1 process-tool magnet."
     },
     "general-harness:mcp:Bash": {
       "state": "integrated",
-      "component": { "kind": "tool", "name": "bash", "path": "tools/bash/bash.toml" },
+      "component": { "kind": "tool", "name": "bash", "path": "modules/tools/bash/bash.toml" },
       "relation": "superseded-by-native-ts-tool",
       "notes": "Magenta3 keeps bash execution in harness and injects host process operations from the assembly layer."
     },
     "general-harness:mcp:Grep": {
       "state": "integrated",
-      "component": { "kind": "tool", "name": "grep", "path": "tools/grep/grep.toml" },
+      "component": { "kind": "tool", "name": "grep", "path": "modules/tools/grep/grep.toml" },
       "relation": "superseded-by-native-ts-tool",
       "notes": "Magenta3 uses the native TypeScript grep tool."
     },
     "general-harness:mcp:Find": {
       "state": "integrated",
-      "component": { "kind": "tool", "name": "find", "path": "tools/find/find.toml" },
+      "component": { "kind": "tool", "name": "find", "path": "modules/tools/find/find.toml" },
       "relation": "superseded-by-native-ts-tool",
       "notes": "Magenta3 uses the native TypeScript find tool."
     },
     "general-harness:mcp:Glob": {
       "state": "integrated",
-      "component": { "kind": "tool", "name": "find", "path": "tools/find/find.toml" },
+      "component": { "kind": "tool", "name": "find", "path": "modules/tools/find/find.toml" },
       "relation": "covered-by-native-ts-tool",
       "notes": "Magenta3's find tool accepts glob patterns, so the separate Magenta1 Glob process tool is not duplicated."
     },
     "general-harness:mcp:Ls": {
       "state": "integrated",
-      "component": { "kind": "tool", "name": "ls", "path": "tools/ls/ls.toml" },
+      "component": { "kind": "tool", "name": "ls", "path": "modules/tools/ls/ls.toml" },
       "relation": "superseded-by-native-ts-tool",
       "notes": "Magenta3 uses the native TypeScript ls tool."
     },
@@ -58,97 +58,97 @@
     },
     "general-harness:mcp:ReadAnchored": {
       "state": "available",
-      "component": { "kind": "tool", "name": "read", "path": "tools/read/magenta/read-anchored.toml" },
+      "component": { "kind": "tool", "name": "read", "path": "modules/tools/read/magenta/read-anchored.toml" },
       "relation": "migrated-rust-process-tool",
       "notes": "Hashline anchored read is provided by the migrated Rust process-tools binary through ProcessToolMagnet."
     },
     "general-harness:mcp:EditHashline": {
       "state": "available",
-      "component": { "kind": "tool", "name": "edit", "path": "tools/edit/magenta/edit-hashline.toml" },
+      "component": { "kind": "tool", "name": "edit", "path": "modules/tools/edit/magenta/edit-hashline.toml" },
       "relation": "migrated-rust-process-tool",
       "notes": "Hashline edit is provided by the migrated Rust process-tools binary through ProcessToolMagnet."
     },
     "general-harness:mcp:FuzzyFind": {
       "state": "available",
-      "component": { "kind": "tool", "name": "find", "path": "tools/find/magenta/fuzzy-find.toml" },
+      "component": { "kind": "tool", "name": "find", "path": "modules/tools/find/magenta/fuzzy-find.toml" },
       "relation": "migrated-rust-process-tool",
       "notes": "Fuzzy path search is provided by the migrated Rust process-tools binary through ProcessToolMagnet."
     },
     "general-harness:mcp:AstGrep": {
       "state": "available",
-      "component": { "kind": "tool", "name": "grep", "path": "tools/grep/magenta/ast-grep.toml" },
+      "component": { "kind": "tool", "name": "grep", "path": "modules/tools/grep/magenta/ast-grep.toml" },
       "relation": "migrated-rust-process-tool",
       "notes": "AST structural search is provided by the migrated Rust process-tools binary through ProcessToolMagnet."
     },
     "general-harness:mcp:AstEditPlan": {
       "state": "available",
-      "component": { "kind": "tool", "name": "edit", "path": "tools/edit/magenta/ast-edit-plan.toml" },
+      "component": { "kind": "tool", "name": "edit", "path": "modules/tools/edit/magenta/ast-edit-plan.toml" },
       "relation": "migrated-rust-process-tool",
       "notes": "AST edit planning remains internal but is migrated for Resolve/EditHashline flows."
     },
     "general-harness:mcp:Lsp": {
       "state": "available",
-      "component": { "kind": "tool", "name": "lsp", "path": "tools/lsp/magenta/lsp.toml" },
+      "component": { "kind": "tool", "name": "lsp", "path": "modules/tools/lsp/magenta/lsp.toml" },
       "relation": "migrated-rust-process-tool",
       "notes": "LSP-style queries are provided by the migrated Rust process-tools binary through ProcessToolMagnet."
     },
     "general-harness:mcp:WebSearch": {
       "state": "available",
-      "component": { "kind": "tool", "name": "web-search", "path": "tools/web-search/magenta/web-search.toml" },
+      "component": { "kind": "tool", "name": "web-search", "path": "modules/tools/web-search/magenta/web-search.toml" },
       "relation": "migrated-rust-process-tool",
       "notes": "WebSearch is provided by the migrated Rust process-tools binary through ProcessToolMagnet."
     },
     "general-harness:mcp:ReadUrl": {
       "state": "available",
-      "component": { "kind": "tool", "name": "read", "path": "tools/read/magenta/read-url.toml" },
+      "component": { "kind": "tool", "name": "read", "path": "modules/tools/read/magenta/read-url.toml" },
       "relation": "migrated-rust-process-tool",
       "notes": "ReadUrl is provided by the migrated Rust process-tools binary through ProcessToolMagnet."
     },
     "general-harness:declared:Read": {
       "state": "integrated",
-      "component": { "kind": "tool", "name": "read", "path": "tools/read/read.toml" },
+      "component": { "kind": "tool", "name": "read", "path": "modules/tools/read/read.toml" },
       "relation": "metadata-covered-by-native-ts-tool",
       "notes": "The Magenta1 declared metadata is covered by the registered Magenta3 read tool."
     },
     "general-harness:declared:Write": {
       "state": "integrated",
-      "component": { "kind": "tool", "name": "write", "path": "tools/write/write.toml" },
+      "component": { "kind": "tool", "name": "write", "path": "modules/tools/write/write.toml" },
       "relation": "metadata-covered-by-native-ts-tool",
       "notes": "The Magenta1 declared metadata is covered by the registered Magenta3 write tool."
     },
     "general-harness:declared:Edit": {
       "state": "integrated",
-      "component": { "kind": "tool", "name": "edit", "path": "tools/edit/edit.toml" },
+      "component": { "kind": "tool", "name": "edit", "path": "modules/tools/edit/edit.toml" },
       "relation": "metadata-covered-by-native-ts-tool",
       "notes": "The Magenta1 declared metadata is covered by the registered Magenta3 edit tool."
     },
     "general-harness:declared:Bash": {
       "state": "integrated",
-      "component": { "kind": "tool", "name": "bash", "path": "tools/bash/bash.toml" },
+      "component": { "kind": "tool", "name": "bash", "path": "modules/tools/bash/bash.toml" },
       "relation": "metadata-covered-by-native-ts-tool",
       "notes": "The Magenta1 declared metadata is covered by the registered Magenta3 bash tool."
     },
     "general-harness:declared:Grep": {
       "state": "integrated",
-      "component": { "kind": "tool", "name": "grep", "path": "tools/grep/grep.toml" },
+      "component": { "kind": "tool", "name": "grep", "path": "modules/tools/grep/grep.toml" },
       "relation": "metadata-covered-by-native-ts-tool",
       "notes": "The Magenta1 declared metadata is covered by the registered Magenta3 grep tool."
     },
     "general-harness:declared:Find": {
       "state": "integrated",
-      "component": { "kind": "tool", "name": "find", "path": "tools/find/find.toml" },
+      "component": { "kind": "tool", "name": "find", "path": "modules/tools/find/find.toml" },
       "relation": "metadata-covered-by-native-ts-tool",
       "notes": "The Magenta1 declared metadata is covered by the registered Magenta3 find tool."
     },
     "general-harness:declared:Glob": {
       "state": "integrated",
-      "component": { "kind": "tool", "name": "find", "path": "tools/find/find.toml" },
+      "component": { "kind": "tool", "name": "find", "path": "modules/tools/find/find.toml" },
       "relation": "metadata-covered-by-native-ts-tool",
       "notes": "The Magenta1 declared Glob metadata is covered by the registered Magenta3 find tool."
     },
     "general-harness:declared:Ls": {
       "state": "integrated",
-      "component": { "kind": "tool", "name": "ls", "path": "tools/ls/ls.toml" },
+      "component": { "kind": "tool", "name": "ls", "path": "modules/tools/ls/ls.toml" },
       "relation": "metadata-covered-by-native-ts-tool",
       "notes": "The Magenta1 declared metadata is covered by the registered Magenta3 ls tool."
     },
@@ -166,25 +166,25 @@
     },
     "runtime-provider:runtime:process": {
       "state": "integrated",
-      "component": { "kind": "runtime", "name": "process", "path": "runtime/runtime.toml" },
+      "component": { "kind": "runtime", "name": "process", "path": "modules/runtime/runtime.toml" },
       "relation": "ported-portable-guards-to-native-ts-provider",
       "notes": "Magenta3 runtime://process enforces direct-exec, workspace cwd, env allowlist, timeout, filesystem path checks, and network tag/allowlist checks. Magenta1 OS sandbox backends are not ported yet."
     },
     "runtime-provider:approval:policy": {
       "state": "integrated",
-      "component": { "kind": "approval", "name": "policy", "path": "policy/policy.toml" },
+      "component": { "kind": "approval", "name": "policy", "path": "modules/policy/policy.toml" },
       "relation": "ported-to-native-ts-provider",
       "notes": "approval://policy decide/status is ported from Magenta1 approval_provider.rs and returns policy decisions without blocking for UI."
     },
     "runtime-provider:shell:policy": {
       "state": "integrated",
-      "component": { "kind": "shell", "name": "policy", "path": "policy/policy.toml" },
+      "component": { "kind": "shell", "name": "policy", "path": "modules/policy/policy.toml" },
       "relation": "ported-to-native-ts-provider",
       "notes": "shell://policy classify/status is ported from Magenta1 shell_policy_provider.rs and is advisory only; it does not execute commands."
     },
     "runtime-provider:context:workspace": {
       "state": "integrated",
-      "component": { "kind": "context", "name": "workspace", "path": "context/context.toml" },
+      "component": { "kind": "context", "name": "workspace", "path": "modules/context/context.toml" },
       "relation": "ported-to-native-ts-provider",
       "notes": "Magenta3 ContextProvider supports both context://workspace from the inventory and context://project from the Magenta1 Rust implementation/pre-turn hook."
     },
@@ -220,31 +220,31 @@
     },
     "general-harness:runtime:shell": {
       "state": "integrated",
-      "component": { "kind": "runtime", "name": "shell", "path": "runtime/script-runtimes.toml" },
+      "component": { "kind": "runtime", "name": "shell", "path": "modules/runtime/script-runtimes.toml" },
       "relation": "ported-to-native-ts-runtime-wrapper",
       "notes": "runtime://shell compiles shell code to runtime://process exec and inherits the process runtime guardrails."
     },
     "general-harness:runtime:python": {
       "state": "integrated",
-      "component": { "kind": "runtime", "name": "python", "path": "runtime/script-runtimes.toml" },
+      "component": { "kind": "runtime", "name": "python", "path": "modules/runtime/script-runtimes.toml" },
       "relation": "ported-to-native-ts-runtime-wrapper",
       "notes": "runtime://python compiles Python code to runtime://process exec and inherits the process runtime guardrails."
     },
     "general-harness:runtime:node": {
       "state": "integrated",
-      "component": { "kind": "runtime", "name": "node", "path": "runtime/script-runtimes.toml" },
+      "component": { "kind": "runtime", "name": "node", "path": "modules/runtime/script-runtimes.toml" },
       "relation": "ported-to-native-ts-runtime-wrapper",
       "notes": "runtime://node compiles JavaScript code to runtime://process exec and inherits the process runtime guardrails."
     },
     "general-harness:runtime:r": {
       "state": "integrated",
-      "component": { "kind": "runtime", "name": "r", "path": "runtime/script-runtimes.toml" },
+      "component": { "kind": "runtime", "name": "r", "path": "modules/runtime/script-runtimes.toml" },
       "relation": "ported-to-native-ts-runtime-wrapper",
       "notes": "runtime://r compiles R code to runtime://process exec and inherits the process runtime guardrails. Execution requires Rscript on PATH."
     },
     "general-harness:runtime:julia": {
       "state": "integrated",
-      "component": { "kind": "runtime", "name": "julia", "path": "runtime/script-runtimes.toml" },
+      "component": { "kind": "runtime", "name": "julia", "path": "modules/runtime/script-runtimes.toml" },
       "relation": "ported-to-native-ts-runtime-wrapper",
       "notes": "runtime://julia compiles Julia code to runtime://process exec and inherits the process runtime guardrails. Execution requires julia on PATH."
     },
@@ -253,7 +253,7 @@
       "component": {
         "kind": "system-prompt",
         "name": "system-prompt",
-        "path": "system-prompt/system-prompt.toml"
+        "path": "modules/system-prompt/system-prompt.toml"
       },
       "relation": "covered-by-magenta3-module",
       "notes": "Magenta3 owns system prompt construction as a harness module."
@@ -346,7 +346,7 @@
     },
     "general-harness:memory:session-grounding": {
       "state": "integrated",
-      "component": { "kind": "memory", "name": "session-grounding", "path": "memory/magenta/session-grounding.ts" },
+      "component": { "kind": "memory", "name": "session-grounding", "path": "modules/memory/magenta/session-grounding.ts" },
       "relation": "ported-to-native-ts-provider",
       "notes": "memory://session-grounding is implemented as a Magenta3 TS HCP target with read/retain/recall/reflect operations and preserves the Magenta1 source constraints."
     },
@@ -377,85 +377,85 @@
     },
     "general-harness:hook:sandbox-select": {
       "state": "integrated",
-      "component": { "kind": "hook", "name": "sandbox-select", "path": "sandbox/magenta/sandbox.ts" },
+      "component": { "kind": "hook", "name": "sandbox-select", "path": "modules/sandbox/magenta/sandbox.ts" },
       "relation": "ported-to-native-ts-provider",
       "notes": "The Magenta1 pre-tool sandbox selection rule is implemented in the Magenta3 sandbox provider as hook://sandbox-select."
     },
     "general-harness:hook:init": {
       "state": "integrated",
-      "component": { "kind": "hook", "name": "init", "path": "hooks/hooks.toml" },
+      "component": { "kind": "hook", "name": "init", "path": "modules/hooks/hooks.toml" },
       "relation": "ported-to-native-ts-provider",
       "notes": "Lifecycle hook returns the same declarative session append action shape as Magenta1 HookProvider."
     },
     "general-harness:hook:pre-turn": {
       "state": "integrated",
-      "component": { "kind": "hook", "name": "pre-turn", "path": "hooks/hooks.toml" },
+      "component": { "kind": "hook", "name": "pre-turn", "path": "modules/hooks/hooks.toml" },
       "relation": "ported-to-native-ts-provider",
       "notes": "Lifecycle hook returns declarative memory/context injection actions."
     },
     "general-harness:hook:pre-llm": {
       "state": "integrated",
-      "component": { "kind": "hook", "name": "pre-llm", "path": "hooks/hooks.toml" },
+      "component": { "kind": "hook", "name": "pre-llm", "path": "modules/hooks/hooks.toml" },
       "relation": "ported-to-native-ts-provider",
       "notes": "Lifecycle hook target is registered and currently returns an ok/no-action envelope."
     },
     "general-harness:hook:post-llm": {
       "state": "integrated",
-      "component": { "kind": "hook", "name": "post-llm", "path": "hooks/hooks.toml" },
+      "component": { "kind": "hook", "name": "post-llm", "path": "modules/hooks/hooks.toml" },
       "relation": "ported-to-native-ts-provider",
       "notes": "Lifecycle hook returns the Magenta1 advisor watchdog update action shape."
     },
     "general-harness:hook:pre-tool": {
       "state": "integrated",
-      "component": { "kind": "hook", "name": "pre-tool", "path": "hooks/hooks.toml" },
+      "component": { "kind": "hook", "name": "pre-tool", "path": "modules/hooks/hooks.toml" },
       "relation": "ported-to-native-ts-provider",
       "notes": "Lifecycle hook returns sandbox, approval, and shell policy action envelopes."
     },
     "general-harness:hook:post-tool": {
       "state": "integrated",
-      "component": { "kind": "hook", "name": "post-tool", "path": "hooks/hooks.toml" },
+      "component": { "kind": "hook", "name": "post-tool", "path": "modules/hooks/hooks.toml" },
       "relation": "ported-to-native-ts-provider",
       "notes": "Lifecycle hook target is registered and currently returns an ok/no-action envelope."
     },
     "general-harness:hook:compact": {
       "state": "integrated",
-      "component": { "kind": "hook", "name": "compact", "path": "hooks/hooks.toml" },
+      "component": { "kind": "hook", "name": "compact", "path": "modules/hooks/hooks.toml" },
       "relation": "ported-to-native-ts-provider",
       "notes": "Lifecycle hook returns the Magenta1 session compaction action shape."
     },
     "general-harness:hook:workflow": {
       "state": "integrated",
-      "component": { "kind": "hook", "name": "workflow", "path": "hooks/hooks.toml" },
+      "component": { "kind": "hook", "name": "workflow", "path": "modules/hooks/hooks.toml" },
       "relation": "ported-to-native-ts-provider",
       "notes": "Lifecycle hook returns the Magenta1 workflow dispatch action shape."
     },
     "general-harness:sandbox:readonly-fs": {
       "state": "integrated",
-      "component": { "kind": "sandbox", "name": "readonly-fs", "path": "sandbox/magenta/readonly-fs.toml" },
+      "component": { "kind": "sandbox", "name": "readonly-fs", "path": "modules/sandbox/magenta/readonly-fs.toml" },
       "relation": "migrated-sandbox-profile",
       "notes": "Profile metadata is migrated and served by the Magenta3 TS SandboxProvider; runtime enforcement remains a separate provider migration."
     },
     "general-harness:sandbox:restricted": {
       "state": "integrated",
-      "component": { "kind": "sandbox", "name": "restricted", "path": "sandbox/magenta/restricted.toml" },
+      "component": { "kind": "sandbox", "name": "restricted", "path": "modules/sandbox/magenta/restricted.toml" },
       "relation": "migrated-sandbox-profile",
       "notes": "Profile metadata is migrated and served by the Magenta3 TS SandboxProvider; runtime enforcement remains a separate provider migration."
     },
     "general-harness:sandbox:workspace-write": {
       "state": "integrated",
-      "component": { "kind": "sandbox", "name": "workspace-write", "path": "sandbox/magenta/workspace-write.toml" },
+      "component": { "kind": "sandbox", "name": "workspace-write", "path": "modules/sandbox/magenta/workspace-write.toml" },
       "relation": "migrated-sandbox-profile",
       "notes": "Profile metadata is migrated and served by the Magenta3 TS SandboxProvider; runtime enforcement remains a separate provider migration."
     },
     "general-harness:sandbox:network-read": {
       "state": "integrated",
-      "component": { "kind": "sandbox", "name": "network-read", "path": "sandbox/magenta/network-read.toml" },
+      "component": { "kind": "sandbox", "name": "network-read", "path": "modules/sandbox/magenta/network-read.toml" },
       "relation": "migrated-sandbox-profile",
       "notes": "Profile metadata is migrated and served by the Magenta3 TS SandboxProvider; runtime enforcement remains a separate provider migration."
     },
     "general-harness:sandbox:trusted": {
       "state": "integrated",
-      "component": { "kind": "sandbox", "name": "trusted", "path": "sandbox/magenta/trusted.toml" },
+      "component": { "kind": "sandbox", "name": "trusted", "path": "modules/sandbox/magenta/trusted.toml" },
       "relation": "migrated-sandbox-profile",
       "notes": "Profile metadata is migrated and served by the Magenta3 TS SandboxProvider; runtime enforcement remains a separate provider migration."
     },

@@ -4,7 +4,7 @@
 	"type": "module",
 	"workspaces": [
 		"harness",
-		"harness/memory",
+		"harness/modules/memory",
 		"pi/*",
 		"pi/coding-agent/examples/extensions/with-deps",
 		"pi/coding-agent/examples/extensions/custom-provider-anthropic",

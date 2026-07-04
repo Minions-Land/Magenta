@@ -1,12 +1,12 @@
-import { compactionPiMagnet } from "../../compaction/pi/magnet.ts";
-import { contextMagentaMagnet } from "../../context/magenta/magnet.ts";
-import { hookMagentaMagnet } from "../../hooks/magenta/magnet.ts";
-import { memoryMagentaMagnet } from "../../memory/magenta/magnet.ts";
-import { policyMagentaMagnet } from "../../policy/magenta/magnet.ts";
-import { promptTemplatePiMagnet } from "../../prompt-templates/pi/magnet.ts";
-import { runtimeMagentaMagnet } from "../../runtime/magenta/magnet.ts";
-import { sandboxMagentaMagnet } from "../../sandbox/magenta/magnet.ts";
-import { systemPromptPiMagnet } from "../../system-prompt/pi/magnet.ts";
+import { compactionPiMagnet } from "../../modules/compaction/pi/magnet.ts";
+import { contextMagentaMagnet } from "../../modules/context/magenta/magnet.ts";
+import { hookMagentaMagnet } from "../../modules/hooks/magenta/magnet.ts";
+import { memoryMagentaMagnet } from "../../modules/memory/magenta/magnet.ts";
+import { policyMagentaMagnet } from "../../modules/policy/magenta/magnet.ts";
+import { promptTemplatePiMagnet } from "../../modules/prompt-templates/pi/magnet.ts";
+import { runtimeMagentaMagnet } from "../../modules/runtime/magenta/magnet.ts";
+import { sandboxMagentaMagnet } from "../../modules/sandbox/magenta/magnet.ts";
+import { systemPromptPiMagnet } from "../../modules/system-prompt/pi/magnet.ts";
 import type { CapabilitySourceMagnet } from "../../hcp-contract/hcp-magnet.ts";
 
 /**

@@ -3,8 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { HcpClient } from "../hcp-client/hcp-client.ts";
-import { execProcess, ProcessRuntimeProvider } from "../runtime/magenta/process-runtime.ts";
-import { loadSandboxProviderFromPack } from "../sandbox/magenta/sandbox.ts";
+import { execProcess, ProcessRuntimeProvider } from "../modules/runtime/magenta/process-runtime.ts";
+import { loadSandboxProviderFromPack } from "../modules/sandbox/magenta/sandbox.ts";
 
 async function writeExecutableScript(dir: string, name: string, source: string): Promise<string> {
 	const path = join(dir, name);
@@ -15,7 +15,7 @@ async function writeExecutableScript(dir: string, name: string, source: string):
 describe("process runtime provider", () => {
 	it("executes through runtime://process with env allowlist and policy report", async () => {
 		const dir = await mkdtemp(join(tmpdir(), "magenta-runtime-"));
-		const provider = await loadSandboxProviderFromPack(new URL("../sandbox/sandbox.toml", import.meta.url).pathname);
+		const provider = await loadSandboxProviderFromPack(new URL("../modules/sandbox/sandbox.toml", import.meta.url).pathname);
 		const script = await writeExecutableScript(
 			dir,
 			"env-tool.mjs",
@@ -75,7 +75,7 @@ process.stdin.on("end", () => {
 
 	it("enforces workspace path and network portable guards", async () => {
 		const dir = await mkdtemp(join(tmpdir(), "magenta-runtime-policy-"));
-		const provider = await loadSandboxProviderFromPack(new URL("../sandbox/sandbox.toml", import.meta.url).pathname);
+		const provider = await loadSandboxProviderFromPack(new URL("../modules/sandbox/sandbox.toml", import.meta.url).pathname);
 
 		await expect(
 			execProcess({

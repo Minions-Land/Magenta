@@ -4,8 +4,8 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { HcpClient } from "../hcp-client/hcp-client.ts";
 import { getHarnessRegistryPath, loadRegistry } from "../hcp-client/registry/registry.ts";
-import { ScriptRuntimeProvider } from "../runtime/magenta/script-runtime.ts";
-import { loadSandboxProviderFromPack } from "../sandbox/magenta/sandbox.ts";
+import { ScriptRuntimeProvider } from "../modules/runtime/magenta/script-runtime.ts";
+import { loadSandboxProviderFromPack } from "../modules/sandbox/magenta/sandbox.ts";
 
 describe("script runtime provider", () => {
 	it("discovers and describes Magenta1 runtime wrappers", async () => {
@@ -26,7 +26,7 @@ describe("script runtime provider", () => {
 
 	it("executes shell and node code through runtime://process", async () => {
 		const dir = await mkdtemp(join(tmpdir(), "magenta-script-runtime-"));
-		const sandbox = await loadSandboxProviderFromPack(new URL("../sandbox/sandbox.toml", import.meta.url).pathname);
+		const sandbox = await loadSandboxProviderFromPack(new URL("../modules/sandbox/sandbox.toml", import.meta.url).pathname);
 		const hcp = new HcpClient().register("runtime", new ScriptRuntimeProvider().toHcpServer());
 
 		await expect(
@@ -108,7 +108,7 @@ describe("script runtime provider", () => {
 			const entry = catalog.entries.find((item) => item.id === `general-harness:runtime:${name}`);
 			expect(entry?.migration).toMatchObject({
 				state: "integrated",
-				component: { kind: "runtime", name, path: "runtime/script-runtimes.toml" },
+				component: { kind: "runtime", name, path: "modules/runtime/script-runtimes.toml" },
 			});
 		}
 	});

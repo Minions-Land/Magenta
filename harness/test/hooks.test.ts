@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { HcpClient } from "../hcp-client/hcp-client.ts";
 import { getHarnessRegistryPath, loadRegistry } from "../hcp-client/registry/registry.ts";
-import { HookProvider } from "../hooks/magenta/hooks.ts";
+import { HookProvider } from "../modules/hooks/magenta/hooks.ts";
 
 describe("hook provider", () => {
 	it("discovers and describes migrated lifecycle hooks", async () => {
@@ -98,7 +98,7 @@ describe("hook provider", () => {
 			const entry = catalog.entries.find((item) => item.id === `general-harness:hook:${name}`);
 			expect(entry?.migration).toMatchObject({
 				state: "integrated",
-				component: { kind: "hook", name, path: "hooks/hooks.toml" },
+				component: { kind: "hook", name, path: "modules/hooks/hooks.toml" },
 			});
 		}
 	});

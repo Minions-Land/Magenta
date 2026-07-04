@@ -6,8 +6,8 @@ import {
 	execProcess,
 	type ProcessExecOutput,
 	type ProcessRuntimeToolMetadata,
-} from "../runtime/magenta/process-runtime.ts";
-import type { SandboxProfile } from "../sandbox/contract.ts";
+} from "../modules/runtime/magenta/process-runtime.ts";
+import type { SandboxProfile } from "../modules/sandbox/contract.ts";
 import type { HcpRequest } from "../hcp-contract/hcp-server.ts";
 import { parseToml, type TomlTable } from "../hcp-client/registry/registry.ts";
 import { UniversalMagnet } from "./universal.ts";
