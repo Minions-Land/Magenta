@@ -1,15 +1,5 @@
-import {
-	Editor,
-	type EditorOptions,
-	type EditorTheme,
-	type TUI,
-	matchesKey,
-} from "@earendil-works/pi-tui";
-import {
-	ImageTokenController,
-	readClipboardFilePaths,
-	type ImageTokenTheme,
-} from "../../../core/image-tokens.ts";
+import { Editor, type EditorOptions, type EditorTheme, matchesKey, type TUI } from "@earendil-works/pi-tui";
+import { type ImageTokenController, type ImageTokenTheme, readClipboardFilePaths } from "../../../core/image-tokens.ts";
 import type { AppKeybinding, KeybindingsManager } from "../../../core/keybindings.ts";
 
 type EditorInternals = {
@@ -42,10 +32,7 @@ export class CustomEditor extends Editor {
 		this.keybindings = keybindings;
 	}
 
-	setImageTokenController(
-		controller: ImageTokenController | undefined,
-		getTheme?: () => ImageTokenTheme,
-	): void {
+	setImageTokenController(controller: ImageTokenController | undefined, getTheme?: () => ImageTokenTheme): void {
 		this.imageTokens = controller;
 		this.getImageTokenTheme = getTheme;
 	}
@@ -88,7 +75,7 @@ export class CustomEditor extends Editor {
 		if (matchesKey(data, "enter") && this.isShowingAutocomplete()) {
 			// Check if text ends with autocomplete trigger (@file or /command)
 			const text = this.getText().trimEnd();
-			if (/(^|\s)[\/@][^\s]*$/.test(text)) {
+			if (/(^|\s)[/@][^\s]*$/.test(text)) {
 				// Convert Enter to Tab to accept/cycle autocomplete
 				super.handleInput("\t");
 				return;

@@ -44,10 +44,14 @@ describe("ImageTokenController", () => {
 		const controller = new ImageTokenController();
 		controller.formatClipboardPaths(["/tmp/image.png"]);
 
-		const rendered = controller.render(["attach [image1]"], {
-			fg: (_color, text) => `<fg>${text}</fg>`,
-			inverse: (text) => `<inverse>${text}</inverse>`,
-		}, 80);
+		const rendered = controller.render(
+			["attach [image1]"],
+			{
+				fg: (_color, text) => `<fg>${text}</fg>`,
+				inverse: (text) => `<inverse>${text}</inverse>`,
+			},
+			80,
+		);
 
 		expect(rendered).toEqual(["attach <fg><inverse>[image1]</inverse></fg>"]);
 	});

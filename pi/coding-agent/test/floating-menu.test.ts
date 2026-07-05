@@ -1,8 +1,8 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import {
 	FloatingMenuBody,
-	FloatingOverlayContainer,
 	type FloatingMenuItem,
+	FloatingOverlayContainer,
 } from "../src/modes/interactive/components/floating-menu.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 

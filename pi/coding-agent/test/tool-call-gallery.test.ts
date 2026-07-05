@@ -75,4 +75,18 @@ describe("tool-call gallery", () => {
 			expect(visibleWidth(line)).toBeLessThanOrEqual(80);
 		}
 	});
+
+	test("badges MCP-backed tools across gallery, strip, and activity views", () => {
+		const mcpTile: ToolCallTile = {
+			...tile(1, "running"),
+			name: "bio_ensembl_info",
+			provenance: { kind: "mcp", server: "aose-bio-mcp", remoteTool: "bio_ensembl_info" },
+		};
+		const gallery = stripAnsi(renderToolCallGallery([mcpTile], 80, { maxHeight: 8 }).join("\n"));
+		expect(gallery).toContain("[mcp]");
+		const strip = stripAnsi(renderToolCallStrip([mcpTile], 60).join("\n"));
+		expect(strip).toContain("[mcp]");
+		const activity = stripAnsi(renderToolCallActivity([mcpTile], 80).join("\n"));
+		expect(activity).toContain("[mcp]");
+	});
 });

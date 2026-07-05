@@ -1,15 +1,15 @@
 /**
  * Todo tool - session-scoped todo list management
- * 
+ *
  * Migrated from extensions/pi/bundled/todo.ts to harness/tools/todo/
- * 
+ *
  * State is stored in tool result details (not external files), which allows
  * proper branching - when you branch, the todo state is automatically
  * correct for that point in history.
  */
 
-import { StringEnum } from "@earendil-works/pi-ai";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
+import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import type { NativeToolSpec } from "../../../../hcp-magnet/native.ts";
 import { NativeToolMagnet } from "../../../../hcp-magnet/native.ts";
@@ -91,12 +91,13 @@ export const todoSpec: NativeToolSpec<typeof todoSchema, TodoDetails> = {
 					}
 					break;
 
-				case "clear":
+				case "clear": {
 					const count = todos.length;
 					todos = [];
 					nextId = 1;
 					content = `Cleared ${count} todo(s)`;
 					break;
+				}
 			}
 
 			const details: TodoDetails = {

@@ -7,17 +7,20 @@ import type { ResourceDiagnostic } from "./diagnostics.ts";
 
 export type { ResourceCollision, ResourceDiagnostic } from "./diagnostics.ts";
 
-import { getHarnessSkillsDir, type Skill as HarnessSkill } from "@magenta/harness";
+import type { AgentTool } from "@earendil-works/pi-agent-core";
 import {
 	assemblePackageToolMagnets,
+	assembleTrunkTools,
+	getHarnessSkillsDir,
+	type Skill as HarnessSkill,
 	loadPackageOverlay,
 	loadSystemPromptDescriptor,
+	type PackageAssemblyProgress,
 	type PackageDiagnostic,
 	type PackageOverlay,
 	type PackageToolAssembly,
 	type SystemPromptDescriptorDiagnostic,
 } from "@magenta/harness";
-import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { canonicalizePath, isLocalPath, resolvePath } from "../utils/paths.ts";
 import { createEventBus, type EventBus } from "./event-bus.ts";
 import {
@@ -43,6 +46,12 @@ export interface ResourceExtensionPaths {
 
 export interface ResourceLoaderReloadOptions {
 	resolveProjectTrust?: (input: { extensionsResult: LoadExtensionsResult }) => Promise<boolean>;
+	/**
+	 * Optional progress sink for the package-assembly phase. Wired by the session
+	 * to a {@link BackgroundEventManager} source so the TUI shows a live bar while
+	 * package components (including MCP server spawns) are assembled.
+	 */
+	onPackageAssemblyProgress?: (progress: PackageAssemblyProgress) => void;
 }
 
 export interface ResourceLoader {
@@ -52,6 +61,7 @@ export interface ResourceLoader {
 	getThemes(): { themes: Theme[]; diagnostics: ResourceDiagnostic[] };
 	getPackageOverlay(): PackageOverlay | undefined;
 	getPackageTools(): { tools: AgentTool[]; diagnostics: ResourceDiagnostic[] };
+	getTrunkTools(): { tools: AgentTool[]; diagnostics: ResourceDiagnostic[] };
 	getHarnessPackageSelectors?(): string[];
 	setHarnessPackageSelectors?(selectors: string[]): void;
 	getAgentsFiles(): { agentsFiles: Array<{ path: string; content: string }> };
@@ -315,6 +325,13 @@ export class DefaultResourceLoader implements ResourceLoader {
 	 */
 	private packageHcp?: PackageToolAssembly["hcp"];
 	private packageDiagnostics: ResourceDiagnostic[];
+	/**
+	 * Harness trunk tools (web-search, web-fetch) assembled from harness.toml.
+	 * Unlike package tools these are always available to the default agent
+	 * runtime, not gated by a harness package selection.
+	 */
+	private trunkTools: AgentTool[];
+	private trunkToolDiagnostics: ResourceDiagnostic[];
 	private agentsFiles: Array<{ path: string; content: string }>;
 	private systemPrompt?: string;
 	private appendSystemPrompt: string[];
@@ -367,6 +384,8 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.themeDiagnostics = [];
 		this.packageTools = [];
 		this.packageDiagnostics = [];
+		this.trunkTools = [];
+		this.trunkToolDiagnostics = [];
 		this.agentsFiles = [];
 		this.appendSystemPrompt = [];
 		this.lastSkillPaths = [];
@@ -400,6 +419,14 @@ export class DefaultResourceLoader implements ResourceLoader {
 
 	getPackageTools(): { tools: AgentTool[]; diagnostics: ResourceDiagnostic[] } {
 		return { tools: this.packageTools, diagnostics: this.packageDiagnostics };
+	}
+
+	/**
+	 * Harness trunk tools (web-search, web-fetch) that are always available to the
+	 * default agent runtime, independent of any harness package selection.
+	 */
+	getTrunkTools(): { tools: AgentTool[]; diagnostics: ResourceDiagnostic[] } {
+		return { tools: this.trunkTools, diagnostics: this.trunkToolDiagnostics };
 	}
 
 	/**
@@ -494,7 +521,8 @@ export class DefaultResourceLoader implements ResourceLoader {
 		// reload() preserves SettingsManager.projectTrusted and reloads settings for that trust state.
 		await this.settingsManager.reload();
 		const resolvedPaths = await this.packageManager.resolve();
-		const packageResources = await this.loadHarnessPackageResources();
+		const packageResources = await this.loadHarnessPackageResources(options?.onPackageAssemblyProgress);
+		await this.loadTrunkTools();
 		const packageSystemPrompts = await this.resolvePackageSystemPromptSources(packageResources);
 		const cliExtensionPaths = await this.packageManager.resolveExtensionSources(this.additionalExtensionPaths, {
 			temporary: true,
@@ -666,12 +694,10 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.systemPrompt = this.systemPromptOverride ? this.systemPromptOverride(baseSystemPrompt) : baseSystemPrompt;
 
 		const discoveredAppendSystemPrompt = this.discoverAppendSystemPromptFile();
-		const appendSources =
-			this.appendSystemPromptSource ??
-			[
-				...(discoveredAppendSystemPrompt ? [discoveredAppendSystemPrompt] : []),
-				...packageSystemPrompts.appendSystemPromptSources,
-			];
+		const appendSources = this.appendSystemPromptSource ?? [
+			...(discoveredAppendSystemPrompt ? [discoveredAppendSystemPrompt] : []),
+			...packageSystemPrompts.appendSystemPromptSources,
+		];
 		const baseAppend = appendSources
 			.map((s) => resolvePromptInput(s, "append system prompt"))
 			.filter((s): s is string => s !== undefined);
@@ -793,7 +819,22 @@ export class DefaultResourceLoader implements ResourceLoader {
 		return discoverHarnessSkillPaths(baseDir).map((path) => ({ path, enabled: true, metadata }));
 	}
 
-	private async loadHarnessPackageResources(): Promise<{
+	private async loadTrunkTools(): Promise<void> {
+		this.trunkTools = [];
+		this.trunkToolDiagnostics = [];
+		try {
+			this.trunkTools = await assembleTrunkTools({ cwd: this.cwd });
+		} catch (error) {
+			this.trunkToolDiagnostics.push({
+				type: "error",
+				message: `Failed to assemble harness trunk tools: ${error instanceof Error ? error.message : String(error)}`,
+			});
+		}
+	}
+
+	private async loadHarnessPackageResources(
+		onAssemblyProgress?: (progress: PackageAssemblyProgress) => void,
+	): Promise<{
 		skillPaths: PackageOverlay["resources"]["skillPaths"];
 		promptPaths: PackageOverlay["resources"]["promptTemplatePaths"];
 		themePaths: PackageOverlay["resources"]["themePaths"];
@@ -817,7 +858,9 @@ export class DefaultResourceLoader implements ResourceLoader {
 			this.packageOverlay = overlay;
 			this.packageDiagnostics.push(...overlay.diagnostics.map(packageDiagnosticToResourceDiagnostic));
 
-			const assembly: PackageToolAssembly = await assemblePackageToolMagnets(overlay);
+			const assembly: PackageToolAssembly = await assemblePackageToolMagnets(overlay, {
+				onProgress: onAssemblyProgress,
+			});
 			this.packageDiagnostics.push(...assembly.diagnostics.map(packageDiagnosticToResourceDiagnostic));
 			this.packageTools = assembly.tools;
 			this.packageHcp = assembly.hcp;

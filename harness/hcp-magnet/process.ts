@@ -5,6 +5,9 @@ import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import type { AgentTool, AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
 import { type TSchema, Type } from "typebox";
 import type { HarnessCatalogEntry, HarnessComponentCatalog } from "../catalog/pi/catalog.ts";
+import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, type TruncationResult } from "../core/utils/pi/truncate.ts";
+import { parseToml, type TomlTable } from "../hcp-client/registry/registry.ts";
+import type { HcpRequest } from "../hcp-contract/hcp-server.ts";
 import {
 	execProcess,
 	type ProcessExecInput,
@@ -14,9 +17,6 @@ import {
 } from "../modules/runtime/magenta/process-runtime.ts";
 import type { SandboxProfile, SandboxSelection } from "../modules/sandbox/contract.ts";
 import { loadSandboxProviderFromPack, selectSandboxProfile } from "../modules/sandbox/magenta/sandbox.ts";
-import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, type TruncationResult } from "../core/utils/pi/truncate.ts";
-import type { HcpRequest } from "../hcp-contract/hcp-server.ts";
-import { parseToml, type TomlTable } from "../hcp-client/registry/registry.ts";
 import { UniversalMagnet } from "./universal.ts";
 
 export interface ProcessToolManifest {
@@ -33,6 +33,12 @@ export interface ProcessToolManifest {
 	tags?: string[];
 	capabilities?: string[];
 	requires?: string[];
+	/**
+	 * Optional UI data-shape identifier. Declares what kind of data this tool's
+	 * result carries so a host-side renderer can draw it without per-tool host
+	 * code. Flows through {@link ProcessToolMagnet.toTool} onto AgentTool.renderKind.
+	 */
+	render_kind?: string;
 	parameters?: TSchema | Record<string, unknown>;
 }
 
@@ -188,6 +194,7 @@ export function processToolManifestFromToml(table: TomlTable): ProcessToolManife
 		tags: asStringArray(table.tags),
 		capabilities: asStringArray(table.capabilities),
 		requires: asStringArray(table.requires),
+		render_kind: asString(table.render_kind),
 		parameters: asObject(table.parameters),
 	};
 }
@@ -411,6 +418,7 @@ export class ProcessToolMagnet<TParameters extends TSchema = TSchema> extends Un
 			label: manifest?.name ?? this.spec?.label ?? this.toolName,
 			description: manifest?.description ?? this.requireSpec().description,
 			parameters,
+			...(manifest?.render_kind ? { renderKind: manifest.render_kind } : {}),
 			execute: async (_toolCallId, params, signal, onUpdate?: AgentToolUpdateCallback<ProcessToolDetails>) =>
 				this.executeProcess(params, signal, onUpdate),
 		};

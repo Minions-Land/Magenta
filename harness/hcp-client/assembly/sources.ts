@@ -1,13 +1,14 @@
+import type { CapabilitySourceMagnet } from "../../hcp-contract/hcp-magnet.ts";
 import { compactionPiMagnet } from "../../modules/compaction/pi/magnet.ts";
 import { contextMagentaMagnet } from "../../modules/context/magenta/magnet.ts";
 import { hookMagentaMagnet } from "../../modules/hooks/magenta/magnet.ts";
 import { memoryMagentaMagnet } from "../../modules/memory/magenta/magnet.ts";
+import { multiagentMagentaMagnet } from "../../modules/multiagent/magenta/magnet.ts";
 import { policyMagentaMagnet } from "../../modules/policy/magenta/magnet.ts";
 import { promptTemplatePiMagnet } from "../../modules/prompt-templates/pi/magnet.ts";
 import { runtimeMagentaMagnet } from "../../modules/runtime/magenta/magnet.ts";
 import { sandboxMagentaMagnet } from "../../modules/sandbox/magenta/magnet.ts";
 import { systemPromptPiMagnet } from "../../modules/system-prompt/pi/magnet.ts";
-import type { CapabilitySourceMagnet } from "../../hcp-contract/hcp-magnet.ts";
 
 /**
  * The dumb aggregation barrel of capability source magnets (spec §8).
@@ -33,6 +34,7 @@ export const CAPABILITY_SOURCE_MAGNETS: readonly CapabilitySourceMagnet[] = [
 	contextMagentaMagnet,
 	hookMagentaMagnet,
 	memoryMagentaMagnet,
+	multiagentMagentaMagnet,
 	policyMagentaMagnet,
 	promptTemplatePiMagnet,
 	runtimeMagentaMagnet,

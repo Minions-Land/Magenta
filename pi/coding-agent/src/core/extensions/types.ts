@@ -10,6 +10,7 @@
 
 import type {
 	AgentMessage,
+	AgentToolProvenance,
 	AgentToolResult,
 	AgentToolUpdateCallback,
 	ThinkingLevel,
@@ -447,6 +448,22 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 	parameters: TParams;
 	/** Controls whether ToolExecutionComponent renders the standard colored shell or the tool renders its own framing. */
 	renderShell?: "default" | "self";
+
+	/**
+	 * Data-shape identifier used to resolve a shared renderer from the renderer
+	 * registry (see core/tools/renderer-registry.ts). When set, the TUI looks up
+	 * a renderer by this kind instead of by tool name, so any tool producing the
+	 * same details shape reuses one renderer. Inline renderCall/renderResult on
+	 * this definition still take precedence when present.
+	 */
+	renderKind?: string;
+
+	/**
+	 * Optional provenance describing where this tool comes from (e.g. an MCP
+	 * server). The TUI uses this to badge externally-backed tools and surface the
+	 * originating server. Mirrors {@link AgentTool.provenance}.
+	 */
+	provenance?: AgentToolProvenance;
 
 	/** Optional compatibility shim to prepare raw tool call arguments before schema validation. Must return an object conforming to TParams. */
 	prepareArguments?: (args: unknown) => Static<TParams>;

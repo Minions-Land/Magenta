@@ -9,7 +9,12 @@ describe("hook provider", () => {
 
 		expect(provider.discover()).toMatchObject({
 			provider: "hooks",
-			targets: expect.arrayContaining(["hook://init", "hook://pre-tool", "hook://workflow", "hook://sandbox-select"]),
+			targets: expect.arrayContaining([
+				"hook://init",
+				"hook://pre-tool",
+				"hook://workflow",
+				"hook://sandbox-select",
+			]),
 			lifecycle_targets: expect.arrayContaining(["hook://init", "hook://pre-tool", "hook://workflow"]),
 		});
 		expect(provider.describeHook("pre-tool")).toMatchObject({

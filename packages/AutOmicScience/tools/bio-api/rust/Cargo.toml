@@ -1,0 +1,58 @@
+# Vendored bio-API MCP workspace.
+#
+# Self-contained Rust workspace for the `aose-bio-mcp` binary, vendored from the
+# AutOmicScience (BioAgent) workspace at github.com/Minions-Land/AutOmicScience.
+# Only the minimal dependency closure needed to serve the bio-database tools
+# over MCP/stdio is included:
+#
+#   aose-schemas   — evidence/grounding types (leaf)
+#   aose-bio-apis  — 24+ bio-database HTTP clients (leaf)
+#   aose-core      — trimmed to the tool subsystem only (tool/trait_based_tool/types/error)
+#   aose-mcp       — trimmed to the stdio server only
+#   aose-bio-mcp   — bio_typed tool set + the `aose-bio-mcp` binary
+#
+# The heavy AOSE graph (providers/runtime/workflow/omics/bridge, tokio-postgres,
+# rusqlite, redis, mongodb) is intentionally excluded; the tool subsystem never
+# references it.
+[workspace]
+members = [
+  "crates/aose-schemas",
+  "crates/aose-bio-apis",
+  "crates/aose-core",
+  "crates/aose-mcp",
+  "crates/aose-bio-mcp",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/Minions-Land/AutOmicScience"
+
+# Shared dependency versions, carried over verbatim from the AutOmicScience
+# workspace table so the vendored crates keep their `.workspace = true`
+# inheritance unchanged.
+[workspace.dependencies]
+anyhow = "1"
+async-trait = "0.1"
+base64 = "0.22"
+chrono = { version = "0.4", features = ["serde"] }
+futures = "0.3"
+regex = "1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls", "stream"] }
+schemars = { version = "0.8", features = ["chrono"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "io-util", "io-std", "sync", "time", "signal", "fs", "net"] }
+tokio-stream = "0.1"
+tracing = "0.1"
+url = "2"
+uuid = { version = "1", features = ["v4", "serde"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 16
+opt-level = 3
+strip = true

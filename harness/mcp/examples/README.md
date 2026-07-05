@@ -1,254 +1,98 @@
 # MCP Examples
 
-Complete examples demonstrating MCP server and client usage.
+Runnable TypeScript/JavaScript examples demonstrating the `@magenta/harness-mcp`
+server and client wrappers.
 
 ## Quick Start
 
-### 1. Install MCP SDK
+### 1. Build the package
+
+The examples import from `../dist/index.js`, so build first:
 
 ```bash
-pip install mcp>=1.28.1
+cd harness/mcp
+npm install
+npm run build
 ```
 
-### 2. Run the Examples
+### 2. Run the client (it spawns the server for you)
 
-**Terminal 1 - Start the server:**
 ```bash
-cd harness/mcp/examples
-python simple_server.py
+node examples/simple-client.js
 ```
 
-**Terminal 2 - Run the client:**
+`simple-client.js` launches `simple-server.js` over stdio, so you only need to
+run the client. To run the server on its own (it listens on stdio and waits):
+
 ```bash
-cd harness/mcp/examples
-python simple_client.py
+node examples/simple-server.js
 ```
 
 ## Available Examples
 
-### simple_server.py
+### `simple-server.js`
 
-A basic MCP server demonstrating:
-- **Tools**: `echo` and `reverse` commands
-- **Resources**: Server configuration accessible via `config://server`
-- **Prompts**: `greet` template with formal/informal options
+A basic MCP server built with `createMcpServer`, demonstrating:
+- **Tools**: `echo` (echoes a message) and `reverse` (reverses a string)
+- **Resources**: server configuration at `config://server`
+- **Prompts**: `greet` with an optional `formal` argument
 
-**Usage:**
-```bash
-python simple_server.py
-```
+### `simple-client.js`
 
-### simple_client.py
-
-A client that connects to `simple_server.py` and:
-- Lists all available tools
-- Calls the echo and reverse tools
-- Reads the configuration resource
-- Retrieves and displays prompt templates
-
-**Usage:**
-```bash
-python simple_client.py
-```
-
-## Expected Output
-
-### Server Output
-```
-Starting example MCP server...
-Server capabilities:
-  - Tools: echo, reverse
-  - Resources: config://server
-  - Prompts: greet
-
-Listening on stdio...
-```
-
-### Client Output
-```
-Connecting to MCP server...
-Server: simple_server.py
-
-Initializing session...
-✓ Connected and initialized
-
-=== Tools ===
-Available tools: 2
-  - echo: Echo back the input message
-  - reverse: Reverse a string
-
-Calling tool: echo
-  Result: Echo: Hello from MCP client!
-
-Calling tool: reverse
-  Result: emosewa si PCM
-
-=== Resources ===
-Available resources: 1
-  - config://server: Server Configuration
-
-Reading resource: config://server
-  Content:
-{
-  "name": "example-server",
-  "version": "1.0.0",
-  "capabilities": [
-    "tools",
-    "resources",
-    "prompts"
-  ]
-}
-
-=== Prompts ===
-Available prompts: 1
-  - greet: Generate a greeting message
-
-Getting prompt: greet (formal=False)
-  Messages: 1
-    Role: user
-    Content: Hey World! What's up?
-
-Getting prompt: greet (formal=True)
-    Role: user
-    Content: Good day, World. How may I assist you today?
-
-✓ All operations completed successfully!
-```
+A client built with `connectMcpClient` that spawns `simple-server.js` and:
+- lists and calls the `echo` and `reverse` tools,
+- lists and reads the `config://server` resource,
+- lists and retrieves the `greet` prompt in informal and formal forms,
+- closes the connection cleanly.
 
 ## Understanding the Code
 
-### Server Structure
+### Server
 
-```python
-from mcp.server import Server
-from mcp.server.stdio import stdio_server
+```typescript
+import { createMcpServer } from "../dist/index.js";
 
-# 1. Create server
-server = Server("example-server")
+const server = createMcpServer({ name: "example-server", version: "1.0.0" });
 
-# 2. Define capabilities
-@server.list_tools()
-async def list_tools():
-    return [...]  # Tool definitions
+server.registerTool(
+  {
+    name: "echo",
+    description: "Echo back the input message",
+    inputSchema: {
+      type: "object",
+      properties: { message: { type: "string" } },
+      required: ["message"],
+    },
+  },
+  async (args) => [{ type: "text", text: `Echo: ${args.message}` }],
+);
 
-@server.call_tool()
-async def call_tool(name, arguments):
-    return [...]  # Tool implementations
-
-# 3. Run server
-stdio_server(server)
+await server.run(); // stdio transport; blocks
 ```
 
-### Client Structure
+### Client
 
-```python
-from mcp.client.session import ClientSession
-from mcp.client.stdio import stdio_client
+```typescript
+import { connectMcpClient } from "../dist/index.js";
 
-async with stdio_client("server.py") as (read, write):
-    async with ClientSession(read, write) as session:
-        # Initialize
-        await session.initialize()
-        
-        # Use the session
-        tools = await session.list_tools()
-        result = await session.call_tool("tool_name", {})
+const client = await connectMcpClient({
+  command: "node",
+  args: ["examples/simple-server.js"],
+});
+
+const tools = await client.listTools();
+const result = await client.callTool("echo", { message: "hi" });
+console.log(result.content[0].text);
+await client.close();
 ```
-
-## Modifying the Examples
-
-### Adding a New Tool
-
-In `simple_server.py`:
-
-```python
-# 1. Add to list_tools()
-{
-    "name": "uppercase",
-    "description": "Convert text to uppercase",
-    "inputSchema": {
-        "type": "object",
-        "properties": {
-            "text": {"type": "string"}
-        },
-        "required": ["text"]
-    }
-}
-
-# 2. Add to call_tool()
-elif name == "uppercase":
-    text = arguments["text"]
-    return [{"type": "text", "text": text.upper()}]
-```
-
-In `simple_client.py`:
-
-```python
-# Call the new tool
-result = await session.call_tool(
-    name="uppercase",
-    arguments={"text": "hello world"}
-)
-```
-
-### Adding a New Resource
-
-```python
-# In list_resources()
-{
-    "uri": "data://metrics",
-    "name": "Server Metrics",
-    "description": "Current server metrics",
-    "mimeType": "application/json"
-}
-
-# In read_resource()
-elif uri == "data://metrics":
-    import json
-    metrics = {"requests": 100, "errors": 0}
-    return [{
-        "uri": uri,
-        "mimeType": "application/json",
-        "text": json.dumps(metrics)
-    }]
-```
-
-## Advanced Examples (Future)
-
-Additional examples to be added:
-
-- **http_server.py**: SSE transport server
-- **websocket_server.py**: WebSocket transport server
-- **authenticated_server.py**: OAuth2 authentication
-- **multi_server_client.py**: Connecting to multiple servers
-- **streaming_client.py**: Handling streaming responses
-- **fastmcp_server.py**: Using the FastMCP framework
 
 ## Troubleshooting
 
-### "ModuleNotFoundError: No module named 'mcp'"
-
-Install the MCP SDK:
-```bash
-pip install mcp
-```
-
-### "Connection refused" or timeout errors
-
-Make sure the server is running before starting the client.
-
-### stdio transport issues on Windows
-
-Use Python 3.10+ and ensure the script has proper line endings.
+- **`Cannot find module '../dist/index.js'`**: run `npm run build` in `harness/mcp` first.
+- **Client hangs**: the client spawns the server itself; make sure `node` is on PATH.
 
 ## Next Steps
 
-1. **Explore the SDK**: Read `../client/README.md` and `../server/README.md`
-2. **Build Your Own**: Use these examples as templates
-3. **Integration**: See `../README.md` for Magenta3 integration patterns
-
-## Resources
-
-- **MCP Specification**: https://spec.modelcontextprotocol.io/
-- **Python SDK Docs**: https://py.sdk.modelcontextprotocol.io/
-- **GitHub**: https://github.com/modelcontextprotocol/python-sdk
+- `../client/README.md` — client wrapper reference
+- `../server/README.md` — server wrapper reference
+- `../README.md` — package overview and the HCP `runtime = "mcp"` integration

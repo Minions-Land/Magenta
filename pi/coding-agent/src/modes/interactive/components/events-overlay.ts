@@ -1,6 +1,6 @@
 import { type Component, type Focusable, matchesKey } from "@earendil-works/pi-tui";
 import type { EventEntry, EventFilter, NotifyLevel, TuiLike } from "../../../core/background-events.ts";
-import { formatDuration } from "../../../core/background-shell-utils.ts";
+import { formatDuration, renderProgressBar } from "../../../core/background-shell-utils.ts";
 import type { Theme } from "../theme/theme.ts";
 import { FLOATING_WINDOW_BODY_LINES, renderFloatingWindow } from "./floating-window.ts";
 
@@ -215,6 +215,13 @@ export class EventsOverlay implements Component, Focusable {
 		const cancelHint = event.canCancel ? this.theme.fg("dim", " x") : "";
 		const title = `${marker} ${state} ${source.id.padEnd(6)} ${event.id.padEnd(9)} ${this.theme.fg("dim", elapsed)} ${compactText(event.label, Math.max(24, width - 38))}${cancelHint}`;
 		const lines = [title];
+
+		// Per-event progress bar for running events that report progress. The
+		// status bar shows a bar only for a sole running event; the overlay shows
+		// one per event so multiple concurrent tasks each get their own.
+		if (event.status === "running" && event.progress) {
+			lines.push(this.theme.fg("accent", `  ${renderProgressBar(event.progress)}`));
+		}
 
 		if (expanded) {
 			for (const detail of source.getEventDetails?.(event.id) ?? this.defaultEventDetails(entry)) {

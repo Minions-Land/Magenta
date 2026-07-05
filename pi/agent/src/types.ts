@@ -391,6 +391,33 @@ export interface AgentTool<TParameters extends TSchema = TSchema, TDetails = any
 	 * If omitted, the default execution mode applies.
 	 */
 	executionMode?: ToolExecutionMode;
+	/**
+	 * Optional data-shape identifier used by the UI to pick a renderer.
+	 *
+	 * This is the tool's half of the render contract: the tool declares *what
+	 * kind of data* its result carries (e.g. "file-content", "shell-output",
+	 * "pattern-search"), and the host maps that identifier to a renderer. Tools
+	 * that run in a separate process (or a different language) can set this so a
+	 * host-side renderer draws their output without any host-side per-tool code.
+	 */
+	renderKind?: string;
+	/**
+	 * Optional provenance describing where this tool comes from, used by the UI to
+	 * distinguish externally-backed tools (e.g. MCP servers) from built-ins. Tools
+	 * that are adapters over an external protocol should populate this so the host
+	 * can badge them and surface the originating server/remote tool name.
+	 */
+	provenance?: AgentToolProvenance;
+}
+
+/** Provenance for an {@link AgentTool}, surfaced in UI (badges, activity views). */
+export interface AgentToolProvenance {
+	/** Provenance kind, e.g. "mcp" for a Model Context Protocol server tool. */
+	kind: string;
+	/** Originating server name, when the tool is proxied from an external server. */
+	server?: string;
+	/** The remote tool name on the originating server, before local namespacing. */
+	remoteTool?: string;
 }
 
 /** Context snapshot passed into the low-level agent loop. */

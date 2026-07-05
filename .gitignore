@@ -68,3 +68,6 @@ plans/
 .pi/hf-sessions/
 .pi/hf-sessions-backup/
 collect.sh
+.notes/
+.magenta/
+.magenta-*.md

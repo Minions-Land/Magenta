@@ -1,10 +1,10 @@
 import type { HarnessCatalogEntry, HarnessComponentCatalog } from "../../catalog/pi/catalog.ts";
+import type { HcpMagnet } from "../../hcp-contract/hcp-magnet.ts";
 import {
 	createHcpProcessMagnetFromCatalogEntry,
 	type HcpProcessMagnet,
 	type HcpProcessMagnetOptions,
 } from "../../hcp-magnet/hcp-process.ts";
-import type { HcpMagnet } from "../../hcp-contract/hcp-magnet.ts";
 import {
 	createProcessToolMagnetFromCatalogEntry,
 	type ProcessToolMagnet,

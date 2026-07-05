@@ -7,7 +7,11 @@ import {
 } from "../../../modules/tools/ssh/magenta/ssh.ts";
 
 function createRunner(
-	handler: (remote: string, command: string, options?: Parameters<SshCommandRunner>[2]) => Partial<Awaited<ReturnType<SshCommandRunner>>>,
+	handler: (
+		remote: string,
+		command: string,
+		options?: Parameters<SshCommandRunner>[2],
+	) => Partial<Awaited<ReturnType<SshCommandRunner>>>,
 ): SshCommandRunner {
 	return async (remote, command, options) => ({
 		stdout: Buffer.alloc(0),
@@ -38,7 +42,10 @@ describe("SSH path mapping", () => {
 
 describe("SSH target resolution", () => {
 	it("uses the explicit remote path when present", async () => {
-		const target = await resolveSshTarget("user@example:/workspace", createRunner(() => ({})));
+		const target = await resolveSshTarget(
+			"user@example:/workspace",
+			createRunner(() => ({})),
+		);
 
 		expect(target).toEqual({ remote: "user@example", remoteCwd: "/workspace" });
 	});
@@ -67,11 +74,9 @@ describe("SSH tool operations", () => {
 			if (command.startsWith("file --mime-type")) return { stdout: Buffer.from("image/png\n") };
 			return { stdout: Buffer.from("ok"), exitCode: command.includes("exit 7") ? 7 : 0 };
 		});
-		const ops = createSshToolOperations(
-			{ remote: "user@example", remoteCwd: "/remote/project" },
-			"/local/project",
-			{ runner },
-		);
+		const ops = createSshToolOperations({ remote: "user@example", remoteCwd: "/remote/project" }, "/local/project", {
+			runner,
+		});
 		const chunks: string[] = [];
 
 		await ops.read.access("/local/project/src/a file.ts");

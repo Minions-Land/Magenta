@@ -1,0 +1,158 @@
+//! API client modules for bioinformatics databases.
+
+pub mod alphafold;
+pub mod archs4;
+pub mod bgee;
+pub mod biogrid;
+pub mod blat;
+// pub mod cbioportal;
+// pub mod cellxgene;
+// pub mod chembl;
+// pub mod clinvar;
+pub mod cosmic;
+// pub mod dbsnp;
+pub mod diamond;
+pub mod disgenet;
+pub mod drugbank;
+pub mod eightcube;
+pub mod elm;
+pub mod encode;
+pub mod enrichr;
+pub mod ensembl;
+// pub mod geo;
+pub mod gnomad;
+pub mod gtex;
+pub mod gwas;
+pub mod hpo;
+pub mod interpro;
+pub mod jaspar;
+pub mod kegg;
+pub mod monarch;
+pub mod muscle;
+// pub mod ncbi;
+pub mod ncbi_virus;
+pub mod omim;
+// pub mod openai;
+// pub mod opentargets;
+pub mod pdb;
+pub mod pfam;
+pub mod pride;
+pub mod pubchem;
+pub mod quickgo;
+pub mod reactome;
+pub mod regulomedb;
+pub mod string;
+pub mod uniprot;
+
+pub use alphafold::AlphaFoldClient;
+pub use archs4::Archs4Client;
+pub use bgee::BgeeClient;
+pub use biogrid::{
+    BiogridClient, BiogridInteraction, InteractionSearchParams, InteractionType, Organism,
+    ResponseFormat,
+};
+pub use blat::{BlatAlignment, BlatClient, BlatResult, SequenceType};
+// pub use cbioportal::{
+//     CancerStudy, CbioportalClient, ClinicalAttribute, ClinicalData, ClinicalDataQuery,
+//     Gene as CbioportalGene, GenePanel, GenePanelGene, MolecularProfile, Mutation, MutationQuery,
+//     Patient, Sample,
+// };
+// pub use cellxgene::CellxGeneCensusClient;
+// pub use chembl::{
+//     ChemblActivity, ChemblClient, ChemblMolecule, ChemblQueryParams, ChemblStatus, ChemblTarget,
+//     CrossReference, MoleculeProperties,
+// };
+// pub use clinvar::ClinVarClient;
+pub use cosmic::{CosmicClient, CosmicDownloadRequest, CosmicMutation, CosmicProject};
+// pub use dbsnp::{
+//     AlleleAnnotation, CanonicalResponse, DbSnpClient, EquivalentResponse, HgvsResponse,
+//     PlacementWithAllele, PrimarySnapshotData, RefSnpResponse, SpdiResponse, VcfResponse,
+// };
+pub use diamond::{
+    DiamondAlignment, DiamondClient, DiamondMode, DiamondResult, DiamondSearchParams, JobStatus,
+    OutputFormat, SensitivityMode,
+};
+pub use disgenet::{
+    AssociationQueryParams, DisGeNetClient, DiseaseInfo, GeneDiseaseAssociation, GeneInfo,
+    VariantDiseaseAssociation,
+};
+pub use drugbank::{
+    DrugBankClient, DrugInteraction, DrugProduct, DrugRecord, DrugSearchParams, DrugTarget,
+    SimpleMolecularProperties,
+};
+pub use eightcube::{
+    EightCubeClient, GeneExpressionRequest, GeneExpressionRow, GeneSpecificity, PsiBlockRequest,
+    PsiBlockRow, SpecificityRequest,
+};
+pub use elm::ElmClient;
+pub use encode::{
+    Annotation as EncodeAnnotation, AnnotationSearchParams as EncodeAnnotationSearchParams,
+    Biosample, BiosampleOntology, EncodeClient, Experiment, ExperimentSearchParams, FileMetadata,
+    SearchResponse as EncodeSearchResponse, Target,
+};
+pub use ensembl::EnsemblClient;
+// pub use geo::{
+//     DatabaseInfo, GeoClient, GeoSummary, SearchField, SearchParams, SearchResult as GeoSearchResult,
+// };
+pub use gnomad::{
+    Dataset, Gene, GnomadClient, PopulationFrequency, ReferenceGenome, RegionQuery, Variant,
+};
+pub use gtex::GtexClient;
+pub use gwas::GwasCatalogClient;
+pub use hpo::{
+    DiseaseAssociation, GeneAssociation, HpoClient, HpoTerm, HpoTermSummary, NetworkAnnotation,
+    SearchResponse as HpoSearchResponse, TermListResponse, Translation, Xref,
+};
+pub use interpro::{
+    EntryCounts, EntrySearchParams, EntryType, GoTerm, InterProClient, InterProEntry,
+    InterProProtein, InterProStructure, InterProTaxonomy, MemberDatabase, ProteinEntry,
+    ProteinLocation, SearchResponse, SourceDatabase,
+};
+pub use jaspar::{
+    JasparClient, MatrixSearchParams, Species as JasparSpecies, TaxonomyInfo, TfMatrix,
+};
+pub use kegg::{KeggClient, KeggConversion, KeggEntry, KeggEntryDetail, KeggLink};
+pub use monarch::{
+    Association, AssociationEntity, AssociationResponse, Entity, Evidence, MonarchClient,
+    Publication, SearchResponse as MonarchSearchResponse, Taxon,
+};
+pub use muscle::{
+    ClusterMethod, DistanceMeasure, MuscleAlignment, MuscleClient, MuscleOutputFormat,
+    MuscleParams, TreeFormat,
+};
+// pub use ncbi::NcbiClient;
+pub use ncbi_virus::{
+    HostInfo, IsolateInfo, LocationInfo, NcbiVirusClient, VirusInfo, VirusQueryParams, VirusRecord,
+};
+pub use omim::{
+    AllelicVariant, ClinicalSynopsis, GeneMap, GeneMapQuery, GenomicCoordinates, OmimClient,
+    OmimEntry, OmimSearchParams, OmimSearchResult, OmimTitles, TextSection,
+};
+// pub use openai::{ChatMessage, GptRequest, GptResponse, MessageRole, OpenAiClient};
+// pub use opentargets::OpenTargetsClient;
+pub use pdb::PdbClient;
+pub use pfam::{PfamClient, PfamEntry, PfamSearchParams, ProteinDomain};
+pub use pride::{
+    FileListParams, FileListResponse, Organism as PrideOrganism, PageInfo as PridePageInfo,
+    PrideClient, Project, ProjectFile, ProjectSearchParams, ProjectSearchResponse, ProjectSummary,
+    Protein, ProteinSearchParams, ProteinSearchResponse,
+};
+pub use pubchem::{CompoundDescription, CompoundProperties, PubChemClient};
+pub use quickgo::{
+    Annotation as GoAnnotation, AnnotationSearchParams as QuickGoAnnotationSearchParams,
+    AnnotationSearchResponse, GoTerm as QuickGoTerm, GoTermSearchParams, GoTermSearchResponse,
+    PageInfo, QuickGoClient,
+};
+pub use reactome::{
+    Disease, PathwayEntity, PathwayEvent, PathwayHierarchy, ReactomeClient,
+    SearchResult as ReactomeSearchResult, Species,
+};
+pub use regulomedb::{
+    ChipSeqPeak, ChromatinState, DnaseEvidence, EqtlEvidence,
+    GenomeVersion as RegulomeGenomeVersion, PwmMotif, RegulomeDbClient, RegulomeVariant, TfBinding,
+};
+pub use string::{
+    Annotation as StringAnnotation, EnrichmentTerm, HomologyScore, Interaction, InteractionPartner,
+    NetworkParams, NetworkType, PpiEnrichment, StringClient, StringIdMapping,
+};
+pub use uniprot::UniProtClient;

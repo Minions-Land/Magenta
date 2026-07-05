@@ -15,7 +15,9 @@ async function writeExecutableScript(dir: string, name: string, source: string):
 describe("process runtime provider", () => {
 	it("executes through runtime://process with env allowlist and policy report", async () => {
 		const dir = await mkdtemp(join(tmpdir(), "magenta-runtime-"));
-		const provider = await loadSandboxProviderFromPack(new URL("../modules/sandbox/sandbox.toml", import.meta.url).pathname);
+		const provider = await loadSandboxProviderFromPack(
+			new URL("../modules/sandbox/sandbox.toml", import.meta.url).pathname,
+		);
 		const script = await writeExecutableScript(
 			dir,
 			"env-tool.mjs",
@@ -75,7 +77,9 @@ process.stdin.on("end", () => {
 
 	it("enforces workspace path and network portable guards", async () => {
 		const dir = await mkdtemp(join(tmpdir(), "magenta-runtime-policy-"));
-		const provider = await loadSandboxProviderFromPack(new URL("../modules/sandbox/sandbox.toml", import.meta.url).pathname);
+		const provider = await loadSandboxProviderFromPack(
+			new URL("../modules/sandbox/sandbox.toml", import.meta.url).pathname,
+		);
 
 		await expect(
 			execProcess({

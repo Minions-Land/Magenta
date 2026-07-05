@@ -66,6 +66,11 @@ name = "omics_compute"
 path = "tools/omics-compute/omics-compute.toml"
 
 [[components]]
+kind = "tool"
+name = "bio_api"
+path = "tools/bio-api/bio-api.toml"
+
+[[components]]
 kind = "python-runtime"
 name = "aose_omics_runtime"
 path = "tools/omics-compute/python/aose_omics_runtime"

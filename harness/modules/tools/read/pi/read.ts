@@ -4,7 +4,12 @@ import { constants } from "fs";
 import { access as fsAccess, readFile as fsReadFile } from "fs/promises";
 import { type Static, Type } from "typebox";
 import { resolveReadPathAsync } from "../../../../core/utils/pi/path-utils.ts";
-import { DEFAULT_MAX_BYTES, formatSize, type TruncationResult, truncateHead } from "../../../../core/utils/pi/truncate.ts";
+import {
+	DEFAULT_MAX_BYTES,
+	formatSize,
+	type TruncationResult,
+	truncateHead,
+} from "../../../../core/utils/pi/truncate.ts";
 
 export const readSchema = Type.Object({
 	path: Type.String({ description: "Path to the file to read (relative or absolute)" }),

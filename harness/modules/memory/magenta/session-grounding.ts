@@ -4,9 +4,9 @@ import type { HcpRequest, HcpServer, HcpServerDescription } from "../../../hcp-c
 import type {
 	MemoryProvider,
 	MemoryReadResult,
-	MemoryRetainResult,
 	MemoryRecallResult,
 	MemoryReflectResult,
+	MemoryRetainResult,
 } from "../contract.ts";
 
 export interface SessionGroundingMemoryEntry {
@@ -101,7 +101,8 @@ export class SessionGroundingMemoryProvider implements MemoryProvider {
 		this.workspaceRoot = resolve(options.workspaceRoot);
 		this.content = options.content ?? DEFAULT_CONTENT;
 		this.description = options.description ?? DEFAULT_DESCRIPTION;
-		this.storePath = options.storePath ?? resolve(this.workspaceRoot, ".magenta", "memory", "session-grounding.jsonl");
+		this.storePath =
+			options.storePath ?? resolve(this.workspaceRoot, ".magenta", "memory", "session-grounding.jsonl");
 		this.now = options.now ?? Date.now;
 	}
 
@@ -142,7 +143,12 @@ export class SessionGroundingMemoryProvider implements MemoryProvider {
 	}
 
 	async retain(input: unknown): Promise<SessionGroundingRetainResult> {
-		const text = (readString(input, "text") ?? readString(input, "fact") ?? readString(input, "content") ?? "").trim();
+		const text = (
+			readString(input, "text") ??
+			readString(input, "fact") ??
+			readString(input, "content") ??
+			""
+		).trim();
 		if (!text) throw new Error("memory://session-grounding retain requires text");
 		await this.loadStore();
 		const entry: SessionGroundingMemoryEntry = {

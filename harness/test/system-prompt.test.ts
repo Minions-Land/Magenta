@@ -32,7 +32,8 @@ describe("formatSkillsForSystemPrompt", () => {
 	it("formats visible skills in order and skips model-disabled skills", () => {
 		expect(formatSkillsForSystemPrompt([visibleSkill, disabledSkill, secondSkill])).toBe(
 			`The following skills provide specialized instructions for specific tasks.
-Read the full skill file when the task matches its description.
+Use the read tool to load the full skill file when the task matches its description.
+After loading a skill, follow its instructions precisely. Skills define mandatory workflows, constraints, and execution patterns that override default behavior.
 When a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.
 
 <available_skills>
@@ -72,13 +73,15 @@ When a skill file references a relative path, resolve it against the skill direc
 
 describe("loadSystemPromptDescriptor", () => {
 	it("loads harness module descriptors without content paths", async () => {
-		const result = await loadSystemPromptDescriptor(join(process.cwd(), "modules", "system-prompt", "system-prompt.toml"));
+		const result = await loadSystemPromptDescriptor(
+			join(process.cwd(), "modules", "system-prompt", "system-prompt.toml"),
+		);
 
 		expect(result.diagnostics).toEqual([]);
 		expect(result.descriptor).toMatchObject({
 			kind: "system-prompt",
 			name: "system-prompt",
-			source: "pi",
+			source: "Magenta",
 			contentPath: undefined,
 		});
 	});

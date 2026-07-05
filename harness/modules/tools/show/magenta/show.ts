@@ -1,6 +1,6 @@
 /**
  * show tool - Magenta implementation
- * 
+ *
  * Displays content in a floating overlay. Accepts URL/path or array of URLs/paths.
  * Content type is auto-detected from file extension.
  */
@@ -34,17 +34,17 @@ interface ToolResult {
  */
 function detectContentType(url: string): ContentItem["type"] {
 	const ext = extname(url).toLowerCase().slice(1);
-	
+
 	const imageExts = ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp"];
 	const codeExts = ["js", "ts", "jsx", "tsx", "py", "java", "cpp", "c", "go", "rs", "rb", "php", "cs", "swift", "kt"];
-	
+
 	if (imageExts.includes(ext)) return "image";
 	if (ext === "pdf") return "pdf";
 	if (ext === "html" || ext === "htm") return "html";
 	if (ext === "md" || ext === "markdown") return "markdown";
 	if (codeExts.includes(ext)) return "code";
 	if (ext === "svg") return "chart";
-	
+
 	return "file";
 }
 
@@ -53,7 +53,7 @@ function detectContentType(url: string): ContentItem["type"] {
  */
 function getMimeType(url: string): string | undefined {
 	const ext = extname(url).toLowerCase().slice(1);
-	
+
 	const mimeTypes: Record<string, string> = {
 		png: "image/png",
 		jpg: "image/jpeg",
@@ -67,7 +67,7 @@ function getMimeType(url: string): string | undefined {
 		md: "text/markdown",
 		markdown: "text/markdown",
 	};
-	
+
 	return mimeTypes[ext];
 }
 
@@ -77,22 +77,22 @@ function getMimeType(url: string): string | undefined {
 function processUrl(url: string, cwd: string): ContentItem | { error: string } {
 	// Resolve path
 	const absolutePath = resolve(cwd, url);
-	
+
 	// Check if file exists
 	if (!existsSync(absolutePath)) {
 		return { error: `File not found: ${url}` };
 	}
-	
+
 	// Get file stats
 	const stats = statSync(absolutePath);
 	if (!stats.isFile()) {
 		return { error: `Not a file: ${url}` };
 	}
-	
+
 	// Detect content type and MIME
 	const contentType = detectContentType(absolutePath);
 	const mimeType = getMimeType(absolutePath);
-	
+
 	return {
 		type: contentType,
 		url: absolutePath,
@@ -103,18 +103,18 @@ function processUrl(url: string, cwd: string): ContentItem | { error: string } {
 
 export default async function show(input: ShowInput, context: ToolContext): Promise<ToolResult> {
 	const urls = Array.isArray(input.url) ? input.url : [input.url];
-	
+
 	if (urls.length === 0) {
 		return {
 			success: false,
 			message: "No URLs provided",
 		};
 	}
-	
+
 	// Process all URLs
 	const items: ContentItem[] = [];
 	const errors: string[] = [];
-	
+
 	for (const url of urls) {
 		const result = processUrl(url, context.cwd);
 		if ("error" in result) {
@@ -123,19 +123,17 @@ export default async function show(input: ShowInput, context: ToolContext): Prom
 			items.push(result);
 		}
 	}
-	
+
 	if (items.length === 0) {
 		return {
 			success: false,
 			message: `Failed to process URLs: ${errors.join(", ")}`,
 		};
 	}
-	
+
 	// Return result with special marker for TUI
-	const message = items.length === 1
-		? `Content ready: ${items[0].filename}`
-		: `${items.length} items ready`;
-	
+	const message = items.length === 1 ? `Content ready: ${items[0].filename}` : `${items.length} items ready`;
+
 	return {
 		success: true,
 		message,

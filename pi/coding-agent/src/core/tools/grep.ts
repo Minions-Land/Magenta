@@ -16,6 +16,7 @@ import { ensureTool } from "../../utils/tools-manager.ts";
 import type { ToolDefinition, ToolRenderResultOptions } from "../extensions/types.ts";
 import { getTextOutput, invalidArgText, shortenPath, str } from "./render-utils.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
+import type { ToolRenderer } from "./renderer-registry.ts";
 import { DEFAULT_MAX_BYTES, formatSize } from "./truncate.ts";
 
 // Re-export the pure types from harness so downstream pi consumers keep working unchanged.
@@ -76,6 +77,24 @@ function formatGrepResult(
 	return text;
 }
 
+/**
+ * Renderer for the "pattern-search" data shape (grep tool). Pulls lastComponent
+ * and showImages from the render context. Registered in
+ * register-builtin-renderers.ts.
+ */
+export const grepRenderer: ToolRenderer<GrepToolDetails | undefined> = {
+	renderCall(args, theme, context) {
+		const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
+		text.setText(formatGrepCall(args, theme));
+		return text;
+	},
+	renderResult(result, options, theme, context) {
+		const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
+		text.setText(formatGrepResult(result as any, options, theme, context.showImages));
+		return text;
+	},
+};
+
 export function createGrepToolDefinition(
 	cwd: string,
 	options?: GrepToolOptions,
@@ -92,17 +111,8 @@ export function createGrepToolDefinition(
 		description: GREP_DESCRIPTION,
 		promptSnippet: GREP_PROMPT_SNIPPET,
 		parameters: grepSchema,
+		renderKind: "pattern-search",
 		execute,
-		renderCall(args, theme, context) {
-			const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
-			text.setText(formatGrepCall(args, theme));
-			return text;
-		},
-		renderResult(result, options, theme, context) {
-			const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
-			text.setText(formatGrepResult(result as any, options, theme, context.showImages));
-			return text;
-		},
 	};
 }
 

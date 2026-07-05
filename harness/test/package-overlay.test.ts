@@ -1,4 +1,5 @@
 import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -124,15 +125,7 @@ content_path = "SYSTEM.md"
 				"General prompt.",
 			);
 			await writeText(
-				join(
-					packagesRoot,
-					"AutOmicScience",
-					"task",
-					"scrna",
-					"skills",
-					"omics-shared-scrna",
-					"SKILL.md",
-				),
+				join(packagesRoot, "AutOmicScience", "task", "scrna", "skills", "omics-shared-scrna", "SKILL.md"),
 				`---
 name: omics-shared
 description: Shared scRNA override.
@@ -154,15 +147,7 @@ content_path = "SYSTEM.md"
 				"scRNA prompt.",
 			);
 			await writeText(
-				join(
-					packagesRoot,
-					"AutOmicScience",
-					"task",
-					"scrna",
-					"skills",
-					"omics-scrna",
-					"SKILL.md",
-				),
+				join(packagesRoot, "AutOmicScience", "task", "scrna", "skills", "omics-scrna", "SKILL.md"),
 				`---
 name: omics-scrna
 description: scRNA skill.
@@ -275,7 +260,7 @@ harness = "missing/harness.toml"
 		expect(overlay.componentMap.get("tool:omics_compute")?.path).toBe(
 			join(repoRoot, "packages", "AutOmicScience", "tools", "omics-compute", "omics-compute.toml"),
 		);
-		expect(overlay.componentMap.get("system-prompt:system-prompt")?.path).toBe(
+		expect(overlay.componentMap.get("append-system-prompt:system-prompt")?.path).toBe(
 			join(repoRoot, "packages", "AutOmicScience", "system-prompt", "system-prompt.toml"),
 		);
 		expect(overlay.resources.skillPaths.map((resource) => resource.name).sort()).toEqual([
@@ -285,7 +270,7 @@ harness = "missing/harness.toml"
 			"scatac-seq",
 			"spatial",
 		]);
-		expect(overlay.resources.systemPromptPaths.map((resource) => resource.name)).toEqual(["system-prompt"]);
+		expect(overlay.resources.appendSystemPromptPaths.map((resource) => resource.name)).toEqual(["system-prompt"]);
 		expect(overlay.resources.brandPaths.map((resource) => resource.name)).toEqual(["AutOmicScience"]);
 	});
 
@@ -491,21 +476,45 @@ process.stdin.on("end", () => {
 		});
 		const assembly = await assemblePackageToolMagnets(overlay);
 
-		expect(assembly.diagnostics).toEqual([]);
-		// omics_environment + omics_install_env are process tools (pixi CLI);
-		// omics_preflight and omics_compute are python-backed (aose_omics_runtime).
-		expect(assembly.magnets.map((magnet) => magnet.kind)).toEqual([
-			"process",
-			"python",
-			"process",
-			"python",
-		]);
-		expect(assembly.tools.map((tool) => tool.name)).toEqual([
-			"omics_environment",
-			"omics_preflight",
-			"omics_install_env",
-			"omics_compute",
-		]);
+		// bio_api is a runtime=mcp tool. When its vendored server binary
+		// (aose-bio-mcp) has been built, assembly spawns it, enumerates the remote
+		// tools, and fans them out into the address space alongside the omics
+		// tools. When the binary is absent (no Rust toolchain / not yet built),
+		// that is a recoverable state and assembly degrades bio_api to a single
+		// `package_tool_runtime_missing` warning instead of an error. Accept both
+		// so the suite is stable regardless of whether the binary is present.
+		const bioBinaryBuilt = existsSync(
+			join(repoRoot, "packages/AutOmicScience/tools/bio-api/rust/target/release/aose-bio-mcp"),
+		);
+		expect(assembly.diagnostics.filter((d) => d.type === "error")).toEqual([]);
+		expect(assembly.diagnostics.filter((d) => d.type === "warning").map((d) => d.code)).toEqual(
+			bioBinaryBuilt ? [] : ["package_tool_runtime_missing"],
+		);
+		// The four omics magnets always assemble: omics_environment +
+		// omics_install_env are process tools (pixi CLI); omics_preflight and
+		// omics_compute are python-backed (aose_omics_runtime). When the bio_api
+		// binary is built, its remote tools add `mcp` magnets on top.
+		const magnetKinds = assembly.magnets.map((magnet) => magnet.kind);
+		expect(magnetKinds.filter((kind) => kind === "process").length).toBe(2);
+		expect(magnetKinds.filter((kind) => kind === "python").length).toBe(2);
+		if (bioBinaryBuilt) {
+			expect(magnetKinds.filter((kind) => kind === "mcp").length).toBeGreaterThanOrEqual(26);
+		} else {
+			expect(magnetKinds).not.toContain("mcp");
+		}
+		const toolNames = assembly.tools.map((tool) => tool.name);
+		expect(toolNames).toEqual(
+			expect.arrayContaining(["omics_environment", "omics_preflight", "omics_install_env", "omics_compute"]),
+		);
+		if (bioBinaryBuilt) {
+			// The vendored server exposes the non-key-gated bio tools, namespaced
+			// under the biofetch prefix, and they must land in the address space.
+			const bioTools = toolNames.filter((name) => name.startsWith("biofetch_"));
+			expect(bioTools.length).toBeGreaterThanOrEqual(26);
+			expect(bioTools).toContain("biofetch_ensembl_info");
+		} else {
+			expect(toolNames.some((name) => name.startsWith("biofetch_"))).toBe(false);
+		}
 		const compute = assembly.tools.find((tool) => tool.name === "omics_compute");
 		expect(compute?.parameters.properties).toMatchObject({
 			subcommand: {

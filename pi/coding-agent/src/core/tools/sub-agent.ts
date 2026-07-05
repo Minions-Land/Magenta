@@ -1,10 +1,12 @@
-import { type ChildProcess, spawn, type SpawnOptions } from "node:child_process";
+import { type ChildProcess, type SpawnOptions, spawn } from "node:child_process";
 import { createWriteStream, type WriteStream } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { StringEnum } from "@earendil-works/pi-ai";
-import { Type, type Static } from "typebox";
+import { type Static, Type } from "typebox";
+import type { AgentSessionEvent } from "../agent-session.ts";
+import type { BackgroundEventManager } from "../background-events.ts";
 import {
 	appendTail as appendTailText,
 	formatDuration,
@@ -12,8 +14,6 @@ import {
 	timestampForFile,
 	truncateTail,
 } from "../background-shell-utils.ts";
-import type { BackgroundEventManager } from "../background-events.ts";
-import type { AgentSessionEvent } from "../agent-session.ts";
 import type { ExtensionContext, ToolDefinition } from "../extensions/types.ts";
 
 const WORK_DIR = join(homedir(), ".pi", "agent", "tmp", "sub-agents");
@@ -131,7 +131,9 @@ const subAgentSchema = Type.Object({
 	role: Type.Optional(Type.String({ description: "Optional role for action=start." })),
 	label: Type.Optional(Type.String({ description: "Optional label for action=start." })),
 	cwd: Type.Optional(Type.String({ description: "Working directory for action=start." })),
-	tools: Type.Optional(Type.Array(Type.String(), { description: `Allowed tools. Defaults to ${DEFAULT_TOOLS.join(",")}.` })),
+	tools: Type.Optional(
+		Type.Array(Type.String(), { description: `Allowed tools. Defaults to ${DEFAULT_TOOLS.join(",")}.` }),
+	),
 	model: Type.Optional(Type.String({ description: "Optional model for action=start." })),
 	provider: Type.Optional(Type.String({ description: "Optional provider for action=start." })),
 	thinking: Type.Optional(StringEnum(["off", "minimal", "low", "medium", "high", "xhigh"] as const)),
@@ -343,7 +345,7 @@ export class SubAgentController {
 
 	constructor(
 		manager: BackgroundEventManager,
-		options: { sendMessage: SubAgentSendMessage; spawnAgent?: SubAgentSpawn } ,
+		options: { sendMessage: SubAgentSendMessage; spawnAgent?: SubAgentSpawn },
 	) {
 		this.sendMessage = options.sendMessage;
 		this.spawnAgent = options.spawnAgent ?? spawn;
@@ -487,7 +489,8 @@ export class SubAgentController {
 				this.config.defaultTimeoutSeconds = positiveNumber(params.defaultTimeoutSeconds);
 			if ("defaultWaitTimeoutSeconds" in params)
 				this.config.defaultWaitTimeoutSeconds = positiveNumber(params.defaultWaitTimeoutSeconds);
-			if (typeof params.defaultReturnToMain === "boolean") this.config.defaultReturnToMain = params.defaultReturnToMain;
+			if (typeof params.defaultReturnToMain === "boolean")
+				this.config.defaultReturnToMain = params.defaultReturnToMain;
 			if (params.defaultReturnDelivery) this.config.defaultReturnDelivery = params.defaultReturnDelivery;
 			if (params.defaultThinking) this.config.defaultThinking = params.defaultThinking;
 			return { content: [{ type: "text" as const, text: formatConfig(this.config) }], details: { ...this.config } };
@@ -528,7 +531,8 @@ export class SubAgentController {
 			thinking: task.thinking ?? commonThinking,
 			timeoutSeconds: positiveNumber(task.timeoutSeconds) ?? commonTimeoutSeconds,
 		}));
-		if (tasks.length > MAX_START_MANY) throw new Error(`sub_agent action=start supports at most ${MAX_START_MANY} tasks`);
+		if (tasks.length > MAX_START_MANY)
+			throw new Error(`sub_agent action=start supports at most ${MAX_START_MANY} tasks`);
 		const running = [...this.events.values()].filter((event) => event.status === "running").length;
 		if (running + tasks.length > MAX_START_MANY) {
 			throw new Error(
@@ -595,7 +599,9 @@ export class SubAgentController {
 		if (!ids.length) {
 			return { content: [{ type: "text" as const, text: "No sub-agents to wait for." }], details: { events: 0 } };
 		}
-		const knownEvents = ids.map((id) => this.events.get(id)).filter((event): event is SubAgentEvent => Boolean(event));
+		const knownEvents = ids
+			.map((id) => this.events.get(id))
+			.filter((event): event is SubAgentEvent => Boolean(event));
 		if (!knownEvents.length) throw new Error(`No known sub-agents found: ${ids.join(", ")}`);
 
 		const waitTimeoutSeconds = positiveNumber(params.waitTimeoutSeconds) ?? this.config.defaultWaitTimeoutSeconds;

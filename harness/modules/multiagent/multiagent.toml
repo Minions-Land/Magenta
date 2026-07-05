@@ -1,0 +1,32 @@
+kind = "multiagent"
+name = "multiagent"
+description = "Deterministic multi-agent orchestration workflows. Provides fixed control-flow patterns (skeletons) that spawn headless pi workers; the LLM fills task content into slots but never controls the flow."
+source = "magenta"
+origin = "magenta1-general-harness"
+origin_rel = "ported/adapted"
+impl = ["multiagent/magenta/orchestrator.ts", "multiagent/magenta/worker.ts", "multiagent/magenta/magnet.ts"]
+targets = ["multiagent://local"]
+
+[[patterns]]
+name = "classify_and_act"
+description = "Classify mixed input first, then route each item to a type-specific handler. Forces the classify step that a generic 'handle these' prompt would skip."
+
+[[patterns]]
+name = "fan_out_synthesize"
+description = "Run the same check over every object in parallel, then merge into one consolidated artifact. For every/all tasks that end in a single report."
+
+[[patterns]]
+name = "adversarial_verify"
+description = "Generator casts a wide net for candidates; independent verifiers re-check each; only confirmed findings pass. For high false-positive-cost work (security, compliance)."
+
+[[patterns]]
+name = "generate_and_filter"
+description = "Independent candidates generated in parallel, then scored by quantifiable criteria; keep the strongest. For open-ended tasks with objective evaluation."
+
+[[patterns]]
+name = "tournament"
+description = "Candidates compete in a pairwise elimination bracket judged by a subagent. For subjective quality where 'good' is hard to quantify."
+
+[[patterns]]
+name = "loop_until_done"
+description = "Iterate a refine worker, excluding prior findings each round; stop when a round yields no new findings or a hard iteration cap is hit. For exhaustive scans."

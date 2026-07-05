@@ -1,6 +1,7 @@
-import type { ExtensionContext } from "./extensions/types.ts";
 import { EventsOverlay } from "../modes/interactive/components/events-overlay.ts";
 import { CENTER_FLOATING_OVERLAY } from "../modes/interactive/components/floating-window.ts";
+import { renderProgressBar, type ShellProgress } from "./background-shell-utils.ts";
+import type { ExtensionContext } from "./extensions/types.ts";
 
 const STATUS_KEY = "background-events";
 const FAILED_STATUSES = new Set(["failed", "timed_out"]);
@@ -17,6 +18,8 @@ export type MonitoredEvent = {
 	cwd?: string;
 	logPath?: string;
 	tail?: string;
+	/** Optional progress reading (value + source) for a running event, when known. */
+	progress?: ShellProgress;
 	canCancel?: boolean;
 };
 
@@ -82,7 +85,15 @@ export class BackgroundEventManager {
 		const icon = failed.length > 0 && running.length === 0 ? "⚠ " : running.length > 0 ? "● " : "⚠ ";
 		const iconColor: Parameters<typeof theme.fg>[0] =
 			failed.length > 0 && running.length === 0 ? "warning" : "accent";
-		this.statusCtx.ui.setStatus(STATUS_KEY, theme.fg(iconColor, icon) + theme.fg("dim", `bg: ${parts.join(", ")}`));
+		// When exactly one event is running and it reports progress, show its bar
+		// inline. With multiple running events the bar is ambiguous, so fall back to
+		// the aggregate count (per-event bars live in the /events overlay).
+		const soleRunning = running.length === 1 && failed.length === 0 ? running[0]?.event : undefined;
+		const progressSuffix = soleRunning?.progress ? ` ${renderProgressBar(soleRunning.progress)}` : "";
+		this.statusCtx.ui.setStatus(
+			STATUS_KEY,
+			theme.fg(iconColor, icon) + theme.fg("dim", `bg: ${parts.join(", ")}${progressSuffix}`),
+		);
 		this.updateOverlay();
 
 		if (running.length > 0 && !this.statusTimer) {
@@ -138,7 +149,9 @@ export class BackgroundEventManager {
 
 	private allEntries(): EventEntry[] {
 		return this.sourceEntries()
-			.flatMap((source) => this.sourceEvents(source).map((event) => ({ source, event, key: eventKey(source.id, event.id) })))
+			.flatMap((source) =>
+				this.sourceEvents(source).map((event) => ({ source, event, key: eventKey(source.id, event.id) })),
+			)
 			.sort((a, b) => b.event.startedAt - a.event.startedAt);
 	}
 

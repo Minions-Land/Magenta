@@ -2,7 +2,7 @@
  * Unit tests for todo tool
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import { createTodoMagnet } from "../../../modules/tools/todo/pi/todo.ts";
 
 // Helper to extract text from tool result

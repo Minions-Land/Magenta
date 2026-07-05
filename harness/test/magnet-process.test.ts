@@ -2,12 +2,13 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { HcpClient } from "../hcp-client/hcp-client.ts";
+import { loadHarnessComponentCatalog } from "../catalog/pi/catalog.ts";
 import { createMagnetFromCatalogEntry } from "../hcp-client/assembly/factory.ts";
 import { registerMagnetHcpServers } from "../hcp-client/assembly/register-servers.ts";
+import { HcpClient } from "../hcp-client/hcp-client.ts";
 import { HcpProcessMagnet } from "../hcp-magnet/hcp-process.ts";
 import { ProcessToolMagnet } from "../hcp-magnet/process.ts";
-import { loadHarnessComponentCatalog } from "../catalog/pi/catalog.ts";
+import { processToolManifestFromToml } from "../hcp-magnet/process.ts";
 
 async function writeExecutableScript(dir: string, name: string, source: string): Promise<string> {
 	const path = join(dir, name);
@@ -57,6 +58,53 @@ process.stdin.on("end", () => {
 			network: "deny",
 			os_enforced: false,
 		});
+	});
+
+	it("propagates manifest render_kind onto the AgentTool for host-side rendering", async () => {
+		const dir = await mkdtemp(join(tmpdir(), "magenta-process-renderkind-"));
+		const withKind = new ProcessToolMagnet({
+			cwd: dir,
+			manifestRoot: dir,
+			manifest: {
+				kind: "process",
+				name: "SearchTool",
+				description: "Search test tool",
+				command: process.execPath,
+				args: ["--version"],
+				render_kind: "search-results",
+			},
+		});
+		expect(withKind.toTool().renderKind).toBe("search-results");
+
+		const withoutKind = new ProcessToolMagnet({
+			cwd: dir,
+			manifestRoot: dir,
+			manifest: {
+				kind: "process",
+				name: "PlainTool",
+				description: "Plain test tool",
+				command: process.execPath,
+				args: ["--version"],
+			},
+		});
+		expect(withoutKind.toTool().renderKind).toBeUndefined();
+	});
+
+	it("parses render_kind from a TOML manifest table", () => {
+		const withKind = processToolManifestFromToml({
+			name: "WebSearch",
+			description: "Search the web",
+			command: "bin/tool",
+			render_kind: "search-results",
+		});
+		expect(withKind.render_kind).toBe("search-results");
+
+		const withoutKind = processToolManifestFromToml({
+			name: "Plain",
+			description: "Plain tool",
+			command: "bin/tool",
+		});
+		expect(withoutKind.render_kind).toBeUndefined();
 	});
 
 	it("exposes a common HCP management surface", async () => {
@@ -219,7 +267,9 @@ rl.on("line", line => {
 			},
 		});
 
-		await expect(magnet.toHcpServer().call({ target: "hcp-process://echo-env-jsonl", op: "health" })).resolves.toMatchObject({
+		await expect(
+			magnet.toHcpServer().call({ target: "hcp-process://echo-env-jsonl", op: "health" }),
+		).resolves.toMatchObject({
 			runtime: "runtime://process",
 			envAllowlist: ["PATH", "MAGENTA_HCP_ALLOWED"],
 			maxWallSeconds: 30,
@@ -263,7 +313,9 @@ rl.on("line", line => {
 			toolName: "AstGrep",
 		});
 		await expect(processTarget!.call({ target: "tool://AstGrep", op: "health" })).resolves.toMatchObject({
-			command: expect.stringContaining("harness/tools/grep/magenta/process-tools/target/release/magenta-process-tools"),
+			command: expect.stringContaining(
+				"harness/tools/grep/magenta/process-tools/target/release/magenta-process-tools",
+			),
 			runtime: "runtime://process",
 		});
 

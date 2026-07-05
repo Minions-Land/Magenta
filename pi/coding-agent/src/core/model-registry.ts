@@ -384,12 +384,7 @@ function inferThinkingLevelMap(
 	// OpenAI models
 	if (api === "openai-completions" || api === "openai-responses") {
 		// GPT-5.2+ supports xhigh
-		if (
-			id.includes("gpt-5.2") ||
-			id.includes("gpt-5.3") ||
-			id.includes("gpt-5.4") ||
-			id.includes("gpt-5.5")
-		) {
+		if (id.includes("gpt-5.2") || id.includes("gpt-5.3") || id.includes("gpt-5.4") || id.includes("gpt-5.5")) {
 			return { off: null, minimal: "low", low: "low", medium: "medium", high: "high", xhigh: "xhigh" };
 		}
 		// Standard reasoning models (o1, o3, o4, gpt-5.1, etc.)
@@ -673,7 +668,7 @@ export class ModelRegistry {
 				this.storeModelHeaders(providerName, modelDef.id, modelDef.headers);
 
 				const defaultCost = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
-					const reasoning = modelDef.reasoning ?? false;
+				const reasoning = modelDef.reasoning ?? false;
 				const thinkingLevelMap =
 					modelDef.thinkingLevelMap ?? inferThinkingLevelMap(modelDef.id, api as Api, reasoning);
 				models.push({
@@ -992,8 +987,8 @@ export class ModelRegistry {
 				this.storeModelHeaders(providerName, modelDef.id, modelDef.headers);
 
 				const thinkingLevelMap =
-				modelDef.thinkingLevelMap ?? inferThinkingLevelMap(modelDef.id, api as Api, modelDef.reasoning);
-			this.models.push({
+					modelDef.thinkingLevelMap ?? inferThinkingLevelMap(modelDef.id, api as Api, modelDef.reasoning);
+				this.models.push({
 					id: modelDef.id,
 					name: modelDef.name,
 					api: api as Api,

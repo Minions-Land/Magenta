@@ -1,4 +1,4 @@
-import { getHarnessRegistryPath, loadRegistry, type HarnessModuleDescriptor } from "@magenta/harness";
+import { getHarnessRegistryPath, type HarnessModuleDescriptor, loadRegistry } from "@magenta/harness";
 import chalk from "chalk";
 
 export interface HarnessListOptions {

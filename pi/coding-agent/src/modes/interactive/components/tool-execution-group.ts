@@ -102,6 +102,7 @@ export class ToolExecutionGroupComponent extends Container {
 			status: entry.status,
 			output: getRenderedTextOutput(entry.result, this.showImages),
 			sortIndex: entry.sortIndex,
+			provenance: entry.component.provenance,
 		}));
 	}
 

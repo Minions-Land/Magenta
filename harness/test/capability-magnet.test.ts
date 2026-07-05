@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { HcpClient } from "../hcp-client/hcp-client.ts";
-import { CapabilityMagnet } from "../hcp-magnet/universal.ts";
 import {
+	buildDefaultCapabilityHcp,
+	type CapabilityBuilderTable,
 	capabilityBindingKey,
 	createCapabilityMagnet,
-	type CapabilityBuilderTable,
-	buildDefaultCapabilityHcp,
 } from "../hcp-client/assembly/capability.ts";
+import { HcpClient } from "../hcp-client/hcp-client.ts";
+import { CapabilityMagnet } from "../hcp-magnet/universal.ts";
 
 const CONTEXT = { repoRoot: "/repo", packagesRoot: "/repo/packages" };
 
@@ -125,7 +125,7 @@ describe("HcpClient.resolveCapability", () => {
 		return {
 			describe: () => ({ target: `capability:${name}`, kind: name, ops: [] }),
 			call: () => undefined,
-			instance: <U,>() => instance as unknown as U,
+			instance: <U>() => instance as unknown as U,
 		};
 	}
 

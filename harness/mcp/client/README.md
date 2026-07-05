@@ -1,224 +1,94 @@
 # MCP Client
 
-MCP client implementations and utilities for connecting to MCP servers.
+TypeScript client wrapper for connecting to MCP servers, built on
+`@modelcontextprotocol/sdk`.
 
 ## Overview
 
-The client module provides tools to connect to and interact with MCP servers using various transport mechanisms.
+`McpClient` wraps the SDK `Client` and exposes a small, typed surface for the
+verbs the harness uses: connect, list/call tools, list/read resources, and
+list/get prompts. `connectMcpClient` is a convenience constructor that connects
+in one call.
 
-## Transport Options
+## Transports
 
-### 1. stdio (Standard I/O)
+Two transports are supported, selected by the shape of the options object:
 
-Connect to servers running as subprocesses:
+### stdio (spawn a subprocess)
 
-```python
-from mcp.client.session import ClientSession
-from mcp.client.stdio import stdio_client
+```typescript
+import { connectMcpClient } from "@magenta/harness-mcp";
 
-async with stdio_client("/path/to/server") as (read, write):
-    async with ClientSession(read, write) as session:
-        await session.initialize()
-        # Use session...
+const client = await connectMcpClient({
+  command: "node",
+  args: ["path/to/server.js"],
+  env: { SOME_KEY: "value" }, // optional
+});
 ```
 
-### 2. SSE (Server-Sent Events)
+### SSE (HTTP Server-Sent Events)
 
-Connect to HTTP-based MCP servers:
-
-```python
-from mcp.client.session import ClientSession
-from mcp.client.sse import sse_client
-
-async with sse_client("http://localhost:8000/sse") as (read, write):
-    async with ClientSession(read, write) as session:
-        await session.initialize()
-        # Use session...
+```typescript
+const client = await connectMcpClient({
+  url: "http://localhost:8000/sse",
+  headers: { Authorization: "Bearer ..." }, // optional
+});
 ```
 
-### 3. WebSocket
+The SDK also ships Streamable HTTP and WebSocket transports; this wrapper does
+not wire them.
 
-Connect to WebSocket-based MCP servers:
+## API
 
-```python
-from mcp.client.session import ClientSession
-from mcp.client.websocket import websocket_client
+```typescript
+import { McpClient } from "@magenta/harness-mcp";
 
-async with websocket_client("ws://localhost:8000/mcp") as (read, write):
-    async with ClientSession(read, write) as session:
-        await session.initialize()
-        # Use session...
+const client = new McpClient({ name: "my-client", version: "1.0.0" });
+await client.connect({ command: "node", args: ["server.js"] });
+
+// Tools
+const tools = await client.listTools();               // Tool[]
+const result = await client.callTool("echo", { message: "hi" });
+console.log(result.content[0].text);
+
+// Resources
+const resources = await client.listResources();       // Resource[]
+const doc = await client.readResource("config://server");
+console.log(doc.contents[0].text);
+
+// Prompts
+const prompts = await client.listPrompts();            // Prompt[]
+const prompt = await client.getPrompt("greet", { name: "World", formal: "true" });
+
+await client.close();
 ```
 
-## Client Session API
+### Methods
 
-### Initialization
+| Method | Description |
+| --- | --- |
+| `connect(transport)` | Connect over stdio or SSE. Throws if already connected. |
+| `listTools()` | Return the server's tools. |
+| `callTool(name, args?)` | Invoke a tool; returns the SDK `CallToolResult`. |
+| `listResources()` | Return the server's resources. |
+| `readResource(uri)` | Read a resource by URI. |
+| `listPrompts()` | Return the server's prompts. |
+| `getPrompt(name, args?)` | Retrieve a rendered prompt. |
+| `close()` | Close the connection. |
+| `isConnected()` | Whether the client is currently connected. |
 
-```python
-await session.initialize()
-```
+All data methods throw if called before `connect()`.
 
-### Tools
+## Notes and limits
 
-```python
-# List available tools
-tools_result = await session.list_tools()
-tools = tools_result.tools
+- Client capabilities are declared as `roots.listChanged: false` and `sampling: {}`,
+  but no sampling/roots handlers or `listChanged` subscriptions are implemented.
+- No pagination handling, timeouts, retries, or multi-server session management.
 
-# Call a tool
-result = await session.call_tool(
-    name="my_tool",
-    arguments={"param": "value"}
-)
-```
-
-### Resources
-
-```python
-# List resources
-resources_result = await session.list_resources()
-resources = resources_result.resources
-
-# Read a resource
-content = await session.read_resource(
-    uri="file:///path/to/resource"
-)
-```
-
-### Prompts
-
-```python
-# List prompts
-prompts_result = await session.list_prompts()
-prompts = prompts_result.prompts
-
-# Get a prompt
-prompt = await session.get_prompt(
-    name="my_prompt",
-    arguments={"param": "value"}
-)
-```
-
-### Sampling (LLM Integration)
-
-```python
-# Request LLM sampling
-result = await session.create_message(
-    messages=[
-        {
-            "role": "user",
-            "content": {"type": "text", "text": "Hello!"}
-        }
-    ],
-    model_preferences={"hints": [{"name": "claude-3-opus"}]}
-)
-```
-
-## Authentication
-
-### OAuth2
-
-```python
-from mcp.client.session import ClientSession
-from mcp.client.auth.oauth2 import OAuth2Authenticator
-
-authenticator = OAuth2Authenticator(
-    client_id="your_client_id",
-    token_url="https://auth.example.com/token"
-)
-
-async with stdio_client("/path/to/server") as (read, write):
-    async with ClientSession(
-        read, write,
-        authenticator=authenticator
-    ) as session:
-        await session.initialize()
-        # Use authenticated session...
-```
-
-### Client Credentials
-
-```python
-from mcp.client.auth.extensions.client_credentials import ClientCredentials
-
-authenticator = ClientCredentials(
-    client_id="your_client_id",
-    client_secret="your_secret",
-    token_url="https://auth.example.com/token"
-)
-```
-
-## Session Group (Multiple Servers)
-
-Manage connections to multiple MCP servers:
-
-```python
-from mcp.client.session_group import SessionGroup
-
-async with SessionGroup() as group:
-    # Add multiple servers
-    session1 = await group.add_server("server1", stdio_client("/path/to/server1"))
-    session2 = await group.add_server("server2", stdio_client("/path/to/server2"))
-    
-    # Use any session
-    tools1 = await session1.list_tools()
-    tools2 = await session2.list_tools()
-```
-
-## Error Handling
-
-```python
-from mcp.shared.exceptions import McpError
-
-try:
-    result = await session.call_tool("tool_name", {})
-except McpError as e:
-    print(f"MCP Error: {e.code} - {e.message}")
-except Exception as e:
-    print(f"Unexpected error: {e}")
-```
-
-## Experimental Features
-
-### Task Support
-
-```python
-from mcp.client.experimental.tasks import TaskHandler
-
-# Enable task support
-task_handler = TaskHandler()
-async with ClientSession(read, write, task_handler=task_handler) as session:
-    await session.initialize()
-    # Tasks will be handled automatically
-```
-
-## Configuration
-
-### Client Options
-
-```python
-from mcp.client.session import ClientSession
-
-session = ClientSession(
-    read, write,
-    timeout=30.0,              # Request timeout in seconds
-    max_retries=3,             # Maximum retry attempts
-    retry_delay=1.0,           # Delay between retries
-    authenticator=None,        # Optional authenticator
-    task_handler=None          # Optional task handler
-)
-```
-
-## Examples
-
-See `examples/` directory for:
-- `simple_client.py` - Basic client usage
-- `multi_server_client.py` - Connecting to multiple servers
-- `authenticated_client.py` - OAuth2 authentication
-- `streaming_client.py` - SSE streaming
+For attracting a server's tools into the harness tool address space without this
+wrapper, see the `runtime = "mcp"` integration in the package `README.md`.
 
 ## Reference
 
-- **Official Docs**: https://py.sdk.modelcontextprotocol.io/client/
-- **Protocol Spec**: https://spec.modelcontextprotocol.io/
-- **Source Code**: https://github.com/modelcontextprotocol/python-sdk/tree/main/src/mcp/client
+- Protocol spec: https://spec.modelcontextprotocol.io/
+- TypeScript SDK: https://github.com/modelcontextprotocol/typescript-sdk

@@ -1,7 +1,10 @@
 import { Box, type Component, Container, getCapabilities, Image, Spacer, Text, type TUI } from "@earendil-works/pi-tui";
 import type { ToolDefinition, ToolRenderContext } from "../../../core/extensions/types.ts";
 import { createAllToolDefinitions, type ToolName } from "../../../core/tools/index.ts";
+import { getRenderer, type ToolRenderer } from "../../../core/tools/renderer-registry.ts";
+import { registerBuiltinRenderers } from "../../../core/tools/register-builtin-renderers.ts";
 import { getTextOutput as getRenderedTextOutput } from "../../../core/tools/render-utils.ts";
+import { type ToolDisplayProvenance, toolProvenanceBadgeText } from "../../../core/tools/tool-display.ts";
 import { convertToPng } from "../../../utils/image-convert.ts";
 import { theme } from "../theme/theme.ts";
 
@@ -50,6 +53,7 @@ export class ToolExecutionComponent extends Container {
 		cwd: string,
 	) {
 		super();
+		registerBuiltinRenderers();
 		this.toolName = toolName;
 		this.toolCallId = toolCallId;
 		this.args = args;
@@ -78,38 +82,43 @@ export class ToolExecutionComponent extends Container {
 		this.updateDisplay();
 	}
 
+	/** Renderer resolved from the registry by renderKind, if any. */
+	private resolveRegistryRenderer(): ToolRenderer | undefined {
+		const renderKind = this.toolDefinition?.renderKind ?? this.builtInToolDefinition?.renderKind;
+		return getRenderer(renderKind);
+	}
+
 	private getCallRenderer(): ToolDefinition<any, any>["renderCall"] | undefined {
-		if (!this.builtInToolDefinition) {
-			return this.toolDefinition?.renderCall;
-		}
-		if (!this.toolDefinition) {
-			return this.builtInToolDefinition.renderCall;
-		}
-		return this.toolDefinition.renderCall ?? this.builtInToolDefinition.renderCall;
+		return (
+			this.toolDefinition?.renderCall ??
+			this.resolveRegistryRenderer()?.renderCall ??
+			this.builtInToolDefinition?.renderCall
+		);
 	}
 
 	private getResultRenderer(): ToolDefinition<any, any>["renderResult"] | undefined {
-		if (!this.builtInToolDefinition) {
-			return this.toolDefinition?.renderResult;
-		}
-		if (!this.toolDefinition) {
-			return this.builtInToolDefinition.renderResult;
-		}
-		return this.toolDefinition.renderResult ?? this.builtInToolDefinition.renderResult;
+		return (
+			this.toolDefinition?.renderResult ??
+			this.resolveRegistryRenderer()?.renderResult ??
+			this.builtInToolDefinition?.renderResult
+		);
 	}
 
 	private hasRendererDefinition(): boolean {
-		return this.builtInToolDefinition !== undefined || this.toolDefinition !== undefined;
+		return (
+			this.builtInToolDefinition !== undefined ||
+			this.toolDefinition !== undefined ||
+			this.resolveRegistryRenderer() !== undefined
+		);
 	}
 
 	private getRenderShell(): "default" | "self" {
-		if (!this.builtInToolDefinition) {
-			return this.toolDefinition?.renderShell ?? "default";
-		}
-		if (!this.toolDefinition) {
-			return this.builtInToolDefinition.renderShell ?? "default";
-		}
-		return this.toolDefinition.renderShell ?? this.builtInToolDefinition.renderShell ?? "default";
+		return (
+			this.toolDefinition?.renderShell ??
+			this.resolveRegistryRenderer()?.renderShell ??
+			this.builtInToolDefinition?.renderShell ??
+			"default"
+		);
 	}
 
 	private getRenderContext(lastComponent: Component | undefined): ToolRenderContext {
@@ -133,7 +142,18 @@ export class ToolExecutionComponent extends Container {
 	}
 
 	private createCallFallback(): Component {
-		return new Text(theme.fg("toolTitle", theme.bold(this.toolName)), 0, 0);
+		return new Text(`${theme.fg("toolTitle", theme.bold(this.toolName))}${this.sourceBadgeSuffix()}`, 0, 0);
+	}
+
+	/** Provenance of this tool (e.g. MCP server), when known. */
+	get provenance(): ToolDisplayProvenance | undefined {
+		return this.toolDefinition?.provenance;
+	}
+
+	/** A themed " [mcp]"-style suffix for externally-backed tools, else "". */
+	private sourceBadgeSuffix(): string {
+		const badge = toolProvenanceBadgeText(this.provenance);
+		return badge ? ` ${theme.fg("accent", `[${badge}]`)}` : "";
 	}
 
 	private createResultFallback(): Component | undefined {
@@ -363,7 +383,7 @@ export class ToolExecutionComponent extends Container {
 	}
 
 	private formatToolExecution(): string {
-		let text = theme.fg("toolTitle", theme.bold(this.toolName));
+		let text = `${theme.fg("toolTitle", theme.bold(this.toolName))}${this.sourceBadgeSuffix()}`;
 		const content = JSON.stringify(this.args, null, 2);
 		if (content) {
 			text += `\n\n${content}`;

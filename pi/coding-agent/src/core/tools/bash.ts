@@ -24,6 +24,7 @@ import {
 } from "../../utils/shell.ts";
 import type { ToolDefinition, ToolRenderResultOptions } from "../extensions/types.ts";
 import { getTextOutput, invalidArgText, str } from "./render-utils.ts";
+import type { ToolRenderer } from "./renderer-registry.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
 import { DEFAULT_MAX_BYTES, formatSize } from "./truncate.ts";
 
@@ -227,6 +228,50 @@ function rebuildBashResultRenderComponent(
 	}
 }
 
+/**
+ * Renderer for the "shell-output" data shape (bash tool output). Pulls state,
+ * lastComponent, executionStarted, isError, showImages and invalidate from the
+ * render context, so any tool producing {@link BashToolDetails}-shaped results
+ * can reuse it. Registered in register-builtin-renderers.ts.
+ */
+export const bashRenderer: ToolRenderer<BashToolDetails | undefined> = {
+	renderCall(args, _theme, context) {
+		const state = context.state as BashRenderState;
+		if (context.executionStarted && state.startedAt === undefined) {
+			state.startedAt = Date.now();
+			state.endedAt = undefined;
+		}
+		const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
+		text.setText(formatBashCall(args));
+		return text;
+	},
+	renderResult(result, options, _theme, context) {
+		const state = context.state as BashRenderState;
+		if (state.startedAt !== undefined && options.isPartial && !state.interval) {
+			state.interval = setInterval(() => context.invalidate(), 1000);
+		}
+		if (!options.isPartial || context.isError) {
+			state.endedAt ??= Date.now();
+			if (state.interval) {
+				clearInterval(state.interval);
+				state.interval = undefined;
+			}
+		}
+		const component =
+			(context.lastComponent as BashResultRenderComponent | undefined) ?? new BashResultRenderComponent();
+		rebuildBashResultRenderComponent(
+			component,
+			result as any,
+			options,
+			context.showImages,
+			state.startedAt,
+			state.endedAt,
+		);
+		component.invalidate();
+		return component;
+	},
+};
+
 export function createBashToolDefinition(
 	cwd: string,
 	options?: BashToolOptions,
@@ -244,43 +289,9 @@ export function createBashToolDefinition(
 		description: BASH_TOOL_DESCRIPTION,
 		promptSnippet: "Execute bash commands (ls, grep, find, etc.)",
 		parameters: bashSchema,
+		renderKind: "shell-output",
 		execute(_toolCallId, params, signal, onUpdate, _ctx) {
 			return execute(_toolCallId, params, signal, onUpdate);
-		},
-		renderCall(args, _theme, context) {
-			const state = context.state;
-			if (context.executionStarted && state.startedAt === undefined) {
-				state.startedAt = Date.now();
-				state.endedAt = undefined;
-			}
-			const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
-			text.setText(formatBashCall(args));
-			return text;
-		},
-		renderResult(result, options, _theme, context) {
-			const state = context.state;
-			if (state.startedAt !== undefined && options.isPartial && !state.interval) {
-				state.interval = setInterval(() => context.invalidate(), 1000);
-			}
-			if (!options.isPartial || context.isError) {
-				state.endedAt ??= Date.now();
-				if (state.interval) {
-					clearInterval(state.interval);
-					state.interval = undefined;
-				}
-			}
-			const component =
-				(context.lastComponent as BashResultRenderComponent | undefined) ?? new BashResultRenderComponent();
-			rebuildBashResultRenderComponent(
-				component,
-				result as any,
-				options,
-				context.showImages,
-				state.startedAt,
-				state.endedAt,
-			);
-			component.invalidate();
-			return component;
 		},
 	};
 }

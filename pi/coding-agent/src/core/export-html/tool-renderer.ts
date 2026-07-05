@@ -9,6 +9,8 @@ import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
 import type { Component } from "@earendil-works/pi-tui";
 import type { Theme } from "../../modes/interactive/theme/theme.ts";
 import type { ToolDefinition, ToolRenderContext } from "../extensions/types.ts";
+import { getRenderer } from "../tools/renderer-registry.ts";
+import { registerBuiltinRenderers } from "../tools/register-builtin-renderers.ts";
 import { ansiLinesToHtml } from "./ansi-to-html.ts";
 
 export interface ToolHtmlRendererDeps {
@@ -56,7 +58,16 @@ function trimRenderedResultLines(lines: string[]): string[] {
 }
 
 export function createToolHtmlRenderer(deps: ToolHtmlRendererDeps): ToolHtmlRenderer {
+	registerBuiltinRenderers();
 	const { getToolDefinition, theme, cwd, width = 100 } = deps;
+
+	// Resolve a renderer function, preferring the definition's inline renderer,
+	// then the registry renderer keyed by renderKind. Mirrors the TUI path in
+	// tool-execution.ts so HTML export renders identically.
+	const resolveRenderCall = (toolDef: ToolDefinition | undefined): ToolDefinition["renderCall"] | undefined =>
+		toolDef?.renderCall ?? getRenderer(toolDef?.renderKind)?.renderCall;
+	const resolveRenderResult = (toolDef: ToolDefinition | undefined): ToolDefinition["renderResult"] | undefined =>
+		toolDef?.renderResult ?? (getRenderer(toolDef?.renderKind)?.renderResult as ToolDefinition["renderResult"]);
 
 	const renderedCallComponents = new Map<string, Component>();
 	const renderedResultComponents = new Map<string, Component>();
@@ -100,11 +111,12 @@ export function createToolHtmlRenderer(deps: ToolHtmlRendererDeps): ToolHtmlRend
 			try {
 				renderedArgs.set(toolCallId, args);
 				const toolDef = getToolDefinition(toolName);
-				if (!toolDef?.renderCall) {
+				const renderCall = resolveRenderCall(toolDef);
+				if (!renderCall) {
 					return undefined;
 				}
 
-				const component = toolDef.renderCall(
+				const component = renderCall(
 					args,
 					theme,
 					createRenderContext(toolCallId, renderedCallComponents.get(toolCallId), false, true, false),
@@ -127,7 +139,8 @@ export function createToolHtmlRenderer(deps: ToolHtmlRendererDeps): ToolHtmlRend
 		): { collapsed?: string; expanded?: string } | undefined {
 			try {
 				const toolDef = getToolDefinition(toolName);
-				if (!toolDef?.renderResult) {
+				const renderResult = resolveRenderResult(toolDef);
+				if (!renderResult) {
 					return undefined;
 				}
 
@@ -140,7 +153,7 @@ export function createToolHtmlRenderer(deps: ToolHtmlRendererDeps): ToolHtmlRend
 				};
 
 				// Render collapsed
-				const collapsedComponent = toolDef.renderResult(
+				const collapsedComponent = renderResult(
 					agentToolResult,
 					{ expanded: false, isPartial: false },
 					theme,
@@ -150,7 +163,7 @@ export function createToolHtmlRenderer(deps: ToolHtmlRendererDeps): ToolHtmlRend
 				const collapsed = ansiLinesToHtml(trimRenderedResultLines(collapsedComponent.render(width)));
 
 				// Render expanded
-				const expandedComponent = toolDef.renderResult(
+				const expandedComponent = renderResult(
 					agentToolResult,
 					{ expanded: true, isPartial: false },
 					theme,

@@ -331,16 +331,23 @@ describe("DefaultResourceLoader", () => {
 			// Selecting only the extra profile loads just that profile's tool.
 			loader.setHarnessPackageSelectors(["MultiDomain:extra"]);
 			await loader.reload();
-			expect(loader.getPackageTools().tools.map((tool) => tool.name).sort()).toEqual(["extra_tool"]);
+			expect(
+				loader
+					.getPackageTools()
+					.tools.map((tool) => tool.name)
+					.sort(),
+			).toEqual(["extra_tool"]);
 
 			// Adding a second per-profile selector for the same package is additive:
 			// both profiles' tools load together (the menu's per-row toggles rely on this).
 			loader.setHarnessPackageSelectors(["MultiDomain:extra", "MultiDomain:general"]);
 			await loader.reload();
-			expect(loader.getPackageTools().tools.map((tool) => tool.name).sort()).toEqual([
-				"extra_tool",
-				"general_tool",
-			]);
+			expect(
+				loader
+					.getPackageTools()
+					.tools.map((tool) => tool.name)
+					.sort(),
+			).toEqual(["extra_tool", "general_tool"]);
 		});
 
 		it("should discover skills from agentDir", async () => {

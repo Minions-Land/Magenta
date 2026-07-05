@@ -3,11 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { BackgroundEventManager } from "../src/core/background-events.ts";
-import {
-	BackgroundShellController,
-	type BackgroundShellReturnMessage,
-} from "../src/core/tools/bg-shell.ts";
 import type { ExtensionContext } from "../src/core/extensions/types.ts";
+import { BackgroundShellController, type BackgroundShellReturnMessage } from "../src/core/tools/bg-shell.ts";
 
 function textOf(result: { content: Array<{ type: string; text?: string }> }): string {
 	return result.content.map((part) => part.text ?? "").join("\n");
@@ -63,9 +60,9 @@ function createContext(cwd: string): ExtensionContext {
 	};
 }
 
-async function waitUntil(predicate: () => boolean, timeoutMs = 2000): Promise<void> {
+async function waitUntil(predicate: () => boolean | Promise<boolean>, timeoutMs = 2000): Promise<void> {
 	const start = Date.now();
-	while (!predicate()) {
+	while (!(await predicate())) {
 		if (Date.now() - start > timeoutMs) {
 			throw new Error("Timed out waiting for condition");
 		}
@@ -148,6 +145,103 @@ describe("built-in bg_shell tool", () => {
 
 		const status = await tool.execute("call-status", { action: "status", eventId }, undefined, undefined, ctx);
 		expect(textOf(status)).toContain("Status: cancelled");
+	});
+
+	it("parses progress from output and reports it while running", async () => {
+		const tool = controller.createToolDefinition();
+		const ctx = createContext(tempDir);
+
+		// Emit a progress token, then stay alive so the event is still running.
+		const start = await tool.execute(
+			"call-start",
+			{ action: "start", command: 'printf "working 42%%\\n"; node -e "setTimeout(()=>{}, 30000)"' },
+			undefined,
+			undefined,
+			ctx,
+		);
+		const eventId = start.details?.id as string;
+
+		try {
+			let statusText = "";
+			await waitUntil(async () => {
+				const status = await tool.execute("call-status", { action: "status", eventId }, undefined, undefined, ctx);
+				statusText = textOf(status);
+				return statusText.includes("Progress:");
+			}, 5000);
+
+			expect(statusText).toContain("Status: running");
+			expect(statusText).toContain("Progress:");
+			expect(statusText).toContain("42%");
+		} finally {
+			await tool.execute("call-cancel", { action: "cancel", eventId }, undefined, undefined, ctx);
+		}
+	});
+
+	it("uses @@progress markers and hides them from output", async () => {
+		const tool = controller.createToolDefinition();
+		const ctx = createContext(tempDir);
+
+		const start = await tool.execute(
+			"call-start",
+			{
+				action: "start",
+				command: 'printf "@@progress 0.8\\nreal-output-line\\n"; node -e "setTimeout(()=>{}, 30000)"',
+			},
+			undefined,
+			undefined,
+			ctx,
+		);
+		const eventId = start.details?.id as string;
+
+		try {
+			let statusText = "";
+			await waitUntil(async () => {
+				const status = await tool.execute("call-status", { action: "status", eventId }, undefined, undefined, ctx);
+				statusText = textOf(status);
+				return statusText.includes("Progress:");
+			}, 5000);
+
+			expect(statusText).toContain("80%");
+			// Marker-backed progress carries no hint word (only time estimates do).
+			expect(statusText).not.toContain("estimated");
+			// Marker line is stripped from the output tail; real output survives.
+			// (The `Command:` echo naturally still contains the literal command text,
+			// so only inspect the Output section for leaked markers.)
+			const outputSection = statusText.slice(statusText.indexOf("Output:"));
+			expect(outputSection).toContain("real-output-line");
+			expect(outputSection).not.toContain("@@progress");
+		} finally {
+			await tool.execute("call-cancel", { action: "cancel", eventId }, undefined, undefined, ctx);
+		}
+	});
+
+	it("falls back to a time-based estimate hinted estimated when expectedSeconds is set", async () => {
+		const tool = controller.createToolDefinition();
+		const ctx = createContext(tempDir);
+
+		// No progress in output, so the estimate comes purely from expectedSeconds.
+		const start = await tool.execute(
+			"call-start",
+			{ action: "start", command: 'node -e "setTimeout(()=>{}, 30000)"', expectedSeconds: 120 },
+			undefined,
+			undefined,
+			ctx,
+		);
+		const eventId = start.details?.id as string;
+
+		try {
+			let statusText = "";
+			await waitUntil(async () => {
+				const status = await tool.execute("call-status", { action: "status", eventId }, undefined, undefined, ctx);
+				statusText = textOf(status);
+				return statusText.includes("Progress:");
+			}, 5000);
+
+			expect(statusText).toContain("Status: running");
+			expect(statusText).toContain("estimated");
+		} finally {
+			await tool.execute("call-cancel", { action: "cancel", eventId }, undefined, undefined, ctx);
+		}
 	});
 
 	it("returns completed output to the main session when requested", async () => {

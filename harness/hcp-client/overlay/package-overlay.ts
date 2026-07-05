@@ -2,18 +2,18 @@ import { existsSync } from "node:fs";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import { HcpClient } from "../hcp-client.ts";
+import type { CapabilityBinding, HcpMagnet } from "../../hcp-contract/hcp-magnet.ts";
+import {
+	createPackageToolMagnet as createPackageToolMagnetFromDescriptor,
+	type PackageToolMagnetDiagnosticCode,
+} from "../../hcp-magnet/package-tool.ts";
 import {
 	type CapabilityMagnetDiagnosticCode,
 	capabilityBindingKey,
 	createCapabilityMagnet,
 } from "../assembly/capability.ts";
 import { registerMagnetHcpServers } from "../assembly/register-servers.ts";
-import type { CapabilityBinding, HcpMagnet } from "../../hcp-contract/hcp-magnet.ts";
-import {
-	createPackageToolMagnet as createPackageToolMagnetFromDescriptor,
-	type PackageToolMagnetDiagnosticCode,
-} from "../../hcp-magnet/package-tool.ts";
+import { HcpClient } from "../hcp-client.ts";
 import { parseToml, type TomlTable, type TomlValue } from "../registry/registry.ts";
 
 export const PACKAGE_MANIFEST_FILE = "package.toml";
@@ -164,6 +164,24 @@ export interface PackageToolAssembly {
 	 */
 	hcp: HcpClient;
 	diagnostics: PackageDiagnostic[];
+}
+
+/**
+ * Progress reading emitted while {@link assemblePackageToolMagnets} walks the
+ * component list. `start` fires before a component is built (useful because a
+ * `runtime = "mcp"` component may spawn a server, and a process tool may trigger
+ * a cargo build); `assembled` fires once it is done. `index` is 0-based and
+ * `total` is the full component count, so a consumer can render `index+1/total`.
+ */
+export interface PackageAssemblyProgress {
+	phase: "start" | "assembled";
+	index: number;
+	total: number;
+	component: PackageResolvedComponent;
+}
+
+export interface AssemblePackageToolMagnetsOptions {
+	onProgress?: (progress: PackageAssemblyProgress) => void;
 }
 
 export interface DiscoverHarnessPackagesResult {
@@ -382,37 +400,39 @@ export const CAPABILITY_KINDS = new Set<string>([
 	"sandbox",
 ]);
 
-export async function assemblePackageToolMagnets(overlay: PackageOverlay): Promise<PackageToolAssembly> {
+export async function assemblePackageToolMagnets(
+	overlay: PackageOverlay,
+	options: AssemblePackageToolMagnetsOptions = {},
+): Promise<PackageToolAssembly> {
 	const diagnostics: PackageDiagnostic[] = [];
 	const magnets: HcpMagnet[] = [];
+	const onProgress = options.onProgress;
+	const total = overlay.components.length;
 
-	for (const component of overlay.components) {
+	for (let index = 0; index < overlay.components.length; index++) {
+		const component = overlay.components[index];
+		const context = {
+			repoRoot: overlay.repoRoot,
+			packagesRoot: overlay.packagesRoot,
+			components: overlay.components,
+			componentMap: overlay.componentMap,
+		};
+
 		if (component.kind === "tool") {
-			const result = await createPackageToolMagnetFromDescriptor({
-				component,
-				context: {
-					repoRoot: overlay.repoRoot,
-					packagesRoot: overlay.packagesRoot,
-					components: overlay.components,
-					componentMap: overlay.componentMap,
-				},
-			});
+			onProgress?.({ phase: "start", index, total, component });
+			const result = await createPackageToolMagnetFromDescriptor({ component, context });
 			diagnostics.push(...result.diagnostics);
 			if (result.magnet) magnets.push(result.magnet);
+			if (result.magnets) magnets.push(...result.magnets);
+			onProgress?.({ phase: "assembled", index, total, component });
 			continue;
 		}
 		if (CAPABILITY_KINDS.has(component.kind)) {
-			const result = await createCapabilityMagnetFromDescriptor({
-				component,
-				context: {
-					repoRoot: overlay.repoRoot,
-					packagesRoot: overlay.packagesRoot,
-					components: overlay.components,
-					componentMap: overlay.componentMap,
-				},
-			});
+			onProgress?.({ phase: "start", index, total, component });
+			const result = await createCapabilityMagnetFromDescriptor({ component, context });
 			diagnostics.push(...result.diagnostics);
 			if (result.magnet) magnets.push(result.magnet);
+			onProgress?.({ phase: "assembled", index, total, component });
 		}
 	}
 

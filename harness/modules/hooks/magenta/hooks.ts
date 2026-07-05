@@ -1,9 +1,9 @@
 import type { HcpRequest, HcpServer, HcpServerDescription } from "../../../hcp-contract/hcp-server.ts";
-import type { HookDescriptor, HookDiscoverResult, HookProviderContract, HookResult } from "../contract.ts";
-import { decideApproval } from "../../policy/magenta/approval.ts";
 import type { ShellPolicyClassification } from "../../policy/contract.ts";
+import { decideApproval } from "../../policy/magenta/approval.ts";
 import { classifyShellCommand } from "../../policy/magenta/shell-policy.ts";
 import { selectSandboxProfile } from "../../sandbox/magenta/sandbox.ts";
+import type { HookDescriptor, HookDiscoverResult, HookProviderContract, HookResult } from "../contract.ts";
 
 const LIFECYCLE_HOOKS = ["init", "pre-turn", "pre-llm", "post-llm", "pre-tool", "post-tool", "compact", "workflow"];
 
@@ -175,7 +175,12 @@ export function runLifecycleHook(name: string, input: unknown): HookResult {
 	if (name === "workflow") {
 		const target = readString(input, "loop") ?? readString(input, "target") ?? "loop://plan-execute";
 		const op = readString(input, "op") ?? "run";
-		const workflowInput = isRecord(input) && "input" in input ? input.input : isRecord(input) && "schedule" in input ? { schedule: input.schedule } : {};
+		const workflowInput =
+			isRecord(input) && "input" in input
+				? input.input
+				: isRecord(input) && "schedule" in input
+					? { schedule: input.schedule }
+					: {};
 		actions.push({
 			type: "hcp_call",
 			target,

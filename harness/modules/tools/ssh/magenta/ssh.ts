@@ -129,7 +129,11 @@ export function runSshCommand(
 	});
 }
 
-export async function sshExec(remote: string, command: string, runner: SshCommandRunner = runSshCommand): Promise<Buffer> {
+export async function sshExec(
+	remote: string,
+	command: string,
+	runner: SshCommandRunner = runSshCommand,
+): Promise<Buffer> {
 	const result = await runner(remote, command);
 	if (result.exitCode !== 0) {
 		throw new Error(`SSH failed (${result.exitCode}): ${result.stderr.toString()}`);
@@ -137,10 +141,7 @@ export async function sshExec(remote: string, command: string, runner: SshComman
 	return result.stdout;
 }
 
-export async function resolveSshTarget(
-	sshArg: string,
-	runner: SshCommandRunner = runSshCommand,
-): Promise<SshTarget> {
+export async function resolveSshTarget(sshArg: string, runner: SshCommandRunner = runSshCommand): Promise<SshTarget> {
 	const pathSeparator = sshArg.indexOf(":");
 	if (pathSeparator >= 0) {
 		const remote = sshArg.slice(0, pathSeparator);

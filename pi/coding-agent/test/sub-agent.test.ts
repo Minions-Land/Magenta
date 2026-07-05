@@ -1,11 +1,11 @@
+import type { ChildProcess, SpawnOptions } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ChildProcess, SpawnOptions } from "node:child_process";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { BackgroundEventManager } from "../src/core/background-events.ts";
 import type { AgentSessionEvent } from "../src/core/agent-session.ts";
+import { BackgroundEventManager } from "../src/core/background-events.ts";
 import type { ExtensionContext } from "../src/core/extensions/types.ts";
 import { SubAgentController, type SubAgentReturnMessage, type SubAgentSpawn } from "../src/core/tools/sub-agent.ts";
 
@@ -188,7 +188,10 @@ describe("built-in sub_agent tool", () => {
 			"call-start",
 			{
 				action: "start",
-				tasks: [{ task: "Inspect tests", label: "tests" }, { task: "Inspect docs", label: "docs" }],
+				tasks: [
+					{ task: "Inspect tests", label: "tests" },
+					{ task: "Inspect docs", label: "docs" },
+				],
 			},
 			undefined,
 			undefined,

@@ -7,13 +7,17 @@ import {
 	fauxToolCall,
 } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
-import type { HcpMagnet } from "../hcp-contract/hcp-magnet.ts";
-import { createReadMagnet } from "../hcp-magnet/native.ts";
 import { NodeExecutionEnv } from "../core/env/pi/nodejs.ts";
 import { AgentHarness } from "../core/loop/pi/agent-harness.ts";
 import { InMemorySessionStorage } from "../core/session/pi/memory-storage.ts";
 import { Session } from "../core/session/pi/session.ts";
-import { buildToolSearchManifest, createToolSearchTool, type ToolSearchEntry } from "../modules/tools-search/tool-search.ts";
+import type { HcpMagnet } from "../hcp-contract/hcp-magnet.ts";
+import { createReadMagnet } from "../hcp-magnet/native.ts";
+import {
+	buildToolSearchManifest,
+	createToolSearchTool,
+	type ToolSearchEntry,
+} from "../modules/tools-search/tool-search.ts";
 
 /**
  * Tool Search (spec §6) — MCP-style deferral of tool schemas. These tests pin

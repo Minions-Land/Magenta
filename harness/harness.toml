@@ -68,6 +68,12 @@ description = "Search the web using the Magenta process-tool source."
 path = "modules/tools/web-search/web-search.toml"
 
 [[components]]
+kind = "tool"
+name = "web-fetch"
+description = "Fetch a web page using the Magenta process-tool source."
+path = "modules/tools/web-fetch/web-fetch.toml"
+
+[[components]]
 kind = "hcp-process"
 name = "hcp-process"
 description = "HCP JSONL process manifests migrated from Magenta1 general-harness."

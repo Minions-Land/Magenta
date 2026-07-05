@@ -94,7 +94,11 @@ function reportDiagnostics(diagnostics: readonly AgentSessionRuntimeDiagnostic[]
 	}
 }
 
-function toRuntimeDiagnostic(diagnostic: { type: string; message: string; path?: string }): AgentSessionRuntimeDiagnostic {
+function toRuntimeDiagnostic(diagnostic: {
+	type: string;
+	message: string;
+	path?: string;
+}): AgentSessionRuntimeDiagnostic {
 	return {
 		type: diagnostic.type === "error" ? "error" : "warning",
 		message: diagnostic.path ? `${diagnostic.message} (${diagnostic.path})` : diagnostic.message,
@@ -697,6 +701,7 @@ export async function main(args: string[], options?: MainOptions) {
 				message: `Failed to load extension "${path}": ${error}`,
 			})),
 			...resourceLoader.getPackageTools().diagnostics.map(toRuntimeDiagnostic),
+			...resourceLoader.getTrunkTools().diagnostics.map(toRuntimeDiagnostic),
 		];
 
 		const modelPatterns = parsed.models ?? settingsManager.getEnabledModels();

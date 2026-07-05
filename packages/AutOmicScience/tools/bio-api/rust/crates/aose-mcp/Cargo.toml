@@ -1,0 +1,15 @@
+[package]
+name = "aose-mcp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# Trimmed to the stdio server (server.rs). The MCP client (lib.rs body) was
+# dropped along with its reqwest/SSE deps; the server only drives ToolSet.
+[dependencies]
+anyhow.workspace = true
+aose-core = { path = "../aose-core" }
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true

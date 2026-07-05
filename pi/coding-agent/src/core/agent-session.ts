@@ -24,7 +24,6 @@ import type {
 	ThinkingLevel,
 } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, ImageContent, Message, Model, TextContent } from "@earendil-works/pi-ai/compat";
-import { createSshToolOperations, type SshTarget, type SshToolOperations } from "@magenta/harness";
 import {
 	clampThinkingLevel,
 	cleanupSessionResources,
@@ -34,13 +33,14 @@ import {
 	resetApiProviders,
 	streamSimple,
 } from "@earendil-works/pi-ai/compat";
+import { createSshToolOperations, type SshTarget, type SshToolOperations } from "@magenta/harness";
 import { getThemeByName, theme } from "../modes/interactive/theme/theme.ts";
 import { stripFrontmatter } from "../utils/frontmatter.ts";
 import { resolvePath } from "../utils/paths.ts";
 import { sleep } from "../utils/sleep.ts";
 import { formatNoApiKeyFoundMessage, formatNoModelSelectedMessage } from "./auth-guidance.ts";
-import { type BashResult, executeBashWithOperations } from "./bash-executor.ts";
 import { BackgroundEventManager } from "./background-events.ts";
+import { type BashResult, executeBashWithOperations } from "./bash-executor.ts";
 import {
 	CompactionError,
 	type CompactionResult,
@@ -85,6 +85,7 @@ import {
 import { emitSessionShutdownEvent } from "./extensions/runner.ts";
 import type { BashExecutionMessage, CustomMessage } from "./messages.ts";
 import type { ModelRegistry } from "./model-registry.ts";
+import { PackageLoadController } from "./package-load-events.ts";
 import { expandPromptTemplate, type PromptTemplate } from "./prompt-templates.ts";
 import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.ts";
 import type { BranchSummaryEntry, CompactionEntry, SessionManager } from "./session-manager.ts";
@@ -95,8 +96,8 @@ import type { SlashCommandInfo } from "./slash-commands.ts";
 import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.ts";
 import { type BuildSystemPromptOptions, buildSystemPrompt } from "./system-prompt.ts";
 import { ToolProgressTracker } from "./tool-progress.ts";
-import { BackgroundShellController } from "./tools/bg-shell.ts";
 import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts";
+import { BackgroundShellController } from "./tools/bg-shell.ts";
 import { createAllToolDefinitions } from "./tools/index.ts";
 import { SubAgentController } from "./tools/sub-agent.ts";
 import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.ts";
@@ -328,6 +329,7 @@ export class AgentSession {
 	private _extensionErrorUnsubscriber?: () => void;
 	private _backgroundEvents: BackgroundEventManager;
 	private _backgroundShell: BackgroundShellController;
+	private _packageLoad: PackageLoadController;
 	private _subAgents: SubAgentController;
 	private _toolProgressTracker: ToolProgressTracker;
 	private _sideChat: SideChatManager;
@@ -365,6 +367,7 @@ export class AgentSession {
 		this._baseToolsOverride = config.baseToolsOverride;
 		this._sessionStartEvent = config.sessionStartEvent ?? { type: "session_start", reason: "startup" };
 		this._backgroundEvents = new BackgroundEventManager();
+		this._packageLoad = new PackageLoadController(this._backgroundEvents);
 		this._toolProgressTracker = new ToolProgressTracker();
 		this._backgroundShell = new BackgroundShellController(this._backgroundEvents, {
 			sendMessage: (message, options) => this.sendCustomMessage(message, options),
@@ -966,9 +969,7 @@ export class AgentSession {
 		const loadedContextFiles = this._resourceLoader.getAgentsFiles().agentsFiles;
 
 		this._baseSystemPromptOptions = {
-			cwd: this._sshTarget
-				? `${this._sshTarget.remoteCwd} (via SSH: ${this._sshTarget.remote})`
-				: this._cwd,
+			cwd: this._sshTarget ? `${this._sshTarget.remoteCwd} (via SSH: ${this._sshTarget.remote})` : this._cwd,
 			skills: loadedSkills,
 			contextFiles: loadedContextFiles,
 			customPrompt: loaderSystemPrompt,
@@ -2406,6 +2407,13 @@ export class AgentSession {
 		const registeredTools = this._extensionRunner.getAllRegisteredTools();
 		const allCustomTools = [
 			...registeredTools,
+			...this._resourceLoader.getTrunkTools().tools.map((tool) => ({
+				definition: createToolDefinitionFromAgentTool(tool),
+				sourceInfo: createSyntheticSourceInfo(`<harness-trunk:${tool.name}>`, {
+					source: "harness-trunk",
+					origin: "top-level",
+				}),
+			})),
 			...this._resourceLoader.getPackageTools().tools.map((tool) => ({
 				definition: createToolDefinitionFromAgentTool(tool),
 				sourceInfo: createSyntheticSourceInfo(`<harness-package:${tool.name}>`, {
@@ -2454,6 +2462,12 @@ export class AgentSession {
 		);
 		const runner = this._extensionRunner;
 		const wrappedExtensionTools = wrapRegisteredTools(allCustomTools, runner);
+		// Harness trunk tools (web-search, web-fetch) are folded into allCustomTools
+		// so they land in the registry, but they behave like built-ins: on by
+		// default via defaultActiveToolNames, and disabled by noTools. They must
+		// not be force-activated through the includeAllExtensionTools path below,
+		// otherwise noTools:"builtin" would still surface them.
+		const trunkToolNames = new Set(this._resourceLoader.getTrunkTools().tools.map((tool) => tool.name));
 		const wrappedBuiltInTools = wrapRegisteredTools(
 			Array.from(this._baseToolDefinitions.values())
 				.filter((definition) => isAllowedTool(definition.name))
@@ -2482,6 +2496,7 @@ export class AgentSession {
 			}
 		} else if (options?.includeAllExtensionTools) {
 			for (const tool of wrappedExtensionTools) {
+				if (trunkToolNames.has(tool.name)) continue;
 				nextActiveToolNames.push(tool.name);
 			}
 		} else if (!options?.activeToolNames) {
@@ -2547,7 +2562,16 @@ export class AgentSession {
 
 		const defaultActiveToolNames = this._baseToolsOverride
 			? Object.keys(this._baseToolsOverride)
-			: ["read", "bash", "edit", "write", "bg_shell", "sub_agent"];
+			: [
+					"read",
+					"bash",
+					"edit",
+					"write",
+					"bg_shell",
+					"sub_agent",
+					// Harness trunk tools (web-search, web-fetch) are on by default.
+					...this._resourceLoader.getTrunkTools().tools.map((tool) => tool.name),
+				];
 		const baseActiveToolNames = options.activeToolNames ?? defaultActiveToolNames;
 		this._refreshToolRegistry({
 			activeToolNames: baseActiveToolNames,
@@ -2563,7 +2587,10 @@ export class AgentSession {
 		resetApiProviders();
 		// Refresh model registry to reload models.json and provider configurations
 		this._modelRegistry.refresh();
-		await this._resourceLoader.reload();
+		await this._resourceLoader.reload({
+			onPackageAssemblyProgress: this._packageLoad.onProgress,
+		});
+		this._packageLoad.finish();
 		this._buildRuntime({
 			activeToolNames: this.getActiveToolNames(),
 			flagValues: previousFlagValues,

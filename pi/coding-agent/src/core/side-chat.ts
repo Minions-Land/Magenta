@@ -1,7 +1,7 @@
 import type { Message, TextContent, UserMessage } from "@earendil-works/pi-ai";
 import { completeSimple } from "@earendil-works/pi-ai/compat";
-import { SideChatOverlay } from "../modes/interactive/components/side-chat-overlay.ts";
 import { CENTER_FLOATING_OVERLAY } from "../modes/interactive/components/floating-window.ts";
+import { SideChatOverlay } from "../modes/interactive/components/side-chat-overlay.ts";
 import type { ExtensionCommandContext } from "./extensions/types.ts";
 import type { ToolProgressTracker } from "./tool-progress.ts";
 

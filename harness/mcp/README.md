@@ -4,174 +4,140 @@ Model Context Protocol (MCP) integration for the Magenta3 harness.
 
 ## Overview
 
-This directory provides MCP protocol support through the official Anthropic Python SDK.
+This directory provides MCP protocol support in **TypeScript**, built on the
+official `@modelcontextprotocol/sdk` (npm). It exposes thin, ergonomic wrappers
+for building MCP servers and connecting to them as a client.
 
 **Architecture**:
-- `client/`: MCP client implementations and utilities
-- `server/`: MCP server implementations and utilities
-- `examples/`: Example MCP servers and clients
+- `client/client.ts`: `McpClient` / `connectMcpClient` — connect to an MCP server over stdio or SSE.
+- `server/server.ts`: `McpServer` / `createMcpServer` — build an MCP server (stdio transport) exposing tools, resources, and prompts.
+- `index.ts`: barrel re-exporting both wrappers plus common SDK types.
+- `examples/`: runnable JavaScript examples (`simple-server.js`, `simple-client.js`).
+
+This wrapper package is a low-level building block. For attracting an external
+MCP server's tools into the harness tool address space, see
+[HCP integration](#hcp-integration-runtime--mcp) below, which does not depend on
+this package or the SDK.
 
 ## Installation
 
-The MCP SDK is included in the harness dependencies:
+This is an npm workspace package. Its runtime dependency is the MCP TypeScript
+SDK:
 
-```bash
-pip install mcp>=1.28.1
+```json
+"dependencies": { "@modelcontextprotocol/sdk": "^1.29.0" }
 ```
+
+Build it with `npm run build` (emits `dist/`).
 
 ## Quick Start
 
-### Running an MCP Server
+### Building an MCP server
 
-```python
-from mcp.server import Server
-from mcp.server.stdio import stdio_server
+```typescript
+import { createMcpServer } from "@magenta/harness-mcp";
 
-# Create server
-server = Server("example-server")
+const server = createMcpServer({ name: "example-server", version: "0.1.0" });
 
-@server.list_tools()
-async def list_tools():
-    return [
-        {
-            "name": "echo",
-            "description": "Echo back the input",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "message": {"type": "string"}
-                },
-                "required": ["message"]
-            }
-        }
-    ]
+server.registerTool(
+  {
+    name: "echo",
+    description: "Echo back the input",
+    inputSchema: {
+      type: "object",
+      properties: { message: { type: "string" } },
+      required: ["message"],
+    },
+  },
+  async (args) => [{ type: "text", text: String(args.message) }],
+);
 
-@server.call_tool()
-async def call_tool(name: str, arguments: dict):
-    if name == "echo":
-        return [{"type": "text", "text": arguments["message"]}]
-    raise ValueError(f"Unknown tool: {name}")
-
-# Run server
-if __name__ == "__main__":
-    stdio_server(server)
+await server.run(); // connects a StdioServerTransport and blocks
 ```
 
-### Connecting as a Client
+### Connecting as a client
 
-```python
-from mcp.client.session import ClientSession
-from mcp.client.stdio import stdio_client
+```typescript
+import { connectMcpClient } from "@magenta/harness-mcp";
 
-async def main():
-    # Connect to server
-    async with stdio_client("path/to/server") as (read, write):
-        async with ClientSession(read, write) as session:
-            # Initialize
-            await session.initialize()
-            
-            # List available tools
-            tools = await session.list_tools()
-            print(f"Available tools: {tools}")
-            
-            # Call a tool
-            result = await session.call_tool("echo", {"message": "Hello MCP!"})
-            print(f"Result: {result}")
+// stdio: spawn a server process
+const client = await connectMcpClient({
+  command: "node",
+  args: ["path/to/server.js"],
+});
 
-if __name__ == "__main__":
-    import asyncio
-    asyncio.run(main())
+const tools = await client.listTools();
+const result = await client.callTool("echo", { message: "Hello MCP!" });
+await client.close();
 ```
 
-## Directory Structure
+An SSE transport is also supported by passing `{ url, headers? }` instead of
+`{ command, args }`.
 
-```
-mcp/
-├── client/                 # MCP client support
-│   ├── README.md          # Client usage guide
-│   └── examples/          # Client examples
-├── server/                 # MCP server support  
-│   ├── README.md          # Server usage guide
-│   └── examples/          # Server examples
-└── examples/               # Complete MCP examples
-    ├── simple_server.py   # Basic server
-    ├── simple_client.py   # Basic client
-    └── README.md          # Examples documentation
+### Running the examples
+
+```bash
+npm run build
+node examples/simple-server.js   # in one terminal
+node examples/simple-client.js   # in another
 ```
 
-## MCP Protocol Features
+## Capabilities and limits
 
-### Client Features
-- **Transport**: stdio, SSE (HTTP), WebSocket
-- **Authentication**: OAuth2, client credentials
-- **Session Management**: Connection lifecycle, retry logic
-- **Streaming**: Server-Sent Events support
-- **Tasks**: Experimental task support
+The wrappers implement the subset of MCP the harness uses today:
 
-### Server Features
-- **Tools**: Register and expose callable tools
-- **Resources**: Serve resources to clients
-- **Prompts**: Provide prompt templates
-- **Sampling**: LLM sampling support
-- **Authentication**: OAuth2 provider
-- **FastMCP**: High-level server framework
+- **Client transports**: stdio and SSE. (Streamable HTTP and WebSocket, which the
+  SDK ships, are not wired here.)
+- **Server transport**: stdio only.
+- **Primitives**: tools, resources, and prompts (list + call/read/get).
+- **Not implemented**: OAuth/auth flows, sampling and roots callbacks,
+  `listChanged` notifications, progress/cancellation, response pagination, and
+  multi-server session management. Add these against the SDK if a future
+  integration needs them.
 
-## Official Resources
+## HCP integration (`runtime = "mcp"`)
 
-- **Protocol Spec**: https://spec.modelcontextprotocol.io/
-- **Python SDK Docs**: https://py.sdk.modelcontextprotocol.io/
-- **GitHub**: https://github.com/modelcontextprotocol/python-sdk
-- **Homepage**: https://modelcontextprotocol.io
+The harness can attract an external MCP server's tools directly into the HCP tool
+address space, independent of this wrapper package. A package declares an MCP
+server as a `tool` component whose descriptor sets `runtime = "mcp"`:
 
-## Integration Notes
+```toml
+# packages/<pkg>/tools/<server>/<server>.toml
+kind = "tool"
+name = "bio_api"          # used as the server name; also the tool name prefix source
+runtime = "mcp"
+command = "packages/<pkg>/tools/<server>/target/release/<server-bin>"  # repo-relative, absolute, or PATH lookup
+args = []
+name_prefix = "bio"       # optional: exposed tools become `bio_<remoteTool>`
+timeout_ms = 30000        # optional: per-request timeout
 
-### For Magenta3 Harness
-
-The MCP integration allows:
-1. **Tool Discovery**: Dynamically discover and invoke external tools via MCP
-2. **Resource Access**: Access remote resources through MCP servers
-3. **Agent Orchestration**: Connect multiple MCP servers for complex workflows
-4. **Extension System**: Build MCP servers as Magenta extensions
-
-### Example: MCP Tool Extension
-
-```python
-# harness/extensions/my-mcp-tool/server.py
-from mcp.server import Server
-
-server = Server("my-tool")
-
-@server.list_tools()
-async def list_tools():
-    return [{
-        "name": "analyze_data",
-        "description": "Analyze data and return insights",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "data": {"type": "string"}
-            }
-        }
-    }]
-
-@server.call_tool()
-async def call_tool(name: str, arguments: dict):
-    if name == "analyze_data":
-        # Your analysis logic
-        result = analyze(arguments["data"])
-        return [{"type": "text", "text": result}]
+[env]                     # optional: extra environment for the spawned server
+SOME_API_KEY = "..."
 ```
 
-## Version Information
+At assembly time the harness spawns the server over stdio, runs the MCP
+`initialize` handshake, calls `tools/list`, and produces **one HCP tool magnet
+per remote tool** (all sharing one long-lived connection). Remote tool names are
+namespaced with `name_prefix` to avoid collisions with built-in tools.
 
-- **MCP SDK**: v1.28.1 (stable)
-- **Protocol Version**: 2024-11-05
-- **Python**: >= 3.10
+Implementation:
+- `hcp-magnet/mcp-client.ts` — dependency-free stdio JSON-RPC client
+  (`initialize`, `tools/list`, `tools/call`).
+- `hcp-magnet/mcp.ts` — `McpConnection` (shared connection lifecycle) and
+  `McpToolMagnet` (one remote tool → one `AgentTool`), plus `createMcpToolMagnets`.
+- `hcp-magnet/package-tool.ts` — the `runtime = "mcp"` cable.
 
-**Note**: v1.x is in maintenance mode. v2.x is in alpha and not recommended for production.
+This path deliberately does **not** depend on `@modelcontextprotocol/sdk`,
+keeping the harness core's dependency surface minimal.
 
-## See Also
+## Official resources
 
-- `examples/` - Working examples
-- `client/README.md` - Client-specific documentation
-- `server/README.md` - Server-specific documentation
+- Protocol spec: https://spec.modelcontextprotocol.io/
+- TypeScript SDK: https://github.com/modelcontextprotocol/typescript-sdk
+- Homepage: https://modelcontextprotocol.io
+
+## See also
+
+- `client/README.md` — client wrapper details
+- `server/README.md` — server wrapper details
+- `examples/README.md` — runnable examples

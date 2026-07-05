@@ -26,6 +26,7 @@ import { formatPathRelativeToCwdOrAbsolute } from "../../utils/paths.ts";
 import type { ToolDefinition, ToolRenderResultOptions } from "../extensions/types.ts";
 import { resolveToCwd } from "./path-utils.ts";
 import { getTextOutput, renderToolPath, replaceTabs, str } from "./render-utils.ts";
+import type { ToolRenderer } from "./renderer-registry.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
 
 // Re-export pure types from harness so downstream pi consumers keep importing them from this module.
@@ -118,9 +119,7 @@ function getCompactReadClassification(
 		// Handle <capability>/<source>/SKILL.md structure
 		const skillDir = dirname(absolutePath);
 		const immediateParent = basename(skillDir);
-		const skillName = SOURCE_DIR_NAMES.has(immediateParent)
-			? basename(dirname(skillDir))
-			: immediateParent;
+		const skillName = SOURCE_DIR_NAMES.has(immediateParent) ? basename(dirname(skillDir)) : immediateParent;
 		return { kind: "skill", label: skillName || fileName };
 	}
 
@@ -197,6 +196,33 @@ function formatReadResult(
 	return text;
 }
 
+/**
+ * Renderer for the "file-content" data shape (read tool output). Registered in
+ * register-builtin-renderers.ts. Pulls everything it needs from the render
+ * context (cwd, expanded, showImages, isError, args, lastComponent), so it
+ * carries no per-instance state and can be shared by any tool producing a
+ * {@link ReadToolDetails}-shaped result.
+ */
+export const readRenderer: ToolRenderer<ReadToolDetails | undefined> = {
+	renderCall(args, theme, context) {
+		const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
+		const classification = !context.expanded ? getCompactReadClassification(args, context.cwd) : undefined;
+		text.setText(
+			classification
+				? formatCompactReadCall(classification, args, theme)
+				: formatReadCall(args, theme, context.cwd),
+		);
+		return text;
+	},
+	renderResult(result, options, theme, context) {
+		const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
+		text.setText(
+			formatReadResult(context.args, result, options, theme, context.showImages, context.cwd, context.isError),
+		);
+		return text;
+	},
+};
+
 export function createReadToolDefinition(
 	cwd: string,
 	options?: ReadToolOptions,
@@ -209,25 +235,9 @@ export function createReadToolDefinition(
 		promptSnippet: "Read file contents",
 		promptGuidelines: ["Use read to examine files instead of cat or sed."],
 		parameters: readSchema,
+		renderKind: "file-content",
 		execute(toolCallId, params: Static<typeof readSchema>, signal, onUpdate, ctx) {
 			return execute(toolCallId, params, signal, onUpdate, ctx);
-		},
-		renderCall(args, theme, context) {
-			const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
-			const classification = !context.expanded ? getCompactReadClassification(args, context.cwd) : undefined;
-			text.setText(
-				classification
-					? formatCompactReadCall(classification, args, theme)
-					: formatReadCall(args, theme, context.cwd),
-			);
-			return text;
-		},
-		renderResult(result, options, theme, context) {
-			const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
-			text.setText(
-				formatReadResult(context.args, result, options, theme, context.showImages, context.cwd, context.isError),
-			);
-			return text;
 		},
 	};
 }

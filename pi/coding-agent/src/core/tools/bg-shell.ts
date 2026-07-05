@@ -4,16 +4,23 @@ import { mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { StringEnum } from "@earendil-works/pi-ai";
-import { Type, type Static } from "typebox";
+import { type Static, Type } from "typebox";
+import type { BackgroundEventManager } from "../background-events.ts";
 import {
 	appendTail as appendTailText,
+	detectProgressFromChunk,
+	detectProgressMarker,
 	formatDuration,
+	mergeProgress,
 	RESULT_LIMIT_BYTES,
+	renderProgressBar,
+	type ShellProgress,
 	shellQuote,
+	stripProgressMarkers,
+	timeProgressFraction,
 	timestampForFile,
 	truncateTail,
 } from "../background-shell-utils.ts";
-import type { BackgroundEventManager } from "../background-events.ts";
 import type { ExtensionContext, ToolDefinition } from "../extensions/types.ts";
 
 const LOG_DIR = join(homedir(), ".pi", "agent", "tmp", "background-shell");
@@ -44,6 +51,10 @@ type BackgroundShellEvent = {
 	signal: NodeJS.Signals | null;
 	error?: string;
 	tail: string;
+	/** Latest progress reading (value + source), if any has been detected. */
+	progress?: ShellProgress;
+	/** Optional expected runtime in seconds, enabling time-based progress fallback. */
+	expectedSeconds?: number;
 	timeout?: NodeJS.Timeout;
 	waiters: Array<() => void>;
 };
@@ -73,10 +84,17 @@ const bgShellSchema = Type.Object({
 	),
 	timeoutSeconds: Type.Optional(
 		Type.Number({
-			description: "Optional maximum runtime for action=start. If exceeded, the event is terminated and marked timed_out.",
+			description:
+				"Optional maximum runtime for action=start. If exceeded, the event is terminated and marked timed_out.",
 		}),
 	),
 	label: Type.Optional(Type.String({ description: "Optional human-readable label for action=start." })),
+	expectedSeconds: Type.Optional(
+		Type.Number({
+			description:
+				"For action=start, the expected runtime in seconds. When the command emits no progress of its own, a time-based estimate is shown (hinted as an estimate). Real progress from output or an @@progress marker always takes precedence.",
+		}),
+	),
 	returnToMain: Type.Optional(
 		Type.Boolean({
 			description:
@@ -142,7 +160,33 @@ function formatConfig(config: BackgroundShellConfig): string {
 }
 
 function appendTail(event: BackgroundShellEvent, data: Buffer): void {
-	event.tail = appendTailText(event.tail, data);
+	const text = data.toString("utf8");
+	// Explicit `@@progress` markers are authoritative and must not leak into the
+	// visible tail, so strip them before buffering the output.
+	const marker = detectProgressMarker(text);
+	const visible = marker !== undefined ? stripProgressMarkers(text) : text;
+	event.tail = appendTailText(event.tail, Buffer.from(visible, "utf8"));
+
+	if (marker !== undefined) {
+		event.progress = mergeProgress(event.progress, { value: marker, source: "marker" });
+		return;
+	}
+	const detected = detectProgressFromChunk(text);
+	if (detected !== undefined) {
+		event.progress = mergeProgress(event.progress, { value: detected, source: "output" });
+	}
+}
+
+/**
+ * The progress to display for an event: the detected reading (marker/output) if
+ * present, otherwise a time-based estimate when `expectedSeconds` was given and
+ * the event is still running. Returns undefined when nothing is known.
+ */
+function effectiveProgress(event: BackgroundShellEvent): ShellProgress | undefined {
+	if (event.progress) return event.progress;
+	if (event.status !== "running" || event.expectedSeconds === undefined) return undefined;
+	const value = timeProgressFraction(Date.now() - event.startedAt, event.expectedSeconds);
+	return value === undefined ? undefined : { value, source: "time" };
 }
 
 function killProcessGroup(event: BackgroundShellEvent, signal: NodeJS.Signals): void {
@@ -194,6 +238,10 @@ function summarizeEvent(event: BackgroundShellEvent, includeOutput = true): stri
 		`Signal: ${event.signal ?? "n/a"}`,
 		`Log: ${event.logPath}`,
 	];
+	if (event.status === "running") {
+		const progress = effectiveProgress(event);
+		if (progress) lines.splice(5, 0, `Progress: ${renderProgressBar(progress)}`);
+	}
 	if (event.error) lines.push(`Error: ${event.error}`);
 	if (includeOutput) {
 		lines.push(
@@ -265,6 +313,7 @@ export class BackgroundShellController {
 					cwd: event.cwd,
 					logPath: event.logPath,
 					tail: event.tail,
+					progress: effectiveProgress(event),
 					canCancel: event.status === "running",
 				})),
 			getEventDetails: (id) => {
@@ -295,6 +344,7 @@ export class BackgroundShellController {
 				"Use the regular bash tool for short one-off shell commands.",
 				"After bg_shell action=start, either call bg_shell action=status/action=wait before relying on the command result, or set returnToMain=true so the result is automatically returned as a follow-up to the main agent.",
 				"Do not use bg_shell action=start for commands that require interactive stdin.",
+				"Progress bars are shown automatically when a command prints percentages or `[n/total]` counters. For exact progress from your own scripts, print lines like `@@progress 0.42` (these are hidden from the output tail). For opaque long tasks, pass expectedSeconds to show a time-based estimate.",
 			],
 			parameters: bgShellSchema,
 			execute: (_toolCallId, params, signal, _onUpdate, ctx) => this.execute(params, signal, ctx),
@@ -357,7 +407,10 @@ export class BackgroundShellController {
 			if (typeof params.defaultReturnToMain === "boolean")
 				this.shellConfig.defaultReturnToMain = params.defaultReturnToMain;
 			if (params.defaultReturnDelivery) this.shellConfig.defaultReturnDelivery = params.defaultReturnDelivery;
-			return { content: [{ type: "text" as const, text: formatConfig(this.shellConfig) }], details: { ...this.shellConfig } };
+			return {
+				content: [{ type: "text" as const, text: formatConfig(this.shellConfig) }],
+				details: { ...this.shellConfig },
+			};
 		}
 
 		if (action === "start") {
@@ -417,6 +470,7 @@ export class BackgroundShellController {
 			exitCode: null,
 			signal: null,
 			tail: "",
+			expectedSeconds: positiveNumber(params.expectedSeconds),
 			waiters: [],
 		};
 		this.events.set(id, event);
@@ -507,7 +561,8 @@ export class BackgroundShellController {
 		const event = this.events.get(params.eventId);
 		if (!event) throw new Error(`Unknown background event: ${params.eventId}`);
 
-		const waitTimeoutSeconds = positiveNumber(params.waitTimeoutSeconds) ?? this.shellConfig.defaultWaitTimeoutSeconds;
+		const waitTimeoutSeconds =
+			positiveNumber(params.waitTimeoutSeconds) ?? this.shellConfig.defaultWaitTimeoutSeconds;
 		const result = await waitForEvent(event, waitTimeoutSeconds, signal);
 		if (result === "aborted") {
 			return {

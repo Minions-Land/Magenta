@@ -1,18 +1,18 @@
 /**
  * Rich Content Reference - 富内容引用系统
- * 
+ *
  * 支持在 TUI 对话中引用和展示非文本内容（图片、PDF、HTML 等）
  * 提供两种交互方式：
  * 1. Ctrl+O - 内联展开/收起
  * 2. Cmd+左键 - 浮动窗口查看
  */
 
-import { basename } from "node:path";
 import { readFileSync } from "node:fs";
+import { basename } from "node:path";
 import {
+	type Component,
 	Container,
 	CURSOR_MARKER,
-	type Component,
 	type Focusable,
 	hyperlink,
 	Image,
@@ -110,12 +110,7 @@ export class RichContentLink implements Component, Focusable {
 	private onToggleExpand: () => void;
 	private onOpenOverlay: () => void;
 
-	constructor(
-		reference: RichContentReference,
-		theme: Theme,
-		onToggleExpand: () => void,
-		onOpenOverlay: () => void,
-	) {
+	constructor(reference: RichContentReference, theme: Theme, onToggleExpand: () => void, onOpenOverlay: () => void) {
 		this.reference = reference;
 		this.theme = theme;
 		this.onToggleExpand = onToggleExpand;
@@ -150,7 +145,10 @@ export class RichContentLink implements Component, Focusable {
 		const linkText = `${icon} ${filename} ${description} ${actionHint}`;
 
 		// 使用终端超链接（如果支持）
-		const displayText = hyperlink(linkText, `pi-internal://rich-content/${this.reference.type}?path=${this.reference.path}`);
+		const displayText = hyperlink(
+			linkText,
+			`pi-internal://rich-content/${this.reference.type}?path=${this.reference.path}`,
+		);
 
 		// 添加光标标记（如果获得焦点）
 		const finalText = this.focused ? displayText + CURSOR_MARKER : displayText;
@@ -249,17 +247,9 @@ export class ExpandableRichContent extends Container implements Focusable {
 			case "html":
 			case "chart":
 				// 这些类型建议使用浮动窗口查看
-				return new Text(
-					this.theme.fg("muted", `Press Enter to view in overlay window`),
-					1,
-					0,
-				);
+				return new Text(this.theme.fg("muted", `Press Enter to view in overlay window`), 1, 0);
 			default:
-				return new Text(
-					this.theme.fg("muted", `Unsupported content type: ${this.reference.type}`),
-					1,
-					0,
-				);
+				return new Text(this.theme.fg("muted", `Unsupported content type: ${this.reference.type}`), 1, 0);
 		}
 	}
 
@@ -313,7 +303,10 @@ export class ExpandableRichContent extends Container implements Focusable {
 			});
 		} catch (error) {
 			return new Text(
-				this.theme.fg("error", `Failed to load markdown: ${error instanceof Error ? error.message : String(error)}`),
+				this.theme.fg(
+					"error",
+					`Failed to load markdown: ${error instanceof Error ? error.message : String(error)}`,
+				),
 				1,
 				0,
 			);
@@ -324,7 +317,7 @@ export class ExpandableRichContent extends Container implements Focusable {
 		try {
 			const content = readFileSync(this.reference.path, "utf-8");
 			const language = this.reference.metadata?.language || "";
-			
+
 			// 使用 Markdown 的代码块渲染
 			const codeBlock = "```" + language + "\n" + content + "\n```";
 			return new Markdown(codeBlock, 1, 0, {
@@ -358,16 +351,16 @@ export class ExpandableRichContent extends Container implements Focusable {
  */
 export function detectRichContentType(path: string): RichContentType {
 	const ext = path.toLowerCase().split(".").pop();
-	
+
 	const imageExts = ["png", "jpg", "jpeg", "gif", "webp", "svg"];
 	const codeExts = ["js", "ts", "py", "java", "cpp", "c", "go", "rs", "rb", "php"];
-	
+
 	if (imageExts.includes(ext || "")) return "image";
 	if (ext === "pdf") return "pdf";
 	if (ext === "html" || ext === "htm") return "html";
 	if (ext === "md" || ext === "markdown") return "markdown";
 	if (codeExts.includes(ext || "")) return "code";
-	
+
 	return "file";
 }
 
@@ -377,12 +370,12 @@ export function detectRichContentType(path: string): RichContentType {
 export function createRichContentReference(path: string, metadata?: RichContentMetadata): RichContentReference {
 	const type = detectRichContentType(path);
 	const ext = path.toLowerCase().split(".").pop();
-	
+
 	let mimeType: string | undefined;
 	if (type === "image") {
 		mimeType = `image/${ext}`;
 	}
-	
+
 	return {
 		type,
 		path,

@@ -316,6 +316,25 @@ function classifyPackageTool(component, runtimeKeys, diagnostics) {
 	if (runtime === "process") {
 		return { ...summary, executable: Boolean(descriptor.command), adapter: "process", reason: descriptor.command ? undefined : "command_missing" };
 	}
+	if (runtime === "mcp") {
+		const command = descriptor.command;
+		if (typeof command !== "string" || command.length === 0) {
+			return { ...summary, executable: false, adapter: "mcp", reason: "command_missing" };
+		}
+		// Mirror resolveMcpCommand: absolute stays, a path resolves against the
+		// repo root, a bare name is looked up on PATH at spawn time. We can only
+		// verify on-disk presence for the first two; a bare name is assumed
+		// resolvable and reported executable.
+		const isPath = command.includes("/") || command.includes("\\");
+		const resolved = isPath ? resolve(repoRoot, command) : command;
+		const present = !isPath || existsSync(resolved);
+		return {
+			...summary,
+			executable: present,
+			adapter: "mcp",
+			reason: present ? undefined : "mcp_binary_missing",
+		};
+	}
 	const runtimeName = typeof runtime === "string" && runtime.startsWith("runtime://") ? runtime.slice("runtime://".length) : runtime;
 	if (scriptRuntimeNames.has(runtimeName)) {
 		const hasCode = typeof descriptor.code === "string" || typeof descriptor.script === "string";

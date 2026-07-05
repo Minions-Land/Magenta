@@ -6,13 +6,13 @@ import { NodeExecutionEnv } from "../core/env/pi/nodejs.ts";
 import { AgentHarness } from "../core/loop/pi/agent-harness.ts";
 import { InMemorySessionStorage } from "../core/session/pi/memory-storage.ts";
 import { Session } from "../core/session/pi/session.ts";
-import { piCompactionProvider, type CompactionProvider } from "../modules/compaction/pi/provider.ts";
-import { ok, type CompactionPreparation, type CompactionResult } from "../core/types/types.ts";
+import { type CompactionPreparation, type CompactionResult, ok } from "../core/types/types.ts";
 import {
 	buildDefaultCapabilityHcp,
 	type CapabilityBuilderTable,
 	createCapabilityMagnet,
 } from "../hcp-client/assembly/capability.ts";
+import { type CompactionProvider, piCompactionProvider } from "../modules/compaction/pi/provider.ts";
 
 const models = createModels();
 

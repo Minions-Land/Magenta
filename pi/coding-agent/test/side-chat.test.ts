@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
+import type { ExtensionCommandContext } from "../src/core/extensions/types.ts";
 import { SideChatManager } from "../src/core/side-chat.ts";
 import { ToolProgressTracker } from "../src/core/tool-progress.ts";
-import type { ExtensionCommandContext } from "../src/core/extensions/types.ts";
 
 const { completeSimpleMock } = vi.hoisted(() => ({
 	completeSimpleMock: vi.fn(),

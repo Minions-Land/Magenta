@@ -5,6 +5,24 @@ export interface ToolDisplayCall {
 	args?: unknown;
 }
 
+/** Provenance for a tool, mirrored from AgentTool.provenance, used for UI badges. */
+export interface ToolDisplayProvenance {
+	kind: string;
+	server?: string;
+	remoteTool?: string;
+}
+
+/**
+ * Short lowercase tag shown next to a tool title to mark externally-backed
+ * tools (e.g. an MCP server tool). Returns undefined for built-in/plain tools so
+ * callers render nothing. This is the label text only; callers apply theming.
+ */
+export function toolProvenanceBadgeText(provenance: ToolDisplayProvenance | undefined): string | undefined {
+	if (!provenance) return undefined;
+	if (provenance.kind === "mcp") return "mcp";
+	return provenance.kind ? provenance.kind.toLowerCase() : undefined;
+}
+
 export function resolveDisplayToolName(name: string): string {
 	switch (name) {
 		case "communicate":

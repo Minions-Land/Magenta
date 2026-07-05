@@ -2,11 +2,16 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { execScriptRuntime, type RuntimeSpec, SCRIPT_RUNTIME_SPECS } from "../modules/runtime/magenta/script-runtime.ts";
-import type { SandboxProfile, SandboxSelection } from "../modules/sandbox/contract.ts";
-import { loadSandboxProviderFromPack, selectSandboxProfile } from "../modules/sandbox/magenta/sandbox.ts";
 import { parseToml, type TomlTable } from "../hcp-client/registry/registry.ts";
 import type { HcpMagnet } from "../hcp-contract/hcp-magnet.ts";
+import {
+	execScriptRuntime,
+	type RuntimeSpec,
+	SCRIPT_RUNTIME_SPECS,
+} from "../modules/runtime/magenta/script-runtime.ts";
+import type { SandboxProfile, SandboxSelection } from "../modules/sandbox/contract.ts";
+import { loadSandboxProviderFromPack, selectSandboxProfile } from "../modules/sandbox/magenta/sandbox.ts";
+import { createMcpToolMagnets } from "./mcp.ts";
 import { ProcessToolMagnet } from "./process.ts";
 import { type PythonLauncherResolver, PythonModuleToolMagnet } from "./python.ts";
 import { parametersFromToml } from "./schema.ts";
@@ -58,7 +63,13 @@ export interface CreatePackageToolMagnetOptions {
 }
 
 export interface CreatePackageToolMagnetResult {
+	/** Single magnet for one-tool runtimes (process, python, script). */
 	magnet?: HcpMagnet;
+	/**
+	 * Multiple magnets for runtimes that fan out to several tools from one
+	 * descriptor (an MCP server exposes N tools over one connection).
+	 */
+	magnets?: HcpMagnet[];
 	diagnostics: PackageToolMagnetDiagnostic[];
 }
 
@@ -117,6 +128,69 @@ export async function createPackageToolMagnet(
 			profile: component.profile,
 		});
 		return { diagnostics };
+	}
+
+	if (runtime === "mcp") {
+		const command = asString(descriptor.command);
+		if (!command) {
+			diagnostics.push({
+				type: "error",
+				code: "package_tool_descriptor_invalid",
+				message: `Package ${component.packageId} MCP tool ${component.name} must declare command.`,
+				path: component.path,
+				packageId: component.packageId,
+				profile: component.profile,
+			});
+			return { diagnostics };
+		}
+		const fixedArgs = asStringArray(descriptor.args);
+		const namePrefix = asString(descriptor.name_prefix) ?? asString(descriptor.namePrefix);
+		const mcpEnv = mcpEnvFromDescriptor(descriptor.env);
+		const cacheDir = resolve(context.repoRoot, ".magenta", "cache", "mcp");
+		try {
+			const magnets = await createMcpToolMagnets({
+				serverName: name,
+				namePrefix,
+				client: {
+					command: resolveMcpCommand(context.repoRoot, command),
+					args: fixedArgs,
+					cwd: dirname(component.path),
+					env: mcpEnv ? { ...process.env, ...mcpEnv } : process.env,
+					requestTimeoutMs: asNumber(descriptor.timeout_ms),
+				},
+				cache: { dir: cacheDir, descriptorEnv: mcpEnv },
+			});
+			return { diagnostics, magnets };
+		} catch (error) {
+			// A missing or unstartable server binary is a recoverable, expected state:
+			// the user may simply not have built it yet (e.g. an `aose-bio-mcp` that
+			// needs `cargo build --release`). Degrade that to a warning so the rest of
+			// the package still assembles; only genuine protocol failures against a
+			// binary that DID start stay as errors.
+			const message = formatUnknownError(error);
+			const notStarted = /ENOENT|not found|no such file|spawn\b/i.test(message);
+			const resolvedCommand = resolveMcpCommand(context.repoRoot, command);
+			if (notStarted) {
+				diagnostics.push({
+					type: "warning",
+					code: "package_tool_runtime_missing",
+					message: `Package ${component.packageId} MCP tool ${component.name}: server binary not available (${resolvedCommand}). Build it, then reload. Original error: ${message}`,
+					path: component.path,
+					packageId: component.packageId,
+					profile: component.profile,
+				});
+				return { diagnostics };
+			}
+			diagnostics.push({
+				type: "error",
+				code: "package_tool_runtime_missing",
+				message: `Package ${component.packageId} MCP tool ${component.name} failed to connect to MCP server: ${message}`,
+				path: component.path,
+				packageId: component.packageId,
+				profile: component.profile,
+			});
+			return { diagnostics };
+		}
 	}
 
 	if (runtime === "process") {
@@ -498,6 +572,28 @@ function asStringArray(value: unknown): string[] {
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
 	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+/**
+ * Resolve an MCP server command. Absolute commands and bare executables (looked
+ * up on PATH) are used as-is; package/repo-relative paths are resolved against
+ * the repo root so a committed server binary can be referenced portably.
+ */
+function resolveMcpCommand(repoRoot: string, command: string): string {
+	if (isAbsolute(command)) return command;
+	if (command.includes("/") || command.includes("\\")) return resolve(repoRoot, command);
+	return command;
+}
+
+/** Read an optional `[env]` table from an MCP descriptor into string pairs. */
+function mcpEnvFromDescriptor(value: unknown): Record<string, string> | undefined {
+	if (!isPlainRecord(value)) return undefined;
+	const env: Record<string, string> = {};
+	for (const [key, raw] of Object.entries(value)) {
+		if (typeof raw === "string") env[key] = raw;
+		else if (typeof raw === "number" || typeof raw === "boolean") env[key] = String(raw);
+	}
+	return Object.keys(env).length > 0 ? env : undefined;
 }
 
 function kebabCase(value: string): string {

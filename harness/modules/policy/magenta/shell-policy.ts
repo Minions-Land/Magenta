@@ -18,12 +18,7 @@ function commandFromInput(input: unknown): string {
 	return "";
 }
 
-function finding(
-	code: string,
-	severity: string,
-	message: string,
-	suggestedTool?: string,
-): ShellPolicyFinding {
+function finding(code: string, severity: string, message: string, suggestedTool?: string): ShellPolicyFinding {
 	return {
 		code,
 		severity,
@@ -91,7 +86,9 @@ export function classifyShellCommand(input: unknown): ShellPolicyClassification 
 	}
 	if (commandHasWriteRedirect(normalized)) {
 		mutating = true;
-		findings.push(finding("shell-redirect-write", "prompt", "Command appears to write through shell redirection.", "Write"));
+		findings.push(
+			finding("shell-redirect-write", "prompt", "Command appears to write through shell redirection.", "Write"),
+		);
 		suggestedTools.push("Write");
 	}
 	if (commandHasInplaceEdit(normalized)) {
@@ -100,15 +97,26 @@ export function classifyShellCommand(input: unknown): ShellPolicyClassification 
 		suggestedTools.push("EditHashline");
 	}
 	if (commandStartsWithAny(normalized, ["cat ", "head ", "tail ", "less ", "more "])) {
-		findings.push(finding("shell-file-read", "suggest", "Prefer native file read tooling for plain file inspection.", "Read"));
+		findings.push(
+			finding("shell-file-read", "suggest", "Prefer native file read tooling for plain file inspection.", "Read"),
+		);
 		suggestedTools.push("Read");
 	}
 	if (commandStartsWithAny(normalized, ["grep ", "rg ", "ag "])) {
-		findings.push(finding("shell-text-search", "suggest", "Prefer native search tooling for text search.", "SearchToolBm25"));
+		findings.push(
+			finding("shell-text-search", "suggest", "Prefer native search tooling for text search.", "SearchToolBm25"),
+		);
 		suggestedTools.push("SearchToolBm25");
 	}
 	if (commandStartsWithAny(normalized, ["find ", "fd "])) {
-		findings.push(finding("shell-file-discovery", "suggest", "Prefer native glob/fuzzy-find tooling for file discovery.", "Glob"));
+		findings.push(
+			finding(
+				"shell-file-discovery",
+				"suggest",
+				"Prefer native glob/fuzzy-find tooling for file discovery.",
+				"Glob",
+			),
+		);
 		suggestedTools.push("Glob");
 	}
 

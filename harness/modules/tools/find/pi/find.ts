@@ -4,7 +4,12 @@ import { spawn } from "child_process";
 import path from "path";
 import { type Static, Type } from "typebox";
 import { pathExists, resolveToCwd } from "../../../../core/utils/pi/path-utils.ts";
-import { DEFAULT_MAX_BYTES, formatSize, type TruncationResult, truncateHead } from "../../../../core/utils/pi/truncate.ts";
+import {
+	DEFAULT_MAX_BYTES,
+	formatSize,
+	type TruncationResult,
+	truncateHead,
+} from "../../../../core/utils/pi/truncate.ts";
 
 function toPosixPath(value: string): string {
 	return value.split(path.sep).join("/");

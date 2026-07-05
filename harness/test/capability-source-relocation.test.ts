@@ -22,6 +22,7 @@ describe("§8 capability source-magnet relocation", () => {
 				"context:magenta",
 				"hook:magenta",
 				"memory:magenta",
+				"multiagent:magenta",
 				"policy:magenta",
 				"prompt-template:pi",
 				"runtime:magenta",

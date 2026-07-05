@@ -1,5 +1,6 @@
-import type { Model, Models } from "@earendil-works/pi-ai";
 import type { StreamFn, ThinkingLevel } from "@earendil-works/pi-agent-core";
+import type { Model, Models } from "@earendil-works/pi-ai";
+import type { Session } from "../../core/session/pi/session.ts";
 import type {
 	BranchSummaryError,
 	BranchSummaryResult,
@@ -7,16 +8,8 @@ import type {
 	Result,
 	SessionTreeEntry,
 } from "../../core/types/types.ts";
-import type { Session } from "../../core/session/pi/session.ts";
-import type {
-	CompactionPreparation,
-	CompactionResult,
-	CompactionSettings,
-} from "./pi/compaction.ts";
-import type {
-	CollectEntriesResult,
-	GenerateBranchSummaryOptions,
-} from "./pi/branch-summarization.ts";
+import type { CollectEntriesResult, GenerateBranchSummaryOptions } from "./pi/branch-summarization.ts";
+import type { CompactionPreparation, CompactionResult, CompactionSettings } from "./pi/compaction.ts";
 
 /**
  * The compaction capability surface consumed by the agent loop. This is the
@@ -50,13 +43,13 @@ export interface CompactionProvider {
 	): Promise<Result<BranchSummaryResult, BranchSummaryError>>;
 }
 
+export type {
+	CollectEntriesResult,
+	GenerateBranchSummaryOptions,
+} from "./pi/branch-summarization.ts";
 // Re-export supporting types for convenience
 export type {
 	CompactionPreparation,
 	CompactionResult,
 	CompactionSettings,
 } from "./pi/compaction.ts";
-export type {
-	CollectEntriesResult,
-	GenerateBranchSummaryOptions,
-} from "./pi/branch-summarization.ts";

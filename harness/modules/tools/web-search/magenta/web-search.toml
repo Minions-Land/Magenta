@@ -10,6 +10,8 @@ version = "1.0.0"
 tags = ["web", "search", "network", "network-read", "fetch"]
 capabilities = ["web-search", "source-urls", "duckduckgo-instant-answer", "bing-html-fallback"]
 requires = []
+# UI data-shape: host renders WebSearch results with the "search-results" renderer.
+render_kind = "search-results"
 
 [parameters]
 type = "object"

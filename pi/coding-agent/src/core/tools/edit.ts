@@ -18,6 +18,7 @@ import type { Theme } from "../../modes/interactive/theme/theme.ts";
 import type { ToolDefinition } from "../extensions/types.ts";
 import { renderToolPath, str } from "./render-utils.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
+import type { ToolRenderer } from "./renderer-registry.ts";
 
 // Re-export pure types from harness so downstream pi consumers keep importing them from this module.
 export type { EditToolInput, EditToolDetails, EditToolOptions, EditOperations };
@@ -188,6 +189,85 @@ function setEditPreview(
 	return changed;
 }
 
+/**
+ * Renderer for the "text-edit" data shape (edit tool). Self-framed
+ * (renderShell: "self") because it draws its own diff Box. Pulls state,
+ * lastComponent, args, argsComplete, isError, cwd and invalidate from the
+ * render context. Registered in register-builtin-renderers.ts.
+ */
+export const editRenderer: ToolRenderer<EditToolDetails | undefined> = {
+	renderShell: "self",
+	renderCall(args, theme, context) {
+		const component = getEditCallRenderComponent(context.state as EditRenderState, context.lastComponent);
+		const previewInput = getRenderablePreviewInput(args as RenderableEditArgs | undefined);
+		const argsKey = previewInput
+			? JSON.stringify({ path: previewInput.path, edits: previewInput.edits })
+			: undefined;
+
+		if (component.previewArgsKey !== argsKey) {
+			component.preview = undefined;
+			component.previewArgsKey = argsKey;
+			component.previewPending = false;
+			component.settledError = false;
+		}
+
+		if (context.argsComplete && previewInput && !component.preview && !component.previewPending) {
+			component.previewPending = true;
+			const requestKey = argsKey;
+			void computeEditsDiff(previewInput.path, previewInput.edits, context.cwd).then((preview) => {
+				if (component.previewArgsKey === requestKey) {
+					setEditPreview(component, preview, requestKey);
+					context.invalidate();
+				}
+			});
+		}
+
+		return buildEditCallComponent(component, args, theme, context.cwd);
+	},
+	renderResult(result, _options, theme, context) {
+		const callComponent = (context.state as EditRenderState).callComponent;
+		const previewInput = getRenderablePreviewInput(context.args as RenderableEditArgs | undefined);
+		const argsKey = previewInput
+			? JSON.stringify({ path: previewInput.path, edits: previewInput.edits })
+			: undefined;
+		const typedResult = result as EditToolResultLike;
+		const resultDiff = !context.isError ? typedResult.details?.diff : undefined;
+		let changed = false;
+		if (callComponent) {
+			if (typeof resultDiff === "string") {
+				changed =
+					setEditPreview(
+						callComponent,
+						{ diff: resultDiff, firstChangedLine: typedResult.details?.firstChangedLine },
+						argsKey,
+					) || changed;
+			}
+			if (callComponent.settledError !== context.isError) {
+				callComponent.settledError = context.isError;
+				changed = true;
+			}
+			if (changed) {
+				buildEditCallComponent(
+					callComponent,
+					context.args as RenderableEditArgs | undefined,
+					theme,
+					context.cwd,
+				);
+			}
+		}
+
+		const output = formatEditResult(context.args, callComponent?.preview, typedResult, theme, context.isError);
+		const component = (context.lastComponent as Container | undefined) ?? new Container();
+		component.clear();
+		if (!output) {
+			return component;
+		}
+		component.addChild(new Spacer(1));
+		component.addChild(new Text(output, 1, 0));
+		return component;
+	},
+};
+
 export function createEditToolDefinition(
 	cwd: string,
 	options?: EditToolOptions,
@@ -207,78 +287,9 @@ export function createEditToolDefinition(
 			"Keep edits[].oldText as small as possible while still being unique in the file. Do not pad with large unchanged regions.",
 		],
 		parameters: editSchema,
-		renderShell: "self",
+		renderKind: "text-edit",
 		prepareArguments: prepareEditArguments,
 		execute,
-		renderCall(args, theme, context) {
-			const component = getEditCallRenderComponent(context.state, context.lastComponent);
-			const previewInput = getRenderablePreviewInput(args as RenderableEditArgs | undefined);
-			const argsKey = previewInput
-				? JSON.stringify({ path: previewInput.path, edits: previewInput.edits })
-				: undefined;
-
-			if (component.previewArgsKey !== argsKey) {
-				component.preview = undefined;
-				component.previewArgsKey = argsKey;
-				component.previewPending = false;
-				component.settledError = false;
-			}
-
-			if (context.argsComplete && previewInput && !component.preview && !component.previewPending) {
-				component.previewPending = true;
-				const requestKey = argsKey;
-				void computeEditsDiff(previewInput.path, previewInput.edits, context.cwd).then((preview) => {
-					if (component.previewArgsKey === requestKey) {
-						setEditPreview(component, preview, requestKey);
-						context.invalidate();
-					}
-				});
-			}
-
-			return buildEditCallComponent(component, args, theme, context.cwd);
-		},
-		renderResult(result, _options, theme, context) {
-			const callComponent = context.state.callComponent;
-			const previewInput = getRenderablePreviewInput(context.args as RenderableEditArgs | undefined);
-			const argsKey = previewInput
-				? JSON.stringify({ path: previewInput.path, edits: previewInput.edits })
-				: undefined;
-			const typedResult = result as EditToolResultLike;
-			const resultDiff = !context.isError ? typedResult.details?.diff : undefined;
-			let changed = false;
-			if (callComponent) {
-				if (typeof resultDiff === "string") {
-					changed =
-						setEditPreview(
-							callComponent,
-							{ diff: resultDiff, firstChangedLine: typedResult.details?.firstChangedLine },
-							argsKey,
-						) || changed;
-				}
-				if (callComponent.settledError !== context.isError) {
-					callComponent.settledError = context.isError;
-					changed = true;
-				}
-				if (changed) {
-					buildEditCallComponent(
-						callComponent,
-						context.args as RenderableEditArgs | undefined,
-						theme,
-						context.cwd,
-					);
-				}
-			}
-
-			const output = formatEditResult(context.args, callComponent?.preview, typedResult, theme, context.isError);
-			const component = (context.lastComponent as Container | undefined) ?? new Container();
-			component.clear();
-			if (!output) {
-				return component;
-			}
-			component.addChild(new Spacer(1));
-			component.addChild(new Text(output, 1, 0));
-			return component;
-		},
 	};
 }
 

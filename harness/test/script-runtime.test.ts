@@ -26,7 +26,9 @@ describe("script runtime provider", () => {
 
 	it("executes shell and node code through runtime://process", async () => {
 		const dir = await mkdtemp(join(tmpdir(), "magenta-script-runtime-"));
-		const sandbox = await loadSandboxProviderFromPack(new URL("../modules/sandbox/sandbox.toml", import.meta.url).pathname);
+		const sandbox = await loadSandboxProviderFromPack(
+			new URL("../modules/sandbox/sandbox.toml", import.meta.url).pathname,
+		);
 		const hcp = new HcpClient().register("runtime", new ScriptRuntimeProvider().toHcpServer());
 
 		await expect(

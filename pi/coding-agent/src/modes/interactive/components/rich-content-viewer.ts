@@ -1,15 +1,15 @@
 /**
  * Rich Content Overlay Viewers - 富内容浮动窗口查看器
- * 
+ *
  * 提供各种富内容的浮动窗口查看体验
  */
 
 import { readFileSync } from "node:fs";
 import { basename } from "node:path";
 import {
+	type Component,
 	Container,
 	CURSOR_MARKER,
-	type Component,
 	type Focusable,
 	Image,
 	Markdown,

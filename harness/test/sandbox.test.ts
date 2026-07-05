@@ -5,7 +5,9 @@ import { loadSandboxProviderFromPack, selectSandboxProfile } from "../modules/sa
 
 describe("sandbox provider", () => {
 	it("loads migrated Magenta1 sandbox profiles", async () => {
-		const provider = await loadSandboxProviderFromPack(new URL("../modules/sandbox/sandbox.toml", import.meta.url).pathname);
+		const provider = await loadSandboxProviderFromPack(
+			new URL("../modules/sandbox/sandbox.toml", import.meta.url).pathname,
+		);
 		const discovered = provider.discover();
 
 		expect(discovered.targets).toEqual([
@@ -51,7 +53,9 @@ describe("sandbox provider", () => {
 	});
 
 	it("registers sandbox and sandbox-select as HCP targets", async () => {
-		const provider = await loadSandboxProviderFromPack(new URL("../modules/sandbox/sandbox.toml", import.meta.url).pathname);
+		const provider = await loadSandboxProviderFromPack(
+			new URL("../modules/sandbox/sandbox.toml", import.meta.url).pathname,
+		);
 		const hcp = new HcpClient()
 			.register("sandbox", provider.toSandboxHcpServer())
 			.registerExact("hook://sandbox-select", provider.toSandboxSelectHcpServer());

@@ -1177,7 +1177,10 @@ bar`,
 			// H1 uses heading + bold, followed by a separate divider line.
 			assert.ok(precedingChunk.includes("\x1b[1m"), `Should re-apply bold for h1: ${precedingChunk}`);
 			assert.ok(precedingChunk.includes("\x1b[36m"), `Should re-apply cyan for h1: ${precedingChunk}`);
-			assert.ok(lines.map(stripAnsi).some((line) => line.includes("━")), "Should render h1 divider line");
+			assert.ok(
+				lines.map(stripAnsi).some((line) => line.includes("━")),
+				"Should render h1 divider line",
+			);
 		});
 
 		it("should not leak h1 underline into padding when inline code is the last token", async () => {

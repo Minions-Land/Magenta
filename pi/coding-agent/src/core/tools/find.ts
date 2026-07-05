@@ -17,6 +17,7 @@ import { ensureTool } from "../../utils/tools-manager.ts";
 import type { ToolDefinition, ToolRenderResultOptions } from "../extensions/types.ts";
 import { getTextOutput, invalidArgText, shortenPath, str } from "./render-utils.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
+import type { ToolRenderer } from "./renderer-registry.ts";
 
 // Re-export pure types from harness so downstream pi consumers keep importing them from this module.
 export type { FindToolInput, FindToolDetails, FindToolOptions, FindOperations };
@@ -71,6 +72,24 @@ function formatFindResult(
 	return text;
 }
 
+/**
+ * Renderer for the "file-search" data shape (find tool). Pulls lastComponent
+ * and showImages from the render context. Registered in
+ * register-builtin-renderers.ts.
+ */
+export const findRenderer: ToolRenderer<FindToolDetails | undefined> = {
+	renderCall(args, theme, context) {
+		const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
+		text.setText(formatFindCall(args, theme));
+		return text;
+	},
+	renderResult(result, options, theme, context) {
+		const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
+		text.setText(formatFindResult(result as any, options, theme, context.showImages));
+		return text;
+	},
+};
+
 export function createFindToolDefinition(
 	cwd: string,
 	options?: FindToolOptions,
@@ -84,17 +103,8 @@ export function createFindToolDefinition(
 		description: `Search for files by glob pattern. Returns matching file paths relative to the search directory. Respects .gitignore. Output is truncated to ${DEFAULT_LIMIT} results or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first).`,
 		promptSnippet: "Find files by glob pattern (respects .gitignore)",
 		parameters: findSchema,
+		renderKind: "file-search",
 		execute,
-		renderCall(args, theme, context) {
-			const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
-			text.setText(formatFindCall(args, theme));
-			return text;
-		},
-		renderResult(result, options, theme, context) {
-			const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
-			text.setText(formatFindResult(result as any, options, theme, context.showImages));
-			return text;
-		},
 	};
 }
 

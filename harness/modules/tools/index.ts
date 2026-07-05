@@ -10,6 +10,12 @@
  * `FIND_DEFAULT_LIMIT`, `LS_DEFAULT_LIMIT`) to avoid a name clash at this barrel.
  */
 
+// Shared utility modules live under utils/pi, not tools/<tool>. Re-export them
+// here for the existing @magenta/harness tool-facing public surface.
+export * from "../../core/utils/pi/edit-diff.ts";
+export * from "../../core/utils/pi/file-mutation-queue.ts";
+export * from "../../core/utils/pi/output-accumulator.ts";
+export * from "../../core/utils/pi/path-utils.ts";
 // Tools with no colliding export names.
 export * from "./bash/pi/bash.ts";
 export * from "./edit/pi/edit.ts";
@@ -53,12 +59,6 @@ export {
 export * from "./read/pi/read.ts";
 export * from "./show/pi/show.ts";
 export * from "./ssh/magenta/ssh.ts";
-// Shared utility modules live under utils/pi, not tools/<tool>. Re-export them
-// here for the existing @magenta/harness tool-facing public surface.
-export * from "../../core/utils/pi/edit-diff.ts";
-export * from "../../core/utils/pi/file-mutation-queue.ts";
-export * from "../../core/utils/pi/output-accumulator.ts";
-export * from "../../core/utils/pi/path-utils.ts";
 // Tool abstraction surface (AgentTool contract + ToolFactory).
 export * from "./tool.ts";
 export * from "./write/pi/write.ts";

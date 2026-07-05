@@ -3,7 +3,12 @@ import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import nodePath from "path";
 import { type Static, Type } from "typebox";
 import { pathExists, resolveToCwd } from "../../../../core/utils/pi/path-utils.ts";
-import { DEFAULT_MAX_BYTES, formatSize, type TruncationResult, truncateHead } from "../../../../core/utils/pi/truncate.ts";
+import {
+	DEFAULT_MAX_BYTES,
+	formatSize,
+	type TruncationResult,
+	truncateHead,
+} from "../../../../core/utils/pi/truncate.ts";
 
 export const lsSchema = Type.Object({
 	path: Type.Optional(Type.String({ description: "Directory to list (default: current directory)" })),

@@ -6,6 +6,7 @@ import {
 	resolveDisplayToolName,
 	summarizeToolCall,
 	toolOutputLooksFailed,
+	toolProvenanceBadgeText,
 	truncateMiddleDisplay,
 } from "../src/core/tools/tool-display.ts";
 
@@ -17,6 +18,15 @@ describe("tool-display helpers", () => {
 		expect(isEditToolName("file_edit")).toBe(true);
 		expect(isEditToolName("MultiEdit")).toBe(true);
 		expect(isEditToolName("read")).toBe(false);
+	});
+
+	test("badges externally-backed tools by provenance", () => {
+		expect(toolProvenanceBadgeText(undefined)).toBeUndefined();
+		expect(toolProvenanceBadgeText({ kind: "mcp", server: "aose-bio-mcp", remoteTool: "bio_ensembl_info" })).toBe(
+			"mcp",
+		);
+		expect(toolProvenanceBadgeText({ kind: "Process" })).toBe("process");
+		expect(toolProvenanceBadgeText({ kind: "" })).toBeUndefined();
 	});
 
 	test("summarizes common tool inputs", () => {

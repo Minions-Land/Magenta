@@ -1,6 +1,6 @@
+import type { HcpMagnet } from "../../hcp-contract/hcp-magnet.ts";
 import type { HcpServerDescription } from "../../hcp-contract/hcp-server.ts";
 import type { HcpClient } from "../hcp-client.ts";
-import type { HcpMagnet } from "../../hcp-contract/hcp-magnet.ts";
 
 export type DuplicateMagnetHcpServerPolicy = "error" | "replace" | "skip";
 

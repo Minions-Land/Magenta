@@ -14,6 +14,7 @@ import { getLanguageFromPath, highlightCode, type Theme } from "../../modes/inte
 import type { ToolDefinition, ToolRenderResultOptions } from "../extensions/types.ts";
 import { normalizeDisplayText, renderToolPath, replaceTabs, str } from "./render-utils.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
+import type { ToolRenderer } from "./renderer-registry.ts";
 
 export type { WriteOperations, WriteToolDetails, WriteToolInput, WriteToolOptions };
 
@@ -156,6 +157,49 @@ function formatWriteResult(
 	return `\n${theme.fg("error", output)}`;
 }
 
+/**
+ * Renderer for the "file-write" data shape (write tool). Pulls lastComponent,
+ * argsComplete, expanded, isPartial, isError and cwd from the render context.
+ * Registered in register-builtin-renderers.ts.
+ */
+export const writeRenderer: ToolRenderer<WriteToolDetails> = {
+	renderCall(args, theme, context) {
+		const renderArgs = args as { path?: string; file_path?: string; content?: string } | undefined;
+		const rawPath = str(renderArgs?.file_path ?? renderArgs?.path);
+		const fileContent = str(renderArgs?.content);
+		const component =
+			(context.lastComponent as WriteCallRenderComponent | undefined) ?? new WriteCallRenderComponent();
+		if (fileContent !== null) {
+			component.cache = context.argsComplete
+				? rebuildWriteHighlightCacheFull(rawPath, fileContent)
+				: updateWriteHighlightCacheIncremental(component.cache, rawPath, fileContent);
+		} else {
+			component.cache = undefined;
+		}
+		component.setText(
+			formatWriteCall(
+				renderArgs,
+				{ expanded: context.expanded, isPartial: context.isPartial },
+				theme,
+				component.cache,
+				context.cwd,
+			),
+		);
+		return component;
+	},
+	renderResult(result, _options, theme, context) {
+		const output = formatWriteResult({ ...result, isError: context.isError }, theme);
+		if (!output) {
+			const component = (context.lastComponent as Container | undefined) ?? new Container();
+			component.clear();
+			return component;
+		}
+		const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
+		text.setText(output);
+		return text;
+	},
+};
+
 export function createWriteToolDefinition(
 	cwd: string,
 	options?: WriteToolOptions,
@@ -169,43 +213,9 @@ export function createWriteToolDefinition(
 		promptSnippet: "Create or overwrite files",
 		promptGuidelines: ["Use write only for new files or complete rewrites."],
 		parameters: writeSchema,
+		renderKind: "file-write",
 		execute(_toolCallId, params: Static<typeof writeSchema>, signal, _onUpdate, _ctx) {
 			return execute(_toolCallId, params, signal);
-		},
-		renderCall(args, theme, context) {
-			const renderArgs = args as { path?: string; file_path?: string; content?: string } | undefined;
-			const rawPath = str(renderArgs?.file_path ?? renderArgs?.path);
-			const fileContent = str(renderArgs?.content);
-			const component =
-				(context.lastComponent as WriteCallRenderComponent | undefined) ?? new WriteCallRenderComponent();
-			if (fileContent !== null) {
-				component.cache = context.argsComplete
-					? rebuildWriteHighlightCacheFull(rawPath, fileContent)
-					: updateWriteHighlightCacheIncremental(component.cache, rawPath, fileContent);
-			} else {
-				component.cache = undefined;
-			}
-			component.setText(
-				formatWriteCall(
-					renderArgs,
-					{ expanded: context.expanded, isPartial: context.isPartial },
-					theme,
-					component.cache,
-					context.cwd,
-				),
-			);
-			return component;
-		},
-		renderResult(result, _options, theme, context) {
-			const output = formatWriteResult({ ...result, isError: context.isError }, theme);
-			if (!output) {
-				const component = (context.lastComponent as Container | undefined) ?? new Container();
-				component.clear();
-				return component;
-			}
-			const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
-			text.setText(output);
-			return text;
 		},
 	};
 }

@@ -28,6 +28,38 @@ function formatTokens(count: number): string {
 	return `${Math.round(count / 1000000)}M`;
 }
 
+/**
+ * Format usage stats for a single message (used by assistant message component).
+ * Returns empty string if no significant usage data.
+ */
+export function formatMessageUsageStats(usage: {
+	input: number;
+	output: number;
+	cacheRead: number;
+	cacheWrite: number;
+	cost: { total: number };
+}): string {
+	const parts: string[] = [];
+
+	if (usage.input) parts.push(`↑${formatTokens(usage.input)}`);
+	if (usage.output) parts.push(`↓${formatTokens(usage.output)}`);
+	if (usage.cacheRead) parts.push(`R${formatTokens(usage.cacheRead)}`);
+	if (usage.cacheWrite) parts.push(`W${formatTokens(usage.cacheWrite)}`);
+
+	// Calculate cache hit rate for this message
+	const promptTokens = usage.input + usage.cacheRead + usage.cacheWrite;
+	if ((usage.cacheRead > 0 || usage.cacheWrite > 0) && promptTokens > 0) {
+		const hitRate = (usage.cacheRead / promptTokens) * 100;
+		parts.push(`CH${hitRate.toFixed(1)}%`);
+	}
+
+	if (usage.cost.total > 0) {
+		parts.push(`$${usage.cost.total.toFixed(3)}`);
+	}
+
+	return parts.length > 0 ? parts.join(" ") : "";
+}
+
 export function formatCwdForFooter(cwd: string, home: string | undefined): string {
 	if (!home) return cwd;
 
@@ -90,9 +122,11 @@ export class FooterComponent implements Component {
 		let totalCacheWrite = 0;
 		let totalCost = 0;
 		let latestCacheHitRate: number | undefined;
+		let assistantMessageCount = 0;
 
 		for (const entry of this.session.sessionManager.getEntries()) {
 			if (entry.type === "message" && entry.message.role === "assistant") {
+				assistantMessageCount++;
 				totalInput += entry.message.usage.input;
 				totalOutput += entry.message.usage.output;
 				totalCacheRead += entry.message.usage.cacheRead;
@@ -105,6 +139,10 @@ export class FooterComponent implements Component {
 					latestPromptTokens > 0 ? (entry.message.usage.cacheRead / latestPromptTokens) * 100 : undefined;
 			}
 		}
+
+		// Calculate average cache hit rate across all messages
+		const totalPromptTokens = totalInput + totalCacheRead + totalCacheWrite;
+		const avgCacheHitRate = totalPromptTokens > 0 ? (totalCacheRead / totalPromptTokens) * 100 : undefined;
 
 		// Calculate context usage from session (handles compaction correctly).
 		// After compaction, tokens are unknown until the next LLM response.
@@ -134,8 +172,8 @@ export class FooterComponent implements Component {
 		if (totalOutput) statsParts.push(`↓${formatTokens(totalOutput)}`);
 		if (totalCacheRead) statsParts.push(`R${formatTokens(totalCacheRead)}`);
 		if (totalCacheWrite) statsParts.push(`W${formatTokens(totalCacheWrite)}`);
-		if ((totalCacheRead > 0 || totalCacheWrite > 0) && latestCacheHitRate !== undefined) {
-			statsParts.push(`CH${latestCacheHitRate.toFixed(1)}%`);
+		if ((totalCacheRead > 0 || totalCacheWrite > 0) && avgCacheHitRate !== undefined) {
+			statsParts.push(`CH${avgCacheHitRate.toFixed(1)}% (avg)`);
 		}
 
 		// Show cost with "(sub)" indicator if using OAuth subscription
@@ -162,6 +200,11 @@ export class FooterComponent implements Component {
 		statsParts.push(contextPercentStr);
 		if (areExperimentalFeaturesEnabled()) {
 			statsParts.push(`${theme.fg("dim", "•")} ${theme.bold(theme.fg("warning", "xp"))}`);
+		}
+
+		// Add message count at the end
+		if (assistantMessageCount > 0) {
+			statsParts.push(`${assistantMessageCount} msg${assistantMessageCount === 1 ? "" : "s"}`);
 		}
 
 		let statsLeft = statsParts.join(" ");

@@ -1,0 +1,37 @@
+kind = "tool"
+name = "biofetch"
+description = "BioFetch: parallel read-only access to bioinformatics databases (Ensembl, UniProt, KEGG, Reactome, STRING, PDB, AlphaFold, GWAS, gnomAD, and more) served over MCP by the vendored aose-bio-mcp binary. Tools are namespaced as biofetch_<db>_<op>, e.g. biofetch_ensembl_search, biofetch_uniprot_info."
+runtime = "mcp"
+
+# Command that launches the MCP server over stdio. The aose-bio-mcp binary is
+# vendored into this package (see rust/) because the upstream AutOmicScience
+# (BioAgent) workspace is retired. Build it with:
+#   cargo build --release --bin aose-bio-mcp
+# from rust/, which produces rust/target/release/aose-bio-mcp. This repo-relative
+# path resolves against the Magenta3 repo root.
+command = "packages/AutOmicScience/tools/bio-api/rust/target/release/aose-bio-mcp"
+args = []
+
+# Namespace the remote tool names so they surface as biofetch_<tool> in the
+# local tool address space and never collide with built-in tools. The remote
+# tools are named <db>_<op> (e.g. ensembl_search), yielding biofetch_ensembl_search.
+name_prefix = "biofetch"
+
+# Per-request timeout. Live database lookups over the network can be slow.
+timeout_ms = 60000
+
+# Optional API keys for gated clients. When set, the corresponding tools are
+# added to the biofetch_* set automatically at server startup:
+#   biofetch_drugbank_search  — requires DRUGBANK_API_KEY
+#   biofetch_disgenet_gene_disease — requires DISGENET_API_KEY
+# Without the keys those two tools are simply absent; the other 26 work freely.
+# [env]
+# DRUGBANK_API_KEY = "..."
+# DISGENET_API_KEY = "..."
+
+[metadata]
+package = "AutOmicScience"
+source = "aose_bio_mcp::bio_typed::all_bio_typed_tools() served via aose_mcp::server::serve_stdio"
+origin_repo = "https://github.com/Minions-Land/AutOmicScience"
+origin_commit = "8964a637123fa9caa8f30baf6bb8bc1bb6b8b0bc"
+vendored = "rust/ (see rust/VENDOR.md)"

@@ -12,9 +12,9 @@ import { runAgentLoop } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, ImageContent, Model, Models, UserMessage } from "@earendil-works/pi-ai";
 import { buildDefaultCapabilityHcp } from "../../../hcp-client/assembly/capability.ts";
 import type { HcpClient } from "../../../hcp-client/hcp-client.ts";
-import { convertToLlm } from "../../messages/messages.ts";
 import { formatPromptTemplateInvocation } from "../../../modules/prompt-templates/pi/prompt-templates.ts";
 import { formatSkillInvocation } from "../../../modules/skills/pi/skills.ts";
+import { convertToLlm } from "../../messages/messages.ts";
 import type {
 	AbortResult,
 	AgentHarnessEvent,
@@ -740,7 +740,14 @@ export class AgentHarness<
 			const provided = hookResult?.compaction;
 			const compactResult = provided
 				? { ok: true as const, value: provided }
-				: await compaction.compact(preparation, this.models, model, customInstructions, undefined, this.thinkingLevel);
+				: await compaction.compact(
+						preparation,
+						this.models,
+						model,
+						customInstructions,
+						undefined,
+						this.thinkingLevel,
+					);
 			if (!compactResult.ok) throw compactResult.error;
 			const result = compactResult.value;
 			const entryId = await this.session.appendCompaction(
@@ -774,7 +781,11 @@ export class AgentHarness<
 			const targetEntry = await this.session.getEntry(targetId);
 			if (!targetEntry) throw new AgentHarnessError("invalid_argument", `Entry ${targetId} not found`);
 			const compaction = await this.resolveCompaction();
-			const { entries, commonAncestorId } = await compaction.collectEntriesForBranchSummary(this.session, oldLeafId, targetId);
+			const { entries, commonAncestorId } = await compaction.collectEntriesForBranchSummary(
+				this.session,
+				oldLeafId,
+				targetId,
+			);
 			const preparation = {
 				targetId,
 				oldLeafId,

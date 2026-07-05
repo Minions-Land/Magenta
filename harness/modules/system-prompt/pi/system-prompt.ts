@@ -1,1 +1,1 @@
-export { formatSkillsForSystemPrompt, type FormatSkillsOptions } from "../contract.ts";
+export { type FormatSkillsOptions, formatSkillsForSystemPrompt } from "../contract.ts";

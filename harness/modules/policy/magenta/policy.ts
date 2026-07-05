@@ -1,9 +1,9 @@
 import {
 	APPROVAL_POLICY_TARGET,
-	SHELL_POLICY_TARGET,
 	type ApprovalDecision,
 	type PolicyHcpServerBinding,
 	type PolicyProviderContract,
+	SHELL_POLICY_TARGET,
 	type ShellPolicyClassification,
 } from "../contract.ts";
 import { ApprovalPolicyProvider, decideApproval } from "./approval.ts";
