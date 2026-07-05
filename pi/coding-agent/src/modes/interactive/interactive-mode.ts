@@ -116,11 +116,15 @@ import { getChangelogPath, getNewEntries, normalizeChangelogLinks, parseChangelo
 import { copyToClipboard } from "../../utils/clipboard.ts";
 import { extensionForImageMimeType, readClipboardImage } from "../../utils/clipboard-image.ts";
 import { parseGitUrl } from "../../utils/git.ts";
+import { checkForMagentaUpdate, runMagentaUpdate } from "../../utils/magenta-update.ts";
 import { getCwdRelativePath } from "../../utils/paths.ts";
 import { getPiUserAgent } from "../../utils/pi-user-agent.ts";
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
 import { ensureTool } from "../../utils/tools-manager.ts";
-import { checkForNewPiVersion, type LatestPiRelease } from "../../utils/version-check.ts";
+// Pi's pi.dev version check is disabled for Magenta (see run()); the type is
+// retained for the dormant showNewVersionNotification method.
+// import { checkForNewPiVersion } from "../../utils/version-check.ts";
+import type { LatestPiRelease } from "../../utils/version-check.ts";
 import { ArminComponent } from "./components/armin.ts";
 import { AssistantMessageComponent } from "./components/assistant-message.ts";
 import { BashExecutionComponent } from "./components/bash-execution.ts";
@@ -863,12 +867,16 @@ export class InteractiveMode {
 	async run(): Promise<void> {
 		await this.init();
 
-		// Start version check asynchronously
-		checkForNewPiVersion(this.version).then((newRelease) => {
-			if (newRelease) {
-				this.showNewVersionNotification(newRelease);
-			}
-		});
+		// Pi's own pi.dev version check is disabled for Magenta — we ship from a
+		// GitHub checkout and auto-update against origin/main instead (below).
+		// checkForNewPiVersion(this.version).then((newRelease) => {
+		// 	if (newRelease) {
+		// 		this.showNewVersionNotification(newRelease);
+		// 	}
+		// });
+
+		// Auto-update Magenta from its GitHub checkout (fast-forward + rebuild).
+		void this.checkAndAutoUpdateMagenta();
 
 		// Start package update check asynchronously
 		this.checkForPackageUpdates().then((updates) => {
@@ -4037,6 +4045,58 @@ export class InteractiveMode {
 				1,
 				0,
 			),
+		);
+		this.chatContainer.addChild(new DynamicBorder((text) => theme.fg("warning", text)));
+		this.ui.requestRender();
+	}
+
+	/**
+	 * Check origin/main and auto-update the Magenta checkout when it is safe:
+	 * only when the working tree is clean and can fast-forward. A dirty or
+	 * diverged checkout (e.g. active development) is left untouched with a hint.
+	 * Runs in the background; never throws.
+	 */
+	private async checkAndAutoUpdateMagenta(): Promise<void> {
+		try {
+			const status = await checkForMagentaUpdate();
+			if (!status || status.behind === 0) return;
+
+			if (!status.clean || !status.fastForwardable) {
+				this.showMagentaUpdateBanner(
+					`${APP_NAME} is ${status.behind} commit(s) behind ${status.remoteSha}.`,
+					status.clean
+						? "Local branch has diverged — run git pull manually to update."
+						: "Working tree has uncommitted changes — auto-update skipped.",
+				);
+				return;
+			}
+
+			this.showMagentaUpdateBanner(
+				`Updating ${APP_NAME} (${status.behind} commit(s) behind)…`,
+				`${status.localSha} → ${status.remoteSha}. This may take a minute.`,
+			);
+			const result = await runMagentaUpdate(status);
+			if (result.ok) {
+				this.showMagentaUpdateBanner(
+					`${APP_NAME} updated to ${result.newSha}.`,
+					`Restart ${APP_NAME} to run the new version.`,
+				);
+			} else {
+				this.showMagentaUpdateBanner(
+					`${APP_NAME} auto-update failed.`,
+					`${result.reason ?? "unknown error"} — update manually with git pull && npm install && npm run build.`,
+				);
+			}
+		} catch {
+			// Auto-update is best-effort; never disrupt the session on failure.
+		}
+	}
+
+	private showMagentaUpdateBanner(title: string, detail: string): void {
+		this.chatContainer.addChild(new Spacer(1));
+		this.chatContainer.addChild(new DynamicBorder((text) => theme.fg("warning", text)));
+		this.chatContainer.addChild(
+			new Text(`${theme.bold(theme.fg("warning", title))}\n${theme.fg("muted", detail)}`, 1, 0),
 		);
 		this.chatContainer.addChild(new DynamicBorder((text) => theme.fg("warning", text)));
 		this.ui.requestRender();
