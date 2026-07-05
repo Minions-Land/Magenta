@@ -230,8 +230,18 @@ export class FloatingMenuBody implements FloatingOverlayBody {
 			if (this.releaseMatchesTrackedNavigation(data)) this.resetNavigationRepeat();
 			return true;
 		}
-		if (matchesAny(data, ["escape", "left"])) {
-			if (matchesKey(data, "left") && this.shouldSuppressRepeatedNavigation("left", data)) return true;
+		// Navigation semantics (menu dock rules):
+		//  - left  = go back one level; at the root it is a no-op (consumed) so
+		//            the menu never closes on left. Only escape closes the root.
+		//  - escape = go back one level; at the root it falls through (undefined)
+		//            to let the container close the overlay.
+		if (matchesKey(data, "left")) {
+			if (this.shouldSuppressRepeatedNavigation("left", data)) return true;
+			if (this.stack.length > 0) this.goBack();
+			// At the root, swallow left so the overlay stays open.
+			return true;
+		}
+		if (matchesKey(data, "escape")) {
 			if (this.stack.length > 0) {
 				this.goBack();
 				return true;
@@ -244,8 +254,10 @@ export class FloatingMenuBody implements FloatingOverlayBody {
 		if (matchesAny(data, ["pageDown", "ctrl+d"])) return this.navigate("pageDown", data, () => this.move(8));
 		if (matchesAny(data, ["home"])) return this.navigate("home", data, () => this.selectIndex(0));
 		if (matchesAny(data, ["end"])) return this.navigate("end", data, () => this.selectIndex(Number.MAX_SAFE_INTEGER));
-		if (matchesAny(data, ["right"])) return this.navigate("right", data, () => this.openCurrentChild());
+		if (matchesAny(data, ["right"])) return this.navigate("right", data, () => this.openCurrentChildOrHold());
 		if (matchesAny(data, ["enter"])) return this.selectCurrent();
+		// Swallow any other key so the overlay never closes on unmapped input.
+		return undefined;
 	}
 
 	render(width: number, height: number): FloatingMenuRender {
@@ -256,8 +268,8 @@ export class FloatingMenuBody implements FloatingOverlayBody {
 			body: this.renderBody(width, height),
 			footer:
 				this.stack.length > 0
-					? "up/down move · right open · enter select · esc/left back"
-					: "up/down move · right open · enter select · esc/left close",
+					? "up/down move · right open · enter select · left/esc back"
+					: "up/down move · right open · enter select · esc close",
 		};
 	}
 
@@ -419,6 +431,14 @@ export class FloatingMenuBody implements FloatingOverlayBody {
 		const item = this.current().items[this.selectedIndex];
 		if (!item || item.disabled || !item.children) return undefined;
 		this.openChild(item);
+		return true;
+	}
+
+	// Right-arrow variant: advance into a child when there is one, otherwise
+	// hold (consume the key) at a leaf. Per the dock rules only enter confirms a
+	// leaf, so right must not fall through and close the overlay.
+	private openCurrentChildOrHold(): true | undefined {
+		this.openCurrentChild();
 		return true;
 	}
 

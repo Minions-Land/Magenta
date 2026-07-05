@@ -114,6 +114,46 @@ describe("FloatingMenuBody", () => {
 		expect(body.handleInput(KEY_ESCAPE)).toBeUndefined();
 	});
 
+	it("swallows left at the root so the overlay stays open", () => {
+		const body = createMenu([
+			{ value: "model", label: "Model" },
+			{ value: "settings", label: "Settings" },
+		]);
+
+		// Left at the root must be consumed (true) and must not change the view.
+		expect(body.handleInput(KEY_LEFT)).toBe(true);
+		expect(renderText(body)).toContain("Model");
+		expect(renderText(body)).toContain("Settings");
+	});
+
+	it("goes back with escape at an intermediate level, like left", () => {
+		const body = createMenu([
+			{
+				value: "tools",
+				label: "Tools",
+				children: [{ value: "tools:on", label: "Enable all" }],
+			},
+		]);
+
+		expect(body.handleInput(KEY_RIGHT)).toBe(true);
+		expect(renderText(body)).toContain("Enable all");
+		// Escape below the root goes back one level (consumed), it does not close.
+		expect(body.handleInput(KEY_ESCAPE)).toBe(true);
+		expect(renderText(body)).toContain("Tools");
+	});
+
+	it("swallows right on a leaf so only enter can confirm it", () => {
+		const selected: string[] = [];
+		const body = createMenu([{ value: "model", label: "Model" }], selected);
+
+		// Right on a leaf is consumed (true) but must not select or close.
+		expect(body.handleInput(KEY_RIGHT)).toBe(true);
+		expect(selected).toEqual([]);
+		// Enter is still required to confirm the leaf.
+		expect(body.handleInput(KEY_ENTER)).toBe(true);
+		expect(selected).toEqual(["model"]);
+	});
+
 	it("skips disabled items while moving", () => {
 		const selected: string[] = [];
 		const body = createMenu(

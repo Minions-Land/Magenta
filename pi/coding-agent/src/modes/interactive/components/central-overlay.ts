@@ -160,10 +160,14 @@ export function createCentralOverlayAdapter(
 		closeOnQ,
 		
 		handleInput: (data: string) => {
-			// 转发输入到焦点组件
+			// Forward input to the focused component. A component may return a
+			// boolean to signal whether it consumed the key: returning a falsy value
+			// lets the FloatingOverlayContainer fallback (left/esc/ctrl+c close) fire.
+			// Components that fully own their input (e.g. those with a search box that
+			// needs left/right for the cursor) should return true for every key.
 			if (focus && 'handleInput' in focus && typeof (focus as any).handleInput === 'function') {
-				(focus as any).handleInput(data);
-				return true;
+				const consumed = (focus as any).handleInput(data);
+				return consumed === undefined ? true : consumed;
 			}
 			return undefined;
 		},
