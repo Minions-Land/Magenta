@@ -148,6 +148,7 @@ import {
 import { FooterComponent } from "./components/footer.ts";
 import { formatKeyText, keyDisplayText, keyHint, keyText, rawKeyHint } from "./components/keybinding-hints.ts";
 import { LoginDialogComponent } from "./components/login-dialog.ts";
+import { createMcpOverlay } from "./components/mcp-overlay.ts";
 import { ModelSelectorComponent } from "./components/model-selector.ts";
 import { type AuthSelectorProvider, OAuthSelectorComponent } from "./components/oauth-selector.ts";
 import { ScopedModelsSelectorComponent } from "./components/scoped-models-selector.ts";
@@ -6138,7 +6139,6 @@ export class InteractiveMode {
 
 	private showMcpManager(): void {
 		this.showSelector((done) => {
-			const { createMcpOverlay } = require("./components/mcp-overlay.ts");
 			const overlay = createMcpOverlay(
 				(selectedId: string) => {
 					done();
