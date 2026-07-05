@@ -114,7 +114,7 @@ export const KEYBINDINGS = {
 	"app.session.tree": { defaultKeys: [], description: "Open session tree" },
 	"app.session.fork": { defaultKeys: [], description: "Fork current session" },
 	"app.session.resume": { defaultKeys: [], description: "Resume a session" },
-	"app.mcp.manage": { defaultKeys: "ctrl+m", description: "Manage MCP servers" },
+	"app.mcp.manage": { defaultKeys: [], description: "Manage MCP servers" },
 	"app.tree.foldOrUp": {
 		defaultKeys: ["ctrl+left", "alt+left"],
 		description: "Fold tree branch or move up",
