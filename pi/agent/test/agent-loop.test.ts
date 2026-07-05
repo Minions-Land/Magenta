@@ -1348,4 +1348,109 @@ describe("agentLoopContinue with AgentMessage", () => {
 		expect(messages.length).toBe(1);
 		expect(messages[0].role).toBe("assistant");
 	});
+
+	it("recovers a tool call the model emitted as literal <invoke> text", async () => {
+		const toolSchema = Type.Object({ value: Type.String() });
+		const executed: string[] = [];
+		const tool: AgentTool<typeof toolSchema, { value: string }> = {
+			name: "echo",
+			label: "Echo",
+			description: "Echo tool",
+			parameters: toolSchema,
+			async execute(_toolCallId, params) {
+				executed.push(params.value);
+				return {
+					content: [{ type: "text", text: `echoed: ${params.value}` }],
+					details: { value: params.value },
+				};
+			},
+		};
+
+		const context: AgentContext = { systemPrompt: "", messages: [], tools: [tool] };
+		const config: AgentLoopConfig = { model: createModel(), convertToLlm: identityConverter };
+
+		let callIndex = 0;
+		const streamFn = () => {
+			const stream = new MockAssistantStream();
+			queueMicrotask(() => {
+				if (callIndex === 0) {
+					// Model wrote the tool call as text and stopped normally.
+					const message = createAssistantMessage(
+						[
+							{
+								type: "text",
+								text: 'Running it now\n<invoke name="echo"><parameter name="value">hello</parameter></invoke>',
+							},
+						],
+						"stop",
+					);
+					stream.push({ type: "done", reason: "stop", message });
+				} else {
+					const message = createAssistantMessage([{ type: "text", text: "done" }]);
+					stream.push({ type: "done", reason: "stop", message });
+				}
+				callIndex++;
+			});
+			return stream;
+		};
+
+		const events: AgentEvent[] = [];
+		const stream = agentLoop([createUserMessage("echo hello")], context, config, undefined, streamFn);
+		for await (const event of stream) {
+			events.push(event);
+		}
+
+		// The recovered tool call should have actually executed.
+		expect(executed).toEqual(["hello"]);
+		const toolEnd = events.find((e) => e.type === "tool_execution_end");
+		expect(toolEnd).toBeDefined();
+
+		// The recovered assistant message keeps prose + a real toolCall block.
+		const messages = await stream.result();
+		const firstAssistant = messages.find((m) => m.role === "assistant");
+		expect(firstAssistant?.role === "assistant" && firstAssistant.content.some((c) => c.type === "toolCall")).toBe(
+			true,
+		);
+	});
+
+	it("does not recover text-form invoke when recoverTextToolCalls is false", async () => {
+		const toolSchema = Type.Object({ value: Type.String() });
+		const executed: string[] = [];
+		const tool: AgentTool<typeof toolSchema, { value: string }> = {
+			name: "echo",
+			label: "Echo",
+			description: "Echo tool",
+			parameters: toolSchema,
+			async execute(_toolCallId, params) {
+				executed.push(params.value);
+				return { content: [{ type: "text", text: "ok" }], details: { value: params.value } };
+			},
+		};
+
+		const context: AgentContext = { systemPrompt: "", messages: [], tools: [tool] };
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+			recoverTextToolCalls: false,
+		};
+
+		const streamFn = () => {
+			const stream = new MockAssistantStream();
+			queueMicrotask(() => {
+				const message = createAssistantMessage(
+					[{ type: "text", text: '<invoke name="echo"><parameter name="value">hello</parameter></invoke>' }],
+					"stop",
+				);
+				stream.push({ type: "done", reason: "stop", message });
+			});
+			return stream;
+		};
+
+		const stream = agentLoop([createUserMessage("go")], context, config, undefined, streamFn);
+		for await (const _event of stream) {
+			// drain
+		}
+		// Disabled: the text-form call is left untouched and never executed.
+		expect(executed).toEqual([]);
+	});
 });

@@ -11,6 +11,7 @@ import {
 	type ToolResultMessage,
 	validateToolArguments,
 } from "@earendil-works/pi-ai/compat";
+import { recoverTextToolCalls } from "./recover-text-tool-calls.ts";
 import type {
 	AgentContext,
 	AgentEvent,
@@ -272,6 +273,23 @@ async function runLoop(
  * Stream an assistant response from the LLM.
  * This is where AgentMessage[] gets transformed to Message[] for the LLM.
  */
+/**
+ * Salvage tool calls a model wrote as literal `<invoke>` text instead of issuing
+ * a real tool_use. Mutates `message` in place (before message_end / persistence)
+ * so the recovered ToolCall content flows through the normal execution path.
+ */
+function applyTextToolCallRecovery(message: AssistantMessage, context: AgentContext, config: AgentLoopConfig): void {
+	if (config.recoverTextToolCalls === false) return;
+	if (message.stopReason !== "stop" && message.stopReason !== "length") return;
+	const knownToolNames = context.tools ? new Set(context.tools.map((t) => t.name)) : undefined;
+	const recovered = recoverTextToolCalls(message, { knownToolNames });
+	if (recovered > 0 && message.stopReason === "stop") {
+		// The turn actually intended tool use; reflect that so downstream logic
+		// (which keys off stopReason) treats it like a normal tool-calling turn.
+		message.stopReason = "toolUse";
+	}
+}
+
 async function streamAssistantResponse(
 	context: AgentContext,
 	config: AgentLoopConfig,
@@ -342,6 +360,7 @@ async function streamAssistantResponse(
 			case "done":
 			case "error": {
 				const finalMessage = await response.result();
+				applyTextToolCallRecovery(finalMessage, context, config);
 				if (addedPartial) {
 					context.messages[context.messages.length - 1] = finalMessage;
 				} else {
@@ -357,6 +376,7 @@ async function streamAssistantResponse(
 	}
 
 	const finalMessage = await response.result();
+	applyTextToolCallRecovery(finalMessage, context, config);
 	if (addedPartial) {
 		context.messages[context.messages.length - 1] = finalMessage;
 	} else {

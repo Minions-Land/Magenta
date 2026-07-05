@@ -141,6 +141,15 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	model: Model<any>;
 
 	/**
+	 * Recover tool calls a model emitted as literal `<invoke>` XML text instead of
+	 * a structured tool_use block. When enabled (the default), an assistant turn
+	 * that ends with no real toolCall but whose text contains `<invoke name="...">`
+	 * markup is rewritten into proper ToolCall content so execution can proceed.
+	 * Set to false to disable this safety net.
+	 */
+	recoverTextToolCalls?: boolean;
+
+	/**
 	 * Converts AgentMessage[] to LLM-compatible Message[] before each LLM call.
 	 *
 	 * Each AgentMessage must be converted to a UserMessage, AssistantMessage, or ToolResultMessage
