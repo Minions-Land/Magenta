@@ -2,9 +2,9 @@ import type { OverlayOptions } from "@earendil-works/pi-tui";
 import {
 	type Component,
 	type Focusable,
-	type KeyId,
 	isKeyRelease,
 	isKeyRepeat,
+	type KeyId,
 	matchesKey,
 	truncateToWidth,
 	visibleWidth,

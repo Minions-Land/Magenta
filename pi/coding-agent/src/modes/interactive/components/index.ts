@@ -23,29 +23,6 @@ export { keyHint, keyText, rawKeyHint } from "./keybinding-hints.ts";
 export { LoginDialogComponent } from "./login-dialog.ts";
 export { ModelSelectorComponent } from "./model-selector.ts";
 export { OAuthSelectorComponent } from "./oauth-selector.ts";
-export { type ModelsCallbacks, type ModelsConfig, ScopedModelsSelectorComponent } from "./scoped-models-selector.ts";
-export { SessionSelectorComponent } from "./session-selector.ts";
-export { type SettingsCallbacks, type SettingsConfig, SettingsSelectorComponent } from "./settings-selector.ts";
-export { ShowImagesSelectorComponent } from "./show-images-selector.ts";
-export { SkillInvocationMessageComponent } from "./skill-invocation-message.ts";
-export { ThemeSelectorComponent } from "./theme-selector.ts";
-export { ThinkingSelectorComponent } from "./thinking-selector.ts";
-export {
-	renderToolCallActivity,
-	renderToolCallGallery,
-	renderToolCallStrip,
-	type ToolCallTile,
-	type ToolGalleryConfig,
-	type ToolTileStatus,
-} from "./tool-call-gallery.ts";
-export { ToolExecutionComponent, type ToolExecutionOptions } from "./tool-execution.ts";
-export { ToolExecutionGroupComponent } from "./tool-execution-group.ts";
-export { TreeSelectorComponent } from "./tree-selector.ts";
-export { TrustSelectorComponent } from "./trust-selector.ts";
-export { UserMessageComponent } from "./user-message.ts";
-export { UserMessageSelectorComponent } from "./user-message-selector.ts";
-export { truncateToVisualLines, type VisualTruncateResult } from "./visual-truncate.ts";
-
 // Rich content components
 export {
 	createRichContentReference,
@@ -64,3 +41,24 @@ export {
 	ImageViewer,
 	MarkdownViewer,
 } from "./rich-content-viewer.ts";
+export { type ModelsCallbacks, type ModelsConfig, ScopedModelsSelectorComponent } from "./scoped-models-selector.ts";
+export { SessionSelectorComponent } from "./session-selector.ts";
+export { type SettingsCallbacks, type SettingsConfig, SettingsSelectorComponent } from "./settings-selector.ts";
+export { ShowImagesSelectorComponent } from "./show-images-selector.ts";
+export { SkillInvocationMessageComponent } from "./skill-invocation-message.ts";
+export { ThemeSelectorComponent } from "./theme-selector.ts";
+export { ThinkingSelectorComponent } from "./thinking-selector.ts";
+export {
+	renderToolCallActivity,
+	renderToolCallGallery,
+	renderToolCallStrip,
+	type ToolCallTile,
+	type ToolGalleryConfig,
+	type ToolTileStatus,
+} from "./tool-call-gallery.ts";
+export { ToolExecutionComponent, type ToolExecutionOptions } from "./tool-execution.ts";
+export { ToolExecutionGroupComponent } from "./tool-execution-group.ts";
+export { TreeSelectorComponent } from "./tree-selector.ts";
+export { UserMessageComponent } from "./user-message.ts";
+export { UserMessageSelectorComponent } from "./user-message-selector.ts";
+export { truncateToVisualLines, type VisualTruncateResult } from "./visual-truncate.ts";

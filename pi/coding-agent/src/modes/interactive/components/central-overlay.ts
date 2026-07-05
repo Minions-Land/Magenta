@@ -1,29 +1,29 @@
 /**
  * Central Overlay - 统一的中央浮动窗口抽象
- * 
+ *
  * 这是TUI中所有浮动窗口的唯一入口点。通过模板和配置系统，
  * 可以适配各种不同的内容类型（选择器、交互式对话、加载提示等）。
  */
 
-import type { Component, Focusable, OverlayOptions, SizeValue } from "@earendil-works/pi-tui";
+import type { Component, OverlayOptions, SizeValue } from "@earendil-works/pi-tui";
 import type { FloatingOverlayBody } from "./floating-menu.ts";
 
 /**
  * 中央浮动窗口的预设类型
  */
-export type CentralOverlayType = 
-	| "selector"      // 选择器类型（Session, Settings, Model等）
-	| "interactive"   // 交互式内容（Side Chat等）
-	| "message"       // 简单消息/加载提示
-	| "custom";       // 自定义
+export type CentralOverlayType =
+	| "selector" // 选择器类型（Session, Settings, Model等）
+	| "interactive" // 交互式内容（Side Chat等）
+	| "message" // 简单消息/加载提示
+	| "custom"; // 自定义
 
 /**
  * 中央浮动窗口的尺寸预设
  */
-export type CentralOverlaySize = 
-	| "small"   // 小窗口，用于简单消息
-	| "medium"  // 中等窗口，用于设置选择器
-	| "large"   // 大窗口，用于复杂选择器和交互
+export type CentralOverlaySize =
+	| "small" // 小窗口，用于简单消息
+	| "medium" // 中等窗口，用于设置选择器
+	| "large" // 大窗口，用于复杂选择器和交互
 	| "xlarge"; // 超大窗口，用于需要更多空间的内容
 
 /**
@@ -32,28 +32,28 @@ export type CentralOverlaySize =
 export interface CentralOverlayConfig {
 	/** 窗口类型，决定默认的渲染模板 */
 	type?: CentralOverlayType;
-	
+
 	/** 窗口尺寸预设 */
 	size?: CentralOverlaySize;
-	
+
 	/** 是否自动移除组件内部边框（避免双层边框） */
 	removeBorder?: boolean;
-	
+
 	/** 自定义宽度（覆盖size预设） */
 	width?: SizeValue;
-	
+
 	/** 自定义最小宽度 */
 	minWidth?: number;
-	
+
 	/** 自定义最大高度 */
 	maxHeight?: SizeValue;
-	
+
 	/** 内容区域行数 */
 	bodyLines?: number;
-	
+
 	/** 是否允许按 Q 键关闭 */
 	closeOnQ?: boolean;
-	
+
 	/** 自定义 overlay 选项（完全覆盖） */
 	overlayOptions?: OverlayOptions;
 }
@@ -61,15 +61,23 @@ export interface CentralOverlayConfig {
 /**
  * 根据类型和尺寸获取默认配置
  */
-export function getCentralOverlayDefaults(type: CentralOverlayType, size: CentralOverlaySize): Required<Pick<CentralOverlayConfig, 'width' | 'minWidth' | 'maxHeight' | 'bodyLines' | 'removeBorder' | 'closeOnQ'>> {
+export function getCentralOverlayDefaults(
+	type: CentralOverlayType,
+	size: CentralOverlaySize,
+): Required<
+	Pick<CentralOverlayConfig, "width" | "minWidth" | "maxHeight" | "bodyLines" | "removeBorder" | "closeOnQ">
+> {
 	// 尺寸预设
-	const sizePresets: Record<CentralOverlaySize, { width: SizeValue; minWidth: number; maxHeight: SizeValue; bodyLines: number }> = {
+	const sizePresets: Record<
+		CentralOverlaySize,
+		{ width: SizeValue; minWidth: number; maxHeight: SizeValue; bodyLines: number }
+	> = {
 		small: { width: "50%", minWidth: 40, maxHeight: "50%", bodyLines: 8 },
 		medium: { width: "70%", minWidth: 60, maxHeight: "75%", bodyLines: 18 },
 		large: { width: "82%", minWidth: 72, maxHeight: "88%", bodyLines: 24 },
 		xlarge: { width: "90%", minWidth: 80, maxHeight: "92%", bodyLines: 30 },
 	};
-	
+
 	// 类型特定的默认值
 	const typeDefaults = {
 		selector: { removeBorder: true, closeOnQ: false },
@@ -77,7 +85,7 @@ export function getCentralOverlayDefaults(type: CentralOverlayType, size: Centra
 		message: { removeBorder: true, closeOnQ: true },
 		custom: { removeBorder: false, closeOnQ: false },
 	};
-	
+
 	return {
 		...sizePresets[size],
 		...typeDefaults[type],
@@ -91,11 +99,11 @@ export function buildOverlayOptions(config: CentralOverlayConfig): OverlayOption
 	if (config.overlayOptions) {
 		return config.overlayOptions;
 	}
-	
+
 	const type = config.type ?? "custom";
 	const size = config.size ?? "large";
 	const defaults = getCentralOverlayDefaults(type, size);
-	
+
 	return {
 		anchor: "center",
 		width: config.width ?? defaults.width,
@@ -111,33 +119,33 @@ export function buildOverlayOptions(config: CentralOverlayConfig): OverlayOption
  */
 export function stripComponentBorders(lines: string[]): string[] {
 	if (lines.length === 0) return lines;
-	
+
 	// 常见的边框字符模式
 	const borderPattern = /^[\s─═╭╮╰╯┌┐└┘├┤┬┴┼│║╞╡╟╢╤╥╦╧╨╩╪╫╬]*$/;
-	
+
 	let start = 0;
 	let end = lines.length;
-	
+
 	// 跳过顶部边框（通常是前2行：顶部边框 + 标题行可能也有边框装饰）
 	while (start < lines.length && borderPattern.test(lines[start] ?? "")) {
 		start++;
 	}
-	
+
 	// 跳过顶部的空行
 	while (start < lines.length && (lines[start] ?? "").trim() === "") {
 		start++;
 	}
-	
+
 	// 跳过底部边框
 	while (end > start && borderPattern.test(lines[end - 1] ?? "")) {
 		end--;
 	}
-	
+
 	// 跳过底部的空行
 	while (end > start && (lines[end - 1] ?? "").trim() === "") {
 		end--;
 	}
-	
+
 	return lines.slice(start, end);
 }
 
@@ -155,54 +163,54 @@ export function createCentralOverlayAdapter(
 	const removeBorder = config.removeBorder ?? defaults.removeBorder;
 	const closeOnQ = config.closeOnQ ?? defaults.closeOnQ;
 	const bodyLines = config.bodyLines ?? defaults.bodyLines;
-	
+
 	return {
 		closeOnQ,
-		
+
 		handleInput: (data: string) => {
 			// Forward input to the focused component. A component may return a
 			// boolean to signal whether it consumed the key: returning a falsy value
 			// lets the FloatingOverlayContainer fallback (left/esc/ctrl+c close) fire.
 			// Components that fully own their input (e.g. those with a search box that
 			// needs left/right for the cursor) should return true for every key.
-			if (focus && 'handleInput' in focus && typeof (focus as any).handleInput === 'function') {
+			if (focus && "handleInput" in focus && typeof (focus as any).handleInput === "function") {
 				const consumed = (focus as any).handleInput(data);
 				return consumed === undefined ? true : consumed;
 			}
 			return undefined;
 		},
-		
+
 		render: (width: number, height: number, focused: boolean) => {
 			// 更新焦点状态
-			if ('focused' in focus) {
+			if ("focused" in focus) {
 				(focus as any).focused = focused;
 			}
-			
+
 			// 渲染组件
 			let rendered = component.render(width);
-			
+
 			// 根据配置移除内部边框
 			if (removeBorder) {
 				rendered = stripComponentBorders(rendered);
 			}
-			
+
 			// 适配高度：截取或填充到目标行数
 			const maxLines = Math.min(bodyLines, height);
 			const body = rendered.slice(0, maxLines);
-			
+
 			// 填充空行到目标高度（保持窗口稳定）
 			while (body.length < maxLines) {
 				body.push("");
 			}
-			
+
 			return {
 				title: "",
 				body,
 			};
 		},
-		
+
 		invalidate: () => {
-			if ('invalidate' in component && typeof (component as any).invalidate === 'function') {
+			if ("invalidate" in component && typeof (component as any).invalidate === "function") {
 				(component as any).invalidate();
 			}
 		},
@@ -213,7 +221,7 @@ export function createCentralOverlayAdapter(
  * 为 Focusable 组件初始化焦点状态
  */
 export function initializeFocus(focus: Component): void {
-	if ('focused' in focus) {
+	if ("focused" in focus) {
 		(focus as any).focused = true;
 	}
 }

@@ -106,7 +106,12 @@ import { BUILTIN_SLASH_COMMANDS } from "../../core/slash-commands.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
 import { isInstallTelemetryEnabled } from "../../core/telemetry.ts";
 import type { TruncationResult } from "../../core/tools/truncate.ts";
-import { hasTrustRequiringProjectResources, ProjectTrustStore } from "../../core/trust-manager.ts";
+import {
+	getProjectTrustOptions,
+	hasTrustRequiringProjectResources,
+	type ProjectTrustOption,
+	ProjectTrustStore,
+} from "../../core/trust-manager.ts";
 import { getChangelogPath, getNewEntries, normalizeChangelogLinks, parseChangelog } from "../../utils/changelog.ts";
 import { copyToClipboard } from "../../utils/clipboard.ts";
 import { extensionForImageMimeType, readClipboardImage } from "../../utils/clipboard-image.ts";
@@ -121,6 +126,12 @@ import { AssistantMessageComponent } from "./components/assistant-message.ts";
 import { BashExecutionComponent } from "./components/bash-execution.ts";
 import { BorderedLoader } from "./components/bordered-loader.ts";
 import { BranchSummaryMessageComponent } from "./components/branch-summary-message.ts";
+import {
+	buildOverlayOptions,
+	type CentralOverlayConfig,
+	createCentralOverlayAdapter,
+	initializeFocus,
+} from "./components/central-overlay.ts";
 import { CompactionSummaryMessageComponent } from "./components/compaction-summary-message.ts";
 import { CountdownTimer } from "./components/countdown-timer.ts";
 import { CustomEditor } from "./components/custom-editor.ts";
@@ -139,16 +150,9 @@ import {
 	type FloatingOverlayBody,
 	FloatingOverlayContainer,
 } from "./components/floating-menu.ts";
-import {
-	buildOverlayOptions,
-	type CentralOverlayConfig,
-	createCentralOverlayAdapter,
-	initializeFocus,
-} from "./components/central-overlay.ts";
 import { FooterComponent } from "./components/footer.ts";
 import { formatKeyText, keyDisplayText, keyHint, keyText, rawKeyHint } from "./components/keybinding-hints.ts";
 import { LoginDialogComponent } from "./components/login-dialog.ts";
-import { createMcpOverlay } from "./components/mcp-overlay.ts";
 import { ModelSelectorComponent } from "./components/model-selector.ts";
 import { type AuthSelectorProvider, OAuthSelectorComponent } from "./components/oauth-selector.ts";
 import { ScopedModelsSelectorComponent } from "./components/scoped-models-selector.ts";
@@ -158,7 +162,6 @@ import { SkillInvocationMessageComponent } from "./components/skill-invocation-m
 import { ToolExecutionComponent } from "./components/tool-execution.ts";
 import { ToolExecutionGroupComponent } from "./components/tool-execution-group.ts";
 import { TreeSelectorComponent } from "./components/tree-selector.ts";
-import { TrustSelectorComponent } from "./components/trust-selector.ts";
 import { UserMessageComponent } from "./components/user-message.ts";
 import { UserMessageSelectorComponent } from "./components/user-message-selector.ts";
 import { getModelSearchText } from "./model-search.ts";
@@ -390,7 +393,6 @@ export class InteractiveMode {
 	private streamingAnimationTimer: NodeJS.Timeout | undefined = undefined;
 
 	// Adaptive rendering: track message_update event rate to dynamically adjust render interval
-
 
 	// Tool execution tracking: toolCallId -> component
 	private pendingTools = new Map<string, ToolExecutionComponent>();
@@ -3649,7 +3651,7 @@ export class InteractiveMode {
 		// Spawn new pi process with same arguments and environment
 		const { spawn } = await import("child_process");
 		const args = process.argv.slice(1); // Skip node executable path
-		
+
 		const child = spawn(process.argv[0], args, {
 			detached: false,
 			stdio: "inherit",
@@ -4003,7 +4005,6 @@ export class InteractiveMode {
 		// 	: theme.fg("accent", changelogUrl);
 		// const changelogLine = theme.fg("muted", "Changelog: ") + changelogLink;
 		// const note = release.note?.trim();
-
 		// this.chatContainer.addChild(new Spacer(1));
 		// this.chatContainer.addChild(new DynamicBorder((text) => theme.fg("warning", text)));
 		// this.chatContainer.addChild(
@@ -4393,7 +4394,9 @@ export class InteractiveMode {
 		const previous = this.session.autoCompactionEnabled;
 		this.session.setAutoCompactionEnabled(enabled);
 		this.footer.setAutoCompactEnabled(enabled);
-		this.showSystemMessage(`Harness auto-compact changed: ${previous ? "enabled" : "disabled"} -> ${enabled ? "enabled" : "disabled"}.`);
+		this.showSystemMessage(
+			`Harness auto-compact changed: ${previous ? "enabled" : "disabled"} -> ${enabled ? "enabled" : "disabled"}.`,
+		);
 		this.showStatus(`Harness auto-compact: ${enabled ? "enabled" : "disabled"}`);
 	}
 
@@ -4401,7 +4404,9 @@ export class InteractiveMode {
 		const previous = this.settingsManager.getEnableSkillCommands();
 		this.settingsManager.setEnableSkillCommands(enabled);
 		this.setupAutocompleteProvider();
-		this.showSystemMessage(`Harness skill slash commands changed: ${previous ? "enabled" : "disabled"} -> ${enabled ? "enabled" : "disabled"}.`);
+		this.showSystemMessage(
+			`Harness skill slash commands changed: ${previous ? "enabled" : "disabled"} -> ${enabled ? "enabled" : "disabled"}.`,
+		);
 		this.showStatus(`Harness skill commands: ${enabled ? "enabled" : "disabled"}`);
 	}
 
@@ -4459,9 +4464,7 @@ export class InteractiveMode {
 
 	private async toggleHarnessPackageSelector(selector: string): Promise<void> {
 		await this.enqueueHarnessPackageMutation((current) =>
-			current.includes(selector)
-				? current.filter((candidate) => candidate !== selector)
-				: [...current, selector],
+			current.includes(selector) ? current.filter((candidate) => candidate !== selector) : [...current, selector],
 		);
 	}
 
@@ -4537,10 +4540,7 @@ export class InteractiveMode {
 		);
 	}
 
-	private formatHarnessPackageSelection(
-		selectors: string[],
-		overlay: PackageOverlay | undefined,
-	): string {
+	private formatHarnessPackageSelection(selectors: string[], overlay: PackageOverlay | undefined): string {
 		if (selectors.length === 0) return "- none";
 		const packageDirs = new Map((overlay?.packages ?? []).map((pkg) => [pkg.id, pkg.dir]));
 		return selectors
@@ -4811,7 +4811,20 @@ export class InteractiveMode {
 				children: (await this.harnessMenuItems()).children,
 			},
 			{ value: "slash:settings", label: "Settings", aliases: ["settings"], description: "/settings" },
-			{ value: "slash:mcp", label: "MCP Servers", aliases: ["mcp"], description: "/mcp" },
+			{
+				value: "command:mcp",
+				label: "MCP Servers",
+				aliases: ["mcp"],
+				description: "MCP server management (under development)",
+				children: [
+					{
+						value: "mcp:none",
+						label: "No MCP servers configured",
+						description: "Add servers in ~/.pi/agent/mcp-servers.json",
+						disabled: true,
+					},
+				],
+			},
 			{ value: "slash:events", label: "Events", aliases: ["events"], description: "/events" },
 			{ value: "slash:side", label: "Side Chat", aliases: ["side", "btw", "s"], description: "/side" },
 			{
@@ -4824,8 +4837,26 @@ export class InteractiveMode {
 			{ value: "slash:reload", label: "Reload", aliases: ["reload"], description: "/reload" },
 			{ value: "slash:tree", label: "Tree", aliases: ["tree"], description: "/tree" },
 			{ value: "slash:resume", label: "Resume", aliases: ["resume"], description: "/resume" },
-			{ value: "slash:trust", label: "Trust", aliases: ["trust"], description: "/trust" },
-			{ value: "slash:login", label: "Login", aliases: ["login"], description: "/login" },
+			{
+				value: "command:trust",
+				label: "Trust",
+				aliases: ["trust"],
+				description: (() => {
+					const cwd = this.sessionManager.getCwd();
+					const trustStore = new ProjectTrustStore(this.runtimeHost.services.agentDir);
+					const savedDecision = trustStore.getEntry(cwd);
+					const savedLabel = savedDecision === null ? "none" : savedDecision.decision ? "trusted" : "untrusted";
+					return `current: ${savedLabel}`;
+				})(),
+				children: this.trustMenuItems().items,
+			},
+			{
+				value: "command:login",
+				label: "Login",
+				aliases: ["login"],
+				description: "Authenticate with subscription or API key",
+				children: this.loginMenuItems(),
+			},
 			{ value: "slash:new", label: "New Session", aliases: ["new", "clear"], description: "/new" },
 			{ value: "slash:hotkeys", label: "Hotkeys", aliases: ["hotkeys"], description: "/hotkeys" },
 			{ value: "slash:quit", label: "Quit", aliases: ["quit", "exit"], description: "/quit" },
@@ -4849,6 +4880,33 @@ export class InteractiveMode {
 			const [, rawProvider, rawId] = item.value.split(":");
 			const model = this.session.modelRegistry.find(decodeMenuValuePart(rawProvider), decodeMenuValuePart(rawId));
 			if (model) void this.setSelectedModel(model);
+			return;
+		}
+		if (item.value.startsWith("trust:")) {
+			const index = Number.parseInt(item.value.slice("trust:".length), 10);
+			if (!Number.isNaN(index)) this.applyTrustSelection(index);
+			return;
+		}
+		if (item.value.startsWith("login:")) {
+			if (item.value === "login:none") return;
+			const [, rawAuthType, rawId] = item.value.split(":");
+			const authType = decodeMenuValuePart(rawAuthType) as "oauth" | "api_key";
+			const providerId = decodeMenuValuePart(rawId);
+			const providerOption = this.getLoginProviderOptions(authType).find((p) => p.id === providerId);
+			if (!providerOption) return;
+			void (async () => {
+				if (providerOption.authType === "oauth") {
+					await this.showLoginDialog(providerOption.id, providerOption.name);
+				} else if (providerOption.id === BEDROCK_PROVIDER_ID) {
+					this.showBedrockSetupDialog(providerOption.id, providerOption.name);
+				} else {
+					await this.showApiKeyLoginDialog(providerOption.id, providerOption.name);
+				}
+			})();
+			return;
+		}
+		if (item.value.startsWith("mcp:")) {
+			// MCP is a placeholder; no action yet.
 			return;
 		}
 		if (this.handleHarnessMenuItem(item)) {
@@ -5364,10 +5422,7 @@ export class InteractiveMode {
 			return true;
 		}
 		if (parts[1] === "tool" && parts[2] && parts[3] === "impl" && parts[4]) {
-			void this.showHarnessToolImplementationSelection(
-				decodeMenuValuePart(parts[2]),
-				decodeMenuValuePart(parts[4]),
-			);
+			void this.showHarnessToolImplementationSelection(decodeMenuValuePart(parts[2]), decodeMenuValuePart(parts[4]));
 			return true;
 		}
 		if (parts[1] === "compact" && (parts[2] === "on" || parts[2] === "off")) {
@@ -5441,7 +5496,9 @@ export class InteractiveMode {
 		const module = registry.registry?.modules.find((candidate) => candidate.id === `tool/${toolName}`);
 		const implementation = module?.implementations.find((candidate) => candidate.source === source);
 		const piImplementation = module?.implementations.find((candidate) => candidate.source === "pi");
-		const activeSource = this.session.getAllTools().some((tool) => tool.name === toolName && tool.sourceInfo.source === "builtin")
+		const activeSource = this.session
+			.getAllTools()
+			.some((tool) => tool.name === toolName && tool.sourceInfo.source === "builtin")
 			? "pi"
 			: "unknown";
 		const requestedPath = implementation?.path ?? "not registered";
@@ -5813,28 +5870,46 @@ export class InteractiveMode {
 		}
 	}
 
-	private showTrustSelector(): void {
+	// Builds the trust options as a flat menu (leaves). Reused by the /trust
+	// command and the dock's Trust submenu so left/right navigation is uniform.
+	private trustMenuItems(): { items: FloatingMenuItem[]; subtitle: string } {
 		const cwd = this.sessionManager.getCwd();
 		const trustStore = new ProjectTrustStore(this.runtimeHost.services.agentDir);
 		const savedDecision = trustStore.getEntry(cwd);
-		this.showSelector((done) => {
-			const selector = new TrustSelectorComponent({
-				cwd,
-				savedDecision,
-				projectTrusted: this.settingsManager.isProjectTrusted(),
-				onSelect: (selection) => {
-					trustStore.setMany(selection.updates);
-					done();
-					this.showStatus(
-						`Saved trust decision: ${selection.trusted ? "trusted" : "untrusted"}. Restart pi for this to take effect.`,
-					);
-				},
-				onCancel: () => {
-					done();
-					this.ui.requestRender();
-				},
-			});
-			return { component: selector, focus: selector };
+		const options = getProjectTrustOptions(cwd);
+		const savedLabel = savedDecision === null ? "none" : savedDecision.decision ? "trusted" : "untrusted";
+		const sessionLabel = this.settingsManager.isProjectTrusted() ? "trusted" : "untrusted";
+		const isSaved = (option: ProjectTrustOption): boolean =>
+			option.savedPath !== undefined &&
+			savedDecision?.decision === option.trusted &&
+			savedDecision.path === option.savedPath;
+		const items: FloatingMenuItem[] = options.map((option, index) => ({
+			value: `trust:${index}`,
+			label: option.label,
+			active: isSaved(option),
+		}));
+		return { items, subtitle: `${cwd} · saved: ${savedLabel} · session: ${sessionLabel}` };
+	}
+
+	private applyTrustSelection(index: number): void {
+		const cwd = this.sessionManager.getCwd();
+		const trustStore = new ProjectTrustStore(this.runtimeHost.services.agentDir);
+		const option = getProjectTrustOptions(cwd)[index];
+		if (!option) return;
+		trustStore.setMany(option.updates);
+		this.showStatus(
+			`Saved trust decision: ${option.trusted ? "trusted" : "untrusted"}. Restart pi for this to take effect.`,
+		);
+	}
+
+	private showTrustSelector(): void {
+		const { items, subtitle } = this.trustMenuItems();
+		this.showFloatingMenu("trust", subtitle, items, (item) => {
+			if (!item.value.startsWith("trust:")) return false;
+			const index = Number.parseInt(item.value.slice("trust:".length), 10);
+			if (Number.isNaN(index)) return false;
+			this.applyTrustSelection(index);
+			return undefined;
 		});
 	}
 
@@ -6138,19 +6213,17 @@ export class InteractiveMode {
 	}
 
 	private showMcpManager(): void {
-		this.showSelector((done) => {
-			const overlay = createMcpOverlay(
-				(selectedId: string) => {
-					done();
-					this.showStatus(`Selected MCP server: ${selectedId}`);
-				},
-				() => {
-					done();
-					this.showStatus("MCP manager closed");
-				}
-			);
-			return { component: overlay, focus: overlay };
-		});
+		// MCP management is still a placeholder; surface it through the shared dock
+		// menu so navigation (left/right/esc) matches every other panel.
+		const items: FloatingMenuItem[] = [
+			{
+				value: "mcp:none",
+				label: "No MCP servers configured",
+				description: "Add servers in ~/.pi/agent/mcp-servers.json",
+				disabled: true,
+			},
+		];
+		this.showFloatingMenu("mcp", "MCP server management (under development)", items, () => false);
 	}
 
 	private showSessionSelector(): void {
@@ -6278,63 +6351,60 @@ export class InteractiveMode {
 	}
 
 	private showLoginAuthTypeSelector(): void {
-		const subscriptionLabel = "Use a subscription";
-		const apiKeyLabel = "Use an API key";
-		this.showSelector((done) => {
-			const selector = new ExtensionSelectorComponent(
-				"Select authentication method:",
-				[subscriptionLabel, apiKeyLabel],
-				(option) => {
-					done();
-					const authType = option === subscriptionLabel ? "oauth" : "api_key";
-					this.showLoginProviderSelector(authType);
-				},
-				() => {
-					done();
-					this.ui.requestRender();
-				},
-			);
-			return { component: selector, focus: selector };
+		this.showLoginMenu();
+	}
+
+	// Builds the two-level login menu tree used by the stack-based dock menu:
+	//   root = authentication methods (subscription / api key)
+	//     children = providers for that method (leaves)
+	// Selecting a provider leaf launches the matching OAuth / API-key dialog.
+	// left/esc between levels is handled by FloatingMenuBody for free.
+	private loginMenuItems(): FloatingMenuItem[] {
+		const methods: Array<{ authType: "oauth" | "api_key"; label: string; empty: string }> = [
+			{ authType: "oauth", label: "Use a subscription", empty: "No subscription providers available" },
+			{ authType: "api_key", label: "Use an API key", empty: "No API key providers available" },
+		];
+		return methods.map((method) => {
+			const providers = this.getLoginProviderOptions(method.authType);
+			const children: FloatingMenuItem[] = providers.map((provider) => {
+				const status = this.session.modelRegistry.getProviderAuthStatus(provider.id);
+				return {
+					value: `login:${encodeMenuValuePart(provider.authType)}:${encodeMenuValuePart(provider.id)}`,
+					label: provider.name,
+					description: status.configured
+						? `configured${status.source ? ` (${status.source})` : ""}`
+						: "not configured",
+					active: status.configured,
+				};
+			});
+			return {
+				value: `login-method:${method.authType}`,
+				label: method.label,
+				description: children.length > 0 ? `${children.length} providers` : method.empty,
+				children: children.length > 0 ? children : [{ value: "login:none", label: method.empty, disabled: true }],
+			};
 		});
 	}
 
-	private showLoginProviderSelector(authType: "oauth" | "api_key"): void {
-		const providerOptions = this.getLoginProviderOptions(authType);
-		if (providerOptions.length === 0) {
-			this.showStatus(
-				authType === "oauth" ? "No subscription providers available." : "No API key providers available.",
-			);
-			return;
-		}
-
-		this.showSelector((done) => {
-			const selector = new OAuthSelectorComponent(
-				"login",
-				this.session.modelRegistry.authStorage,
-				providerOptions,
-				async (providerId: string) => {
-					done();
-
-					const providerOption = providerOptions.find((provider) => provider.id === providerId);
-					if (!providerOption) {
-						return;
-					}
-
-					if (providerOption.authType === "oauth") {
-						await this.showLoginDialog(providerOption.id, providerOption.name);
-					} else if (providerOption.id === BEDROCK_PROVIDER_ID) {
-						this.showBedrockSetupDialog(providerOption.id, providerOption.name);
-					} else {
-						await this.showApiKeyLoginDialog(providerOption.id, providerOption.name);
-					}
-				},
-				() => {
-					done();
-					this.showLoginAuthTypeSelector();
-				},
-				(providerId) => this.session.modelRegistry.getProviderAuthStatus(providerId),
-			);
-			return { component: selector, focus: selector };
+	private showLoginMenu(): void {
+		const items = this.loginMenuItems();
+		this.showFloatingMenu("login", "authentication method / provider", items, (item) => {
+			if (!item.value.startsWith("login:") || item.value === "login:none") return false;
+			const [, rawAuthType, rawId] = item.value.split(":");
+			const authType = decodeMenuValuePart(rawAuthType) as "oauth" | "api_key";
+			const providerId = decodeMenuValuePart(rawId);
+			const providerOption = this.getLoginProviderOptions(authType).find((provider) => provider.id === providerId);
+			if (!providerOption) return false;
+			void (async () => {
+				if (providerOption.authType === "oauth") {
+					await this.showLoginDialog(providerOption.id, providerOption.name);
+				} else if (providerOption.id === BEDROCK_PROVIDER_ID) {
+					this.showBedrockSetupDialog(providerOption.id, providerOption.name);
+				} else {
+					await this.showApiKeyLoginDialog(providerOption.id, providerOption.name);
+				}
+			})();
+			return undefined;
 		});
 	}
 
