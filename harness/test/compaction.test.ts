@@ -10,6 +10,17 @@ import {
 	type Usage,
 } from "@earendil-works/pi-ai";
 import { beforeEach, describe, expect, it } from "vitest";
+import { buildSessionContext } from "../core/session/pi/session.ts";
+import type {
+	BranchSummaryEntry,
+	CompactionEntry,
+	CustomMessageEntry,
+	MessageEntry,
+	ModelChangeEntry,
+	SessionTreeEntry,
+	ThinkingLevelChangeEntry,
+} from "../core/types/types.ts";
+import { getOrThrow } from "../core/types/types.ts";
 import {
 	type CompactionPreparation,
 	type CompactionSettings,
@@ -26,17 +37,6 @@ import {
 	serializeConversation,
 	shouldCompact,
 } from "../modules/compaction/pi/compaction.ts";
-import { buildSessionContext } from "../core/session/pi/session.ts";
-import type {
-	BranchSummaryEntry,
-	CompactionEntry,
-	CustomMessageEntry,
-	MessageEntry,
-	ModelChangeEntry,
-	SessionTreeEntry,
-	ThinkingLevelChangeEntry,
-} from "../core/types/types.ts";
-import { getOrThrow } from "../core/types/types.ts";
 
 let nextId = 0;
 function createId(): string {
