@@ -5,7 +5,7 @@
  */
 
 // Import from other harness modules using relative paths
-// Example: import type { Session } from "../../session/pi/session.ts";
+// Example: import type { Session } from "../../core/session/pi/session.ts";
 
 /**
  * Example configuration interface

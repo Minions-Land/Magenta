@@ -138,37 +138,37 @@ path = "modules/system-prompt/system-prompt.toml"
 kind = "loop"
 name = "loop"
 description = "Agent harness - main loop orchestration."
-path = "loop/loop.toml"
+path = "core/loop/loop.toml"
 
 [[components]]
 kind = "session"
 name = "session"
 description = "Session management with jsonl and memory storage backends."
-path = "session/session.toml"
+path = "core/session/session.toml"
 
 [[components]]
 kind = "env"
 name = "env"
 description = "Environment adapters for Node.js runtime integration."
-path = "env/env.toml"
+path = "core/env/env.toml"
 
 [[components]]
 kind = "util"
 name = "utils"
 description = "Shared utilities for shell output formatting and text truncation."
-path = "utils/utils.toml"
+path = "core/utils/utils.toml"
 
 [[components]]
 kind = "contract"
 name = "messages"
 description = "Agent message contracts and conversion utilities shared across harness modules."
-path = "messages/messages.toml"
+path = "core/messages/messages.toml"
 
 [[components]]
 kind = "contract"
 name = "types"
 description = "Shared harness type contracts, result helpers, execution environment, and errors."
-path = "types/types.toml"
+path = "core/types/types.toml"
 
 [[components]]
 kind = "memory"

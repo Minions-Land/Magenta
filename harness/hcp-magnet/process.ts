@@ -14,7 +14,7 @@ import {
 } from "../modules/runtime/magenta/process-runtime.ts";
 import type { SandboxProfile, SandboxSelection } from "../modules/sandbox/contract.ts";
 import { loadSandboxProviderFromPack, selectSandboxProfile } from "../modules/sandbox/magenta/sandbox.ts";
-import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, type TruncationResult } from "../utils/pi/truncate.ts";
+import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, type TruncationResult } from "../core/utils/pi/truncate.ts";
 import type { HcpRequest } from "../hcp-contract/hcp-server.ts";
 import { parseToml, type TomlTable } from "../hcp-client/registry/registry.ts";
 import { UniversalMagnet } from "./universal.ts";

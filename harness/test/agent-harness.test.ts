@@ -9,11 +9,11 @@ import {
 } from "@earendil-works/pi-ai";
 import { getModel } from "@earendil-works/pi-ai/compat";
 import { describe, expect, it } from "vitest";
-import { NodeExecutionEnv } from "../env/pi/nodejs.ts";
-import { AgentHarness } from "../loop/pi/agent-harness.ts";
-import { InMemorySessionStorage } from "../session/pi/memory-storage.ts";
-import { Session } from "../session/pi/session.ts";
-import type { PromptTemplate, Skill } from "../types/types.ts";
+import { NodeExecutionEnv } from "../core/env/pi/nodejs.ts";
+import { AgentHarness } from "../core/loop/pi/agent-harness.ts";
+import { InMemorySessionStorage } from "../core/session/pi/memory-storage.ts";
+import { Session } from "../core/session/pi/session.ts";
+import type { PromptTemplate, Skill } from "../core/types/types.ts";
 import { calculateTool } from "./utils/calculate.ts";
 import { getCurrentTimeTool } from "./utils/get-current-time.ts";
 

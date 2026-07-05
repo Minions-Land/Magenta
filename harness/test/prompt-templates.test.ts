@@ -1,7 +1,7 @@
 import { symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { NodeExecutionEnv } from "../env/pi/nodejs.ts";
+import { NodeExecutionEnv } from "../core/env/pi/nodejs.ts";
 import {
 	formatPromptTemplateInvocation,
 	loadPromptTemplates,

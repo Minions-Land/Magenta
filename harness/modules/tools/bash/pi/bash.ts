@@ -1,7 +1,7 @@
 import type { AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
 import { type Static, Type } from "typebox";
-import { OutputAccumulator } from "../../../../utils/pi/output-accumulator.ts";
-import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize, type TruncationResult } from "../../../../utils/pi/truncate.ts";
+import { OutputAccumulator } from "../../../../core/utils/pi/output-accumulator.ts";
+import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize, type TruncationResult } from "../../../../core/utils/pi/truncate.ts";
 
 export const bashSchema = Type.Object({
 	command: Type.String({ description: "Bash command to execute" }),

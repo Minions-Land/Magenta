@@ -2,8 +2,8 @@ import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { mkdir as fsMkdir, writeFile as fsWriteFile } from "fs/promises";
 import { dirname } from "path";
 import { type Static, Type } from "typebox";
-import { withFileMutationQueue } from "../../../../utils/pi/file-mutation-queue.ts";
-import { resolveToCwd } from "../../../../utils/pi/path-utils.ts";
+import { withFileMutationQueue } from "../../../../core/utils/pi/file-mutation-queue.ts";
+import { resolveToCwd } from "../../../../core/utils/pi/path-utils.ts";
 
 export const writeSchema = Type.Object({
 	path: Type.String({ description: "Path to the file to write (relative or absolute)" }),

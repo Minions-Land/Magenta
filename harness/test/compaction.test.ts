@@ -26,7 +26,7 @@ import {
 	serializeConversation,
 	shouldCompact,
 } from "../modules/compaction/pi/compaction.ts";
-import { buildSessionContext } from "../session/pi/session.ts";
+import { buildSessionContext } from "../core/session/pi/session.ts";
 import type {
 	BranchSummaryEntry,
 	CompactionEntry,
@@ -35,8 +35,8 @@ import type {
 	ModelChangeEntry,
 	SessionTreeEntry,
 	ThinkingLevelChangeEntry,
-} from "../types/types.ts";
-import { getOrThrow } from "../types/types.ts";
+} from "../core/types/types.ts";
+import { getOrThrow } from "../core/types/types.ts";
 
 let nextId = 0;
 function createId(): string {

@@ -2,7 +2,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { NodeExecutionEnv } from "../env/pi/nodejs.ts";
+import { NodeExecutionEnv } from "../core/env/pi/nodejs.ts";
 import { loadSystemPromptDescriptor } from "../modules/system-prompt/pi/descriptor.ts";
 import { formatSkillsForSystemPrompt } from "../modules/system-prompt/pi/system-prompt.ts";
 

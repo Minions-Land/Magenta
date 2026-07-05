@@ -1,7 +1,7 @@
 import type { AgentEvent, AgentMessage, AgentTool, QueueMode, ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { ImageContent, Model, Models, SimpleStreamOptions, TextContent, Transport } from "@earendil-works/pi-ai";
-import type { CompactionPreparation, CompactionProvider } from "../modules/compaction/contract.ts";
-import type { HcpClient } from "../hcp-client/hcp-client.ts";
+import type { CompactionPreparation, CompactionProvider } from "../../modules/compaction/contract.ts";
+import type { HcpClient } from "../../hcp-client/hcp-client.ts";
 import type { Session } from "../session/pi/session.ts";
 
 /** Result of a fallible operation. Expected failures are returned as `ok: false` instead of thrown. */
@@ -823,4 +823,4 @@ export interface AgentHarnessOptions<
 }
 
 export type { AgentHarness } from "../loop/pi/agent-harness.ts";
-export type { CompactionProvider } from "../modules/compaction/contract.ts";
+export type { CompactionProvider } from "../../modules/compaction/contract.ts";

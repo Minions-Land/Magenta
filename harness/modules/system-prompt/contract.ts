@@ -1,5 +1,5 @@
 import type { TomlTable } from "../../hcp-client/registry/registry.ts";
-import type { Skill } from "../../types/types.ts";
+import type { Skill } from "../../core/types/types.ts";
 
 /** Options to customize the skills system-prompt block wording without changing its XML structure. */
 export interface FormatSkillsOptions {

@@ -2,7 +2,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import ignore from "ignore";
 import { parse } from "yaml";
-import { type ExecutionEnv, type FileInfo, type Result, type Skill, toError } from "../../../types/types.ts";
+import { type ExecutionEnv, type FileInfo, type Result, type Skill, toError } from "../../../core/types/types.ts";
 
 const MAX_NAME_LENGTH = 64;
 const MAX_DESCRIPTION_LENGTH = 1024;

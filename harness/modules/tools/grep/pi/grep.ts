@@ -4,7 +4,7 @@ import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import { spawn } from "child_process";
 import path from "path";
 import { type Static, Type } from "typebox";
-import { resolveToCwd } from "../../../../utils/pi/path-utils.ts";
+import { resolveToCwd } from "../../../../core/utils/pi/path-utils.ts";
 import {
 	DEFAULT_MAX_BYTES,
 	formatSize,
@@ -12,7 +12,7 @@ import {
 	type TruncationResult,
 	truncateHead,
 	truncateLine,
-} from "../../../../utils/pi/truncate.ts";
+} from "../../../../core/utils/pi/truncate.ts";
 
 export const grepSchema = Type.Object({
 	pattern: Type.String({ description: "Search pattern (regex or literal string)" }),

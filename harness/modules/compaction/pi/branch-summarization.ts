@@ -5,9 +5,9 @@ import {
 	createBranchSummaryMessage,
 	createCompactionSummaryMessage,
 	createCustomMessage,
-} from "../../../messages/messages.ts";
-import type { BranchSummaryResult, Session, SessionTreeEntry } from "../../../types/types.ts";
-import { BranchSummaryError, err, ok, type Result, SessionError } from "../../../types/types.ts";
+} from "../../../core/messages/messages.ts";
+import type { BranchSummaryResult, Session, SessionTreeEntry } from "../../../core/types/types.ts";
+import { BranchSummaryError, err, ok, type Result, SessionError } from "../../../core/types/types.ts";
 import { estimateTokens, SUMMARIZATION_SYSTEM_PROMPT } from "./compaction.ts";
 import {
 	computeFileLists,

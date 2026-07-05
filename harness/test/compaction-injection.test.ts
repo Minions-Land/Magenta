@@ -2,12 +2,12 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { createModels } from "@earendil-works/pi-ai";
 import { getModel } from "@earendil-works/pi-ai/compat";
 import { describe, expect, it } from "vitest";
-import { NodeExecutionEnv } from "../env/pi/nodejs.ts";
-import { AgentHarness } from "../loop/pi/agent-harness.ts";
-import { InMemorySessionStorage } from "../session/pi/memory-storage.ts";
-import { Session } from "../session/pi/session.ts";
+import { NodeExecutionEnv } from "../core/env/pi/nodejs.ts";
+import { AgentHarness } from "../core/loop/pi/agent-harness.ts";
+import { InMemorySessionStorage } from "../core/session/pi/memory-storage.ts";
+import { Session } from "../core/session/pi/session.ts";
 import { piCompactionProvider, type CompactionProvider } from "../modules/compaction/pi/provider.ts";
-import { ok, type CompactionPreparation, type CompactionResult } from "../types/types.ts";
+import { ok, type CompactionPreparation, type CompactionResult } from "../core/types/types.ts";
 import {
 	buildDefaultCapabilityHcp,
 	type CapabilityBuilderTable,

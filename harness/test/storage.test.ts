@@ -1,10 +1,10 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { NodeExecutionEnv } from "../env/pi/nodejs.ts";
-import { JsonlSessionStorage, loadJsonlSessionMetadata } from "../session/pi/jsonl-storage.ts";
-import { InMemorySessionStorage } from "../session/pi/memory-storage.ts";
-import { type MessageEntry, ok, type SessionMetadata } from "../types/types.ts";
+import { NodeExecutionEnv } from "../core/env/pi/nodejs.ts";
+import { JsonlSessionStorage, loadJsonlSessionMetadata } from "../core/session/pi/jsonl-storage.ts";
+import { InMemorySessionStorage } from "../core/session/pi/memory-storage.ts";
+import { type MessageEntry, ok, type SessionMetadata } from "../core/types/types.ts";
 import { createAssistantMessage, createTempDir, createUserMessage } from "./session-test-utils.ts";
 
 describe("InMemorySessionStorage", () => {

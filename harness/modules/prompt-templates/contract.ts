@@ -1,4 +1,4 @@
-import type { ExecutionEnv, PromptTemplate } from "../../types/types.ts";
+import type { ExecutionEnv, PromptTemplate } from "../../core/types/types.ts";
 
 export type PromptTemplateDiagnosticCode = "file_info_failed" | "list_failed" | "read_failed" | "parse_failed";
 

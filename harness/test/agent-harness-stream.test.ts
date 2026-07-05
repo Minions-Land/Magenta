@@ -7,10 +7,10 @@ import {
 	type StreamOptions,
 } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
-import { NodeExecutionEnv } from "../env/pi/nodejs.ts";
-import { AgentHarness } from "../loop/pi/agent-harness.ts";
-import { InMemorySessionStorage } from "../session/pi/memory-storage.ts";
-import { Session } from "../session/pi/session.ts";
+import { NodeExecutionEnv } from "../core/env/pi/nodejs.ts";
+import { AgentHarness } from "../core/loop/pi/agent-harness.ts";
+import { InMemorySessionStorage } from "../core/session/pi/memory-storage.ts";
+import { Session } from "../core/session/pi/session.ts";
 import { calculateTool } from "./utils/calculate.ts";
 
 /** Shared collection; each faux provider gets a unique id so coexisting fakes route correctly. */

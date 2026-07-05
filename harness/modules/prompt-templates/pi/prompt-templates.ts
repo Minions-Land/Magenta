@@ -7,7 +7,7 @@ import {
 	type PromptTemplateDiagnostic,
 	type PromptTemplateProviderContract,
 } from "../contract.ts";
-import { type ExecutionEnv, type FileInfo, type PromptTemplate, type Result, toError } from "../../../types/types.ts";
+import { type ExecutionEnv, type FileInfo, type PromptTemplate, type Result, toError } from "../../../core/types/types.ts";
 
 export {
 	expandPromptTemplate,

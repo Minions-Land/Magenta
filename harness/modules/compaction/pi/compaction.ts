@@ -14,8 +14,8 @@ import {
 	createBranchSummaryMessage,
 	createCompactionSummaryMessage,
 	createCustomMessage,
-} from "../../../messages/messages.ts";
-import { buildSessionContext } from "../../../session/pi/session.ts";
+} from "../../../core/messages/messages.ts";
+import { buildSessionContext } from "../../../core/session/pi/session.ts";
 import {
 	type CompactionEntry,
 	CompactionError,
@@ -23,7 +23,7 @@ import {
 	ok,
 	type Result,
 	type SessionTreeEntry,
-} from "../../../types/types.ts";
+} from "../../../core/types/types.ts";
 import {
 	computeFileLists,
 	createFileOps,

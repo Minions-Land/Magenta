@@ -10,13 +10,8 @@ const selectedTrees = [
 	"hcp-magnet",
 	"hcp-contract",
 	"catalog",
-	"env",
-	"loop",
-	"messages",
+	"core",
 	"modules",
-	"session",
-	"types",
-	"utils",
 ];
 
 const copiedFileNames = new Set([".gitignore", "Cargo.lock", "Cargo.toml", "README.md"]);

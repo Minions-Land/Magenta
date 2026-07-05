@@ -1,8 +1,8 @@
 import { existsSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { NodeExecutionEnv } from "../env/pi/nodejs.ts";
-import { JsonlSessionRepo } from "../session/pi/jsonl-repo.ts";
-import { InMemorySessionRepo } from "../session/pi/memory-repo.ts";
+import { NodeExecutionEnv } from "../core/env/pi/nodejs.ts";
+import { JsonlSessionRepo } from "../core/session/pi/jsonl-repo.ts";
+import { InMemorySessionRepo } from "../core/session/pi/memory-repo.ts";
 import { createAssistantMessage, createTempDir, createUserMessage } from "./session-test-utils.ts";
 
 describe("InMemorySessionRepo", () => {

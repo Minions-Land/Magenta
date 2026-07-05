@@ -1,9 +1,9 @@
 import { access, chmod, realpath, symlink } from "node:fs/promises";
 import { delimiter, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { NodeExecutionEnv } from "../env/pi/nodejs.ts";
-import { FileError, getOrThrow } from "../types/types.ts";
-import { executeShellWithCapture } from "../utils/pi/shell-output.ts";
+import { NodeExecutionEnv } from "../core/env/pi/nodejs.ts";
+import { FileError, getOrThrow } from "../core/types/types.ts";
+import { executeShellWithCapture } from "../core/utils/pi/shell-output.ts";
 import { createTempDir } from "./session-test-utils.ts";
 
 const chmodRestorePaths: string[] = [];

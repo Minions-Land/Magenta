@@ -154,13 +154,13 @@
     },
     "runtime-provider:session:current": {
       "state": "integrated",
-      "component": { "kind": "session", "name": "session", "path": "session/session.toml" },
+      "component": { "kind": "session", "name": "session", "path": "core/session/session.toml" },
       "relation": "covered-by-magenta3-module",
       "notes": "Magenta3 has a TS session module with jsonl and memory storage backends."
     },
     "general-harness:loop:react-loop": {
       "state": "integrated",
-      "component": { "kind": "loop", "name": "loop", "path": "loop/loop.toml" },
+      "component": { "kind": "loop", "name": "loop", "path": "core/loop/loop.toml" },
       "relation": "covered-by-magenta3-module",
       "notes": "Magenta3 uses the pi-style agent harness loop; HCP remains outside the hot path."
     },

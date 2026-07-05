@@ -55,10 +55,10 @@ export * from "./show/pi/show.ts";
 export * from "./ssh/magenta/ssh.ts";
 // Shared utility modules live under utils/pi, not tools/<tool>. Re-export them
 // here for the existing @magenta/harness tool-facing public surface.
-export * from "../../utils/pi/edit-diff.ts";
-export * from "../../utils/pi/file-mutation-queue.ts";
-export * from "../../utils/pi/output-accumulator.ts";
-export * from "../../utils/pi/path-utils.ts";
+export * from "../../core/utils/pi/edit-diff.ts";
+export * from "../../core/utils/pi/file-mutation-queue.ts";
+export * from "../../core/utils/pi/output-accumulator.ts";
+export * from "../../core/utils/pi/path-utils.ts";
 // Tool abstraction surface (AgentTool contract + ToolFactory).
 export * from "./tool.ts";
 export * from "./write/pi/write.ts";

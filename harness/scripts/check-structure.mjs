@@ -16,21 +16,16 @@ const allowedTopLevel = new Set([
 	"hcp-contract",
 	"hcp-magnet",
 	"catalog",
+	"core",
 	"docs",
-	"env",
 	"harness.toml",
 	"index.ts",
-	"loop",
-	"messages",
 	"modules",
 	"package.json",
 	"scripts",
-	"session",
 	"test",
 	"tsconfig.build.json",
 	"tsconfig.json",
-	"types",
-	"utils",
 	"vitest.config.ts",
 ]);
 
@@ -54,23 +49,23 @@ const sourceModuleDirs = [
 	"catalog",
 	"modules/compaction",
 	"modules/context",
-	"env",
+	"core/env",
 	"modules/hooks",
-	"loop",
+	"core/loop",
 	"modules/memory",
-	"messages",
+	"core/messages",
 	"modules/policy",
 	"modules/prompt-templates",
 	"modules/runtime",
 	"modules/sandbox",
-	"session",
+	"core/session",
 	"modules/skills",
 	"modules/system-prompt",
 	"test",
 	"modules/tools",
 	"modules/tools-search",
-	"types",
-	"utils",
+	"core/types",
+	"core/utils",
 ];
 
 function fail(message) {
@@ -302,7 +297,7 @@ function checkToolLayout() {
 	}
 	const supportDir = join(toolsRoot, "support");
 	if (existsSync(supportDir)) {
-		fail("harness/modules/tools/support is invalid; shared utility code must live under harness/utils/<source>/");
+		fail("harness/modules/tools/support is invalid; shared utility code must live under harness/core/utils/<source>/");
 	}
 	for (const name of foldedToolModuleNames) {
 		const dir = join(toolsRoot, name);

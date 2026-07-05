@@ -6,8 +6,8 @@ import type {
 	CompactionError,
 	Result,
 	SessionTreeEntry,
-} from "../../types/types.ts";
-import type { Session } from "../../session/pi/session.ts";
+} from "../../core/types/types.ts";
+import type { Session } from "../../core/session/pi/session.ts";
 import type {
 	CompactionPreparation,
 	CompactionResult,
