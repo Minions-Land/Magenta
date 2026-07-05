@@ -92,7 +92,7 @@ baseline: `"describe"`, `"configure"`, `"enable"`, `"disable"`, `"state"`,
 [[components]]
 kind = "assembly"
 name = "hcp"
-path = "hcp/hcp.toml"
+path = "hcp-client/hcp-client.toml"
 ```
 
 ## Dependencies

@@ -175,4 +175,3 @@ async def call_tool(name: str, arguments: dict):
 - `examples/` - Working examples
 - `client/README.md` - Client-specific documentation
 - `server/README.md` - Server-specific documentation
-- `/Users/mjm/Magenta3/MCP_INTEGRATION_RESEARCH.md` - Full research report

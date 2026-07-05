@@ -27,7 +27,7 @@ Rules:
 - Use component kinds such as `skill`, `tool`, `python-runtime`, `env`,
   `system-prompt`, and `append-system-prompt`.
 - Register system prompts through a `system-prompt/*.toml` descriptor, matching
-  `harness/system-prompt/system-prompt.toml`; the descriptor may point to
+  `harness/modules/system-prompt/system-prompt.toml`; the descriptor may point to
   package-local Markdown with `content_path`.
 - Prefer root components over `general/` or `task/` profile wrappers unless a
   package truly needs optional profile subsets.
@@ -36,5 +36,5 @@ Rules:
   defaults.
 
 Use `packages/AutOmicScience/` and
-`harness/hcp/package-overlay/README.md` as the current executable
+`harness/hcp-client/overlay/README.md` as the current executable
 reference.

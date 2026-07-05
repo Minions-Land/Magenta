@@ -55,7 +55,7 @@ directly, off the HCP path.
 3. **No second selection registry (spec §8, §10.1).** Which source wins a slot
    is decided once by the HcpClient / package overlay. Your magnet only *binds*;
    it makes no selection decisions. The builder/default/hotSwappable tables are
-   *derived* from the `hcp/magnet/sources.ts` barrel — never hand-maintain a
+   *derived* from the `hcp-client/assembly/sources.ts` barrel — never hand-maintain a
    central builder map.
 4. **Keep the magnet thin.** It is a last-inch adapter: binding + (for tools)
    transport selection only. No business logic.
@@ -72,10 +72,10 @@ directly, off the HCP path.
 
 ## Task 1 — Add a tool
 
-A tool is an independent module under `harness/tools/<name>/`.
+A tool is an independent module under `harness/modules/tools/<name>/`.
 
 ```
-harness/tools/my-tool/
+harness/modules/tools/my-tool/
   my-tool.toml         — kind="tool", name, description, parameters (JSON Schema)
   pi/my-tool.ts        — the execute implementation (source = pi)
   README.md
@@ -117,7 +117,7 @@ Pick this when you are implementing one of the loop slots: `compaction`,
 new *source* to an existing slot (or, rarely, a new slot).
 
 ```
-harness/memory/
+harness/modules/memory/
   memory.toml
   magenta/            ← existing source
     magnet.ts
@@ -127,10 +127,10 @@ harness/memory/
     ...impl
 ```
 
-1. Implement your provider in `harness/memory/my-source/*.ts`.
-2. Bind it with `harness/memory/my-source/magnet.ts`:
+1. Implement your provider in `harness/modules/memory/my-source/*.ts`.
+2. Bind it with `harness/modules/memory/my-source/magnet.ts`:
    ```typescript
-   import type { CapabilitySourceMagnet } from "../../hcp/magnet/source-magnet.ts";
+   import type { CapabilitySourceMagnet } from "../../../hcp-contract/hcp-magnet.ts";
    import { MyMemoryProvider } from "./my-memory.ts";
 
    /** The my-source binding for the `memory` capability (spec §8). */
@@ -142,10 +142,10 @@ harness/memory/
      build: () => new MyMemoryProvider({}),
    };
    ```
-3. Register it in the barrel `harness/hcp/magnet/sources.ts` — add a static
+3. Register it in the barrel `harness/hcp-client/assembly/sources.ts` — add a static
    import and put it in the `CAPABILITY_SOURCE_MAGNETS` array. That's it: the
    builder table, default-source map, and hotSwappable map in
-   `hcp/magnet/capability.ts` are derived from this array. **Do not** add a
+   `hcp-client/assembly/capability.ts` are derived from this array. **Do not** add a
    central builder literal — the barrel is a dumb aggregation with no selection
    logic, and that is the invariant.
 
@@ -216,13 +216,13 @@ path = "tools/my-compute/my-compute.toml"
 - `runtime = "<name>"` matching a `python-runtime` component named `<name>` →
   `PythonModuleToolMagnet` (Python module backed).
 
-The overlay (`hcp/package-overlay/`) resolves these; you declare, it wires. See
-`hcp/package-overlay/README.md` for the exact cable rules.
+The overlay (`hcp-client/overlay/`) resolves these; you declare, it wires. See
+`hcp-client/overlay/README.md` for the exact cable rules.
 
 **Layout note.** Packages express origin via the `source =` field, and the
 package itself is the source scope, so package components use a flat
 `tools/<tool>/` / `skills/<skill>/` layout — the `<name>/<source>/` directory
-layout is for in-harness components under `harness/tools/`, not for package
+layout is for in-harness components under `harness/modules/tools/`, not for package
 components.
 
 **Big binaries stay out of git.** Materialized environments (`.pixi/`, conda

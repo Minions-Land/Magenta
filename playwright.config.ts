@@ -1,4 +1,4 @@
-import { defineConfig, devices } from '@playwright/test';
+import { defineConfig } from '@playwright/test';
 
 export default defineConfig({
   testDir: './tests/e2e',
@@ -15,10 +15,6 @@ export default defineConfig({
   },
 
   projects: [
-    {
-      name: 'cli-tests',
-      testMatch: '**/cli.test.ts',
-    },
     {
       name: 'cli-conversation',
       testMatch: '**/cli-conversation.test.ts',

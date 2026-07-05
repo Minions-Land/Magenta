@@ -3,7 +3,7 @@
 Rust process tools migrated from Magenta1 `general-harness/bins/process-tools`.
 
 The binary reads one JSON object from stdin and prints a text result to stdout.
-`ProcessToolMagnet` uses the TOML manifest in the owning `harness/tools/<tool>/magenta/` source directory to
+`ProcessToolMagnet` uses the TOML manifest in the owning `harness/modules/tools/<tool>/magenta/` source directory to
 wrap these commands as Magenta3 `AgentTool`s.
 
 Source/provenance:

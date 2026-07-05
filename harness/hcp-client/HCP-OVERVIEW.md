@@ -239,25 +239,34 @@ await agentTool.execute({
 ## Directory Structure
 
 ```
-harness/hcp/
-  hcp/
-    hcp.toml
-    hcp.ts             — HcpClient, HcpServer, HcpRequest
-    README.md
-  
-  magnet/
-    magnet.toml
-    magnet.ts          — HcpMagnet interface
-    native.ts          — NativeToolMagnet implementation
-    README.md
-  
+harness/hcp-contract/
+  hcp-magnet.ts        — HcpMagnet + CapabilitySourceMagnet interfaces
+  hcp-server.ts        — HcpServer + HcpRequest interfaces
+  README.md
+
+harness/hcp-client/
+  hcp-client.ts        — HcpClient (component resolution, assembly)
   registry/
-    registry.toml
-    pi/
-      registry.ts      — loadRegistry(), ComponentDescriptor
-    README.md
-  
-  README.md            — This file
+    registry.ts        — loadRegistry(), ComponentDescriptor, TOML parsing
+  assembly/
+    sources.ts         — Capability source magnet barrel (dumb re-export list)
+    capability.ts      — Capability builder + default-source map (derived from sources)
+    factory.ts         — Component factory (tools, capabilities, resources)
+  overlay/
+    package-overlay.ts — Package overlay loader (profile + source selection)
+    README.md          — Overlay schema and precedence rules
+  HCP-OVERVIEW.md      — This file
+  README.md
+
+harness/hcp-magnet/
+  native.ts            — NativeToolMagnet (wraps native TS tools as AgentTools)
+  process.ts           — ProcessMagnet (wraps process-backed tools)
+  hcp-process.ts       — HCP process protocol (spawn, manifest parsing)
+  universal.ts         — UniversalMagnet (selector magnet, delegates to native/process)
+  package-tool.ts      — Package tool magnet (for package-declared tools)
+  python.ts            — Python-backed tool magnet
+  schema.ts            — Shared magnet schema helpers
+  README.md
 ```
 
 ---
@@ -305,17 +314,17 @@ All three modules are registered in `harness/harness.toml`:
 [[components]]
 kind = "assembly"
 name = "hcp"
-path = "hcp/hcp/hcp.toml"
+path = "hcp-client/hcp-client.toml"
 
 [[components]]
 kind = "assembly"
 name = "magnet"
-path = "hcp/magnet/magnet.toml"
+path = "hcp-magnet/magnet.toml"
 
 [[components]]
 kind = "assembly"
 name = "registry"
-path = "hcp/registry/registry.toml"
+path = "hcp-client/registry/registry.toml"
 ```
 
 ---

@@ -10,4 +10,4 @@ stale scaffold. Keep skills under package-root `skills/`, system prompts under
 `system-prompt/` with a module descriptor such as `system-prompt.toml`, and tool
 descriptors plus implementation assets under package-root `tools/<tool>/`.
 
-See `harness/hcp/package-overlay/README.md` for the current schema and overlay precedence.
+See `harness/hcp-client/overlay/README.md` for the current schema and overlay precedence.

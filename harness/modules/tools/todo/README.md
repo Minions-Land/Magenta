@@ -8,7 +8,7 @@ The `todo` tool allows the LLM to manage a todo list within the current session.
 
 ## Migrated from
 
-Previously located at `harness/extensions/pi/bundled/todo.ts` as a PI Extension. Migrated to `harness/tools/todo/` as a native HCP tool.
+Previously located at `harness/extensions/pi/bundled/todo.ts` as a PI Extension. Migrated to `harness/modules/tools/todo/` as a native HCP tool.
 
 ## Usage
 

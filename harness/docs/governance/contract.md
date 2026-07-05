@@ -33,7 +33,7 @@ package overlays, process runtimes, and UI selection keep evolving.
   Python, HCP JSONL, and script-backed tools must not bypass its sandbox and
   policy checks.
 - Repository-level `packages/` is the only package content root. The harness
-  module for package discovery and profile expansion is `harness/hcp/package-overlay`;
+  module for package discovery and profile expansion is `harness/hcp-client/overlay`;
   there must not be a second content root under `harness/packages`.
 - Harness Source names are origin-agent names, not programming languages or
   runtime mechanisms. Magenta/Magenta1-related material uses `magenta`; Pi uses
@@ -45,14 +45,14 @@ package overlays, process runtimes, and UI selection keep evolving.
   must not stand in for Module kinds or Source names.
 - Process-backed tools are still tools. Their manifests, adapter code, Rust
   crates, and local build artifacts must live under the owning capability source,
-  for example `harness/tools/grep/magenta/process-tools`; a shared
-  `harness/tools/process` capability slot is invalid.
+  for example `harness/modules/tools/grep/magenta/process-tools`; a shared
+  `harness/modules/tools/process` capability slot is invalid.
 - Tool sub-operations are not separate top-level tool modules when they serve
   the same capability slot. For example `edit-hashline` and `ast-edit-plan`
   belong under `tools/edit/<source>/`, `read-anchored` and `read-url` under
   `tools/read/<source>/`, `glob` and `fuzzy-find` under `tools/find/<source>/`,
   and `ast-grep` under `tools/grep/<source>/`.
-- `harness/tools/<name>` is reserved for selectable tool capability slots with
+- `harness/modules/tools/<name>` is reserved for selectable tool capability slots with
   `tools/<name>/<name>.toml`. Shared utility code belongs under
   `harness/utils/<source>/`, not under `tools/support`.
 - `pi/coding-agent` owns app composition, CLI/TUI surfaces, and ResourceLoader.
@@ -66,8 +66,7 @@ package overlays, process runtimes, and UI selection keep evolving.
 Manage `harness/` as four layers:
 
 1. Protocol and assembly:
-   `hcp/hcp`, `hcp/magnet`, `hcp/registry`,
-   `hcp/package-overlay`.
+   `hcp-contract`, `hcp-client` (registry, assembly, overlay), `hcp-magnet`.
 2. Runtime guardrails:
    `runtime`, `sandbox`, `policy`, `hooks`.
 3. Capability modules:

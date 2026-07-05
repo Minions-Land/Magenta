@@ -123,7 +123,7 @@ path = "skills/omics-shared"
 Known resource component kinds are `skill`, `prompt-template`, `prompt`, `theme`, `system-prompt`, `append-system-prompt`, and `brand`. Other component kinds remain in the overlay component list for later harness/tool integrations.
 
 `system-prompt` and `append-system-prompt` components should point at a module
-descriptor TOML, matching the built-in `harness/system-prompt/system-prompt.toml`
+descriptor TOML, matching the built-in `harness/modules/system-prompt/system-prompt.toml`
 shape. Package-owned descriptors can provide package-local prompt text through
 `content_path`:
 
@@ -145,7 +145,7 @@ references that escape `packages/<PackageName>/` are invalid.
 
 ## Tool Assembly
 
-Package `tool` components are descriptors. At assembly time, `assemblePackageToolMagnets()` passes those descriptors to `hcp/magnet/package-tool.ts`, which chooses the appropriate Magnet cable:
+Package `tool` components are descriptors. At assembly time, `assemblePackageToolMagnets()` passes those descriptors to `hcp-magnet/package-tool.ts`, which chooses the appropriate Magnet cable:
 
 ```toml
 kind = "tool"

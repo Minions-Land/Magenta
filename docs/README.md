@@ -22,7 +22,7 @@ Magenta3 is an AI coding assistant forked from Pi, with enhanced modular archite
 ### Project Information
 - **[../README.md](../README.md)** - Project overview and quick start
 - **[../harness/README.md](../harness/README.md)** - Harness architecture
-- **[../harness/hcp/README.md](../harness/hcp/README.md)** - Assembly layer (HCP/Magnet/Registry)
+- **[../harness/hcp-client/HCP-OVERVIEW.md](../harness/hcp-client/HCP-OVERVIEW.md)** - Assembly layer (HCP/Magnet/Registry)
 
 ## Key Concepts
 
@@ -33,7 +33,7 @@ Magenta uses a neutral brand registry allowing multiple brands (Magenta, Pi, cus
 Modular component system with source separation by origin agent (`pi/`, `magenta/`, `codex/`, `claude-code/`) plus the Magenta memory package. See [harness/README.md](../harness/README.md).
 
 ### Assembly Layer
-Component discovery, adaptation, and management at startup. See [harness/hcp/README.md](../harness/hcp/README.md).
+Component discovery, adaptation, and management at startup. See [harness/hcp-client/HCP-OVERVIEW.md](../harness/hcp-client/HCP-OVERVIEW.md).
 
 ## Version Strategy
 

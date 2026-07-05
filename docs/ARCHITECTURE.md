@@ -46,7 +46,7 @@ Magenta3 采用分层的模块化架构,将核心功能拆分为独立的包,提
   - `SimpleHashEmbedding` - 简单哈希实现
   - 向量相似度计算工具
 - **依赖**: `@earendil-works/pi-ai`
-- **位置**: `harness/memory/`
+- **位置**: `harness/modules/memory/`
 
 ### 应用层 (Application Layer)
 
@@ -156,7 +156,7 @@ export class BrowserExecutionEnv implements ExecutionEnv {
 
 ### 添加新的记忆后端
 
-实现 `harness/memory/pi/types.ts` 中的 `MemoryStore` 接口:
+实现 `harness/modules/memory/pi/types.ts` 中的 `MemoryStore` 接口:
 
 ```typescript
 export class RedisMemoryStore implements MemoryStore {

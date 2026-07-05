@@ -24,7 +24,7 @@ harness/<module-name>/
 > `sandbox`) is a *slot* that can bind several sources. Each source binds itself
 > into that slot with a thin `<module>/<source>/magnet.ts` exporting a
 > `CapabilitySourceMagnet`, and registers it in the dumb barrel
-> `harness/hcp/magnet/sources.ts`. Tools, Resources (e.g. `system-prompt`), and
+> `harness/hcp-client/assembly/sources.ts`. Tools, Resources (e.g. `system-prompt`), and
 > pure contract modules do **not** use a capability magnet — see the Magnet
 > section below.
 
@@ -80,9 +80,9 @@ If your module is a **capability** — a slot resolved by the HcpClient at
 assembly time (`compaction`, `context`, `hook`, `memory`, `policy`, `runtime`,
 `sandbox`) — each source must bind itself into the slot with a thin Magnet.
 
-1. Add `harness/my-module/<source>/magnet.ts`:
+1. Add `harness/modules/my-module/<source>/magnet.ts`:
    ```typescript
-   import type { CapabilitySourceMagnet } from "../../hcp/magnet/source-magnet.ts";
+   import type { CapabilitySourceMagnet } from "../../../hcp-contract/hcp-magnet.ts";
    import { MyProvider } from "./my-module.ts";
 
    /** The <source> source's binding for the `my-module` capability (spec §8). */
@@ -95,10 +95,10 @@ assembly time (`compaction`, `context`, `hook`, `memory`, `policy`, `runtime`,
    };
    ```
 
-2. Register it in the dumb barrel `harness/hcp/magnet/sources.ts` (a static
+2. Register it in the dumb barrel `harness/hcp-client/assembly/sources.ts` (a static
    re-export list, NO selection logic — selection is the HcpClient's job). The
    builder table, default-source map, and hotSwappable map are DERIVED from this
-   barrel in `hcp/magnet/capability.ts`; do not hand-maintain a central builder
+   barrel in `hcp-client/assembly/capability.ts`; do not hand-maintain a central builder
    literal.
 
 **Keep the Magnet thin.** It is a last-inch adapter: binding + (for tools)
@@ -117,7 +117,7 @@ builder — doing so triggers a `capability_factory_missing` error (spec §5.1).
 Tools follow a slightly different pattern — each tool is an independent module under `tools/`:
 
 ```
-harness/tools/
+harness/modules/tools/
   <tool-name>/
     <tool-name>.toml
     pi/
