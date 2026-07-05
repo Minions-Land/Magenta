@@ -1,3 +1,4 @@
+import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { HcpServer } from "../../hcp-contract/hcp-server.ts";
 
 /**
@@ -31,16 +32,38 @@ export type Isolation = "process" | "worktree";
 /**
  * A single fill-in slot the LLM provides. The skeleton owns the surrounding
  * control flow; this is the only surface the LLM writes into.
+ *
+ * This is a superset of pi's `AgentTask`: a single sub-agent is just a
+ * one-node workflow, so a slot describes "how one agent runs" with the exact
+ * same fields (`task`/`role`/`model`/`provider`/`tools`/`thinking`/timeout),
+ * plus the orchestration-only extras `focus` and `schema`. Keeping the shapes
+ * aligned lets the sub_agent facade route a lone task and a workflow slot
+ * through one code path.
  */
 export interface WorkerSlot {
-	/** What this worker does (LLM-supplied). */
-	prompt: string;
+	/** What this worker does (LLM-supplied). Mirrors AgentTask.task. */
+	task: string;
+	/** Optional role hint for the worker (LLM-supplied). */
+	role?: string;
 	/** The standard/criteria this worker must attend to (LLM-supplied, optional). */
 	focus?: string;
-	/** JSON Schema constraining the worker's structured output (optional). */
+	/**
+	 * JSON Schema constraining the worker's structured output (optional).
+	 * For verifier/judge/evaluator slots the skeleton overrides this with its
+	 * own schema — the confidence/winner/score reads are the pattern's命根子
+	 * and must not be diluted by the LLM.
+	 */
 	schema?: unknown;
 	/** Model override for this worker, e.g. a stronger model for judging (optional). */
 	model?: string;
+	/** Provider override for this worker (optional). */
+	provider?: string;
+	/** Tool whitelist for this worker. Defaults to read-only (optional). */
+	tools?: string[];
+	/** Thinking level for this worker (optional). */
+	thinking?: ThinkingLevel;
+	/** Per-worker wall-clock timeout in seconds (optional). */
+	timeoutSeconds?: number;
 }
 
 /** Options shared by every pattern request. */

@@ -84,15 +84,61 @@ export function loadClaudeCodeAuth(): ExternalCredential[] {
 	return creds;
 }
 
-/** Minimal TOML lookup: find `base_url = "..."` inside the [model_providers.*] table. */
-function parseCodexBaseUrl(toml: string): string | undefined {
-	// Grab the first base_url under any model_providers section.
-	const match = toml.match(/base_url\s*=\s*"([^"]+)"/);
-	return match?.[1];
+/** Minimal TOML lookup: find `base_url` for the active provider in config.toml.
+ *
+ * Resolution order:
+ *   1. Read `model_provider = "<name>"` from the top-level (pre-table) section.
+ *   2. Find the matching `[model_providers.<name>]` section and return its base_url.
+ *   3. Fall back to the first base_url found anywhere in the file.
+ *
+ * Exported for unit testing.
+ */
+export function parseCodexBaseUrl(toml: string): string | undefined {
+	const lines = toml.split("\n");
+
+	// Step 1: find active provider name from top-level config (before any [table]).
+	let activeProvider: string | undefined;
+	for (const line of lines) {
+		const trimmed = line.trim();
+		if (trimmed.startsWith("[")) break;
+		const m = trimmed.match(/^model_provider\s*=\s*"([^"]+)"/);
+		if (m) {
+			activeProvider = m[1];
+			break;
+		}
+	}
+
+	// Step 2: if we know the active provider, read base_url from its section only.
+	// We must NOT fall back to a different provider's base_url here, otherwise we'd
+	// mislabel the active provider with someone else's endpoint.
+	if (activeProvider) {
+		const sectionHeader = `[model_providers.${activeProvider}]`;
+		let inSection = false;
+		for (const line of lines) {
+			const trimmed = line.trim();
+			if (trimmed === sectionHeader) {
+				inSection = true;
+				continue;
+			}
+			if (inSection) {
+				if (trimmed.startsWith("[")) break; // left the section
+				const m = trimmed.match(/^base_url\s*=\s*"([^"]+)"/);
+				if (m) return m[1];
+			}
+		}
+		// Active provider declared but has no base_url: return undefined rather than
+		// borrowing another provider's URL.
+		return undefined;
+	}
+
+	// Step 3: no active provider declared — fall back to first base_url anywhere.
+	const fallback = toml.match(/base_url\s*=\s*"([^"]+)"/);
+	return fallback?.[1];
 }
 
-/** Find a top-level `model = "..."` (outside any [table]) in codex config.toml. */
-function parseCodexModel(toml: string): string | undefined {
+/** Find a top-level `model = "..."` (outside any [table]) in codex config.toml.
+ *  Exported for unit testing. */
+export function parseCodexModel(toml: string): string | undefined {
 	for (const line of toml.split("\n")) {
 		const trimmed = line.trim();
 		if (trimmed.startsWith("[")) break; // stop at first table header

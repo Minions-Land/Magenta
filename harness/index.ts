@@ -45,6 +45,11 @@ export * from "./modules/context/magenta/context.ts";
 export * from "./modules/hooks/contract.ts";
 export * from "./modules/hooks/magenta/hooks.ts";
 export * from "./modules/memory/magenta/session-grounding.ts";
+export * from "./modules/multiagent/contract.ts";
+export {
+	MultiAgentOrchestrator,
+	type WorkerRunner,
+} from "./modules/multiagent/magenta/orchestrator.ts";
 export * from "./modules/policy/contract.ts";
 export * from "./modules/policy/magenta/approval.ts";
 export * from "./modules/policy/magenta/policy.ts";

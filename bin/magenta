@@ -1,29 +1,13 @@
 #!/usr/bin/env bash
 set -e
 
-# Auth loading priority:
-# 1. Existing environment variables
-# 2. ~/.codex/auth.json + config.toml (OpenAI)
-# 3. ~/.claude/settings.json (Anthropic)
+# Credential autodetection is handled inside the CLI by external-auth-loader.ts,
+# which resolves keys and base URLs in this priority order (per provider):
+#   1. Existing environment variables (ANTHROPIC_AUTH_TOKEN/ANTHROPIC_API_KEY, OPENAI_API_KEY, ...)
+#   2. Claude Code  (~/.claude/settings.json -> env.ANTHROPIC_* )
+#   3. Codex        (~/.codex/auth.json + config.toml, active model_provider's base_url)
+# It is invoked unconditionally, so autodetection is always on and needs no shell setup here.
+# Any credentials already exported in the environment are inherited by the child process.
 
-# --- OpenAI from Codex ---
-if [ -z "$OPENAI_API_KEY" ] && [ -f ~/.codex/auth.json ]; then
-  OPENAI_API_KEY=$(python3 -c "import json; print(json.load(open('$HOME/.codex/auth.json'))['OPENAI_API_KEY'])" 2>/dev/null || echo "")
-  export OPENAI_API_KEY
-fi
-
-if [ -z "$OPENAI_BASE_URL" ] && [ -f ~/.codex/config.toml ]; then
-  OPENAI_BASE_URL=$(grep 'base_url' ~/.codex/config.toml | head -1 | sed -E 's/.*"(.*)".*/\1/' 2>/dev/null || echo "")
-  export OPENAI_BASE_URL
-fi
-
-# --- Anthropic from Claude Code ---
-if [ -z "$ANTHROPIC_API_KEY" ] && [ -z "$ANTHROPIC_AUTH_TOKEN" ] && [ -f ~/.claude/settings.json ]; then
-  ANTHROPIC_AUTH_TOKEN=$(python3 -c "import json; env=json.load(open('$HOME/.claude/settings.json')).get('env',{}); print(env.get('ANTHROPIC_AUTH_TOKEN') or env.get('ANTHROPIC_API_KEY') or '')" 2>/dev/null || echo "")
-  export ANTHROPIC_AUTH_TOKEN
-
-  ANTHROPIC_BASE_URL=$(python3 -c "import json; env=json.load(open('$HOME/.claude/settings.json')).get('env',{}); print(env.get('ANTHROPIC_BASE_URL') or '')" 2>/dev/null || echo "")
-  export ANTHROPIC_BASE_URL
-fi
-
+# Resolve the built CLI relative to this script so the launcher works from any cwd.
 exec node "$(dirname "$0")/../pi/coding-agent/dist/cli.js" "$@"

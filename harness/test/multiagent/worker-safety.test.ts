@@ -51,3 +51,20 @@ describe("worker depth guard (defense in depth)", () => {
 		expect(result.durationMs).toBe(0);
 	});
 });
+
+describe("worker isolation guard", () => {
+	const original = process.env.PI_MAORCH_DEPTH;
+	afterEach(() => {
+		if (original === undefined) delete process.env.PI_MAORCH_DEPTH;
+		else process.env.PI_MAORCH_DEPTH = original;
+	});
+
+	it("refuses an unimplemented isolation instead of silently downgrading to process", async () => {
+		delete process.env.PI_MAORCH_DEPTH;
+		const result = await spawnWorker({ workerId: "w1", prompt: "anything", isolation: "worktree" });
+		expect(result.success).toBe(false);
+		expect(result.error).toMatch(/isolation "worktree" is not implemented/);
+		// Bails before spawning, so no time is spent.
+		expect(result.durationMs).toBe(0);
+	});
+});

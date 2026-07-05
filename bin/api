@@ -1,30 +1,13 @@
 #!/usr/bin/env bash
 set -e
 
-# Auth 加载优先级：
-# 1. 已有环境变量（最高优先级）
-# 2. ~/.codex/auth.json + config.toml（OpenAI）
-# 3. ~/.claude/settings.json（Anthropic）
+# 凭证自动抓取由 CLI 内部的 external-auth-loader.ts 完成，
+# 按 provider 依次解析 key 与 base_url（优先级从高到低）：
+#   1. 已有环境变量（ANTHROPIC_AUTH_TOKEN/ANTHROPIC_API_KEY、OPENAI_API_KEY 等）
+#   2. Claude Code（~/.claude/settings.json -> env.ANTHROPIC_*）
+#   3. Codex（~/.codex/auth.json + config.toml，取当前 model_provider 段的 base_url）
+# 该逻辑无条件执行，因此自动抓取默认开启，无需在此处做 shell 层抓取。
+# 环境里已 export 的凭证会被子进程继承。
 
-# --- OpenAI from Codex ---
-if [ -z "$OPENAI_API_KEY" ] && [ -f ~/.codex/auth.json ]; then
-  OPENAI_API_KEY=$(python3 -c "import json; print(json.load(open('$HOME/.codex/auth.json'))['OPENAI_API_KEY'])" 2>/dev/null || echo "")
-  export OPENAI_API_KEY
-fi
-
-if [ -z "$OPENAI_BASE_URL" ] && [ -f ~/.codex/config.toml ]; then
-  OPENAI_BASE_URL=$(grep 'base_url' ~/.codex/config.toml | head -1 | sed -E 's/.*"(.*)".*/\1/' 2>/dev/null || echo "")
-  export OPENAI_BASE_URL
-fi
-
-# --- Anthropic from Claude Code ---
-if [ -z "$ANTHROPIC_API_KEY" ] && [ -z "$ANTHROPIC_AUTH_TOKEN" ] && [ -f ~/.claude/settings.json ]; then
-  ANTHROPIC_AUTH_TOKEN=$(python3 -c "import json; env=json.load(open('$HOME/.claude/settings.json')).get('env',{}); print(env.get('ANTHROPIC_AUTH_TOKEN') or env.get('ANTHROPIC_API_KEY') or '')" 2>/dev/null || echo "")
-  export ANTHROPIC_AUTH_TOKEN
-
-  ANTHROPIC_BASE_URL=$(python3 -c "import json; env=json.load(open('$HOME/.claude/settings.json')).get('env',{}); print(env.get('ANTHROPIC_BASE_URL') or '')" 2>/dev/null || echo "")
-  export ANTHROPIC_BASE_URL
-fi
-
-# 调用构建好的 CLI
+# 相对本脚本定位构建好的 CLI，保证从任意 cwd 启动都能工作。
 exec node "$(dirname "$0")/../pi/coding-agent/dist/cli.js" "$@"

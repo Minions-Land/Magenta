@@ -254,4 +254,55 @@ describe("built-in sub_agent tool", () => {
 		expect(textOf(result)).toContain("defaultReturnDelivery: nextTurn");
 		expect(textOf(result)).toContain("defaultThinking: high");
 	});
+
+	it("runs a workflow as one background event and returns a structured tree", async () => {
+		const fakeRunner = {
+			spawn: async (options: { workerId: string }) => ({
+				workerId: options.workerId,
+				text: `synth of ${options.workerId}`,
+				durationMs: 1,
+				success: true,
+			}),
+			parallel: async (specs: Array<{ workerId: string }>) =>
+				specs.map((s) => ({ workerId: s.workerId, text: `did ${s.workerId}`, durationMs: 1, success: true })),
+		};
+		controller = new SubAgentController(manager, {
+			sendMessage: (message, options) => {
+				returned.push({ message, options });
+			},
+			spawnAgent: createFakeSpawn(spawnRecords, { output: "unused" }),
+			workflowRunner: fakeRunner as never,
+		});
+		const tool = controller.createToolDefinition();
+		const ctx = createContext(tempDir);
+
+		const start = await tool.execute(
+			"call-wf",
+			{
+				action: "start",
+				workflow: {
+					pattern: "fan_out_synthesize",
+					name: "triage",
+					workers: [{ task: "look at A" }, { task: "look at B" }],
+					synthesizer: { task: "merge findings" },
+				},
+			},
+			undefined,
+			undefined,
+			ctx,
+		);
+		expect(textOf(start)).toContain("Started workflow");
+		expect(textOf(start)).toContain("Pattern: fan_out_synthesize");
+		const eventId = start.details?.id as string;
+
+		// The orchestration runs in-process (fake runner), so no real pi is spawned.
+		// Wait for it to finish via the wait action.
+		await tool.execute("call-wait", { action: "wait", eventId }, undefined, undefined, ctx);
+
+		const status = await tool.execute("call-status", { action: "status", eventId }, undefined, undefined, ctx);
+		const text = textOf(status);
+		expect(text).toContain("Status: exited");
+		expect(text).toContain("pattern: fan_out_synthesize");
+		expect(text).toContain("outcome");
+	});
 });

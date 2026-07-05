@@ -121,7 +121,6 @@ export class FooterComponent implements Component {
 		let totalCacheRead = 0;
 		let totalCacheWrite = 0;
 		let totalCost = 0;
-		let latestCacheHitRate: number | undefined;
 		let assistantMessageCount = 0;
 
 		for (const entry of this.session.sessionManager.getEntries()) {
@@ -132,11 +131,6 @@ export class FooterComponent implements Component {
 				totalCacheRead += entry.message.usage.cacheRead;
 				totalCacheWrite += entry.message.usage.cacheWrite;
 				totalCost += entry.message.usage.cost.total;
-
-				const latestPromptTokens =
-					entry.message.usage.input + entry.message.usage.cacheRead + entry.message.usage.cacheWrite;
-				latestCacheHitRate =
-					latestPromptTokens > 0 ? (entry.message.usage.cacheRead / latestPromptTokens) * 100 : undefined;
 			}
 		}
 
@@ -173,7 +167,7 @@ export class FooterComponent implements Component {
 		if (totalCacheRead) statsParts.push(`R${formatTokens(totalCacheRead)}`);
 		if (totalCacheWrite) statsParts.push(`W${formatTokens(totalCacheWrite)}`);
 		if ((totalCacheRead > 0 || totalCacheWrite > 0) && avgCacheHitRate !== undefined) {
-			statsParts.push(`CH${avgCacheHitRate.toFixed(1)}% (avg)`);
+			statsParts.push(`CH${avgCacheHitRate.toFixed(1)}%`);
 		}
 
 		// Show cost with "(sub)" indicator if using OAuth subscription

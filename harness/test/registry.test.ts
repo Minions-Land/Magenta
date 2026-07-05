@@ -72,7 +72,7 @@ describe("harness registry", () => {
 		const summary = summarizeHarnessCatalogEntries(catalog.entries);
 		expect(summary.byMigrationState.integrated).toBeGreaterThan(0);
 		expect(summary.byMigrationState.available).toBe(10);
-		expect(summary.byMigrationState["requires-migration"]).toBe(15);
+		expect(summary.byMigrationState["requires-migration"]).toBe(14);
 		expect(summary.byMigrationState["metadata-only"]).toBe(14);
 		expect(summary.byMigrationState["external-boundary"]).toBe(9);
 		expect(summary.byMigrationState["deferred-domain-pack"]).toBe(17);

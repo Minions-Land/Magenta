@@ -58,10 +58,10 @@ describe("classify_and_act skeleton", () => {
 		const result = await orch.orchestrate({
 			pattern: "classify_and_act",
 			input: "app crashes on launch",
-			classifier: { prompt: "classify" },
+			classifier: { task: "classify" },
 			handlers: {
-				bug: { prompt: "fix the bug" },
-				feature: { prompt: "design the feature" },
+				bug: { task: "fix the bug" },
+				feature: { task: "design the feature" },
 			},
 		});
 
@@ -84,9 +84,9 @@ describe("classify_and_act skeleton", () => {
 		const result = await orch.orchestrate({
 			pattern: "classify_and_act",
 			input: "???",
-			classifier: { prompt: "classify" },
-			handlers: { bug: { prompt: "fix" } },
-			fallback: { prompt: "handle anything" },
+			classifier: { task: "classify" },
+			handlers: { bug: { task: "fix" } },
+			fallback: { task: "handle anything" },
 		});
 		expect(calls[1].prompt).toContain("handle anything");
 		expect(result.outcome?.text).toBe("fallback ran");
@@ -98,8 +98,8 @@ describe("classify_and_act skeleton", () => {
 		const result = await orch.orchestrate({
 			pattern: "classify_and_act",
 			input: "x",
-			classifier: { prompt: "classify" },
-			handlers: { bug: { prompt: "fix" } },
+			classifier: { task: "classify" },
+			handlers: { bug: { task: "fix" } },
 		});
 		expect(calls).toHaveLength(1); // only the classifier ran
 		expect(result.terminatedBy).toBe("completed");
@@ -117,8 +117,8 @@ describe("adversarial_verify skeleton", () => {
 		const orch = new MultiAgentOrchestrator({ runner });
 		const result = await orch.orchestrate({
 			pattern: "adversarial_verify",
-			generator: { prompt: "find issues" },
-			verifier: { prompt: "verify" },
+			generator: { task: "find issues" },
+			verifier: { task: "verify" },
 			verifyCount: 3,
 			confidenceThreshold: 0.6,
 		});
@@ -136,8 +136,8 @@ describe("adversarial_verify skeleton", () => {
 		const orch = new MultiAgentOrchestrator({ runner });
 		const result = await orch.orchestrate({
 			pattern: "adversarial_verify",
-			generator: { prompt: "g" },
-			verifier: { prompt: "v" },
+			generator: { task: "g" },
+			verifier: { task: "v" },
 			verifyCount: 2,
 			confidenceThreshold: 0.8,
 		});
@@ -157,9 +157,9 @@ describe("generate_and_filter skeleton", () => {
 		const orch = new MultiAgentOrchestrator({ runner });
 		const result = await orch.orchestrate({
 			pattern: "generate_and_filter",
-			generator: { prompt: "generate" },
+			generator: { task: "generate" },
 			count: 3,
-			evaluator: { prompt: "score" },
+			evaluator: { task: "score" },
 		});
 		// 3 generators + 3 evaluators.
 		expect(calls).toHaveLength(6);
@@ -179,8 +179,8 @@ describe("tournament skeleton", () => {
 		const orch = new MultiAgentOrchestrator({ runner });
 		const result = await orch.orchestrate({
 			pattern: "tournament",
-			approaches: [{ prompt: "a" }, { prompt: "b" }, { prompt: "c" }, { prompt: "d" }],
-			judge: { prompt: "compare" },
+			approaches: [{ task: "a" }, { task: "b" }, { task: "c" }, { task: "d" }],
+			judge: { task: "compare" },
 		});
 		const judgeCalls = calls.filter((c) => c.workerId.startsWith("judge"));
 		expect(judgeCalls).toHaveLength(3); // N-1 comparisons
@@ -198,8 +198,8 @@ describe("tournament skeleton", () => {
 		const orch = new MultiAgentOrchestrator({ runner });
 		await orch.orchestrate({
 			pattern: "tournament",
-			approaches: [{ prompt: "a" }, { prompt: "b" }, { prompt: "c" }],
-			judge: { prompt: "compare" },
+			approaches: [{ task: "a" }, { task: "b" }, { task: "c" }],
+			judge: { task: "compare" },
 		});
 		const judgeCalls = calls.filter((c) => c.workerId.startsWith("judge"));
 		expect(judgeCalls).toHaveLength(2);
@@ -214,7 +214,7 @@ describe("loop_until_done skeleton", () => {
 		const result = await orch.orchestrate({
 			pattern: "loop_until_done",
 			initial: "start",
-			refine: { prompt: "find more" },
+			refine: { task: "find more" },
 			maxIterations: 10,
 		});
 		expect(calls).toHaveLength(3);
@@ -229,7 +229,7 @@ describe("loop_until_done skeleton", () => {
 		await orch.orchestrate({
 			pattern: "loop_until_done",
 			initial: "start",
-			refine: { prompt: "find more" },
+			refine: { task: "find more" },
 		});
 		// Second round's prompt must include the first round's finding "A".
 		expect(calls[1].prompt).toContain("A");
@@ -245,7 +245,7 @@ describe("loop_until_done skeleton", () => {
 		const result = await orch.orchestrate({
 			pattern: "loop_until_done",
 			initial: "start",
-			refine: { prompt: "find more" },
+			refine: { task: "find more" },
 			maxIterations: 4,
 		});
 		expect(calls).toHaveLength(4);
@@ -263,8 +263,8 @@ describe("fan_out_synthesize skeleton", () => {
 		const orch = new MultiAgentOrchestrator({ runner });
 		const result = await orch.orchestrate({
 			pattern: "fan_out_synthesize",
-			workers: [{ prompt: "w1" }, { prompt: "w2" }, { prompt: "w3" }],
-			synthesizer: { prompt: "merge them" },
+			workers: [{ task: "w1" }, { task: "w2" }, { task: "w3" }],
+			synthesizer: { task: "merge them" },
 		});
 		expect(calls).toHaveLength(4); // 3 workers + 1 synthesizer
 		const synthCall = calls.find((c) => c.workerId.startsWith("synth"));

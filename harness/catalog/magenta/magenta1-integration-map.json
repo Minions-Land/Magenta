@@ -270,9 +270,9 @@
       "notes": "Magenta3 has harness/harness.toml and the registry loader, but no scaffold://default/general/magenta HCP target with the Magenta1 posture operations."
     },
     "general-harness:multiagent:local": {
-      "state": "requires-migration",
-      "relation": "covered-only-by-surface-sub-agent",
-      "notes": "Magenta3 has the LazyPi-derived sub_agent background event tool, but not the HCP multiagent://local batch orchestrator that routes arbitrary worker targets through HCP."
+      "state": "integrated",
+      "relation": "native-ts-orchestrator-plus-sub-agent-surface",
+      "notes": "Magenta3 provides the multiagent://local orchestrator as a native TypeScript MultiAgentOrchestrator (modules/multiagent) covering six deterministic patterns (classify_and_act, fan_out_synthesize, adversarial_verify, generate_and_filter, tournament, loop_until_done). It is wired into the HCP address space via multiagentMagentaMagnet in CAPABILITY_SOURCE_MAGNETS (resolveCapability('multiagent')) and surfaced to the model through the sub_agent tool's workflow option, which runs an orchestration as a single background event over the shared sub-agent worker/spawn mechanism."
     },
     "runtime-provider:trace:session": {
       "state": "requires-migration",

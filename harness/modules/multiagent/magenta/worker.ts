@@ -13,6 +13,7 @@ import { type ChildProcess, spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { Isolation, WorkerResult, WorkerSlot } from "../contract.ts";
 
 /** Default tools handed to a worker when none are specified: read-only. */
@@ -73,13 +74,17 @@ export interface SpawnWorkerOptions {
 	systemPrompt?: string;
 	/** Model override. */
 	model?: string;
+	/** Provider override (optional). */
+	provider?: string;
+	/** Thinking level for the worker (optional). */
+	thinking?: ThinkingLevel;
 	/** Tool whitelist. Defaults to read-only tools. */
 	tools?: string[];
 	/** JSON Schema; when set, the worker's final text is parsed into `structured`. */
 	schema?: unknown;
 	/** Working directory. */
 	cwd?: string;
-	/** Isolation level. Only "process" is honored here; "worktree" is a future addition. */
+	/** Isolation level. Only "process" is honored; any other value is refused at spawn time. "worktree" is a future addition. */
 	isolation?: Isolation;
 	/** Stable id for this worker (for result correlation). */
 	workerId: string;
@@ -201,6 +206,20 @@ export async function spawnWorker(options: SpawnWorkerOptions, signal?: AbortSig
 		};
 	}
 
+	// Isolation guard: only "process" isolation is implemented. Rather than
+	// silently running an unsupported isolation as a plain process (which would
+	// give the caller a false sense of stronger isolation than they got), fail
+	// explicitly. "worktree" is a declared-but-unimplemented future addition.
+	if (options.isolation && options.isolation !== "process") {
+		return {
+			workerId: options.workerId,
+			text: "",
+			durationMs: 0,
+			success: false,
+			error: `refused: isolation "${options.isolation}" is not implemented; only "process" isolation is supported`,
+		};
+	}
+
 	const tools = sanitizeWorkerTools(options.tools);
 	const timeoutMs = options.timeoutMs ?? DEFAULT_WORKER_TIMEOUT_MS;
 
@@ -208,6 +227,8 @@ export async function spawnWorker(options: SpawnWorkerOptions, signal?: AbortSig
 	// structured NDJSON output.
 	const args = ["--mode", "json", "-p", "--no-session", "--no-extensions", "--tools", tools.join(",")];
 	if (options.model) args.push("--model", options.model);
+	if (options.provider) args.push("--provider", options.provider);
+	if (options.thinking) args.push("--thinking", options.thinking);
 
 	let systemPromptPath: string | null = null;
 	if (options.systemPrompt && options.systemPrompt.trim()) {

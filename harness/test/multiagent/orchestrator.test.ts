@@ -46,21 +46,21 @@ describe("multiagent orchestrator", () => {
 describe("buildSystemPrompt guard invariant", () => {
 	it("always places the skeleton guard before the LLM-supplied focus", () => {
 		const guard = "SOUL STEP: classify first.";
-		const slot: WorkerSlot = { prompt: "task", focus: "look at severity" };
+		const slot: WorkerSlot = { task: "task", focus: "look at severity" };
 		const assembled = buildSystemPrompt(guard, slot);
 		expect(assembled.indexOf(guard)).toBe(0);
 		expect(assembled.indexOf("look at severity")).toBeGreaterThan(assembled.indexOf(guard));
 	});
 
 	it("appends the schema instruction when a slot supplies a schema", () => {
-		const slot: WorkerSlot = { prompt: "t", schema: { type: "object" } };
+		const slot: WorkerSlot = { task: "t", schema: { type: "object" } };
 		const assembled = buildSystemPrompt("guard", slot);
 		expect(assembled).toContain("JSON matching this schema");
 		expect(assembled).toContain('"type": "object"');
 	});
 
 	it("emits only the guard when no focus or schema is given", () => {
-		const assembled = buildSystemPrompt("just the guard", { prompt: "t" });
+		const assembled = buildSystemPrompt("just the guard", { task: "t" });
 		expect(assembled).toBe("just the guard");
 	});
 });

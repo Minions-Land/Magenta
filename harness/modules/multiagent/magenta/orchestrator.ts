@@ -33,11 +33,7 @@ import { buildSystemPrompt, parallel, type SpawnWorkerOptions, spawnWorker } fro
  */
 export interface WorkerRunner {
 	spawn(options: SpawnWorkerOptions, signal?: AbortSignal): Promise<WorkerResult>;
-	parallel(
-		specs: SpawnWorkerOptions[],
-		maxConcurrent: number,
-		signal?: AbortSignal,
-	): Promise<WorkerResult[]>;
+	parallel(specs: SpawnWorkerOptions[], maxConcurrent: number, signal?: AbortSignal): Promise<WorkerResult[]>;
 }
 
 const defaultRunner: WorkerRunner = { spawn: spawnWorker, parallel };
@@ -92,19 +88,27 @@ function nextWorkerId(prefix: string): string {
 function slotToSpawn(workerId: string, slot: WorkerSlot, guard: string, common: CommonOptions): SpawnWorkerOptions {
 	return {
 		workerId,
-		prompt: slot.prompt,
+		prompt: slot.task,
 		systemPrompt: buildSystemPrompt(guard, slot),
+		// Slot-level overrides win over the orchestration-wide defaults.
 		model: slot.model ?? common.model,
-		tools: common.tools,
+		provider: slot.provider,
+		tools: slot.tools ?? common.tools,
+		thinking: slot.thinking,
 		schema: slot.schema,
 		cwd: common.cwd,
 		isolation: common.isolation,
+		timeoutMs: slot.timeoutSeconds !== undefined ? slot.timeoutSeconds * 1000 : undefined,
 	};
 }
 
 // --- Pattern 2: Fan Out and Synthesize (first full implementation) ---------
 
-async function fanOutSynthesize(req: FanOutSynthesizeRequest, runner: WorkerRunner, signal?: AbortSignal): Promise<OrchestrationResult> {
+async function fanOutSynthesize(
+	req: FanOutSynthesizeRequest,
+	runner: WorkerRunner,
+	signal?: AbortSignal,
+): Promise<OrchestrationResult> {
 	const maxConcurrent = req.maxConcurrent ?? DEFAULT_MAX_CONCURRENT;
 
 	// Fan out: run every worker in parallel over its object.
@@ -116,7 +120,7 @@ async function fanOutSynthesize(req: FanOutSynthesizeRequest, runner: WorkerRunn
 		.map((r, i) => `--- Worker ${i + 1} (${r.success ? "ok" : "failed"}) ---\n${r.text || r.error || ""}`)
 		.join("\n\n");
 	const synthSpec = slotToSpawn(nextWorkerId("synth"), req.synthesizer, GUARDS.synthesizer, req);
-	synthSpec.prompt = `${req.synthesizer.prompt}\n\n${merged}`;
+	synthSpec.prompt = `${req.synthesizer.task}\n\n${merged}`;
 	const outcome = await runner.spawn(synthSpec, signal);
 
 	return {
@@ -171,7 +175,11 @@ function withSchema(slot: WorkerSlot, schema: unknown): WorkerSlot {
 
 // --- Pattern 1: Classify and Act -------------------------------------------
 
-async function classifyAndAct(req: ClassifyAndActRequest, runner: WorkerRunner, signal?: AbortSignal): Promise<OrchestrationResult> {
+async function classifyAndAct(
+	req: ClassifyAndActRequest,
+	runner: WorkerRunner,
+	signal?: AbortSignal,
+): Promise<OrchestrationResult> {
 	const labels = Object.keys(req.handlers);
 
 	// Classify first (the soul step). Constrain output to the known label set.
@@ -181,7 +189,7 @@ async function classifyAndAct(req: ClassifyAndActRequest, runner: WorkerRunner, 
 		required: ["label"],
 	});
 	const classSpec = slotToSpawn(nextWorkerId("classify"), classifierSlot, GUARDS.classifier, req);
-	classSpec.prompt = `${req.classifier.prompt}\n\nAvailable labels: ${labels.join(", ")}\n\nInput:\n${req.input}`;
+	classSpec.prompt = `${req.classifier.task}\n\nAvailable labels: ${labels.join(", ")}\n\nInput:\n${req.input}`;
 	const classifier = await runner.spawn(classSpec, signal);
 
 	const rawLabel = (classifier.structured as { label?: string } | undefined)?.label ?? classifier.text.trim();
@@ -198,7 +206,7 @@ async function classifyAndAct(req: ClassifyAndActRequest, runner: WorkerRunner, 
 		};
 	}
 	const handlerSpec = slotToSpawn(nextWorkerId("handle"), handlerSlot, "", req);
-	handlerSpec.prompt = `${handlerSlot.prompt}\n\nInput:\n${req.input}`;
+	handlerSpec.prompt = `${handlerSlot.task}\n\nInput:\n${req.input}`;
 	const handler = await runner.spawn(handlerSpec, signal);
 
 	return {
@@ -211,7 +219,11 @@ async function classifyAndAct(req: ClassifyAndActRequest, runner: WorkerRunner, 
 
 // --- Pattern 3: Adversarial Verification -----------------------------------
 
-async function adversarialVerify(req: AdversarialVerifyRequest, runner: WorkerRunner, signal?: AbortSignal): Promise<OrchestrationResult> {
+async function adversarialVerify(
+	req: AdversarialVerifyRequest,
+	runner: WorkerRunner,
+	signal?: AbortSignal,
+): Promise<OrchestrationResult> {
 	const verifyCount = Math.max(1, req.verifyCount ?? 3);
 	const threshold = req.confidenceThreshold ?? 0.8;
 	const maxConcurrent = req.maxConcurrent ?? DEFAULT_MAX_CONCURRENT;
@@ -224,7 +236,7 @@ async function adversarialVerify(req: AdversarialVerifyRequest, runner: WorkerRu
 	const verifierSlot = withSchema(req.verifier, BOOLEAN_VERDICT_SCHEMA);
 	const verifierSpecs = Array.from({ length: verifyCount }, () => {
 		const spec = slotToSpawn(nextWorkerId("verify"), verifierSlot, GUARDS.verifier, req);
-		spec.prompt = `${req.verifier.prompt}\n\nCandidate(s) to verify:\n${generator.text}`;
+		spec.prompt = `${req.verifier.task}\n\nCandidate(s) to verify:\n${generator.text}`;
 		return spec;
 	});
 	const verifiers = await runner.parallel(verifierSpecs, maxConcurrent, signal);
@@ -244,7 +256,11 @@ async function adversarialVerify(req: AdversarialVerifyRequest, runner: WorkerRu
 
 // --- Pattern 4: Generate and Filter ----------------------------------------
 
-async function generateAndFilter(req: GenerateAndFilterRequest, runner: WorkerRunner, signal?: AbortSignal): Promise<OrchestrationResult> {
+async function generateAndFilter(
+	req: GenerateAndFilterRequest,
+	runner: WorkerRunner,
+	signal?: AbortSignal,
+): Promise<OrchestrationResult> {
 	const count = Math.max(1, req.count);
 	const maxConcurrent = req.maxConcurrent ?? DEFAULT_MAX_CONCURRENT;
 
@@ -256,7 +272,7 @@ async function generateAndFilter(req: GenerateAndFilterRequest, runner: WorkerRu
 	const evalSlot = withSchema(req.evaluator, SCORE_SCHEMA);
 	const evalSpecs = candidates.map((c) => {
 		const spec = slotToSpawn(nextWorkerId("eval"), evalSlot, GUARDS.evaluator, req);
-		spec.prompt = `${req.evaluator.prompt}\n\nCandidate to score:\n${c.text}`;
+		spec.prompt = `${req.evaluator.task}\n\nCandidate to score:\n${c.text}`;
 		return spec;
 	});
 	const evaluations = await runner.parallel(evalSpecs, maxConcurrent, signal);
@@ -277,7 +293,11 @@ async function generateAndFilter(req: GenerateAndFilterRequest, runner: WorkerRu
 
 // --- Pattern 5: Tournament (pairwise elimination bracket) -------------------
 
-async function tournament(req: TournamentRequest, runner: WorkerRunner, signal?: AbortSignal): Promise<OrchestrationResult> {
+async function tournament(
+	req: TournamentRequest,
+	runner: WorkerRunner,
+	signal?: AbortSignal,
+): Promise<OrchestrationResult> {
 	const maxConcurrent = req.maxConcurrent ?? DEFAULT_MAX_CONCURRENT;
 
 	// Generate all approaches in parallel.
@@ -300,7 +320,7 @@ async function tournament(req: TournamentRequest, runner: WorkerRunner, signal?:
 				continue;
 			}
 			const spec = slotToSpawn(nextWorkerId("judge"), judgeSlot, GUARDS.judge, req);
-			spec.prompt = `${req.judge.prompt}\n\nCandidate 0:\n${a.text}\n\nCandidate 1:\n${b.text}`;
+			spec.prompt = `${req.judge.task}\n\nCandidate 0:\n${a.text}\n\nCandidate 1:\n${b.text}`;
 			const verdict = await runner.spawn(spec, signal);
 			allWorkers.push(verdict);
 			const winnerIdx = readNumberField(verdict, "winner");
@@ -319,7 +339,11 @@ async function tournament(req: TournamentRequest, runner: WorkerRunner, signal?:
 
 // --- Pattern 6: Loop Until Done --------------------------------------------
 
-async function loopUntilDone(req: LoopUntilDoneRequest, runner: WorkerRunner, signal?: AbortSignal): Promise<OrchestrationResult> {
+async function loopUntilDone(
+	req: LoopUntilDoneRequest,
+	runner: WorkerRunner,
+	signal?: AbortSignal,
+): Promise<OrchestrationResult> {
 	const maxIterations = Math.max(1, req.maxIterations ?? 10);
 	const workers: WorkerResult[] = [];
 	const findings: string[] = [];
@@ -338,7 +362,7 @@ async function loopUntilDone(req: LoopUntilDoneRequest, runner: WorkerRunner, si
 		const priorBlock = findings.length
 			? `\n\nAlready-found (exclude these):\n${findings.map((f, i) => `${i + 1}. ${f}`).join("\n")}`
 			: "";
-		spec.prompt = `${req.refine.prompt}\n\nStarting content:\n${req.initial}${priorBlock}`;
+		spec.prompt = `${req.refine.task}\n\nStarting content:\n${req.initial}${priorBlock}`;
 		const result = await runner.spawn(spec, signal);
 		workers.push(result);
 

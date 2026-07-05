@@ -4,6 +4,12 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { StringEnum } from "@earendil-works/pi-ai";
+import {
+	type OrchestrationRequest as MultiAgentOrchestrationRequest,
+	type OrchestrationResult as MultiAgentOrchestrationResult,
+	MultiAgentOrchestrator,
+	type WorkerRunner as WorkflowRunner,
+} from "@magenta/harness";
 import { type Static, Type } from "typebox";
 import type { AgentSessionEvent } from "../agent-session.ts";
 import type { BackgroundEventManager } from "../background-events.ts";
@@ -61,6 +67,8 @@ type AgentTask = {
 	timeoutSeconds?: number;
 };
 
+type WorkflowInput = Static<typeof WorkflowSchema>;
+
 type SubAgentEvent = {
 	id: string;
 	task: string;
@@ -73,7 +81,16 @@ type SubAgentEvent = {
 	thinking: ThinkingLevel;
 	promptPath: string;
 	logPath: string;
-	child: ChildProcess;
+	/** Event driver kind. "agent" = one child process; "workflow" = in-process orchestration. */
+	kind: "agent" | "workflow";
+	/** Present for kind="agent": the headless pi child process. */
+	child?: ChildProcess;
+	/** Present for kind="workflow": aborts the in-process orchestration on cancel. */
+	abort?: AbortController;
+	/** Present for kind="workflow": pattern name for labeling/details. */
+	pattern?: string;
+	/** Present for kind="workflow" once finished: the structured orchestration result. */
+	workflowResult?: MultiAgentOrchestrationResult;
 	log: WriteStream;
 	startedAt: number;
 	endedAt?: number;
@@ -125,8 +142,75 @@ const TaskSchema = Type.Object({
 	),
 });
 
+/**
+ * A workflow slot: one node in an orchestration. This is a superset of a plain
+ * task (a single sub-agent is a one-node workflow), so it shares task/role/
+ * model/provider/tools/thinking, plus the orchestration-only `focus`. Structured
+ * output `schema` for verifier/judge/evaluator slots is enforced by the harness
+ * skeleton and is intentionally NOT exposed here — the LLM fills content, never
+ * the control-flow-critical output contract.
+ */
+const WorkflowSlotSchema = Type.Object({
+	task: Type.String({ description: "What this worker does (LLM-supplied task content)." }),
+	role: Type.Optional(Type.String({ description: "Optional role hint for this worker." })),
+	focus: Type.Optional(Type.String({ description: "Optional standard/criteria this worker must attend to." })),
+	model: Type.Optional(Type.String({ description: "Model override for this worker (e.g. a stronger judge model)." })),
+	provider: Type.Optional(Type.String({ description: "Provider override for this worker." })),
+	tools: Type.Optional(
+		Type.Array(Type.String(), { description: `Tool whitelist for this worker. Defaults to read-only.` }),
+	),
+	thinking: Type.Optional(StringEnum(["off", "minimal", "low", "medium", "high", "xhigh"] as const)),
+	timeoutSeconds: Type.Optional(Type.Number({ description: "Per-worker wall-clock timeout in seconds." })),
+});
+
+/**
+ * A multi-agent workflow: a deterministic orchestration skeleton (harness owns
+ * the control flow) that the LLM fills with task content. Which slot fields
+ * apply depends on `pattern`; unused slots are ignored. Validated at runtime by
+ * the harness orchestrator, so slots are all optional here.
+ */
+const WorkflowSchema = Type.Object({
+	pattern: StringEnum(
+		[
+			"classify_and_act",
+			"fan_out_synthesize",
+			"adversarial_verify",
+			"generate_and_filter",
+			"tournament",
+			"loop_until_done",
+		] as const,
+		{ description: "Which orchestration skeleton to run." },
+	),
+	name: Type.Optional(
+		Type.String({ description: "Human-readable name shown in /events. Defaults to the pattern name." }),
+	),
+	model: Type.Optional(Type.String({ description: "Default model for all workers in this orchestration." })),
+	tools: Type.Optional(Type.Array(Type.String(), { description: "Default tool whitelist for all workers." })),
+	maxConcurrent: Type.Optional(Type.Number({ description: "Max workers running concurrently. Defaults to 8." })),
+	// Pattern-specific slots (only the ones matching `pattern` are used):
+	classifier: Type.Optional(WorkflowSlotSchema),
+	handlers: Type.Optional(Type.Record(Type.String(), WorkflowSlotSchema)),
+	fallback: Type.Optional(WorkflowSlotSchema),
+	workers: Type.Optional(Type.Array(WorkflowSlotSchema)),
+	synthesizer: Type.Optional(WorkflowSlotSchema),
+	generator: Type.Optional(WorkflowSlotSchema),
+	verifier: Type.Optional(WorkflowSlotSchema),
+	evaluator: Type.Optional(WorkflowSlotSchema),
+	approaches: Type.Optional(Type.Array(WorkflowSlotSchema)),
+	judge: Type.Optional(WorkflowSlotSchema),
+	refine: Type.Optional(WorkflowSlotSchema),
+	input: Type.Optional(Type.String({ description: "Input payload for classify_and_act." })),
+	initial: Type.Optional(Type.String({ description: "Starting content for loop_until_done." })),
+	verifyCount: Type.Optional(Type.Number({ description: "Verifier count for adversarial_verify." })),
+	threshold: Type.Optional(Type.Number({ description: "Confidence threshold for adversarial_verify." })),
+	candidateCount: Type.Optional(Type.Number({ description: "Candidate count for generate_and_filter." })),
+	topK: Type.Optional(Type.Number({ description: "How many top candidates to keep for generate_and_filter." })),
+	maxIterations: Type.Optional(Type.Number({ description: "Hard iteration cap for loop_until_done." })),
+});
+
 const subAgentSchema = Type.Object({
 	action: StringEnum(["start", "status", "wait", "cancel", "config"] as const),
+	workflow: Type.Optional(WorkflowSchema),
 	task: Type.Optional(Type.String({ description: "Single task for action=start. Mutually exclusive with tasks." })),
 	role: Type.Optional(Type.String({ description: "Optional role for action=start." })),
 	label: Type.Optional(Type.String({ description: "Optional label for action=start." })),
@@ -231,14 +315,19 @@ function appendTail(event: SubAgentEvent, data: Buffer): void {
 }
 
 function killProcessGroup(event: SubAgentEvent, signal: NodeJS.Signals): void {
-	const pid = event.child.pid;
+	// Workflow events have no single child; cancellation is driven by the AbortController.
+	if (event.kind === "workflow") {
+		event.abort?.abort();
+		return;
+	}
+	const pid = event.child?.pid;
 	if (!pid) return;
 
 	try {
 		process.kill(-pid, signal);
 	} catch {
 		try {
-			event.child.kill(signal);
+			event.child?.kill(signal);
 		} catch {
 			// Process already exited.
 		}
@@ -267,6 +356,7 @@ function finishEvent(
 }
 
 function summarizeEvent(event: SubAgentEvent, includeOutput = true): string {
+	if (event.kind === "workflow") return summarizeWorkflowEvent(event, includeOutput);
 	const elapsedUntil = event.endedAt ?? Date.now();
 	const output = truncateTail(event.tail.trimEnd());
 	const lines = [
@@ -291,6 +381,54 @@ function summarizeEvent(event: SubAgentEvent, includeOutput = true): string {
 			output.truncated ? `[Output truncated to last ${RESULT_LIMIT_BYTES} bytes]` : "Output:",
 			output.text || "(no output yet)",
 		);
+	}
+	return lines.join("\n");
+}
+
+function summarizeWorkflowEvent(event: SubAgentEvent, includeOutput: boolean): string {
+	const elapsedUntil = event.endedAt ?? Date.now();
+	const lines = [
+		`Workflow: ${event.id} (${event.label})`,
+		`Pattern: ${event.pattern}`,
+		`Status: ${event.status}`,
+		`Elapsed: ${formatDuration(elapsedUntil - event.startedAt)}`,
+		`Log: ${event.logPath}`,
+	];
+	if (event.error) lines.push(`Error: ${event.error}`);
+	if (includeOutput) {
+		lines.push("", event.workflowResult ? formatWorkflowResult(event.workflowResult) : "(no result yet)");
+	}
+	return lines.join("\n");
+}
+
+/**
+ * Map the sub_agent `workflow` tool input onto a harness OrchestrationRequest.
+ * The shapes are aligned by design (WorkflowSlotSchema is a WorkerSlot superset),
+ * so this is mostly a pass-through; the harness validates required slots per
+ * pattern and rejects malformed requests.
+ */
+function buildOrchestrationRequest(input: WorkflowInput): MultiAgentOrchestrationRequest {
+	const { name: _name, ...rest } = input;
+	return rest as unknown as MultiAgentOrchestrationRequest;
+}
+
+/** Render an OrchestrationResult as a compact structured tree for /events + returns. */
+function formatWorkflowResult(result: MultiAgentOrchestrationResult): string {
+	const header = [`pattern: ${result.pattern}`, `terminatedBy: ${result.terminatedBy}`];
+	if (result.confidence !== undefined) header.push(`confidence: ${result.confidence.toFixed(2)}`);
+	if (result.iterations !== undefined) header.push(`iterations: ${result.iterations}`);
+	const lines = [header.join(" · ")];
+	const workers = result.workers ?? [];
+	workers.forEach((w, i) => {
+		const branch = i === workers.length - 1 && !result.outcome ? "└─" : "├─";
+		const status = w.success ? "ok" : "fail";
+		const text = compactValue(w.text ?? w.error ?? "", 120) ?? "";
+		lines.push(`${branch} ${w.workerId} [${status}] ${text}`);
+	});
+	if (result.outcome) {
+		const o = result.outcome;
+		const text = compactValue(o.text ?? o.error ?? "", 200) ?? "";
+		lines.push(`└─ outcome [${o.success ? "ok" : "fail"}] ${text}`);
 	}
 	return lines.join("\n");
 }
@@ -342,13 +480,15 @@ export class SubAgentController {
 	private monitor: { update: (ctx?: ExtensionContext) => void };
 	private sendMessage: SubAgentSendMessage;
 	private spawnAgent: SubAgentSpawn;
+	private workflowRunner?: WorkflowRunner;
 
 	constructor(
 		manager: BackgroundEventManager,
-		options: { sendMessage: SubAgentSendMessage; spawnAgent?: SubAgentSpawn },
+		options: { sendMessage: SubAgentSendMessage; spawnAgent?: SubAgentSpawn; workflowRunner?: WorkflowRunner },
 	) {
 		this.sendMessage = options.sendMessage;
 		this.spawnAgent = options.spawnAgent ?? spawn;
+		this.workflowRunner = options.workflowRunner;
 		this.monitor = manager.registerSource({
 			id: "agents",
 			title: "agents",
@@ -367,6 +507,19 @@ export class SubAgentController {
 			getEventDetails: (id) => {
 				const event = this.events.get(id);
 				if (!event) return [`unknown agent event: ${id}`];
+				if (event.kind === "workflow") {
+					// Expanding a workflow event reveals its internal structure: the
+					// pattern, and each worker the orchestration ran (the (b)/(c) case).
+					const head = [
+						`pattern: ${event.pattern}`,
+						`cwd: ${event.cwd}`,
+						`log: ${event.logPath}`,
+						...(event.error ? [`error: ${event.error}`] : []),
+					];
+					if (event.workflowResult) head.push(...formatWorkflowResult(event.workflowResult).split("\n"));
+					else head.push("(running...)");
+					return head;
+				}
 				return [
 					`role: ${event.role ?? "general"}`,
 					`cwd: ${event.cwd}`,
@@ -389,7 +542,7 @@ export class SubAgentController {
 			name: "sub_agent",
 			label: "Sub Agent",
 			description:
-				"Start, inspect, wait for, or cancel headless pi sub-agents. action=start accepts either one task or a tasks array for parallel work; set returnToMain=true to automatically send completed results back to the main agent. Sub-agents are read-only by default, run with --no-session --no-extensions, and receive parent progress.",
+				"Start, inspect, wait for, or cancel headless pi sub-agents. action=start accepts either one task or a tasks array for parallel work, or a workflow object to run a deterministic multi-agent orchestration (classify_and_act, fan_out_synthesize, adversarial_verify, generate_and_filter, tournament, loop_until_done). Set returnToMain=true to automatically send completed results back to the main agent. Sub-agents are read-only by default, run with --no-session --no-extensions, and receive parent progress.",
 			promptSnippet: "Run one or more headless pi sub-agents for delegated analysis",
 			promptGuidelines: [
 				"Use sub_agent action=start with tasks:[...] when a task can be decomposed into independent research, code review, test analysis, or planning subtasks that benefit from concurrent agents.",
@@ -398,6 +551,7 @@ export class SubAgentController {
 				"Sub-agents receive parent tool progress as situational awareness; if they need the freshest state and have read access, they can read the provided progress file.",
 				"After sub_agent action=start, either call sub_agent action=wait before relying on results, or set returnToMain=true so results are automatically returned as a follow-up to the main agent.",
 				"Sub-agents run with --no-extensions, so they cannot recursively create more sub-agents.",
+				"Use action=start with a workflow object when the task needs a structured multi-agent pattern (route-and-handle, fan-out-and-synthesize, generate-and-verify, candidate tournament, or iterate-until-done) rather than independent parallel tasks. The orchestration control flow is deterministic and owned by the harness; you only supply each slot's task content. A workflow shows up as a single background event whose expansion reveals its internal workers.",
 			],
 			parameters: subAgentSchema,
 			execute: (_toolCallId, params, signal, _onUpdate, ctx) => this.execute(params, signal, ctx),
@@ -519,6 +673,36 @@ export class SubAgentController {
 		returnDelivery: ReturnDelivery,
 		returnInstruction: string | undefined,
 	) {
+		// Workflow branch: a multi-agent orchestration. The harness owns the
+		// deterministic control flow; this facade only manages it as one background
+		// event and reuses the same return-to-main auto-continuation.
+		if (params.workflow) {
+			const running = [...this.events.values()].filter((event) => event.status === "running").length;
+			if (running + 1 > MAX_START_MANY) {
+				throw new Error(
+					`Cannot start a workflow: ${running} already running and the limit is ${MAX_START_MANY}. Wait or cancel some before starting more.`,
+				);
+			}
+			const event = this.startWorkflow(params.workflow as WorkflowInput, ctx.cwd);
+			if (returnToMain) this.scheduleReturnToMain([event], returnDelivery, returnInstruction);
+			this.monitor.update(ctx);
+			return {
+				content: [
+					{
+						type: "text" as const,
+						text: `Started workflow ${event.id} (${event.label})${returnToMain ? " with automatic return to main agent" : ""}\nPattern: ${event.pattern}\nCWD: ${event.cwd}\nLog: ${event.logPath}`,
+					},
+				],
+				details: {
+					id: event.id,
+					status: event.status,
+					pattern: event.pattern,
+					logPath: event.logPath,
+					returnsToMain: returnToMain,
+				},
+			};
+		}
+
 		const hasSingle = Boolean(params.task);
 		const hasTasks = Boolean(params.tasks?.length);
 		if (hasSingle === hasTasks) throw new Error("sub_agent action=start requires exactly one of task or tasks");
@@ -673,6 +857,7 @@ export class SubAgentController {
 
 		const event: SubAgentEvent = {
 			id,
+			kind: "agent",
 			task: input.task,
 			role: input.role,
 			label: input.label,
@@ -722,6 +907,66 @@ export class SubAgentController {
 				setTimeout(() => killProcessGroup(event, "SIGKILL"), TERM_GRACE_MS);
 			}, input.timeoutSeconds * 1000);
 		}
+
+		return event;
+	}
+
+	private startWorkflow(input: WorkflowInput, parentCwd: string): SubAgentEvent {
+		const id = `agent_${String(this.nextAgentNumber++).padStart(3, "0")}`;
+		const cwd = resolve(parentCwd, ".");
+		const stamp = timestampForFile();
+		const logPath = join(WORK_DIR, `${id}-${stamp}.workflow.log`);
+		const label = input.name?.trim() || input.pattern;
+		const abort = new AbortController();
+		void mkdir(WORK_DIR, { recursive: true }).catch(() => undefined);
+		const log = createWriteStream(logPath, { flags: "a" });
+
+		const event: SubAgentEvent = {
+			id,
+			kind: "workflow",
+			task: label,
+			label,
+			pattern: input.pattern,
+			cwd,
+			tools: input.tools ?? [],
+			model: input.model,
+			thinking: DEFAULT_THINKING,
+			promptPath: logPath,
+			logPath,
+			abort,
+			log,
+			startedAt: Date.now(),
+			status: "running",
+			exitCode: null,
+			signal: null,
+			tail: "",
+			waiters: [],
+		};
+		this.events.set(id, event);
+		this.monitor.update();
+
+		const request = buildOrchestrationRequest(input);
+		log.write(`# workflow ${input.pattern}${input.name ? ` (${input.name})` : ""}\n\n`);
+		const orchestrator = new MultiAgentOrchestrator({ cwd, runner: this.workflowRunner });
+
+		void orchestrator
+			.orchestrate(request, abort.signal)
+			.then((result) => {
+				if (event.status !== "running") return;
+				event.workflowResult = result;
+				const summary = formatWorkflowResult(result);
+				event.tail = appendTailText(event.tail, Buffer.from(`${summary}\n`));
+				if (!log.writableEnded && !log.destroyed) log.write(`${summary}\n`);
+				finishEvent(event, "exited", 0, null);
+				this.monitor.update();
+			})
+			.catch((error: unknown) => {
+				if (event.status !== "running") return;
+				const message = error instanceof Error ? error.message : String(error);
+				const aborted = abort.signal.aborted;
+				finishEvent(event, aborted ? "cancelled" : "failed", null, aborted ? "SIGTERM" : null, message);
+				this.monitor.update();
+			});
 
 		return event;
 	}
