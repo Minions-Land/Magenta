@@ -593,6 +593,7 @@
 		"node_modules/@magenta/harness": {
 			"version": "0.0.1",
 			"resolved": "https://registry.npmjs.org/@magenta/harness/-/harness-0.0.1.tgz",
+			"license": "ISC",
 			"dependencies": {
 				"@earendil-works/pi-agent-core": "0.80.2",
 				"@earendil-works/pi-ai": "0.80.2"
