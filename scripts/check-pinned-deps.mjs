@@ -3,7 +3,9 @@ import { join } from "node:path";
 
 const dependencySections = ["dependencies", "devDependencies", "optionalDependencies"];
 const exactVersionPattern = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
-const ignoredDirectories = new Set([".git", "dist", "node_modules"]);
+// `.pixi` holds gitignored local Python/conda environments (JupyterLab, plotly,
+// ...) whose vendored package.json files are third-party and out of our control.
+const ignoredDirectories = new Set([".git", ".pixi", "dist", "node_modules"]);
 const packageJsonFiles = [];
 
 function collectPackageJsonFiles(directory) {
