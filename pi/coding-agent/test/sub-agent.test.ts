@@ -7,7 +7,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentSessionEvent } from "../src/core/agent-session.ts";
 import { BackgroundEventManager } from "../src/core/background-events.ts";
 import type { ExtensionContext } from "../src/core/extensions/types.ts";
-import { SubAgentController, type SubAgentReturnMessage, type SubAgentSpawn } from "../src/core/tools/sub-agent.ts";
+import {
+	buildOrchestrationRequest,
+	SubAgentController,
+	type SubAgentReturnMessage,
+	type SubAgentSpawn,
+} from "../src/core/tools/sub-agent.ts";
 
 function textOf(result: { content: Array<{ type: string; text?: string }> }): string {
 	return result.content.map((part) => part.text ?? "").join("\n");
@@ -328,5 +333,51 @@ describe("built-in sub_agent tool", () => {
 		expect(text).toContain("Status: exited");
 		expect(text).toContain("pattern: fan_out_synthesize");
 		expect(text).toContain("outcome");
+	});
+});
+
+describe("buildOrchestrationRequest slot remapping", () => {
+	it("remaps adversarial_verify threshold -> confidenceThreshold", () => {
+		const req = buildOrchestrationRequest({
+			pattern: "adversarial_verify",
+			verifyCount: 5,
+			threshold: 0.6,
+		} as never) as Record<string, unknown>;
+		expect(req.confidenceThreshold).toBe(0.6);
+		expect(req.verifyCount).toBe(5);
+		expect(req.threshold).toBeUndefined();
+	});
+
+	it("remaps generate_and_filter candidateCount -> count and topK -> keepTop", () => {
+		const req = buildOrchestrationRequest({
+			pattern: "generate_and_filter",
+			candidateCount: 7,
+			topK: 3,
+		} as never) as Record<string, unknown>;
+		expect(req.count).toBe(7);
+		expect(req.keepTop).toBe(3);
+		expect(req.candidateCount).toBeUndefined();
+		expect(req.topK).toBeUndefined();
+	});
+
+	it("drops the tool-only `name` field and leaves aligned slots untouched", () => {
+		const req = buildOrchestrationRequest({
+			pattern: "fan_out_synthesize",
+			name: "my run",
+			maxConcurrent: 4,
+			workers: [{ task: "a" }],
+		} as never) as Record<string, unknown>;
+		expect(req.name).toBeUndefined();
+		expect(req.maxConcurrent).toBe(4);
+		expect(req.workers).toEqual([{ task: "a" }]);
+	});
+
+	it("omits remapped keys entirely when they are not supplied", () => {
+		const req = buildOrchestrationRequest({
+			pattern: "adversarial_verify",
+		} as never) as Record<string, unknown>;
+		expect("confidenceThreshold" in req).toBe(false);
+		expect("count" in req).toBe(false);
+		expect("keepTop" in req).toBe(false);
 	});
 });

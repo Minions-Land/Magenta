@@ -179,6 +179,7 @@ function createMinimalResourceLoader(systemPrompt: string): ResourceLoader {
 		getPackageOverlay: () => undefined,
 		getPackageTools: () => ({ tools: [], diagnostics: [] }),
 		getTrunkTools: () => ({ tools: [], diagnostics: [] }),
+		getUserMcpTools: () => ({ tools: [], diagnostics: [] }),
 		getAgentsFiles: () => ({ agentsFiles: [] }),
 		getSystemPrompt: () => systemPrompt,
 		getAppendSystemPrompt: () => [],

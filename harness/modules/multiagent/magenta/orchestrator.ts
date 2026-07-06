@@ -281,12 +281,16 @@ async function generateAndFilter(
 	const ranked = candidates
 		.map((candidate, i) => ({ candidate, score: readNumberField(evaluations[i], "score") ?? -Infinity }))
 		.sort((a, b) => b.score - a.score);
-	const winner = ranked[0]?.candidate;
+	const keepTop = Math.max(1, req.keepTop ?? 1);
+	const finalists = ranked.slice(0, keepTop).map((r) => r.candidate);
+	const winner = finalists[0];
 
 	return {
 		pattern: "generate_and_filter",
 		workers: [...candidates, ...evaluations],
 		outcome: winner,
+		// Top-K candidates by score when keepTop > 1; `outcome` is always the top one.
+		...(finalists.length > 1 ? { finalists } : {}),
 		terminatedBy: "completed",
 	};
 }

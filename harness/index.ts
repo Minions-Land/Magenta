@@ -25,6 +25,8 @@ export * from "./hcp-contract/hcp-magnet.ts";
 //   hcp-magnet/    — the HcpMagnet transport framework (native/process/python/...)
 export * from "./hcp-contract/hcp-server.ts";
 export * from "./hcp-magnet/hcp-process.ts";
+export * from "./hcp-magnet/mcp.ts";
+export * from "./hcp-magnet/mcp-client.ts";
 export * from "./hcp-magnet/native.ts";
 export * from "./hcp-magnet/package-tool.ts";
 export * from "./hcp-magnet/process.ts";

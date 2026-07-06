@@ -4,6 +4,7 @@ import chalk from "chalk";
 import { CONFIG_DIR_NAME } from "../config.ts";
 import { loadThemeFromPath, type Theme } from "../modes/interactive/theme/theme.ts";
 import type { ResourceDiagnostic } from "./diagnostics.ts";
+import { loadUserMcpTools } from "./mcp-config-loader.ts";
 
 export type { ResourceCollision, ResourceDiagnostic } from "./diagnostics.ts";
 
@@ -62,6 +63,7 @@ export interface ResourceLoader {
 	getPackageOverlay(): PackageOverlay | undefined;
 	getPackageTools(): { tools: AgentTool[]; diagnostics: ResourceDiagnostic[] };
 	getTrunkTools(): { tools: AgentTool[]; diagnostics: ResourceDiagnostic[] };
+	getUserMcpTools(): { tools: AgentTool[]; diagnostics: ResourceDiagnostic[] };
 	getHarnessPackageSelectors?(): string[];
 	setHarnessPackageSelectors?(selectors: string[]): void;
 	getAgentsFiles(): { agentsFiles: Array<{ path: string; content: string }> };
@@ -332,6 +334,13 @@ export class DefaultResourceLoader implements ResourceLoader {
 	 */
 	private trunkTools: AgentTool[];
 	private trunkToolDiagnostics: ResourceDiagnostic[];
+	/**
+	 * MCP tools loaded from the user config (`~/.pi/agent/mcp-servers.json`).
+	 * This is the general MCP registration path; unlike the harness package
+	 * path it does not require shipping a package.
+	 */
+	private userMcpTools: AgentTool[];
+	private userMcpDiagnostics: ResourceDiagnostic[];
 	private agentsFiles: Array<{ path: string; content: string }>;
 	private systemPrompt?: string;
 	private appendSystemPrompt: string[];
@@ -386,6 +395,8 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.packageDiagnostics = [];
 		this.trunkTools = [];
 		this.trunkToolDiagnostics = [];
+		this.userMcpTools = [];
+		this.userMcpDiagnostics = [];
 		this.agentsFiles = [];
 		this.appendSystemPrompt = [];
 		this.lastSkillPaths = [];
@@ -427,6 +438,10 @@ export class DefaultResourceLoader implements ResourceLoader {
 	 */
 	getTrunkTools(): { tools: AgentTool[]; diagnostics: ResourceDiagnostic[] } {
 		return { tools: this.trunkTools, diagnostics: this.trunkToolDiagnostics };
+	}
+
+	getUserMcpTools(): { tools: AgentTool[]; diagnostics: ResourceDiagnostic[] } {
+		return { tools: this.userMcpTools, diagnostics: this.userMcpDiagnostics };
 	}
 
 	/**
@@ -523,6 +538,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		const resolvedPaths = await this.packageManager.resolve();
 		const packageResources = await this.loadHarnessPackageResources(options?.onPackageAssemblyProgress);
 		await this.loadTrunkTools();
+		await this.loadUserMcpTools();
 		const packageSystemPrompts = await this.resolvePackageSystemPromptSources(packageResources);
 		const cliExtensionPaths = await this.packageManager.resolveExtensionSources(this.additionalExtensionPaths, {
 			temporary: true,
@@ -828,6 +844,21 @@ export class DefaultResourceLoader implements ResourceLoader {
 			this.trunkToolDiagnostics.push({
 				type: "error",
 				message: `Failed to assemble harness trunk tools: ${error instanceof Error ? error.message : String(error)}`,
+			});
+		}
+	}
+
+	private async loadUserMcpTools(): Promise<void> {
+		this.userMcpTools = [];
+		this.userMcpDiagnostics = [];
+		try {
+			const result = await loadUserMcpTools();
+			this.userMcpTools = result.tools;
+			this.userMcpDiagnostics = result.diagnostics;
+		} catch (error) {
+			this.userMcpDiagnostics.push({
+				type: "error",
+				message: `Failed to load user MCP servers: ${error instanceof Error ? error.message : String(error)}`,
 			});
 		}
 	}

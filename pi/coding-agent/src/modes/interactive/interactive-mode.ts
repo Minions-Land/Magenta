@@ -4875,7 +4875,7 @@ export class InteractiveMode {
 				value: "command:mcp",
 				label: "MCP Servers",
 				aliases: ["mcp"],
-				description: "MCP server management (under development)",
+				description: "View MCP servers loaded from ~/.pi/agent/mcp-servers.json",
 				children: [
 					{
 						value: "mcp:none",
@@ -6273,17 +6273,46 @@ export class InteractiveMode {
 	}
 
 	private showMcpManager(): void {
-		// MCP management is still a placeholder; surface it through the shared dock
-		// menu so navigation (left/right/esc) matches every other panel.
-		const items: FloatingMenuItem[] = [
-			{
+		// Read-only view of the tools loaded from ~/.pi/agent/mcp-servers.json.
+		// Surfaced through the shared dock menu so navigation matches every other
+		// panel. Editing servers is still done by hand in the config file.
+		const { tools, diagnostics } = this.session.resourceLoader.getUserMcpTools();
+		const items: FloatingMenuItem[] = [];
+
+		if (tools.length === 0) {
+			items.push({
 				value: "mcp:none",
 				label: "No MCP servers configured",
 				description: "Add servers in ~/.pi/agent/mcp-servers.json",
 				disabled: true,
-			},
-		];
-		this.showFloatingMenu("mcp", "MCP server management (under development)", items, () => false);
+			});
+		} else {
+			// Tool names are `<prefix>_<remoteTool>`; group by the server prefix.
+			const byServer = new Map<string, number>();
+			for (const tool of tools) {
+				const prefix = tool.name.includes("_") ? tool.name.slice(0, tool.name.indexOf("_")) : tool.name;
+				byServer.set(prefix, (byServer.get(prefix) ?? 0) + 1);
+			}
+			for (const [server, count] of byServer) {
+				items.push({
+					value: `mcp:${server}`,
+					label: server,
+					description: `${count} tool${count === 1 ? "" : "s"} loaded`,
+					disabled: true,
+				});
+			}
+		}
+
+		for (const diagnostic of diagnostics) {
+			items.push({
+				value: `mcp:diag:${diagnostic.message}`,
+				label: diagnostic.type === "error" ? "⚠ error" : "⚠ warning",
+				description: diagnostic.message,
+				disabled: true,
+			});
+		}
+
+		this.showFloatingMenu("mcp", "MCP servers (read-only; edit ~/.pi/agent/mcp-servers.json)", items, () => false);
 	}
 
 	private showSessionSelector(): void {

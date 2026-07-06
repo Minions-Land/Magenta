@@ -540,6 +540,11 @@ export function getSettingsPath(): string {
 	return join(getAgentDir(), "settings.json");
 }
 
+/** Get path to the user MCP servers config (mcp-servers.json) */
+export function getMcpServersPath(): string {
+	return join(getAgentDir(), "mcp-servers.json");
+}
+
 /** Get path to tools directory */
 export function getToolsDir(): string {
 	return join(getAgentDir(), "tools");

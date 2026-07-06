@@ -702,6 +702,7 @@ export async function main(args: string[], options?: MainOptions) {
 			})),
 			...resourceLoader.getPackageTools().diagnostics.map(toRuntimeDiagnostic),
 			...resourceLoader.getTrunkTools().diagnostics.map(toRuntimeDiagnostic),
+			...resourceLoader.getUserMcpTools().diagnostics.map(toRuntimeDiagnostic),
 		];
 
 		const modelPatterns = parsed.models ?? settingsManager.getEnabledModels();

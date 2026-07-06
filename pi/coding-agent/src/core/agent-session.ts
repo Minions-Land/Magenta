@@ -2421,6 +2421,13 @@ export class AgentSession {
 					origin: "package",
 				}),
 			})),
+			...this._resourceLoader.getUserMcpTools().tools.map((tool) => ({
+				definition: createToolDefinitionFromAgentTool(tool),
+				sourceInfo: createSyntheticSourceInfo(`<user-mcp:${tool.name}>`, {
+					source: "user-mcp",
+					origin: "top-level",
+				}),
+			})),
 			...this._customTools.map((definition) => ({
 				definition,
 				sourceInfo: createSyntheticSourceInfo(`<sdk:${definition.name}>`, { source: "sdk" }),

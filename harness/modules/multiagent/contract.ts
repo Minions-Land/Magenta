@@ -103,6 +103,12 @@ export interface OrchestrationResult {
 	workers: WorkerResult[];
 	/** Synthesizer / winner / final output, when the pattern produces one. */
 	outcome?: WorkerResult;
+	/**
+	 * Top-K candidates by score, highest first, for generate_and_filter when
+	 * `keepTop > 1`. `outcome` is always `finalists[0]`. Omitted when only the
+	 * single winner is kept.
+	 */
+	finalists?: WorkerResult[];
 	/** Confidence = passed / verifyCount, for adversarial_verify. */
 	confidence?: number;
 	/** Iterations executed, for loop_until_done. */

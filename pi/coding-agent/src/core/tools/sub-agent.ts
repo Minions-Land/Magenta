@@ -410,13 +410,26 @@ function summarizeWorkflowEvent(event: SubAgentEvent, includeOutput: boolean): s
 
 /**
  * Map the sub_agent `workflow` tool input onto a harness OrchestrationRequest.
- * The shapes are aligned by design (WorkflowSlotSchema is a WorkerSlot superset),
- * so this is mostly a pass-through; the harness validates required slots per
- * pattern and rejects malformed requests.
+ * The worker-slot shapes are aligned by design (WorkflowSlotSchema is a
+ * WorkerSlot superset), so those pass through untouched. A few tuning slots are
+ * exposed under tool-friendly names that differ from the harness contract keys;
+ * those must be remapped explicitly here, otherwise they are silently dropped
+ * and the orchestrator falls back to defaults (or, for the required
+ * `generate_and_filter` count, breaks candidate generation). The harness
+ * validates required slots per pattern and rejects malformed requests.
  */
-function buildOrchestrationRequest(input: WorkflowInput): MultiAgentOrchestrationRequest {
-	const { name: _name, ...rest } = input;
-	return rest as unknown as MultiAgentOrchestrationRequest;
+export function buildOrchestrationRequest(input: WorkflowInput): MultiAgentOrchestrationRequest {
+	// Tool-only keys that either map to a differently-named contract field
+	// (below) or are not part of the contract at all (`name`).
+	const { name: _name, threshold, candidateCount, topK, ...rest } = input;
+	const request = { ...rest } as Record<string, unknown>;
+	// adversarial_verify: tool `threshold` -> contract `confidenceThreshold`.
+	if (threshold !== undefined) request.confidenceThreshold = threshold;
+	// generate_and_filter: tool `candidateCount` -> contract `count` (required),
+	// tool `topK` -> contract `keepTop`.
+	if (candidateCount !== undefined) request.count = candidateCount;
+	if (topK !== undefined) request.keepTop = topK;
+	return request as unknown as MultiAgentOrchestrationRequest;
 }
 
 /** Render an OrchestrationResult as a compact structured tree for /events + returns. */

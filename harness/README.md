@@ -16,11 +16,12 @@ harness/
   hcp-client/       — HCP client (registry, assembly, package overlay)
   hcp-magnet/       — Magnet connectors (wrap implementations as AgentTools/HcpServers)
   
-  modules/          — Capability and tool modules (12 modules)
+  modules/          — Capability and tool modules (13 modules)
     compaction/       — Branch summarization and context compaction
     context/          — Context management
     hooks/            — Lifecycle hooks
     memory/           — Memory storage (standalone workspace package)
+    multiagent/       — Deterministic multi-agent orchestration (consumed by sub_agent; not a harness.toml component)
     policy/           — Execution policies
     prompt-templates/ — Reusable prompt templates
     runtime/          — Runtime configuration
@@ -39,9 +40,11 @@ harness/
     utils/            — Shared utilities (shell output, truncation)
   
   catalog/          — Component inventories and integration maps
-  
-  mcp/              — MCP (Model Context Protocol) integration (standalone subpackage, TODO: fold into hcp-magnet)
 ```
+
+MCP (Model Context Protocol) support lives in `hcp-magnet/` (`mcp.ts` +
+`mcp-client.ts`): the harness connects to MCP servers and exposes their tools
+as magnets. User-configured servers are loaded from `~/.pi/agent/mcp-servers.json`.
 
 ### Module Layout
 
@@ -116,6 +119,7 @@ Magenta3 only registers currently assembled implementations under
 - **context** — Context management
 - **hooks** — Lifecycle hooks
 - **memory** — Memory storage (standalone workspace package at `@magenta/memory`)
+- **multiagent** — Deterministic multi-agent orchestration skeletons (consumed directly by the `sub_agent` tool via import)
 - **policy** — Execution policies
 - **prompt-templates** — Reusable prompt templates with parameter substitution
 - **runtime** — Runtime configuration
@@ -123,6 +127,11 @@ Magenta3 only registers currently assembled implementations under
 - **skills** — Agent skills (user-invocable via `/skill` command)
 - **system-prompt** — System prompt construction and templating
 - **tools-search** — Tool search and discovery
+
+> **Note:** `multiagent` and `tools-search` are intentionally **not** registered as
+> loop components in `harness.toml`. `multiagent` is consumed directly by the
+> `sub_agent` tool via import (it is a workflow engine, not a loop capability), and
+> `tools-search` is wired separately. The other 11 modules are `harness.toml` components.
 
 ### Tools (modules/tools/)
 

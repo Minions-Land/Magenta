@@ -222,6 +222,7 @@ export function createTestResourceLoader(options: CreateTestResourceLoaderOption
 		getPackageOverlay: () => undefined,
 		getPackageTools: () => ({ tools: [], diagnostics: [] }),
 		getTrunkTools: () => ({ tools: [], diagnostics: [] }),
+		getUserMcpTools: () => ({ tools: [], diagnostics: [] }),
 		getAgentsFiles: () => ({ agentsFiles: [] }),
 		getSystemPrompt: () => undefined,
 		getAppendSystemPrompt: () => [],
