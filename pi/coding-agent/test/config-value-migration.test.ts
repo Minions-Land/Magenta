@@ -2,10 +2,10 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ENV_AGENT_DIR } from "../src/config.ts";
+import { CONFIG_DIR_NAME, ENV_AGENT_DIR } from "../src/config.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { ModelRegistry } from "../src/core/model-registry.ts";
-import { runMigrations } from "../src/migrations.ts";
+import { migrateLegacyPiAgentDirToCurrentConfigDir, runMigrations } from "../src/migrations.ts";
 
 describe("config value env var syntax migration", () => {
 	const tempDirs: string[] = [];
@@ -36,6 +36,70 @@ describe("config value env var syntax migration", () => {
 			}
 		}
 	}
+
+	describe("legacy .pi agent dir migration", () => {
+		it("copies ~/.pi/agent to the current branded agent dir without deleting the source", () => {
+			const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-legacy-agent-dir-test-"));
+			tempDirs.push(root);
+			const oldAgentDir = path.join(root, ".pi", "agent");
+			const newAgentDir = path.join(root, CONFIG_DIR_NAME, "agent");
+			fs.mkdirSync(path.join(oldAgentDir, "sessions", "demo"), { recursive: true });
+			fs.writeFileSync(path.join(oldAgentDir, "settings.json"), '{"theme":"dark"}\n', "utf-8");
+			fs.writeFileSync(path.join(oldAgentDir, "sessions", "demo", "session.jsonl"), "{}\n", "utf-8");
+
+			const migrated = migrateLegacyPiAgentDirToCurrentConfigDir({
+				oldAgentDir,
+				newAgentDir,
+				envAgentDir: undefined,
+				configDirName: CONFIG_DIR_NAME,
+			});
+
+			expect(migrated).toBe(true);
+			expect(fs.existsSync(path.join(oldAgentDir, "settings.json"))).toBe(true);
+			expect(fs.readFileSync(path.join(newAgentDir, "settings.json"), "utf-8")).toBe('{"theme":"dark"}\n');
+			expect(fs.readFileSync(path.join(newAgentDir, "sessions", "demo", "session.jsonl"), "utf-8")).toBe("{}\n");
+		});
+
+		it("does not overwrite an existing branded agent dir", () => {
+			const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-legacy-agent-dir-existing-test-"));
+			tempDirs.push(root);
+			const oldAgentDir = path.join(root, ".pi", "agent");
+			const newAgentDir = path.join(root, CONFIG_DIR_NAME, "agent");
+			fs.mkdirSync(oldAgentDir, { recursive: true });
+			fs.mkdirSync(newAgentDir, { recursive: true });
+			fs.writeFileSync(path.join(oldAgentDir, "settings.json"), '{"theme":"old"}\n', "utf-8");
+			fs.writeFileSync(path.join(newAgentDir, "settings.json"), '{"theme":"new"}\n', "utf-8");
+
+			const migrated = migrateLegacyPiAgentDirToCurrentConfigDir({
+				oldAgentDir,
+				newAgentDir,
+				envAgentDir: undefined,
+				configDirName: CONFIG_DIR_NAME,
+			});
+
+			expect(migrated).toBe(false);
+			expect(fs.readFileSync(path.join(newAgentDir, "settings.json"), "utf-8")).toBe('{"theme":"new"}\n');
+		});
+
+		it("skips migration when the agent dir is explicitly overridden", () => {
+			const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-legacy-agent-dir-env-test-"));
+			tempDirs.push(root);
+			const oldAgentDir = path.join(root, ".pi", "agent");
+			const newAgentDir = path.join(root, CONFIG_DIR_NAME, "agent");
+			fs.mkdirSync(oldAgentDir, { recursive: true });
+			fs.writeFileSync(path.join(oldAgentDir, "settings.json"), '{"theme":"old"}\n', "utf-8");
+
+			const migrated = migrateLegacyPiAgentDirToCurrentConfigDir({
+				oldAgentDir,
+				newAgentDir,
+				envAgentDir: path.join(root, "custom-agent"),
+				configDirName: CONFIG_DIR_NAME,
+			});
+
+			expect(migrated).toBe(false);
+			expect(fs.existsSync(newAgentDir)).toBe(false);
+		});
+	});
 
 	it("leaves uppercase auth.json API key values unchanged", () => {
 		const agentDir = createAgentDir();

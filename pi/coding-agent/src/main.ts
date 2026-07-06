@@ -44,7 +44,7 @@ import { assertValidSessionId, SessionManager } from "./core/session-manager.ts"
 import { SettingsManager } from "./core/settings-manager.ts";
 import { printTimings, resetTimings, time } from "./core/timings.ts";
 import { hasTrustRequiringProjectResources, ProjectTrustStore } from "./core/trust-manager.ts";
-import { runMigrations, showDeprecationWarnings } from "./migrations.ts";
+import { migrateLegacyPiAgentDirToCurrentConfigDir, runMigrations, showDeprecationWarnings } from "./migrations.ts";
 import { InteractiveMode, runPrintMode, runRpcMode } from "./modes/index.ts";
 import { initTheme, stopThemeWatcher } from "./modes/interactive/theme/theme.ts";
 import { handleConfigCommand, handlePackageCommand } from "./package-manager-cli.ts";
@@ -482,6 +482,7 @@ export async function main(args: string[], options?: MainOptions) {
 	}
 
 	const cwd = process.cwd();
+	migrateLegacyPiAgentDirToCurrentConfigDir();
 	const agentDir = getAgentDir();
 	const bootstrapSettingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted: false });
 	applyHttpProxySettings(bootstrapSettingsManager.getGlobalSettings().httpProxy);
@@ -689,6 +690,9 @@ export async function main(args: string[], options?: MainOptions) {
 				systemPrompt: parsed.systemPrompt,
 				appendSystemPrompt: parsed.appendSystemPrompt,
 				extensionFactories: options?.extensionFactories,
+				// Hot-reload skills only in the interactive TTY session, where getSkills() is re-read
+				// live. Headless/print/rpc runs read skills once, so a watcher would only add overhead.
+				watchSkills: appMode === "interactive",
 			},
 		});
 		const { settingsManager, modelRegistry, resourceLoader } = services;

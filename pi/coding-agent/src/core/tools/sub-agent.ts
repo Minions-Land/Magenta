@@ -1,7 +1,6 @@
 import { type ChildProcess, type SpawnOptions, spawn } from "node:child_process";
 import { createWriteStream, type WriteStream } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { StringEnum } from "@earendil-works/pi-ai";
 import {
@@ -11,6 +10,7 @@ import {
 	type WorkerRunner as WorkflowRunner,
 } from "@magenta/harness";
 import { type Static, Type } from "typebox";
+import { APP_BINARY_NAME, APP_NAME, getAgentDir } from "../../config.ts";
 import type { AgentSessionEvent } from "../agent-session.ts";
 import type { BackgroundEventManager } from "../background-events.ts";
 import {
@@ -22,7 +22,7 @@ import {
 } from "../background-shell-utils.ts";
 import type { ExtensionContext, ToolDefinition } from "../extensions/types.ts";
 
-const WORK_DIR = join(homedir(), ".pi", "agent", "tmp", "sub-agents");
+const WORK_DIR = join(getAgentDir(), "tmp", "sub-agents");
 const MAIN_PROGRESS_PATH = join(WORK_DIR, "main-tool-progress.md");
 const TERM_GRACE_MS = 3000;
 const MAX_START_MANY = 8;
@@ -83,7 +83,7 @@ type SubAgentEvent = {
 	logPath: string;
 	/** Event driver kind. "agent" = one child process; "workflow" = in-process orchestration. */
 	kind: "agent" | "workflow";
-	/** Present for kind="agent": the headless pi child process. */
+	/** Present for kind="agent": the headless child process. */
 	child?: ChildProcess;
 	/** Present for kind="workflow": aborts the in-process orchestration on cancel. */
 	abort?: AbortController;
@@ -111,6 +111,11 @@ type SubAgentEvent = {
 };
 
 export type SubAgentSpawn = (command: string, args: string[], options: SpawnOptions) => ChildProcess;
+
+export type SubAgentModelSelection = {
+	provider: string;
+	model: string;
+};
 
 export type SubAgentReturnMessage<T = unknown> = {
 	message: {
@@ -500,14 +505,24 @@ export class SubAgentController {
 	private monitor: { update: (ctx?: ExtensionContext) => void };
 	private sendMessage: SubAgentSendMessage;
 	private spawnAgent: SubAgentSpawn;
+	private agentCommand: string;
+	private getDefaultModel?: () => SubAgentModelSelection | undefined;
 	private workflowRunner?: WorkflowRunner;
 
 	constructor(
 		manager: BackgroundEventManager,
-		options: { sendMessage: SubAgentSendMessage; spawnAgent?: SubAgentSpawn; workflowRunner?: WorkflowRunner },
+		options: {
+			sendMessage: SubAgentSendMessage;
+			spawnAgent?: SubAgentSpawn;
+			agentCommand?: string;
+			getDefaultModel?: () => SubAgentModelSelection | undefined;
+			workflowRunner?: WorkflowRunner;
+		},
 	) {
 		this.sendMessage = options.sendMessage;
 		this.spawnAgent = options.spawnAgent ?? spawn;
+		this.agentCommand = options.agentCommand ?? APP_BINARY_NAME;
+		this.getDefaultModel = options.getDefaultModel;
 		this.workflowRunner = options.workflowRunner;
 		this.monitor = manager.registerSource({
 			id: "agents",
@@ -562,8 +577,8 @@ export class SubAgentController {
 			name: "sub_agent",
 			label: "Sub Agent",
 			description:
-				"Start, inspect, wait for, or cancel headless pi sub-agents. action=start accepts either one task or a tasks array for parallel work, or a workflow object to run a deterministic multi-agent orchestration (classify_and_act, fan_out_synthesize, adversarial_verify, generate_and_filter, tournament, loop_until_done). Set returnToMain=true to automatically send completed results back to the main agent. Sub-agents are read-only by default, run with --no-session --no-extensions, and receive parent progress.",
-			promptSnippet: "Run one or more headless pi sub-agents for delegated analysis",
+				`Start, inspect, wait for, or cancel headless ${APP_NAME} sub-agents. action=start accepts either one task or a tasks array for parallel work, or a workflow object to run a deterministic multi-agent orchestration (classify_and_act, fan_out_synthesize, adversarial_verify, generate_and_filter, tournament, loop_until_done). Set returnToMain=true to automatically send completed results back to the main agent. Sub-agents are read-only by default, inherit the parent model unless a task specifies model/provider, run with --no-session --no-extensions, and receive parent progress.`,
+			promptSnippet: `Run one or more headless ${APP_NAME} sub-agents for delegated analysis`,
 			promptGuidelines: [
 				"Use sub_agent action=start with tasks:[...] when a task can be decomposed into independent research, code review, test analysis, or planning subtasks that benefit from concurrent agents.",
 				"Prefer default read-only sub-agents. The parent agent should synthesize results and perform final edits.",
@@ -574,6 +589,7 @@ export class SubAgentController {
 				"Use action=start with a workflow object when the task needs a structured multi-agent pattern (route-and-handle, fan-out-and-synthesize, generate-and-verify, candidate tournament, or iterate-until-done) rather than independent parallel tasks. The orchestration control flow is deterministic and owned by the harness; you only supply each slot's task content. A workflow shows up as a single background event whose expansion reveals its internal workers.",
 			],
 			parameters: subAgentSchema,
+			renderKind: "sub-agent-result",
 			execute: (_toolCallId, params, signal, _onUpdate, ctx) => this.execute(params, signal, ctx),
 		};
 	}
@@ -878,12 +894,15 @@ export class SubAgentController {
 		await writeFile(promptPath, prompt, "utf8");
 
 		const args = ["--print", "--no-session", "--no-extensions", "--tools", tools.join(","), "--thinking", thinking];
-		if (input.provider) args.push("--provider", input.provider);
-		if (input.model) args.push("--model", input.model);
+		const inheritedModel = !input.provider && !input.model ? this.getDefaultModel?.() : undefined;
+		const provider = input.provider ?? inheritedModel?.provider;
+		const model = input.model ?? inheritedModel?.model;
+		if (provider) args.push("--provider", provider);
+		if (model) args.push("--model", model);
 		args.push(`@${promptPath}`);
 
 		const log = createWriteStream(logPath, { flags: "a" });
-		const child = this.spawnAgent("pi", args, {
+		const child = this.spawnAgent(this.agentCommand, args, {
 			cwd,
 			detached: true,
 			stdio: ["ignore", "pipe", "pipe"],
@@ -898,8 +917,8 @@ export class SubAgentController {
 			label: input.label,
 			cwd,
 			tools,
-			model: input.model,
-			provider: input.provider,
+			model,
+			provider,
 			thinking,
 			promptPath,
 			logPath,
@@ -915,7 +934,7 @@ export class SubAgentController {
 		this.events.set(id, event);
 		this.monitor.update();
 
-		log.write(`$ pi ${args.map((arg) => JSON.stringify(arg)).join(" ")}\n\n`);
+		log.write(`$ ${this.agentCommand} ${args.map((arg) => JSON.stringify(arg)).join(" ")}\n\n`);
 		child.stdout?.on("data", (data: Buffer) => {
 			if (!log.writableEnded && !log.destroyed) log.write(data);
 			appendTail(event, data);

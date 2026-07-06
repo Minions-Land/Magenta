@@ -1,9 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
 	createSshPathMapper,
+	createSshPtyCommandRunner,
 	createSshToolOperations,
 	resolveSshTarget,
 	type SshCommandRunner,
+	type SshPtyProcess,
+	type SshPtySpawnOptions,
 } from "../../../modules/tools/ssh/magenta/ssh.ts";
 
 function createRunner(
@@ -21,6 +24,40 @@ function createRunner(
 		aborted: false,
 		...handler(remote, command, options),
 	});
+}
+
+class FakeSshPtyProcess implements SshPtyProcess {
+	private dataListeners: Array<(data: string) => void> = [];
+	private exitListeners: Array<(event: { exitCode: number; signal?: number }) => void> = [];
+	killed = false;
+
+	onData(listener: (data: string) => void) {
+		this.dataListeners.push(listener);
+		return { dispose: () => this.removeListener(this.dataListeners, listener) };
+	}
+
+	onExit(listener: (event: { exitCode: number; signal?: number }) => void) {
+		this.exitListeners.push(listener);
+		return { dispose: () => this.removeListener(this.exitListeners, listener) };
+	}
+
+	kill() {
+		this.killed = true;
+		this.emitExit(1);
+	}
+
+	emitData(data: string) {
+		for (const listener of [...this.dataListeners]) listener(data);
+	}
+
+	emitExit(exitCode: number) {
+		for (const listener of [...this.exitListeners]) listener({ exitCode });
+	}
+
+	private removeListener<T>(listeners: T[], listener: T) {
+		const index = listeners.indexOf(listener);
+		if (index >= 0) listeners.splice(index, 1);
+	}
 }
 
 describe("SSH path mapping", () => {
@@ -101,5 +138,93 @@ describe("SSH tool operations", () => {
 			{ remote: "user@example", command: "cat '/remote/project/src/a file.ts'" },
 			{ remote: "user@example", command: "cd '/remote/project' && echo hi; exit 7" },
 		]);
+	});
+
+	it("can route bash through a separate runner without changing file operations", async () => {
+		const fileCalls: string[] = [];
+		const bashCalls: string[] = [];
+		const fileRunner = createRunner((_remote, command) => {
+			fileCalls.push(command);
+			return { stdout: Buffer.from("ok") };
+		});
+		const bashRunner = createRunner((_remote, command) => {
+			bashCalls.push(command);
+			return { stdout: Buffer.from("bash"), exitCode: 9 };
+		});
+		const ops = createSshToolOperations({ remote: "user@example", remoteCwd: "/remote/project" }, "/local/project", {
+			bashRunner,
+			runner: fileRunner,
+		});
+
+		await ops.read.access("/local/project/src/file.ts");
+		const result = await ops.bash.exec("exit 9", "/local/project", { onData: () => {} });
+
+		expect(result.exitCode).toBe(9);
+		expect(fileCalls).toEqual(["test -r '/remote/project/src/file.ts'"]);
+		expect(bashCalls).toEqual(["cd '/remote/project' && exit 9"]);
+	});
+});
+
+describe("SSH PTY runner", () => {
+	it("spawns ssh with forced TTY allocation and streams PTY output", async () => {
+		const fakeProcess = new FakeSshPtyProcess();
+		const spawnCalls: Array<{ file: string; args: string[]; options: SshPtySpawnOptions }> = [];
+		const runner = createSshPtyCommandRunner({
+			spawn: (file, args, options) => {
+				spawnCalls.push({ file, args, options });
+				return fakeProcess;
+			},
+		});
+		const chunks: string[] = [];
+		const resultPromise = runner("user@example", "echo hi", {
+			env: { TERM: "xterm-256color" },
+			onData: (data) => chunks.push(data.toString()),
+		});
+
+		fakeProcess.emitData("hello\r\n");
+		fakeProcess.emitExit(7);
+		const result = await resultPromise;
+
+		expect(spawnCalls).toEqual([
+			{
+				file: "ssh",
+				args: ["-tt", "user@example", "echo hi"],
+				options: {
+					name: "xterm-256color",
+					cols: 120,
+					rows: 40,
+					cwd: process.cwd(),
+					env: { TERM: "xterm-256color" },
+				},
+			},
+		]);
+		expect(chunks).toEqual(["hello\r\n"]);
+		expect(result).toEqual({
+			stdout: Buffer.from("hello\r\n"),
+			stderr: Buffer.alloc(0),
+			exitCode: 7,
+			timedOut: false,
+			aborted: false,
+		});
+	});
+
+	it("kills the PTY on timeout and reports the timeout", async () => {
+		vi.useFakeTimers();
+		try {
+			const fakeProcess = new FakeSshPtyProcess();
+			const runner = createSshPtyCommandRunner({
+				spawn: () => fakeProcess,
+			});
+			const resultPromise = runner("user@example", "sleep 10", { timeout: 1 });
+
+			await vi.advanceTimersByTimeAsync(1000);
+			const result = await resultPromise;
+
+			expect(fakeProcess.killed).toBe(true);
+			expect(result.timedOut).toBe(true);
+			expect(result.exitCode).toBe(1);
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 });

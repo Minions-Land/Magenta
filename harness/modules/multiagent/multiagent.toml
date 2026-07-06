@@ -4,7 +4,7 @@ description = "Deterministic multi-agent orchestration workflows. Provides fixed
 source = "magenta"
 origin = "magenta1-general-harness"
 origin_rel = "ported/adapted"
-impl = ["multiagent/magenta/orchestrator.ts", "multiagent/magenta/worker.ts", "multiagent/magenta/magnet.ts"]
+impl = ["multiagent/workflow/magenta/orchestrator.ts", "multiagent/workflow/magenta/worker.ts", "multiagent/workflow/magenta/magnet.ts"]
 targets = ["multiagent://local"]
 
 [assumption]

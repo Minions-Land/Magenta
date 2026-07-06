@@ -3,15 +3,54 @@
  */
 
 import chalk from "chalk";
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs";
+import { homedir } from "os";
 import { dirname, join } from "path";
-import { CONFIG_DIR_NAME, getAgentDir, getBinDir } from "./config.ts";
+import { CONFIG_DIR_NAME, ENV_AGENT_DIR, getAgentDir, getBinDir } from "./config.ts";
 import { migrateKeybindingsConfig } from "./core/keybindings.ts";
 
 const MIGRATION_GUIDE_URL =
 	"https://github.com/earendil-works/pi-mono/blob/main/packages/coding-agent/CHANGELOG.md#extensions-migration";
 const EXTENSIONS_DOC_URL =
 	"https://github.com/earendil-works/pi-mono/blob/main/packages/coding-agent/docs/extensions.md";
+
+export interface LegacyAgentDirMigrationOptions {
+	oldAgentDir?: string;
+	newAgentDir?: string;
+	envAgentDir?: string;
+	configDirName?: string;
+}
+
+/**
+ * Copy the old upstream default ~/.pi/agent to the current branded default.
+ *
+ * This is deliberately non-destructive: it never deletes or renames ~/.pi/agent, never runs when
+ * the user explicitly overrides the agent dir, and never overwrites an existing destination.
+ */
+export function migrateLegacyPiAgentDirToCurrentConfigDir(options: LegacyAgentDirMigrationOptions = {}): boolean {
+	const configDirName = options.configDirName ?? CONFIG_DIR_NAME;
+	const envAgentDir = "envAgentDir" in options ? options.envAgentDir : process.env[ENV_AGENT_DIR];
+	if (envAgentDir || configDirName === ".pi") return false;
+
+	const oldAgentDir = options.oldAgentDir ?? join(homedir(), ".pi", "agent");
+	const newAgentDir = options.newAgentDir ?? getAgentDir();
+	if (!existsSync(oldAgentDir) || existsSync(newAgentDir)) return false;
+
+	try {
+		mkdirSync(dirname(newAgentDir), { recursive: true });
+		cpSync(oldAgentDir, newAgentDir, { recursive: true, errorOnExist: false });
+		return true;
+	} catch (err) {
+		console.log(
+			chalk.yellow(
+				`Warning: Could not copy legacy ~/.pi/agent to ~/${configDirName}/agent: ${
+					err instanceof Error ? err.message : err
+				}`,
+			),
+		);
+		return false;
+	}
+}
 
 /**
  * Migrate legacy oauth.json and settings.json apiKeys to auth.json.
@@ -306,6 +345,7 @@ export function runMigrations(cwd: string): {
 	migratedAuthProviders: string[];
 	deprecationWarnings: string[];
 } {
+	migrateLegacyPiAgentDirToCurrentConfigDir();
 	const migratedAuthProviders = migrateAuthToAuthJson();
 	migrateSessionsFromAgentRoot();
 	migrateToolsToBin();

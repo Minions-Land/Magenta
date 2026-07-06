@@ -3,9 +3,12 @@ import { fileURLToPath } from "node:url";
 import ignore from "ignore";
 import { parse } from "yaml";
 import { type ExecutionEnv, type FileInfo, type Result, type Skill, toError } from "../../../core/types/types.ts";
+import { parseCommandArgs, substituteArgs } from "../../prompt-templates/contract.ts";
 
 const MAX_NAME_LENGTH = 64;
 const MAX_DESCRIPTION_LENGTH = 1024;
+/** Frontmatter keys lifted to first-class {@link Skill} fields; everything else lands in `metadata`. */
+const STANDARD_FRONTMATTER_KEYS = new Set(["name", "description", "disable-model-invocation", "argument-hint", "tags"]);
 const IGNORE_FILE_NAMES = [".gitignore", ".ignore", ".fdignore"];
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const isBunBinary =
@@ -36,13 +39,27 @@ interface SkillFrontmatter {
 	name?: string;
 	description?: string;
 	"disable-model-invocation"?: boolean;
+	"argument-hint"?: string;
+	tags?: unknown;
 	[key: string]: unknown;
 }
 
-/** Format a skill invocation prompt, optionally appending additional user instructions. */
+/**
+ * Format a skill invocation prompt.
+ *
+ * `additionalInstructions` is the free-text argument string supplied after `/skill:<name>`. When the
+ * skill body contains argument placeholders (`$1`, `$@`, `$ARGUMENTS`, `${N:-default}`, ...), those are
+ * substituted in place using the shared prompt-template arg grammar and the instructions are NOT also
+ * appended (they are consumed by the placeholders). When the body has no placeholders, the instructions
+ * are appended after the block, preserving the original behavior for placeholder-free skills.
+ */
 export function formatSkillInvocation(skill: Skill, additionalInstructions?: string): string {
-	const skillBlock = `<skill name="${skill.name}" location="${skill.filePath}">\nReferences are relative to ${dirnameEnvPath(skill.filePath)}.\n\n${skill.content}\n</skill>`;
-	return additionalInstructions ? `${skillBlock}\n\n${additionalInstructions}` : skillBlock;
+	const args = additionalInstructions ?? "";
+	const hasPlaceholders = /\$\{?(ARGUMENTS|@|\d)/.test(skill.content);
+	const body = hasPlaceholders ? substituteArgs(skill.content, parseCommandArgs(args)) : skill.content;
+	const skillBlock = `<skill name="${skill.name}" location="${skill.filePath}">\nReferences are relative to ${dirnameEnvPath(skill.filePath)}.\n\n${body}\n</skill>`;
+	if (!args || hasPlaceholders) return skillBlock;
+	return `${skillBlock}\n\n${args}`;
 }
 
 /**
@@ -301,6 +318,10 @@ export async function loadSkillFile(
 		return { skill: null, diagnostics };
 	}
 
+	const argumentHint = typeof frontmatter["argument-hint"] === "string" ? frontmatter["argument-hint"] : undefined;
+	const tags = normalizeTags(frontmatter.tags);
+	const metadata = extractMetadata(frontmatter);
+
 	return {
 		skill: {
 			name,
@@ -308,9 +329,25 @@ export async function loadSkillFile(
 			content: body,
 			filePath,
 			disableModelInvocation: frontmatter["disable-model-invocation"] === true,
+			...(argumentHint ? { argumentHint } : {}),
+			...(tags ? { tags } : {}),
+			...(metadata ? { metadata } : {}),
 		},
 		diagnostics,
 	};
+}
+
+/** Coerce a frontmatter `tags` value into a clean `string[]`, or undefined when absent/empty. */
+function normalizeTags(value: unknown): string[] | undefined {
+	if (!Array.isArray(value)) return undefined;
+	const tags = value.filter((t): t is string => typeof t === "string" && t.trim() !== "");
+	return tags.length > 0 ? tags : undefined;
+}
+
+/** Collect every non-standard frontmatter key so domain-specific metadata survives loading. */
+function extractMetadata(frontmatter: SkillFrontmatter): Record<string, unknown> | undefined {
+	const entries = Object.entries(frontmatter).filter(([key]) => !STANDARD_FRONTMATTER_KEYS.has(key));
+	return entries.length > 0 ? Object.fromEntries(entries) : undefined;
 }
 
 function validateName(name: string, parentDirName: string): string[] {
@@ -340,9 +377,17 @@ function parseFrontmatter<T extends Record<string, unknown>>(
 ): Result<{ frontmatter: T; body: string }, Error> {
 	try {
 		const normalized = content.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-		if (!normalized.startsWith("---")) return { ok: true, value: { frontmatter: {} as T, body: normalized } };
+		// A frontmatter block opens with `---` on its own first line. A bare `---` that is NOT
+		// followed by a newline (e.g. a horizontal rule `---text`) is treated as body, not an opener.
+		const opensFrontmatter = normalized === "---" || normalized.startsWith("---\n");
+		if (!opensFrontmatter) return { ok: true, value: { frontmatter: {} as T, body: normalized } };
 		const endIndex = normalized.indexOf("\n---", 3);
-		if (endIndex === -1) return { ok: true, value: { frontmatter: {} as T, body: normalized } };
+		if (endIndex === -1) {
+			// An opener with no closing delimiter is a malformed block, not a bodyful document. Surfacing
+			// this as an error (rather than silently swallowing the whole file as body) means a typo'd
+			// closing fence produces a `parse_failed` diagnostic instead of a nameless, dropped skill.
+			return { ok: false, error: new Error("frontmatter opener '---' has no closing '---' delimiter") };
+		}
 		const yamlString = normalized.slice(4, endIndex);
 		const body = normalized.slice(endIndex + 4).trim();
 		return { ok: true, value: { frontmatter: (parse(yamlString) ?? {}) as T, body } };

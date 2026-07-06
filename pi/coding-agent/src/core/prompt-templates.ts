@@ -47,7 +47,7 @@ export interface LoadPromptTemplatesOptions {
 	agentDir: string;
 	/** Explicit prompt template paths (files or directories). */
 	promptPaths: string[];
-	/** Include default prompt directories (agentDir/prompts, cwd/.pi/prompts). */
+	/** Include default prompt directories (agentDir/prompts, cwd/<configDir>/prompts). */
 	includeDefaults: boolean;
 }
 

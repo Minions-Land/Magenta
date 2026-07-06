@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { WorkerSlot } from "../../modules/multiagent/contract.ts";
-import { MultiAgentOrchestrator } from "../../modules/multiagent/magenta/orchestrator.ts";
-import { buildSystemPrompt } from "../../modules/multiagent/magenta/worker.ts";
+import { MultiAgentOrchestrator } from "../../modules/multiagent/workflow/magenta/orchestrator.ts";
+import { buildSystemPrompt } from "../../modules/multiagent/workflow/magenta/worker.ts";
 
 /**
  * These guards protect the orchestration CONTRACT, not the worker execution.

@@ -506,6 +506,11 @@ describe("decodeKittyPrintable", () => {
 		assert.strictEqual(decodeKittyPrintable("\x1b[57416u"), ",");
 		assert.strictEqual(decodeKittyPrintable("\x1b[57417u"), undefined);
 	});
+
+	it("should not decode Kitty release events as printable input", () => {
+		assert.strictEqual(decodeKittyPrintable("\x1b[97;1:3u"), undefined);
+		assert.strictEqual(decodeKittyPrintable("\x1b[97;1:2u"), "a");
+	});
 });
 
 describe("decodePrintableKey", () => {

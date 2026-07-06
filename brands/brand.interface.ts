@@ -15,6 +15,9 @@ export interface BrandConfig {
 	/** NPM package scope for product-specific packages */
 	packageScope: string;
 
+	/** Default config directory name under the user's home and project roots */
+	configDirName: string;
+
 	/** Visual theme */
 	theme: {
 		primaryColor: string;      // Main brand color (hex)

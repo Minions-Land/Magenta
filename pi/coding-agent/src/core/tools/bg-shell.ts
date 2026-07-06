@@ -1,10 +1,10 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { createWriteStream, type WriteStream } from "node:fs";
 import { mkdir } from "node:fs/promises";
-import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { type Static, Type } from "typebox";
+import { getAgentDir } from "../../config.ts";
 import type { BackgroundEventManager } from "../background-events.ts";
 import {
 	appendTail as appendTailText,
@@ -23,7 +23,7 @@ import {
 } from "../background-shell-utils.ts";
 import type { ExtensionContext, ToolDefinition } from "../extensions/types.ts";
 
-const LOG_DIR = join(homedir(), ".pi", "agent", "tmp", "background-shell");
+const LOG_DIR = join(getAgentDir(), "tmp", "background-shell");
 const TERM_GRACE_MS = 3000;
 
 type BackgroundShellStatus = "running" | "exited" | "failed" | "timed_out" | "cancelled";

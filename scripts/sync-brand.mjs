@@ -12,7 +12,7 @@
  * Usage: node scripts/sync-brand.mjs [--dry-run] [--brand=<name>]
  */
 
-import { readFileSync, writeFileSync } from "fs";
+import { existsSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 import { fileURLToPath } from "url";
 
@@ -70,6 +70,8 @@ const BRAND_CONFIG = eval(`(${configMatch[1]})`);
 console.log(`   Name: ${BRAND_CONFIG.name}`);
 console.log(`   Version: ${BRAND_CONFIG.version}`);
 console.log(`   Scope: ${BRAND_CONFIG.packageScope}`);
+console.log(`   Config dir: ${BRAND_CONFIG.configDirName}`);
+console.log(`   Binary: ${BRAND_CONFIG.cli.binaryName}`);
 console.log(`   Infra: pi@${BRAND_CONFIG.infra.piVersion}, harness@${BRAND_CONFIG.infra.harnessVersion}`);
 console.log(`   Rename pi packages: ${BRAND_CONFIG.infra.renamePiPackages}\n`);
 
@@ -117,6 +119,10 @@ let updated = 0;
 
 for (const pkg of PACKAGES) {
 	const fullPath = join(ROOT, pkg.path);
+	if (!existsSync(fullPath)) {
+		console.log(`  - ${pkg.path}: missing, skipped`);
+		continue;
+	}
 	let content = readFileSync(fullPath, "utf-8");
 	const original = content;
 
@@ -133,6 +139,36 @@ for (const pkg of PACKAGES) {
 	if (pkg.name && parsed.name !== pkg.name) {
 		parsed.name = pkg.name;
 		console.log(`  ✓ ${pkg.path}: name → ${pkg.name}`);
+	}
+
+	if (pkg.path === "pi/coding-agent/package.json") {
+		const nextPiConfig = {
+			...(parsed.piConfig ?? {}),
+			name: BRAND_CONFIG.name,
+			configDir: BRAND_CONFIG.configDirName,
+			binaryName: BRAND_CONFIG.cli.binaryName,
+		};
+		if (JSON.stringify(parsed.piConfig ?? {}) !== JSON.stringify(nextPiConfig)) {
+			parsed.piConfig = nextPiConfig;
+			console.log(
+				`  ✓ ${pkg.path}: piConfig → ${BRAND_CONFIG.name} (${BRAND_CONFIG.configDirName}, ${BRAND_CONFIG.cli.binaryName})`,
+			);
+		}
+		const nextBin = { [BRAND_CONFIG.cli.binaryName]: "dist/cli.js" };
+		if (JSON.stringify(parsed.bin ?? {}) !== JSON.stringify(nextBin)) {
+			parsed.bin = nextBin;
+			console.log(`  ✓ ${pkg.path}: bin → ${BRAND_CONFIG.cli.binaryName}`);
+		}
+		if (parsed.scripts?.["build:binary"]) {
+			const nextBuildBinary = parsed.scripts["build:binary"].replace(
+				/--outfile dist\/\S+/,
+				`--outfile dist/${BRAND_CONFIG.cli.binaryName}`,
+			);
+			if (nextBuildBinary !== parsed.scripts["build:binary"]) {
+				parsed.scripts["build:binary"] = nextBuildBinary;
+				console.log(`  ✓ ${pkg.path}: build:binary output → dist/${BRAND_CONFIG.cli.binaryName}`);
+			}
+		}
 	}
 
 	// Update dependencies (rename old package names to new ones if renamePiPackages)

@@ -207,6 +207,30 @@ describe("skills", () => {
 			expect(collisions).toHaveLength(1);
 			expect(collisions[0].collision?.name).toBe("calendar");
 		});
+
+		it("preserves the collision loser in `shadowed` rather than discarding it", async () => {
+			const { skills, shadowed } = await loadSkills({
+				agentDir: emptyAgentDir,
+				cwd: emptyCwd,
+				skillPaths: [resolve(collisionFixturesDir, "first"), resolve(collisionFixturesDir, "second")],
+				includeDefaults: false,
+			});
+			expect(skills).toHaveLength(1);
+			expect(shadowed).toHaveLength(1);
+			expect(shadowed[0].name).toBe("calendar");
+			// The winner and loser come from different fixture directories.
+			expect(shadowed[0].filePath).not.toBe(skills[0].filePath);
+		});
+
+		it("returns an empty `shadowed` list when there are no collisions", async () => {
+			const { shadowed } = await loadSkills({
+				agentDir: emptyAgentDir,
+				cwd: emptyCwd,
+				skillPaths: [resolve(collisionFixturesDir, "first")],
+				includeDefaults: false,
+			});
+			expect(shadowed).toEqual([]);
+		});
 	});
 
 	describe("formatSkillsForPrompt", () => {

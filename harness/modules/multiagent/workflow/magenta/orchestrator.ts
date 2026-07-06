@@ -7,7 +7,7 @@
  * decides the order, the concurrency, or when to stop.
  */
 
-import type { HcpServer } from "../../../hcp-contract/hcp-server.ts";
+import type { HcpServer } from "../../../../hcp-contract/hcp-server.ts";
 import type {
 	AdversarialVerifyRequest,
 	ClassifyAndActRequest,
@@ -23,7 +23,7 @@ import type {
 	TournamentRequest,
 	WorkerResult,
 	WorkerSlot,
-} from "../contract.ts";
+} from "../../contract.ts";
 import { buildSystemPrompt, parallel, type SpawnWorkerOptions, spawnWorker } from "./worker.ts";
 
 /**
@@ -438,7 +438,7 @@ export class MultiAgentOrchestrator implements MultiAgentProviderContract {
 					metadata: { patterns: PATTERNS },
 				};
 			},
-			async call(request: import("../../../hcp-contract/hcp-server.ts").HcpRequest) {
+			async call(request: import("../../../../hcp-contract/hcp-server.ts").HcpRequest) {
 				switch (request.op) {
 					case "discover":
 						return provider.discover();

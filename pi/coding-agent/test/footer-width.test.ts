@@ -21,6 +21,7 @@ function createSession(options: {
 	reasoning?: boolean;
 	thinkingLevel?: string;
 	usage?: AssistantUsage;
+	sessionId?: string;
 }): AgentSession {
 	const usage = options.usage;
 	const entries =
@@ -37,6 +38,9 @@ function createSession(options: {
 				];
 
 	const session = {
+		get sessionId() {
+			return options.sessionId ?? "a1b2c3d4";
+		},
 		state: {
 			model: {
 				id: options.modelId ?? "test-model",
@@ -123,6 +127,14 @@ describe("FooterComponent width handling", () => {
 		for (const line of lines) {
 			expect(visibleWidth(line)).toBeLessThanOrEqual(width);
 		}
+	});
+
+	it("shows the session id on the first line for easy copying", () => {
+		const session = createSession({ sessionName: "", sessionId: "deadbeef" });
+		const footer = new FooterComponent(session, createFooterData(1));
+
+		const firstLine = stripAnsi(footer.render(120)[0]);
+		expect(firstLine).toContain("SessionID deadbeef");
 	});
 
 	it("shows the latest cache hit rate when cache usage is present", () => {

@@ -178,6 +178,10 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 		sessionManager,
 		settingsManager,
 		cwd: tempDir,
+		// Isolate the peer-messaging mailbox per harness. Without this the
+		// SendMessageController falls back to the machine-global messages.db and
+		// concurrent suite tests pollute each other's presence/messages.
+		agentDir: tempDir,
 		modelRegistry,
 		resourceLoader,
 		baseToolsOverride: toolMap,

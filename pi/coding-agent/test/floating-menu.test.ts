@@ -42,7 +42,7 @@ function createMenu(
 }
 
 describe("FloatingMenuBody", () => {
-	it("opts the overlay into key releases and does not close on release events", () => {
+	it("does not forward key releases to ordinary overlay bodies", () => {
 		let releaseEvents = 0;
 		let closed = false;
 		const container = new FloatingOverlayContainer(
@@ -58,11 +58,24 @@ describe("FloatingMenuBody", () => {
 			},
 		);
 
+		expect(container.wantsKeyRelease).toBe(false);
+
+		container.handleInput(KITTY_KEY_LEFT_RELEASE);
+
+		expect(releaseEvents).toBe(0);
+		expect(closed).toBe(false);
+	});
+
+	it("opts floating menus into key releases without closing on release events", () => {
+		let closed = false;
+		const container = new FloatingOverlayContainer(createMenu([{ value: "model", label: "Model" }]), () => {
+			closed = true;
+		});
+
 		expect(container.wantsKeyRelease).toBe(true);
 
 		container.handleInput(KITTY_KEY_LEFT_RELEASE);
 
-		expect(releaseEvents).toBe(1);
 		expect(closed).toBe(false);
 	});
 

@@ -6,7 +6,7 @@ import { getAgentDir, getMcpServersPath } from "../config.ts";
 import type { ResourceDiagnostic } from "./diagnostics.ts";
 
 /**
- * User-facing MCP server config, read from `~/.pi/agent/mcp-servers.json`.
+ * User-facing MCP server config, read from `~/.magenta/agent/mcp-servers.json`.
  *
  * This is the general registration path for MCP servers: it mirrors the harness
  * "package" path (a `runtime = "mcp"` descriptor) but sources servers from a
@@ -75,7 +75,7 @@ function parseServersFile(raw: string): { servers: McpServerConfig[]; error?: st
 }
 
 /**
- * Read `~/.pi/agent/mcp-servers.json` and connect each configured MCP server,
+ * Read `~/.magenta/agent/mcp-servers.json` and connect each configured MCP server,
  * returning its remote tools as AgentTools. A missing config file is not an
  * error (returns no tools). A malformed file or a server that fails to connect
  * is downgraded to a diagnostic so one bad entry never blocks the others.

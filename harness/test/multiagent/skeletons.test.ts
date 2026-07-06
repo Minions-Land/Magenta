@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { WorkerResult } from "../../modules/multiagent/contract.ts";
-import { MultiAgentOrchestrator, type WorkerRunner } from "../../modules/multiagent/magenta/orchestrator.ts";
-import type { SpawnWorkerOptions } from "../../modules/multiagent/magenta/worker.ts";
+import { MultiAgentOrchestrator, type WorkerRunner } from "../../modules/multiagent/workflow/magenta/orchestrator.ts";
+import type { SpawnWorkerOptions } from "../../modules/multiagent/workflow/magenta/worker.ts";
 
 /**
  * Deterministic skeleton tests. These exercise the control flow of each pattern

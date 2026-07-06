@@ -14,6 +14,9 @@ export const BRAND_CONFIG: BrandConfig = {
 	/** NPM package scope for product-specific packages */
 	packageScope: "@magenta",
 
+	/** Default config directory name */
+	configDirName: ".magenta",
+
 	/** Visual theme */
 	theme: {
 		primaryColor: "#E91E63",      // Pink/Magenta
@@ -60,4 +63,3 @@ export const BRAND_CONFIG: BrandConfig = {
 		// Future: @magenta/extensions, @magenta/themes, @magenta/config-presets
 	],
 };
-

@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { CONFIG_DIR_NAME } from "../src/config.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { ExtensionRunner } from "../src/core/extensions/runner.ts";
 import { ModelRegistry } from "../src/core/model-registry.ts";
@@ -281,7 +282,7 @@ describe("DefaultResourceLoader", () => {
 
 		it("uses package system prompts unless an explicit system prompt is provided", async () => {
 			writeHarnessPackageFixture(cwd);
-			const piDir = join(cwd, ".pi");
+			const piDir = join(cwd, CONFIG_DIR_NAME);
 			mkdirSync(piDir, { recursive: true });
 			writeFileSync(join(piDir, "SYSTEM.md"), "Project system prompt.");
 
@@ -410,7 +411,7 @@ Prompt content.`,
 
 		it("should prefer project resources over user on name collisions", async () => {
 			const userPromptsDir = join(agentDir, "prompts");
-			const projectPromptsDir = join(cwd, ".pi", "prompts");
+			const projectPromptsDir = join(cwd, CONFIG_DIR_NAME, "prompts");
 			mkdirSync(userPromptsDir, { recursive: true });
 			mkdirSync(projectPromptsDir, { recursive: true });
 			const userPromptPath = join(userPromptsDir, "commit.md");
@@ -419,7 +420,7 @@ Prompt content.`,
 			writeFileSync(projectPromptPath, "Project prompt");
 
 			const userSkillDir = join(agentDir, "skills", "collision-skill");
-			const projectSkillDir = join(cwd, ".pi", "skills", "collision-skill");
+			const projectSkillDir = join(cwd, CONFIG_DIR_NAME, "skills", "collision-skill");
 			mkdirSync(userSkillDir, { recursive: true });
 			mkdirSync(projectSkillDir, { recursive: true });
 			const userSkillPath = join(userSkillDir, "SKILL.md");
@@ -446,9 +447,9 @@ Project skill`,
 			) as { name: string; vars?: Record<string, string> };
 			baseTheme.name = "collision-theme";
 			const userThemePath = join(agentDir, "themes", "collision.json");
-			const projectThemePath = join(cwd, ".pi", "themes", "collision.json");
+			const projectThemePath = join(cwd, CONFIG_DIR_NAME, "themes", "collision.json");
 			mkdirSync(join(agentDir, "themes"), { recursive: true });
-			mkdirSync(join(cwd, ".pi", "themes"), { recursive: true });
+			mkdirSync(join(cwd, CONFIG_DIR_NAME, "themes"), { recursive: true });
 			writeFileSync(userThemePath, JSON.stringify(baseTheme, null, 2));
 			if (baseTheme.vars) {
 				baseTheme.vars.accent = "#ff00ff";
@@ -482,9 +483,9 @@ Project skill`,
 			);
 
 			mkdirSync(agentDir, { recursive: true });
-			mkdirSync(join(cwd, ".pi"), { recursive: true });
+			mkdirSync(join(cwd, CONFIG_DIR_NAME), { recursive: true });
 			symlinkSync(sharedExtDir, join(agentDir, "extensions"), "dir");
-			symlinkSync(sharedExtDir, join(cwd, ".pi", "extensions"), "dir");
+			symlinkSync(sharedExtDir, join(cwd, CONFIG_DIR_NAME, "extensions"), "dir");
 
 			const loader = createLoader();
 			await loader.reload();
@@ -495,12 +496,12 @@ Project skill`,
 
 			// mergePaths processes project paths before user paths, so the project
 			// alias is the canonical survivor.
-			expect(extensionsResult.extensions[0].path).toBe(join(cwd, ".pi", "extensions", "shared.ts"));
+			expect(extensionsResult.extensions[0].path).toBe(join(cwd, CONFIG_DIR_NAME, "extensions", "shared.ts"));
 		});
 
 		it("should load user extensions before trust and reuse them after trust resolves", async () => {
 			const userExtDir = join(agentDir, "extensions");
-			const projectExtDir = join(cwd, ".pi", "extensions");
+			const projectExtDir = join(cwd, CONFIG_DIR_NAME, "extensions");
 			mkdirSync(userExtDir, { recursive: true });
 			mkdirSync(projectExtDir, { recursive: true });
 			const loadCountKey = `__piTrustPreloadCount_${Date.now()}_${Math.random().toString(36).slice(2)}`;
@@ -539,7 +540,7 @@ export default function(pi) {
 
 			const extensionsResult = loader.getExtensions();
 			expect(extensionsResult.extensions.map((extension) => extension.path)).toEqual([
-				join(cwd, ".pi", "extensions", "project.ts"),
+				join(cwd, CONFIG_DIR_NAME, "extensions", "project.ts"),
 				join(userExtDir, "user.ts"),
 			]);
 			expect(globalState[loadCountKey]).toBe(1);
@@ -547,7 +548,7 @@ export default function(pi) {
 
 		it("should keep both extensions loaded when command names collide", async () => {
 			const userExtDir = join(agentDir, "extensions");
-			const projectExtDir = join(cwd, ".pi", "extensions");
+			const projectExtDir = join(cwd, CONFIG_DIR_NAME, "extensions");
 			mkdirSync(userExtDir, { recursive: true });
 			mkdirSync(projectExtDir, { recursive: true });
 
@@ -676,8 +677,8 @@ Content`,
 			expect(agentsFiles).toEqual([]);
 		});
 
-		it("should discover SYSTEM.md from cwd/.pi", async () => {
-			const piDir = join(cwd, ".pi");
+		it("should discover SYSTEM.md from the project config directory", async () => {
+			const piDir = join(cwd, CONFIG_DIR_NAME);
 			mkdirSync(piDir, { recursive: true });
 			writeFileSync(join(piDir, "SYSTEM.md"), "You are a helpful assistant.");
 
@@ -688,7 +689,7 @@ Content`,
 		});
 
 		it("should skip project resources that require trust when project is not trusted", async () => {
-			const piDir = join(cwd, ".pi");
+			const piDir = join(cwd, CONFIG_DIR_NAME);
 			const extensionsDir = join(piDir, "extensions");
 			const skillDir = join(piDir, "skills", "project-skill");
 			const promptsDir = join(piDir, "prompts");
@@ -734,7 +735,7 @@ Project skill content`,
 		});
 
 		it("should discover APPEND_SYSTEM.md", async () => {
-			const piDir = join(cwd, ".pi");
+			const piDir = join(cwd, CONFIG_DIR_NAME);
 			mkdirSync(piDir, { recursive: true });
 			writeFileSync(join(piDir, "APPEND_SYSTEM.md"), "Additional instructions.");
 
@@ -1049,6 +1050,148 @@ export default function(pi: ExtensionAPI) {
 			expect(runner.getCommand("deploy:1")?.description).toBe("explicit command");
 			expect(runner.getCommand("deploy:2")?.description).toBe("global command");
 			expect(runner.getToolDefinition("duplicate-tool")?.description).toBe("explicit tool");
+		});
+	});
+
+	describe("skill namespacing", () => {
+		function writeSkillDir(dir: string, name: string, description: string): string {
+			mkdirSync(dir, { recursive: true });
+			writeFileSync(join(dir, "SKILL.md"), `---\nname: ${name}\ndescription: ${description}\n---\nBody for ${name}.`);
+			return dir;
+		}
+
+		it("assigns each skill a `<source>:<name>` qualifiedName", async () => {
+			writeSkillDir(join(tempDir, "skills-a", "solo"), "solo", "Solo skill");
+			const loader = createLoader({ additionalSkillPaths: [join(tempDir, "skills-a", "solo")] });
+			await loader.reload();
+
+			const skill = loader.getSkills().skills.find((s) => s.name === "solo");
+			expect(skill).toBeDefined();
+			expect(skill?.qualifiedName).toBe(`${skill?.sourceInfo.source}:solo`);
+		});
+
+		it("resolves skills by bare name and by qualified name", async () => {
+			writeSkillDir(join(tempDir, "skills-a", "solo"), "solo", "Solo skill");
+			const loader = createLoader({ additionalSkillPaths: [join(tempDir, "skills-a", "solo")] });
+			await loader.reload();
+
+			const bare = loader.resolveSkill("solo");
+			expect(bare?.name).toBe("solo");
+			expect(loader.resolveSkill(bare?.qualifiedName ?? "")?.name).toBe("solo");
+			expect(loader.resolveSkill("does-not-exist")).toBeUndefined();
+		});
+
+		it("keeps only the winner model-visible on a bare-name collision", async () => {
+			const winnerDir = writeSkillDir(join(tempDir, "skills-a", "dup"), "dup", "Winner");
+			const loserDir = writeSkillDir(join(tempDir, "skills-b", "dup"), "dup", "Loser");
+			const loader = createLoader({ additionalSkillPaths: [winnerDir, loserDir] });
+			await loader.reload();
+
+			// Only the winner (first loaded) is model-visible, and a bare-name lookup returns it.
+			const visible = loader.getSkills().skills.filter((s) => s.name === "dup");
+			expect(visible).toHaveLength(1);
+			const winner = loader.resolveSkill("dup");
+			expect(winner?.filePath).toBe(join(winnerDir, "SKILL.md"));
+			// Same-source special case: both are filesystem skills carrying source "local", so they share
+			// the qualified name "local:dup" and the winner shadows the loser under it too. Cross-source
+			// collisions stay separable — see "namespaces a package skill vs a same-named local skill".
+			expect(loader.resolveSkill("local:dup")?.filePath).toBe(join(winnerDir, "SKILL.md"));
+		});
+
+		it("namespaces a package skill vs a same-named local skill (both stay reachable)", async () => {
+			// The package fixture contributes a skill named "test-domain" with source
+			// "harness:TestDomain:general". Add a filesystem-local skill of the same bare name.
+			writeHarnessPackageFixture(cwd);
+			const localDir = writeSkillDir(join(tempDir, "skills-local", "test-domain"), "test-domain", "Local override");
+			const loader = createLoader({ harnessPackages: ["TestDomain"], additionalSkillPaths: [localDir] });
+			await loader.reload();
+
+			// Exactly one "test-domain" is model-visible (deduped), but the loser is not discarded.
+			const visible = loader.getSkills().skills.filter((s) => s.name === "test-domain");
+			expect(visible).toHaveLength(1);
+
+			// The two contenders have distinct sources, hence distinct qualified names, so BOTH are
+			// reachable by their qualified names regardless of which one won the bare-name slot.
+			const pkg = loader.resolveSkill("harness:TestDomain:general:test-domain");
+			const local = loader.resolveSkill("local:test-domain");
+			expect(pkg).toBeDefined();
+			expect(local).toBeDefined();
+			expect(pkg?.filePath).not.toBe(local?.filePath);
+			expect(local?.filePath).toBe(join(localDir, "SKILL.md"));
+
+			// A bare-name lookup lands on the model-visible winner.
+			expect(loader.resolveSkill("test-domain")?.filePath).toBe(visible[0].filePath);
+		});
+	});
+
+	describe("skill hot-reload", () => {
+		function writeSkill(dir: string, name: string, description: string): void {
+			mkdirSync(dir, { recursive: true });
+			writeFileSync(join(dir, "SKILL.md"), `---\nname: ${name}\ndescription: ${description}\n---\nBody for ${name}.`);
+		}
+
+		async function waitFor(predicate: () => boolean, timeoutMs = 3000): Promise<boolean> {
+			const start = performance.now();
+			while (performance.now() - start < timeoutMs) {
+				if (predicate()) return true;
+				await new Promise((r) => setTimeout(r, 25));
+			}
+			return predicate();
+		}
+
+		it("does not watch when watchSkills is disabled", async () => {
+			const skillDir = join(tempDir, "skills", "watched");
+			writeSkill(skillDir, "watched", "Original");
+			const loader = createLoader({ additionalSkillPaths: [skillDir] });
+			await loader.reload();
+			// onSkillsReloaded is exposed, but the event never fires without a watcher.
+			let fired = false;
+			loader.onSkillsReloaded(() => {
+				fired = true;
+			});
+			writeSkill(join(tempDir, "skills", "added"), "added", "New skill");
+			const appeared = await waitFor(() => loader.getSkills().skills.some((s) => s.name === "added"), 400);
+			expect(appeared).toBe(false);
+			expect(fired).toBe(false);
+			loader.dispose();
+		});
+
+		it("reloads skills and notifies subscribers when a watched dir changes", async () => {
+			const skillDir = join(tempDir, "skills", "watched");
+			writeSkill(skillDir, "watched", "Original description");
+			const loader = createLoader({ additionalSkillPaths: [skillDir], watchSkills: true });
+			await loader.reload();
+			expect(loader.getSkills().skills.find((s) => s.name === "watched")?.description).toBe("Original description");
+
+			let notified = 0;
+			loader.onSkillsReloaded(() => {
+				notified++;
+			});
+
+			// Edit the existing skill in place; the watcher on its parent dir should pick it up.
+			writeSkill(skillDir, "watched", "Updated description");
+			const updated = await waitFor(
+				() => loader.getSkills().skills.find((s) => s.name === "watched")?.description === "Updated description",
+			);
+			expect(updated).toBe(true);
+			expect(notified).toBeGreaterThanOrEqual(1);
+			loader.dispose();
+		});
+
+		it("stops firing after dispose", async () => {
+			const skillDir = join(tempDir, "skills", "watched");
+			writeSkill(skillDir, "watched", "Original");
+			const loader = createLoader({ additionalSkillPaths: [skillDir], watchSkills: true });
+			await loader.reload();
+			let notified = 0;
+			loader.onSkillsReloaded(() => {
+				notified++;
+			});
+			loader.dispose();
+			writeSkill(skillDir, "watched", "Changed after dispose");
+			// Give any lingering watcher a chance to (incorrectly) fire.
+			await new Promise((r) => setTimeout(r, 400));
+			expect(notified).toBe(0);
 		});
 	});
 });

@@ -1,5 +1,6 @@
+import type { FSWatcher } from "node:fs";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { join, resolve, sep } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import chalk from "chalk";
 import { CONFIG_DIR_NAME } from "../config.ts";
 import { loadThemeFromPath, type Theme } from "../modes/interactive/theme/theme.ts";
@@ -22,6 +23,7 @@ import {
 	type PackageToolAssembly,
 	type SystemPromptDescriptorDiagnostic,
 } from "@magenta/harness";
+import { closeWatcher, watchWithErrorHandler } from "../utils/fs-watch.ts";
 import { canonicalizePath, isLocalPath, resolvePath } from "../utils/paths.ts";
 import { createEventBus, type EventBus } from "./event-bus.ts";
 import {
@@ -58,6 +60,17 @@ export interface ResourceLoaderReloadOptions {
 export interface ResourceLoader {
 	getExtensions(): LoadExtensionsResult;
 	getSkills(): { skills: Skill[]; diagnostics: ResourceDiagnostic[] };
+	/**
+	 * Resolve a skill by a `/skill:` handle: bare `name`, or `<source>:<name>` qualified name (which
+	 * also reaches collision-shadowed skills excluded from {@link getSkills}). Optional so alternative
+	 * loaders need not implement it; callers fall back to a bare-name scan over `getSkills()`.
+	 */
+	resolveSkill?(handle: string): Skill | undefined;
+	/**
+	 * Subscribe to skill hot-reload notifications; returns an unsubscribe function. Optional: loaders
+	 * without hot-reload support may omit it, and callers should guard the call.
+	 */
+	onSkillsReloaded?(callback: () => void): () => void;
 	getPrompts(): { prompts: PromptTemplate[]; diagnostics: ResourceDiagnostic[] };
 	getThemes(): { themes: Theme[]; diagnostics: ResourceDiagnostic[] };
 	getPackageOverlay(): PackageOverlay | undefined;
@@ -71,6 +84,8 @@ export interface ResourceLoader {
 	getAppendSystemPrompt(): string[];
 	extendResources(paths: ResourceExtensionPaths): Promise<void>;
 	reload(options?: ResourceLoaderReloadOptions): Promise<void>;
+	/** Release held resources (e.g. skill hot-reload watchers). Optional; safe to call more than once. */
+	dispose?(): void;
 }
 
 function resolvePromptInput(input: string | undefined, description: string): string | undefined {
@@ -232,6 +247,11 @@ function packageResourceMetadata(resource: { packageId: string; profile?: string
 	};
 }
 
+/** Debounce window for skill hot-reload: coalesces editor save bursts (temp file + rename) into one reload. */
+const SKILL_RELOAD_DEBOUNCE_MS = 150;
+/** Event channel emitted after skills are hot-reloaded, so consumers (e.g. interactive mode) can refresh. */
+export const SKILLS_RELOADED_EVENT = "skills-reloaded";
+
 export interface DefaultResourceLoaderOptions {
 	cwd: string;
 	agentDir: string;
@@ -249,6 +269,12 @@ export interface DefaultResourceLoaderOptions {
 	noThemes?: boolean;
 	noContextFiles?: boolean;
 	includeBundledResources?: boolean;
+	/**
+	 * Watch skill directories and hot-reload skills mid-session when a `SKILL.md` (or root `.md`)
+	 * changes. Off by default: headless/SDK/RPC callers that never re-read `getSkills()` gain nothing
+	 * from it, and file watchers carry an OS handle + teardown cost. Interactive mode opts in.
+	 */
+	watchSkills?: boolean;
 	systemPrompt?: string;
 	appendSystemPrompt?: string[];
 	extensionsOverride?: (base: LoadExtensionsResult) => LoadExtensionsResult;
@@ -335,7 +361,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 	private trunkTools: AgentTool[];
 	private trunkToolDiagnostics: ResourceDiagnostic[];
 	/**
-	 * MCP tools loaded from the user config (`~/.pi/agent/mcp-servers.json`).
+	 * MCP tools loaded from the user config (`~/.magenta/agent/mcp-servers.json`).
 	 * This is the general MCP registration path; unlike the harness package
 	 * path it does not require shipping a package.
 	 */
@@ -345,6 +371,15 @@ export class DefaultResourceLoader implements ResourceLoader {
 	private systemPrompt?: string;
 	private appendSystemPrompt: string[];
 	private lastSkillPaths: string[];
+	/**
+	 * Skills that lost a name collision. Kept out of the model-visible {@link getSkills} listing but
+	 * resolvable by their `<source>:<name>` qualified name for explicit `/skill:` invocation.
+	 */
+	private shadowedSkills: Skill[];
+	/** Hot-reload state (only populated when `watchSkills` is enabled). */
+	private watchSkills: boolean;
+	private skillWatchers: Map<string, FSWatcher>;
+	private skillReloadTimer: ReturnType<typeof setTimeout> | null;
 	private extensionSkillSourceInfos: Map<string, SourceInfo>;
 	private extensionPromptSourceInfos: Map<string, SourceInfo>;
 	private extensionThemeSourceInfos: Map<string, SourceInfo>;
@@ -374,6 +409,10 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.noThemes = options.noThemes ?? false;
 		this.noContextFiles = options.noContextFiles ?? false;
 		this.includeBundledResources = options.includeBundledResources ?? true;
+		this.watchSkills = options.watchSkills ?? false;
+		this.skillWatchers = new Map();
+		this.skillReloadTimer = null;
+		this.shadowedSkills = [];
 		this.systemPromptSource = options.systemPrompt;
 		this.appendSystemPromptSource = options.appendSystemPrompt;
 		this.extensionsOverride = options.extensionsOverride;
@@ -976,9 +1015,9 @@ export class DefaultResourceLoader implements ResourceLoader {
 		skillPaths: string[],
 		metadataByPath?: Map<string, PathMetadata>,
 	): Promise<void> {
-		let skillsResult: { skills: HarnessSkill[]; diagnostics: ResourceDiagnostic[] };
+		let skillsResult: { skills: HarnessSkill[]; shadowed: HarnessSkill[]; diagnostics: ResourceDiagnostic[] };
 		if (this.noSkills && skillPaths.length === 0) {
-			skillsResult = { skills: [], diagnostics: [] };
+			skillsResult = { skills: [], shadowed: [], diagnostics: [] };
 		} else {
 			skillsResult = await loadSkills({
 				cwd: this.cwd,
@@ -987,19 +1026,121 @@ export class DefaultResourceLoader implements ResourceLoader {
 				includeDefaults: false,
 			});
 		}
-		const resolvedSkills = this.skillsOverride ? this.skillsOverride(skillsResult) : skillsResult;
-		this.skills = resolvedSkills.skills.map((skill): Skill => {
-			const baseDir = skill.filePath.split("/").slice(0, -1).join("/") || "/";
-			// Preserve a sourceInfo the skill already carries (e.g. injected by skillsOverride) before
-			// falling back to extension/default resolution, which may stat the filePath.
-			const existingSourceInfo = (skill as Partial<Skill>).sourceInfo;
-			const sourceInfo =
-				this.findSourceInfoForPath(skill.filePath, this.extensionSkillSourceInfos, metadataByPath) ??
-				existingSourceInfo ??
-				this.getDefaultSourceInfoForPath(skill.filePath);
-			return { ...skill, baseDir, sourceInfo } as Skill;
-		});
+		// skillsOverride only sees the model-visible set; shadowed collision-losers bypass it.
+		const shadowed = skillsResult.shadowed;
+		const resolvedSkills = this.skillsOverride
+			? this.skillsOverride({ skills: skillsResult.skills, diagnostics: skillsResult.diagnostics })
+			: skillsResult;
+		this.skills = resolvedSkills.skills.map((skill) => this.enrichSkill(skill, metadataByPath, false));
+		this.shadowedSkills = shadowed.map((skill) => this.enrichSkill(skill, metadataByPath, true));
 		this.skillDiagnostics = resolvedSkills.diagnostics;
+		if (this.watchSkills) this.syncSkillWatchers();
+	}
+
+	/** Attach pi-specific fields (baseDir, sourceInfo, qualifiedName) to a harness-loaded skill. */
+	private enrichSkill(skill: HarnessSkill, metadataByPath: Map<string, PathMetadata> | undefined, shadowed: boolean): Skill {
+		const baseDir = skill.filePath.split("/").slice(0, -1).join("/") || "/";
+		// Preserve a sourceInfo the skill already carries (e.g. injected by skillsOverride) before
+		// falling back to extension/default resolution, which may stat the filePath.
+		const existingSourceInfo = (skill as Partial<Skill>).sourceInfo;
+		const sourceInfo =
+			this.findSourceInfoForPath(skill.filePath, this.extensionSkillSourceInfos, metadataByPath) ??
+			existingSourceInfo ??
+			this.getDefaultSourceInfoForPath(skill.filePath);
+		const qualifiedName = `${sourceInfo.source}:${skill.name}`;
+		return { ...skill, baseDir, sourceInfo, qualifiedName, ...(shadowed ? { shadowed: true } : {}) } as Skill;
+	}
+
+	/**
+	 * Resolve a skill by the handle the user typed after `/skill:`. Tries, in order: exact bare-name
+	 * match among visible skills, exact `<source>:<name>` qualified-name match among visible skills,
+	 * then qualified-name match among shadowed collision-losers. Returns undefined if nothing matches.
+	 */
+	resolveSkill(handle: string): Skill | undefined {
+		return (
+			this.skills.find((s) => s.name === handle) ??
+			this.skills.find((s) => s.qualifiedName === handle) ??
+			this.shadowedSkills.find((s) => s.qualifiedName === handle)
+		);
+	}
+
+	/**
+	 * Subscribe to skill hot-reload notifications. The callback fires after a watched skill directory
+	 * change is debounced and skills are re-read. Returns an unsubscribe function. No-op unless
+	 * `watchSkills` is enabled (the event simply never fires otherwise).
+	 */
+	onSkillsReloaded(callback: () => void): () => void {
+		return this.eventBus.on(SKILLS_RELOADED_EVENT, () => callback());
+	}
+
+	/**
+	 * (Re)establish filesystem watchers over the directories that currently contribute skills.
+	 *
+	 * We watch the immediate parent directory of every loaded skill file (rather than the file
+	 * itself — editors frequently replace a file via rename, which invalidates a per-file watch) plus
+	 * any configured skill-path directories. Watchers are keyed by directory so re-syncing after a
+	 * reload only opens/closes the delta.
+	 */
+	private syncSkillWatchers(): void {
+		const wanted = new Set<string>();
+		for (const skill of this.skills) wanted.add(dirname(skill.filePath));
+		for (const dir of this.lastSkillPaths.map((p) => (p.endsWith(".md") ? dirname(p) : p))) wanted.add(dir);
+
+		// Close watchers for directories that no longer contribute skills.
+		for (const [dir, watcher] of this.skillWatchers) {
+			if (!wanted.has(dir)) {
+				closeWatcher(watcher);
+				this.skillWatchers.delete(dir);
+			}
+		}
+		// Open watchers for newly-contributing directories.
+		for (const dir of wanted) {
+			if (this.skillWatchers.has(dir) || !existsSync(dir)) continue;
+			const watcher = watchWithErrorHandler(
+				dir,
+				(_event, filename) => {
+					// Only react to markdown changes; ignore editor scratch files and unrelated churn.
+					if (filename && !filename.endsWith(".md")) return;
+					this.scheduleSkillReload();
+				},
+				() => {
+					// On watcher error, drop it; the next reload() re-syncs watchers.
+					const w = this.skillWatchers.get(dir);
+					closeWatcher(w);
+					this.skillWatchers.delete(dir);
+				},
+			);
+			if (watcher) this.skillWatchers.set(dir, watcher);
+		}
+	}
+
+	/** Debounced skill-only reload triggered by a watched-directory change. */
+	private scheduleSkillReload(): void {
+		if (this.skillReloadTimer) clearTimeout(this.skillReloadTimer);
+		this.skillReloadTimer = setTimeout(() => {
+			this.skillReloadTimer = null;
+			void this.reloadSkillsFromWatch();
+		}, SKILL_RELOAD_DEBOUNCE_MS);
+	}
+
+	/** Reload skills from the last-known paths and notify consumers. Errors are swallowed (best-effort). */
+	private async reloadSkillsFromWatch(): Promise<void> {
+		try {
+			await this.updateSkillsFromPaths(this.lastSkillPaths);
+			this.eventBus.emit(SKILLS_RELOADED_EVENT, { skills: this.skills, diagnostics: this.skillDiagnostics });
+		} catch {
+			// Best-effort hot-reload: a transient read error should not crash the session.
+		}
+	}
+
+	/** Stop all skill watchers and cancel any pending reload. Idempotent. */
+	dispose(): void {
+		if (this.skillReloadTimer) {
+			clearTimeout(this.skillReloadTimer);
+			this.skillReloadTimer = null;
+		}
+		for (const watcher of this.skillWatchers.values()) closeWatcher(watcher);
+		this.skillWatchers.clear();
 	}
 
 	private async updatePromptsFromPaths(

@@ -154,6 +154,14 @@ export class FooterComponent implements Component {
 			pwd = `${pwd} (${branch})`;
 		}
 
+		// Add the session id so it is easy to read off and copy (peer messaging
+		// addresses sessions by this id). Kept on the first line, right after the
+		// cwd/branch, so it sits at a stable, selectable position.
+		const sessionId = this.session.sessionId;
+		if (sessionId) {
+			pwd = `${pwd}  SessionID ${sessionId}`;
+		}
+
 		// Add session name if set
 		const sessionName = this.session.sessionManager.getSessionName();
 		if (sessionName) {

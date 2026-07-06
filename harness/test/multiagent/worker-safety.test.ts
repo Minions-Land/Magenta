@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { currentDepth, sanitizeWorkerTools, spawnWorker } from "../../modules/multiagent/magenta/worker.ts";
+import { currentDepth, sanitizeWorkerTools, spawnWorker } from "../../modules/multiagent/workflow/magenta/worker.ts";
 
 /**
  * Safety guards for worker spawning. These are the invariants that prevent a

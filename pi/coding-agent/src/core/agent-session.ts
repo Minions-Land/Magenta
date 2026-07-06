@@ -13,8 +13,8 @@
  * Modes use this class and add their own I/O layer on top.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { basename, dirname } from "node:path";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import type {
 	Agent,
 	AgentEvent,
@@ -33,9 +33,8 @@ import {
 	resetApiProviders,
 	streamSimple,
 } from "@earendil-works/pi-ai/compat";
-import { createSshToolOperations, type SshTarget, type SshToolOperations } from "@magenta/harness";
+import { createSshToolOperations, formatSkillInvocation, type SshTarget, type SshToolOperations } from "@magenta/harness";
 import { getThemeByName, theme } from "../modes/interactive/theme/theme.ts";
-import { stripFrontmatter } from "../utils/frontmatter.ts";
 import { resolvePath } from "../utils/paths.ts";
 import { sleep } from "../utils/sleep.ts";
 import { formatNoApiKeyFoundMessage, formatNoModelSelectedMessage } from "./auth-guidance.ts";
@@ -100,6 +99,8 @@ import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts"
 import { BackgroundShellController } from "./tools/bg-shell.ts";
 import { createAllToolDefinitions } from "./tools/index.ts";
 import { SubAgentController } from "./tools/sub-agent.ts";
+import { formatPeerMessages, PEER_MESSAGE_CUSTOM_TYPE, SendMessageController } from "./tools/send-message.ts";
+import { getPeerMessageDbPath } from "../config.ts";
 import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.ts";
 
 // ============================================================================
@@ -168,6 +169,11 @@ export interface AgentSessionConfig {
 	sessionManager: SessionManager;
 	settingsManager: SettingsManager;
 	cwd: string;
+	/**
+	 * Agent config/state directory (e.g. ~/.magenta/agent). Used to locate the shared
+	 * peer-message mailbox. Defaults to the machine-global mailbox when omitted.
+	 */
+	agentDir?: string;
 	/** Models to cycle through with Ctrl+P (from --models flag) */
 	scopedModels?: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel }>;
 	/** Resource loader for skills, prompts, themes, context files, system prompt */
@@ -331,6 +337,8 @@ export class AgentSession {
 	private _backgroundShell: BackgroundShellController;
 	private _packageLoad: PackageLoadController;
 	private _subAgents: SubAgentController;
+	/** Magenta feature: peer messaging between agent sessions. */
+	private _peerMessages: SendMessageController;
 	private _toolProgressTracker: ToolProgressTracker;
 	private _sideChat: SideChatManager;
 	private _sshTarget?: SshTarget;
@@ -374,6 +382,21 @@ export class AgentSession {
 		});
 		this._subAgents = new SubAgentController(this._backgroundEvents, {
 			sendMessage: (message, options) => this.sendCustomMessage(message, options),
+			getDefaultModel: () =>
+				this.model
+					? {
+							provider: this.model.provider,
+							model: this.model.id,
+						}
+					: undefined,
+		});
+		// Magenta feature: peer messaging. Sender identity is the live session id;
+		// the mailbox is a single machine-global database so messages cross between
+		// independent agent processes. A caller-provided agentDir (tests) overrides
+		// the location.
+		this._peerMessages = new SendMessageController({
+			dbPath: config.agentDir ? join(config.agentDir, "messages.db") : getPeerMessageDbPath(),
+			getSessionId: () => this.sessionId,
 		});
 		this._sideChat = new SideChatManager({ toolProgress: this._toolProgressTracker });
 
@@ -647,10 +670,24 @@ export class AgentSession {
 	private async _emitExtensionEvent(event: AgentEvent): Promise<void> {
 		if (event.type === "agent_start") {
 			this._turnIndex = 0;
+			// Magenta feature: this session is now looping. Record presence so peers
+			// see it as active and know a message will be picked up soon.
+			this._peerMessages.recordPresence("active");
 			await this._extensionRunner.emit({ type: "agent_start" });
 		} else if (event.type === "agent_end") {
+			// Magenta feature: loop finished; the process is alive but not looping.
+			this._peerMessages.recordPresence("idle");
 			await this._extensionRunner.emit({ type: "agent_end", messages: event.messages });
 		} else if (event.type === "turn_start") {
+			// Magenta feature: heartbeat + drain peer messages addressed to this
+			// session and inject them as follow-up context. The heartbeat refreshes
+			// liveness on every turn so a long loop never looks stale. followUp
+			// delivers after the current tool calls settle, so a teammate's message
+			// reaches the model on its next loop without interrupting the tool in
+			// flight. Draining is fire-once (marks read atomically), so each message
+			// is injected once, and everything queued while busy arrives together.
+			this._peerMessages.recordPresence("active");
+			await this._injectPeerMessages();
 			const extensionEvent: TurnStartEvent = {
 				type: "turn_start",
 				turnIndex: this._turnIndex,
@@ -767,7 +804,9 @@ export class AgentSession {
 			this.abortBash();
 			this._backgroundShell.shutdown();
 			this._subAgents.shutdown();
+			this._peerMessages.shutdown();
 			this._backgroundEvents.dispose();
+			this._resourceLoader.dispose?.();
 			this.agent.abort();
 		} catch {
 			// Dispose must succeed even if an abort hook throws.
@@ -1238,23 +1277,18 @@ export class AgentSession {
 		const skillName = spaceIndex === -1 ? text.slice(7) : text.slice(7, spaceIndex);
 		const args = spaceIndex === -1 ? "" : text.slice(spaceIndex + 1).trim();
 
-		const skill = this.resourceLoader.getSkills().skills.find((s) => s.name === skillName);
+		// Resolve by bare name or `<source>:<name>` qualified name (reaches collision-shadowed skills).
+		// Fall back to a bare-name scan for loaders that don't implement resolveSkill.
+		const skill =
+			this.resourceLoader.resolveSkill?.(skillName) ??
+			this.resourceLoader.getSkills().skills.find((s) => s.name === skillName);
 		if (!skill) return text; // Unknown skill, pass through
 
-		try {
-			const content = readFileSync(skill.filePath, "utf-8");
-			const body = stripFrontmatter(content).trim();
-			const skillBlock = `<skill name="${skill.name}" location="${skill.filePath}">\nReferences are relative to ${skill.baseDir}.\n\n${body}\n</skill>`;
-			return args ? `${skillBlock}\n\n${args}` : skillBlock;
-		} catch (err) {
-			// Emit error like extension commands do
-			this._extensionRunner.emitError({
-				extensionPath: skill.filePath,
-				event: "skill_expansion",
-				error: err instanceof Error ? err.message : String(err),
-			});
-			return text; // Return original on error
-		}
+		// Use the already-loaded, frontmatter-stripped `skill.content` and the shared
+		// `formatSkillInvocation` helper rather than re-reading the file and hand-rolling the block.
+		// This keeps a single source of truth for the <skill> block and gives skills the same
+		// argument-substitution grammar ($1, $@, $ARGUMENTS, ${N:-default}, ...) as prompt templates.
+		return formatSkillInvocation(skill, args);
 	}
 
 	/**
@@ -1330,6 +1364,30 @@ export class AgentSession {
 			content,
 			timestamp: Date.now(),
 		});
+	}
+
+	/**
+	 * Magenta feature: drain this session's unread peer messages and inject them
+	 * as a follow-up custom message so they enter the model's context on the next
+	 * loop. No-op when there are no messages. Injection failures must never break
+	 * the turn, so errors are swallowed.
+	 */
+	private async _injectPeerMessages(): Promise<void> {
+		try {
+			const messages = this._peerMessages.drainForInjection();
+			if (messages.length === 0) return;
+			await this.sendCustomMessage(
+				{
+					customType: PEER_MESSAGE_CUSTOM_TYPE,
+					content: formatPeerMessages(messages),
+					display: true,
+					details: { count: messages.length, ids: messages.map((m) => m.id) },
+				},
+				{ deliverAs: "followUp" },
+			);
+		} catch {
+			// Mailbox errors must not abort the agent turn.
+		}
 	}
 
 	/**
@@ -2541,6 +2599,7 @@ export class AgentSession {
 		if (!this._baseToolsOverride) {
 			baseToolDefinitions.bg_shell = this._backgroundShell.createToolDefinition() as ToolDefinition;
 			baseToolDefinitions.sub_agent = this._subAgents.createToolDefinition() as ToolDefinition;
+			baseToolDefinitions.send_message = this._peerMessages.createToolDefinition() as ToolDefinition;
 		}
 
 		this._baseToolDefinitions = new Map(

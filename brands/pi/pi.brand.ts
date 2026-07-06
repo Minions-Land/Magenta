@@ -10,6 +10,7 @@ export const BRAND_CONFIG: BrandConfig = {
 	name: "Pi",
 	version: "0.80.2",
 	packageScope: "@earendil-works",
+	configDirName: ".pi",
 
 	theme: {
 		primaryColor: "#2196F3",      // Blue (pi's original color)

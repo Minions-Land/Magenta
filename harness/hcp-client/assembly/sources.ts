@@ -3,7 +3,7 @@ import { compactionPiMagnet } from "../../modules/compaction/pi/magnet.ts";
 import { contextMagentaMagnet } from "../../modules/context/magenta/magnet.ts";
 import { hookMagentaMagnet } from "../../modules/hooks/magenta/magnet.ts";
 import { memoryMagentaMagnet } from "../../modules/memory/magenta/magnet.ts";
-import { multiagentMagentaMagnet } from "../../modules/multiagent/magenta/magnet.ts";
+import { multiagentMagentaMagnet } from "../../modules/multiagent/workflow/magenta/magnet.ts";
 import { policyMagentaMagnet } from "../../modules/policy/magenta/magnet.ts";
 import { promptTemplatePiMagnet } from "../../modules/prompt-templates/pi/magnet.ts";
 import { runtimeMagentaMagnet } from "../../modules/runtime/magenta/magnet.ts";

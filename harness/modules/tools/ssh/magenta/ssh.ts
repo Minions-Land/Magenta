@@ -1,9 +1,38 @@
 import { spawn } from "node:child_process";
+import { createRequire } from "node:module";
 import { posix, relative, resolve } from "node:path";
 import type { BashOperations } from "../../bash/pi/bash.ts";
 import type { EditOperations } from "../../edit/pi/edit.ts";
 import type { ReadOperations } from "../../read/pi/read.ts";
 import type { WriteOperations } from "../../write/pi/write.ts";
+
+const cjsRequire = createRequire(import.meta.url);
+const SSH_PTY_COLUMNS = 120;
+const SSH_PTY_ROWS = 40;
+
+export type SshBashTerminalMode = "pipe" | "pty";
+
+export interface SshPtyDisposable {
+	dispose(): void;
+}
+
+export interface SshPtyProcess {
+	onData(listener: (data: string) => void): SshPtyDisposable;
+	onExit(listener: (event: { exitCode: number; signal?: number }) => void): SshPtyDisposable;
+	kill(signal?: string): void;
+}
+
+export interface SshPtySpawnOptions {
+	name: string;
+	cols: number;
+	rows: number;
+	cwd: string;
+	env: NodeJS.ProcessEnv;
+}
+
+export interface SshPtyFactory {
+	spawn(file: string, args: string[], options: SshPtySpawnOptions): SshPtyProcess;
+}
 
 export interface SshTarget {
 	remote: string;
@@ -14,6 +43,7 @@ export interface SshCommandOptions {
 	onData?: (data: Buffer) => void;
 	signal?: AbortSignal;
 	timeout?: number;
+	env?: NodeJS.ProcessEnv;
 }
 
 export interface SshCommandResult {
@@ -38,7 +68,15 @@ export interface SshToolOperations {
 }
 
 export interface SshToolOperationsOptions {
+	/**
+	 * Runner for non-interactive SSH operations. Also used for bash when an
+	 * explicit runner is provided and no bash-specific override is configured.
+	 */
 	runner?: SshCommandRunner;
+	/** Runner used only by the SSH-backed bash tool. */
+	bashRunner?: SshCommandRunner;
+	/** Select the default SSH bash backend when no bashRunner is provided. */
+	bashTerminal?: SshBashTerminalMode;
 }
 
 export function shellQuote(value: string): string {
@@ -65,7 +103,10 @@ export function runSshCommand(
 	options: SshCommandOptions = {},
 ): Promise<SshCommandResult> {
 	return new Promise((resolveCommand, reject) => {
-		const child = spawn("ssh", [remote, command], { stdio: ["ignore", "pipe", "pipe"] });
+		const child = spawn("ssh", [remote, command], {
+			env: options.env,
+			stdio: ["ignore", "pipe", "pipe"],
+		});
 		const stdoutChunks: Buffer[] = [];
 		const stderrChunks: Buffer[] = [];
 		let timedOut = false;
@@ -128,6 +169,104 @@ export function runSshCommand(
 		});
 	});
 }
+
+let cachedNodePty: SshPtyFactory | undefined;
+
+function loadNodePty(): SshPtyFactory {
+	if (cachedNodePty) return cachedNodePty;
+	try {
+		cachedNodePty = cjsRequire("node-pty") as SshPtyFactory;
+		return cachedNodePty;
+	} catch (error) {
+		const reason = error instanceof Error ? error.message : String(error);
+		throw new Error(`SSH PTY execution requires node-pty to be installed: ${reason}`);
+	}
+}
+
+export function createSshPtyCommandRunner(ptyFactory: SshPtyFactory): SshCommandRunner {
+	return (remote, command, options: SshCommandOptions = {}) =>
+		new Promise((resolveCommand, reject) => {
+			const outputChunks: Buffer[] = [];
+			let timedOut = false;
+			let aborted = false;
+			let settled = false;
+			let timeoutHandle: NodeJS.Timeout | undefined;
+			let dataDisposable: SshPtyDisposable | undefined;
+			let exitDisposable: SshPtyDisposable | undefined;
+			let ptyProcess: SshPtyProcess | undefined;
+
+			const cleanup = () => {
+				if (timeoutHandle) clearTimeout(timeoutHandle);
+				dataDisposable?.dispose();
+				exitDisposable?.dispose();
+				options.signal?.removeEventListener("abort", onAbort);
+			};
+
+			const settle = (result: SshCommandResult) => {
+				if (settled) return;
+				settled = true;
+				cleanup();
+				resolveCommand(result);
+			};
+
+			const killPty = () => {
+				try {
+					ptyProcess?.kill();
+				} catch {
+					// The PTY may already be exiting after a signal or timeout.
+				}
+			};
+
+			const onAbort = () => {
+				aborted = true;
+				killPty();
+			};
+
+			try {
+				ptyProcess = ptyFactory.spawn("ssh", ["-tt", remote, command], {
+					name: "xterm-256color",
+					cols: SSH_PTY_COLUMNS,
+					rows: SSH_PTY_ROWS,
+					cwd: process.cwd(),
+					env: options.env ?? process.env,
+				});
+			} catch (error) {
+				reject(error);
+				return;
+			}
+
+			dataDisposable = ptyProcess.onData((data) => {
+				const chunk = Buffer.from(data, "utf8");
+				outputChunks.push(chunk);
+				options.onData?.(chunk);
+			});
+			exitDisposable = ptyProcess.onExit(({ exitCode }) => {
+				settle({
+					stdout: Buffer.concat(outputChunks),
+					stderr: Buffer.alloc(0),
+					exitCode,
+					timedOut,
+					aborted,
+				});
+			});
+
+			if (options.timeout !== undefined && options.timeout > 0) {
+				timeoutHandle = setTimeout(() => {
+					timedOut = true;
+					killPty();
+				}, options.timeout * 1000);
+			}
+
+			if (options.signal?.aborted) {
+				onAbort();
+			} else {
+				options.signal?.addEventListener("abort", onAbort, { once: true });
+			}
+		});
+}
+
+export const runSshPtyCommand: SshCommandRunner = (remote, command, options) =>
+	createSshPtyCommandRunner(loadNodePty())(remote, command, options);
 
 export async function sshExec(
 	remote: string,
@@ -195,14 +334,22 @@ function createRemoteEditOps(target: SshTarget, localCwd: string, runner: SshCom
 function createRemoteBashOps(target: SshTarget, localCwd: string, runner: SshCommandRunner): BashOperations {
 	const toRemote = createSshPathMapper(localCwd, target.remoteCwd);
 	return {
-		exec: async (command, cwd, { onData, signal, timeout }) => {
+		exec: async (command, cwd, { onData, signal, timeout, env }) => {
 			const remoteCommand = `cd ${shellQuote(toRemote(cwd))} && ${command}`;
-			const result = await runner(target.remote, remoteCommand, { onData, signal, timeout });
+			const result = await runner(target.remote, remoteCommand, { onData, signal, timeout, env });
 			if (result.aborted) throw new Error("aborted");
 			if (result.timedOut) throw new Error(`timeout:${timeout}`);
 			return { exitCode: result.exitCode };
 		},
 	};
+}
+
+function resolveSshBashRunner(options: SshToolOperationsOptions, fallbackRunner: SshCommandRunner): SshCommandRunner {
+	if (options.bashRunner) return options.bashRunner;
+	if (options.bashTerminal === "pipe") return fallbackRunner;
+	if (options.bashTerminal === "pty") return runSshPtyCommand;
+	if (options.runner) return options.runner;
+	return runSshPtyCommand;
 }
 
 export function createSshToolOperations(
@@ -211,10 +358,11 @@ export function createSshToolOperations(
 	options: SshToolOperationsOptions = {},
 ): SshToolOperations {
 	const runner = options.runner ?? runSshCommand;
+	const bashRunner = resolveSshBashRunner(options, runner);
 	return {
 		read: createRemoteReadOps(target, localCwd, runner),
 		write: createRemoteWriteOps(target, localCwd, runner),
 		edit: createRemoteEditOps(target, localCwd, runner),
-		bash: createRemoteBashOps(target, localCwd, runner),
+		bash: createRemoteBashOps(target, localCwd, bashRunner),
 	};
 }

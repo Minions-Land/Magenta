@@ -78,6 +78,7 @@ export type FloatingMenuRender = {
 
 export type FloatingOverlayBody = {
 	closeOnQ?: boolean;
+	wantsKeyRelease?: boolean;
 	handleInput?: (data: string) => boolean | undefined;
 	render: (width: number, height: number, focused: boolean) => FloatingMenuRender;
 	invalidate?: () => void;
@@ -139,7 +140,6 @@ function renderFloatingFrame(options: {
 
 export class FloatingOverlayContainer implements Component, Focusable {
 	focused = false;
-	wantsKeyRelease = true;
 	private readonly body: FloatingOverlayBody;
 	private readonly done: () => void;
 
@@ -148,9 +148,15 @@ export class FloatingOverlayContainer implements Component, Focusable {
 		this.done = done;
 	}
 
+	get wantsKeyRelease(): boolean {
+		return this.body.wantsKeyRelease === true;
+	}
+
 	handleInput(data: string): void {
 		if (isKeyRelease(data)) {
-			this.body.handleInput?.(data);
+			if (this.body.wantsKeyRelease) {
+				this.body.handleInput?.(data);
+			}
 			return;
 		}
 		if (this.body.handleInput?.(data)) return;
@@ -184,6 +190,7 @@ export class FloatingOverlayContainer implements Component, Focusable {
 }
 
 export class FloatingMenuBody implements FloatingOverlayBody {
+	wantsKeyRelease = true;
 	private selectedIndex = 0;
 	private scrollTop = 0;
 	private filter = "";

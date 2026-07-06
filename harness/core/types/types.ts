@@ -56,6 +56,20 @@ export interface Skill {
 	filePath: string;
 	/** Exclude this skill from model-visible skill lists while still allowing explicit application invocation. */
 	disableModelInvocation?: boolean;
+	/**
+	 * Hint shown in command lists / autocomplete describing the skill's arguments (from the
+	 * `argument-hint` frontmatter key). Mirrors {@link PromptTemplate.argumentHint}.
+	 */
+	argumentHint?: string;
+	/** Free-form classification tags (from the `tags` frontmatter key). */
+	tags?: string[];
+	/**
+	 * All non-standard frontmatter keys, preserved verbatim so domain-specific metadata is never
+	 * silently dropped. Standard keys (`name`, `description`, `disable-model-invocation`,
+	 * `argument-hint`, `tags`) are lifted to their own fields and excluded here. Packages layer
+	 * their own conventions on top of this (e.g. omics `requiredTools` / `evidencePolicy`).
+	 */
+	metadata?: Record<string, unknown>;
 }
 
 /** Prompt template that can be formatted into a prompt for explicit invocation. */

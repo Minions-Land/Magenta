@@ -473,6 +473,7 @@ interface PackageJson {
 	piConfig?: {
 		name?: string;
 		configDir?: string;
+		binaryName?: string;
 	};
 }
 
@@ -486,12 +487,13 @@ try {
 
 const piConfigName: string | undefined = pkg.piConfig?.name;
 export const PACKAGE_NAME: string = pkg.name || "@earendil-works/pi-coding-agent";
-export const APP_NAME: string = piConfigName || "pi";
-export const APP_TITLE: string = piConfigName ? APP_NAME : "π";
-export const CONFIG_DIR_NAME: string = pkg.piConfig?.configDir || ".pi";
+export const APP_NAME: string = piConfigName || "Magenta";
+export const APP_TITLE: string = APP_NAME;
+export const APP_BINARY_NAME: string = pkg.piConfig?.binaryName || APP_NAME.toLowerCase();
+export const CONFIG_DIR_NAME: string = pkg.piConfig?.configDir || ".magenta";
 export const VERSION: string = pkg.version || "0.0.0";
 
-// e.g., PI_CODING_AGENT_DIR or TAU_CODING_AGENT_DIR
+// e.g., MAGENTA_CODING_AGENT_DIR or PI_CODING_AGENT_DIR
 export const ENV_AGENT_DIR = `${APP_NAME.toUpperCase()}_CODING_AGENT_DIR`;
 export const ENV_SESSION_DIR = `${APP_NAME.toUpperCase()}_CODING_AGENT_SESSION_DIR`;
 
@@ -508,16 +510,34 @@ export function getShareViewerUrl(gistId: string): string {
 }
 
 // =============================================================================
-// User Config Paths (~/.pi/agent/*)
+// User Config Paths (~/<CONFIG_DIR_NAME>/agent/*)
 // =============================================================================
 
-/** Get the agent config directory (e.g., ~/.pi/agent/) */
+/** Get the agent config directory (e.g., ~/.magenta/agent/) */
 export function getAgentDir(): string {
 	const envDir = process.env[ENV_AGENT_DIR];
 	if (envDir) {
 		return expandTildePath(envDir);
 	}
 	return join(homedir(), CONFIG_DIR_NAME, "agent");
+}
+
+/**
+ * Config root directory (e.g., ~/.magenta/). Parent of the agent dir; holds
+ * machine-global state shared across every agent session.
+ */
+export function getConfigRootDir(): string {
+	return join(homedir(), CONFIG_DIR_NAME);
+}
+
+/**
+ * Path to the machine-global peer-message mailbox (Magenta feature). Every
+ * agent session on this machine reads and writes the same database so messages
+ * cross between independent agent processes; it deliberately lives at the
+ * config root rather than under any single session's agent dir.
+ */
+export function getPeerMessageDbPath(): string {
+	return join(getConfigRootDir(), "messages.db");
 }
 
 /** Get path to user's custom themes directory */

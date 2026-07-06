@@ -24,7 +24,7 @@ Confirmed sources (see `pi/coding-agent/docs/extensions.md`,
 | npm package | `npm:<pkg>` | inspect the published tarball, do not execute |
 | git repo | `git:github.com/<owner>/<repo>` | clone read-only, pin a ref |
 
-Pi's own auto-discovery locations (`~/.pi/agent/extensions/`, `.pi/extensions/`,
+Magenta's own auto-discovery locations (`~/.magenta/agent/extensions/`, `.magenta/extensions/`,
 `settings.json` packages/extensions) are **disabled** in Magenta3. We do not
 re-enable them; we migrate the code into the harness instead.
 

@@ -1356,6 +1356,9 @@ export function decodeKittyPrintable(data: string): string | undefined {
 
 	const shiftedKey = match[2] && match[2].length > 0 ? Number.parseInt(match[2], 10) : undefined;
 	const modValue = match[4] ? Number.parseInt(match[4], 10) : 1;
+	const eventType = parseEventType(match[5]);
+	if (eventType === "release") return undefined;
+
 	// Modifiers are 1-indexed in CSI-u; normalize to our bitmask.
 	const modifier = Number.isFinite(modValue) ? modValue - 1 : 0;
 

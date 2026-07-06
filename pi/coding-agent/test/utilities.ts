@@ -8,6 +8,7 @@ import { dirname, join } from "node:path";
 import { Agent } from "@earendil-works/pi-agent-core";
 import { getModel, type OAuthCredentials, type OAuthProvider } from "@earendil-works/pi-ai/compat";
 import { getOAuthApiKey } from "@earendil-works/pi-ai/oauth";
+import { CONFIG_DIR_NAME } from "../src/config.ts";
 import { AgentSession } from "../src/core/agent-session.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { createEventBus } from "../src/core/event-bus.ts";
@@ -26,10 +27,10 @@ import { createCodingTools } from "../src/index.ts";
 export const API_KEY = process.env.ANTHROPIC_OAUTH_TOKEN || process.env.ANTHROPIC_API_KEY;
 
 // ============================================================================
-// OAuth API key resolution from ~/.pi/agent/auth.json
+// OAuth API key resolution from ~/.magenta/agent/auth.json
 // ============================================================================
 
-const AUTH_PATH = join(homedir(), ".pi", "agent", "auth.json");
+const AUTH_PATH = join(homedir(), CONFIG_DIR_NAME, "agent", "auth.json");
 
 type ApiKeyCredential = {
 	type: "api_key";
@@ -66,7 +67,7 @@ function saveAuthStorage(storage: AuthStorageData): void {
 }
 
 /**
- * Resolve API key for a provider from ~/.pi/agent/auth.json
+ * Resolve API key for a provider from ~/.magenta/agent/auth.json
  *
  * For API key credentials, returns the key directly.
  * For OAuth credentials, returns the access token (refreshing if expired and saving back).
@@ -106,18 +107,18 @@ export async function resolveApiKey(provider: string): Promise<string | undefine
 }
 
 /**
- * Check if a provider has credentials in ~/.pi/agent/auth.json
+ * Check if a provider has credentials in ~/.magenta/agent/auth.json
  */
 export function hasAuthForProvider(provider: string): boolean {
 	const storage = loadAuthStorage();
 	return provider in storage;
 }
 
-/** Path to the real pi agent config directory */
-export const PI_AGENT_DIR = join(homedir(), ".pi", "agent");
+/** Path to the real agent config directory */
+export const PI_AGENT_DIR = join(homedir(), CONFIG_DIR_NAME, "agent");
 
 /**
- * Get an AuthStorage instance backed by ~/.pi/agent/auth.json
+ * Get an AuthStorage instance backed by ~/.magenta/agent/auth.json
  * Use this for tests that need real OAuth credentials.
  */
 export function getRealAuthStorage(): AuthStorage {
@@ -264,6 +265,9 @@ export function createTestSession(options: TestSessionOptions = {}): TestSession
 		sessionManager,
 		settingsManager,
 		cwd: tempDir,
+		// Isolate the peer-messaging mailbox per session so tests don't share the
+		// machine-global messages.db.
+		agentDir: tempDir,
 		modelRegistry,
 		resourceLoader: createTestResourceLoader(),
 	});

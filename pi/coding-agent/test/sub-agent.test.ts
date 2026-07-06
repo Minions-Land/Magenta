@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentSessionEvent } from "../src/core/agent-session.ts";
 import { BackgroundEventManager } from "../src/core/background-events.ts";
+import { APP_BINARY_NAME } from "../src/config.ts";
 import type { ExtensionContext } from "../src/core/extensions/types.ts";
 import {
 	buildOrchestrationRequest,
@@ -161,7 +162,7 @@ describe("built-in sub_agent tool", () => {
 		const promptPath = start.details?.promptPath as string;
 
 		expect(eventId).toMatch(/^agent_/);
-		expect(spawnRecords[0]?.command).toBe("pi");
+		expect(spawnRecords[0]?.command).toBe(APP_BINARY_NAME);
 		expect(spawnRecords[0]?.args).toEqual(
 			expect.arrayContaining(["--print", "--no-session", "--no-extensions", "--tools", "read,grep,find,ls"]),
 		);

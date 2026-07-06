@@ -397,6 +397,9 @@ function createHarnessWithResourceLoader(
 		sessionManager,
 		settingsManager,
 		cwd: tempDir,
+		// Isolate the peer-messaging mailbox per session so tests don't share the
+		// machine-global messages.db.
+		agentDir: tempDir,
 		modelRegistry,
 		resourceLoader,
 		baseToolsOverride: options.baseToolsOverride,

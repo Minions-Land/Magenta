@@ -44,7 +44,7 @@ harness/
 
 MCP (Model Context Protocol) support lives in `hcp-magnet/` (`mcp.ts` +
 `mcp-client.ts`): the harness connects to MCP servers and exposes their tools
-as magnets. User-configured servers are loaded from `~/.pi/agent/mcp-servers.json`.
+as magnets. User-configured servers are loaded from `~/.magenta/agent/mcp-servers.json`.
 
 ### Module Layout
 

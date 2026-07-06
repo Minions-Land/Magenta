@@ -21,6 +21,9 @@ export const BRAND_CONFIG: BrandConfig = {
 	/** NPM package scope (e.g., @yourcompany, @yourusername) */
 	packageScope: "@youragent",
 
+	/** Config directory name under home and project roots (e.g., .youragent) */
+	configDirName: ".youragent",
+
 	/** Visual theme - choose your brand colors (hex format) */
 	theme: {
 		primaryColor: "#007ACC",      // Main brand color

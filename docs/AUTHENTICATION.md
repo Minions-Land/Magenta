@@ -6,7 +6,7 @@ Magenta3 can automatically load API keys from multiple sources.
 
 Magenta checks for credentials in this order:
 
-1. **Pi's own auth.json** (`~/.pi/agent/auth.json`)
+1. **Magenta's own auth.json** (`~/.magenta/agent/auth.json`)
 2. **External tools** (Claude Code, Codex)
 3. **Environment variables**
 
@@ -21,7 +21,7 @@ Start Magenta and use the `/login` command:
 /login
 ```
 
-Select your provider and enter credentials. They'll be stored in `~/.pi/agent/auth.json`.
+Select your provider and enter credentials. They'll be stored in `~/.magenta/agent/auth.json`.
 
 ### Method 2: Environment Variables
 
@@ -97,7 +97,7 @@ If you see "No API key found", credentials are not configured yet.
 **"No API key found"**
 - Check that at least one of the setup methods is configured
 - Verify the provider name matches (e.g., `anthropic`, not `claude`)
-- Check file permissions on `~/.pi/agent/auth.json`
+- Check file permissions on `~/.magenta/agent/auth.json`
 
 **External credentials not detected**
 - Ensure the external tool's auth file exists and contains valid JSON

@@ -14,6 +14,7 @@
 
 import type { Skill as HarnessSkill, SkillDiagnostic } from "@magenta/harness";
 import { loadSkillFile, loadSkills as loadSkillsFromHarness, NodeExecutionEnv } from "@magenta/harness";
+import { CONFIG_DIR_NAME } from "../config.ts";
 import type { ResourceDiagnostic } from "./diagnostics.ts";
 
 export interface LoadSkillsOptions {
@@ -23,21 +24,25 @@ export interface LoadSkillsOptions {
 	agentDir: string;
 	/** Explicit skill paths (files or directories). */
 	skillPaths: string[];
-	/** Include default skills directories (agentDir/skills, cwd/.pi/skills). */
+	/** Include default skills directories (agentDir/skills, cwd/<configDir>/skills). */
 	includeDefaults: boolean;
 }
 
 export interface LoadSkillsResult {
+	/** Deduplicated skills, one per name (first loaded wins). This is the model-visible set. */
 	skills: HarnessSkill[];
+	/**
+	 * Skills that lost a name collision and were kept out of `skills`. They are preserved (rather than
+	 * dropped) so a namespacing layer can still expose them for explicit `<source>:<name>` invocation.
+	 * Empty when there are no collisions.
+	 */
+	shadowed: HarnessSkill[];
 	diagnostics: ResourceDiagnostic[];
 }
 
-/** Project config directory name (mirrors CONFIG_DIR_NAME). */
-const CONFIG_DIR_NAME = ".pi";
-
 /**
  * pi historically did not require a skill's name to match its parent directory: it supports flat
- * root `.md` files (e.g. `.pi/skills/foo.md`) as a documented convention. The harness enforces the
+ * root `.md` files (e.g. `.magenta/skills/foo.md`) as a documented convention. The harness enforces the
  * Agent-Skills "name must match parent directory" rule, which would warn on every such skill. We
  * drop only that specific diagnostic (matched via the stable `invalid_metadata` code plus the rule
  * text) so other metadata validations — invalid characters, length, hyphen rules — still surface.
@@ -73,6 +78,7 @@ export async function loadSkills(options: LoadSkillsOptions): Promise<LoadSkills
 
 		const skillMap = new Map<string, HarnessSkill>();
 		const realPathSet = new Set<string>();
+		const shadowed: HarnessSkill[] = [];
 		const diagnostics: ResourceDiagnostic[] = [];
 		const collisionDiagnostics: ResourceDiagnostic[] = [];
 
@@ -96,6 +102,9 @@ export async function loadSkills(options: LoadSkillsOptions): Promise<LoadSkills
 						loserPath: skill.filePath,
 					},
 				});
+				// Keep the loser for namespaced access rather than discarding it entirely.
+				shadowed.push(skill);
+				realPathSet.add(realPath);
 				return;
 			}
 			skillMap.set(skill.name, skill);
@@ -146,6 +155,7 @@ export async function loadSkills(options: LoadSkillsOptions): Promise<LoadSkills
 
 		return {
 			skills: Array.from(skillMap.values()),
+			shadowed,
 			diagnostics: [...diagnostics, ...collisionDiagnostics],
 		};
 	} finally {

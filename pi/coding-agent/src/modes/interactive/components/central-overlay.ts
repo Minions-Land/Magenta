@@ -6,6 +6,7 @@
  */
 
 import type { Component, OverlayOptions, SizeValue } from "@earendil-works/pi-tui";
+import { stripAnsi } from "../../../utils/ansi.ts";
 import type { FloatingOverlayBody } from "./floating-menu.ts";
 
 /**
@@ -127,7 +128,7 @@ export function stripComponentBorders(lines: string[]): string[] {
 	let end = lines.length;
 
 	// 跳过顶部边框（通常是前2行：顶部边框 + 标题行可能也有边框装饰）
-	while (start < lines.length && borderPattern.test(lines[start] ?? "")) {
+	while (start < lines.length && borderPattern.test(stripAnsi(lines[start] ?? ""))) {
 		start++;
 	}
 
@@ -137,7 +138,7 @@ export function stripComponentBorders(lines: string[]): string[] {
 	}
 
 	// 跳过底部边框
-	while (end > start && borderPattern.test(lines[end - 1] ?? "")) {
+	while (end > start && borderPattern.test(stripAnsi(lines[end - 1] ?? ""))) {
 		end--;
 	}
 

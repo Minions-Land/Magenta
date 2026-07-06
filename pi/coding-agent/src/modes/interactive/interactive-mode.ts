@@ -418,6 +418,8 @@ export class InteractiveMode {
 
 	// Agent subscription unsubscribe function
 	private unsubscribe?: () => void;
+	// Skill hot-reload subscription unsubscribe function
+	private unsubscribeSkillsReloaded?: () => void;
 	private signalCleanupHandlers: Array<() => void> = [];
 
 	// Track if editor is in bash mode (text starts with !)
@@ -1724,6 +1726,12 @@ export class InteractiveMode {
 
 		setRegisteredThemes(this.session.resourceLoader.getThemes().themes);
 		this.setupAutocompleteProvider();
+		// Rebuild the skill autocomplete list whenever skills hot-reload on disk. Re-subscribe on each
+		// bind so the callback closes over the current session's loader; drop any prior subscription.
+		this.unsubscribeSkillsReloaded?.();
+		this.unsubscribeSkillsReloaded = this.session.resourceLoader.onSkillsReloaded?.(() => {
+			this.setupAutocompleteProvider();
+		});
 		const sshTarget = this.session.sshTarget;
 		this.setExtensionStatus(
 			"ssh",
@@ -1942,6 +1950,10 @@ export class InteractiveMode {
 	private setExtensionStatus(key: string, text: string | undefined): void {
 		this.footerDataProvider.setExtensionStatus(key, text);
 		this.ui.requestRender();
+	}
+
+	private setMagentaUpdateStatus(text: string | undefined): void {
+		this.setExtensionStatus("magenta-update", text);
 	}
 
 	private getWorkingLoaderMessage(): string {
@@ -4055,11 +4067,31 @@ export class InteractiveMode {
 	 * Runs in the background; never throws.
 	 */
 	private async checkAndAutoUpdateMagenta(): Promise<void> {
+		if (process.env.MAGENTA_SKIP_UPDATE) {
+			this.setMagentaUpdateStatus("Auto-update: off");
+			return;
+		}
+		if (process.env.PI_OFFLINE) {
+			this.setMagentaUpdateStatus("Auto-update: offline");
+			return;
+		}
+
+		this.setMagentaUpdateStatus("Auto-update: checking");
 		try {
 			const status = await checkForMagentaUpdate();
-			if (!status || status.behind === 0) return;
+			if (!status) {
+				this.setMagentaUpdateStatus("Auto-update: unavailable");
+				return;
+			}
+			if (status.behind === 0) {
+				this.setMagentaUpdateStatus(`Auto-update: up to date (${status.localSha})`);
+				return;
+			}
 
 			if (!status.clean || !status.fastForwardable) {
+				this.setMagentaUpdateStatus(
+					status.clean ? "Auto-update: skipped (diverged)" : "Auto-update: skipped (dirty)",
+				);
 				this.showMagentaUpdateBanner(
 					`${APP_NAME} is ${status.behind} commit(s) behind ${status.remoteSha}.`,
 					status.clean
@@ -4069,17 +4101,21 @@ export class InteractiveMode {
 				return;
 			}
 
+			this.setMagentaUpdateStatus(`Auto-update: updating ${status.localSha} -> ${status.remoteSha}`);
 			this.showMagentaUpdateBanner(
 				`Updating ${APP_NAME} (${status.behind} commit(s) behind)…`,
 				`${status.localSha} → ${status.remoteSha}. This may take a minute.`,
 			);
 			const result = await runMagentaUpdate(status);
 			if (result.ok) {
+				const newSha = result.newSha ?? status.remoteSha;
+				this.setMagentaUpdateStatus(`Auto-update: updated (${newSha})`);
 				this.showMagentaUpdateBanner(
-					`${APP_NAME} updated to ${result.newSha}.`,
+					`${APP_NAME} updated to ${newSha}.`,
 					`Restart ${APP_NAME} to run the new version.`,
 				);
 			} else {
+				this.setMagentaUpdateStatus("Auto-update: failed");
 				this.showMagentaUpdateBanner(
 					`${APP_NAME} auto-update failed.`,
 					`${result.reason ?? "unknown error"} — update manually with git pull && npm install && npm run build.`,
@@ -4087,6 +4123,7 @@ export class InteractiveMode {
 			}
 		} catch {
 			// Auto-update is best-effort; never disrupt the session on failure.
+			this.setMagentaUpdateStatus("Auto-update: unavailable");
 		}
 	}
 
@@ -4874,12 +4911,12 @@ export class InteractiveMode {
 				value: "command:mcp",
 				label: "MCP Servers",
 				aliases: ["mcp"],
-				description: "View MCP servers loaded from ~/.pi/agent/mcp-servers.json",
+				description: `View MCP servers loaded from ~/${CONFIG_DIR_NAME}/agent/mcp-servers.json`,
 				children: [
 					{
 						value: "mcp:none",
 						label: "No MCP servers configured",
-						description: "Add servers in ~/.pi/agent/mcp-servers.json",
+						description: `Add servers in ~/${CONFIG_DIR_NAME}/agent/mcp-servers.json`,
 						disabled: true,
 					},
 				],
@@ -6272,9 +6309,10 @@ export class InteractiveMode {
 	}
 
 	private showMcpManager(): void {
-		// Read-only view of the tools loaded from ~/.pi/agent/mcp-servers.json.
+		// Read-only view of the tools loaded from the user MCP config.
 		// Surfaced through the shared dock menu so navigation matches every other
 		// panel. Editing servers is still done by hand in the config file.
+		const mcpConfigPath = `~/${CONFIG_DIR_NAME}/agent/mcp-servers.json`;
 		const { tools, diagnostics } = this.session.resourceLoader.getUserMcpTools();
 		const items: FloatingMenuItem[] = [];
 
@@ -6282,7 +6320,7 @@ export class InteractiveMode {
 			items.push({
 				value: "mcp:none",
 				label: "No MCP servers configured",
-				description: "Add servers in ~/.pi/agent/mcp-servers.json",
+				description: `Add servers in ${mcpConfigPath}`,
 				disabled: true,
 			});
 		} else {
@@ -6311,7 +6349,7 @@ export class InteractiveMode {
 			});
 		}
 
-		this.showFloatingMenu("mcp", "MCP servers (read-only; edit ~/.pi/agent/mcp-servers.json)", items, () => false);
+		this.showFloatingMenu("mcp", `MCP servers (read-only; edit ${mcpConfigPath})`, items, () => false);
 	}
 
 	private showSessionSelector(): void {
@@ -7523,6 +7561,8 @@ export class InteractiveMode {
 		if (this.unsubscribe) {
 			this.unsubscribe();
 		}
+		this.unsubscribeSkillsReloaded?.();
+		this.unsubscribeSkillsReloaded = undefined;
 		if (this.isInitialized) {
 			this.ui.stop();
 			this.isInitialized = false;

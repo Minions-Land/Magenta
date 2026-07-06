@@ -34,7 +34,7 @@ import {
 export interface CreateAgentSessionOptions {
 	/** Working directory for project-local discovery. Default: process.cwd() */
 	cwd?: string;
-	/** Global config directory. Default: ~/.pi/agent */
+	/** Global config directory. Default: ~/.magenta/agent */
 	agentDir?: string;
 
 	/** Auth storage for credentials. Default: AuthStorage.create(agentDir/auth.json) */
@@ -252,7 +252,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	// default, but disabled by noTools. Seed them into the initial active set so
 	// they are gated the same way as read/bash rather than force-activated.
 	const trunkToolNames = resourceLoader.getTrunkTools().tools.map((tool) => tool.name);
-	// User-configured MCP tools (~/.pi/agent/mcp-servers.json) are on by default,
+	// User-configured MCP tools (~/.magenta/agent/mcp-servers.json) are on by default,
 	// like package tools: the user opted in by configuring the server.
 	const userMcpToolNames = resourceLoader.getUserMcpTools().tools.map((tool) => tool.name);
 	const initialActiveToolNames: string[] = (
@@ -393,6 +393,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		sessionManager,
 		settingsManager,
 		cwd,
+		agentDir,
 		scopedModels: options.scopedModels,
 		resourceLoader,
 		customTools: options.customTools,
