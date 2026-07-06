@@ -6,12 +6,13 @@ import { NodeExecutionEnv } from "../core/env/pi/nodejs.ts";
 import { AgentHarness } from "../core/loop/pi/agent-harness.ts";
 import { InMemorySessionStorage } from "../core/session/pi/memory-storage.ts";
 import { Session } from "../core/session/pi/session.ts";
-import { type CompactionPreparation, type CompactionResult, ok } from "../core/types/types.ts";
+import { ok } from "../core/types/types.ts";
 import {
 	buildDefaultCapabilityHcp,
 	type CapabilityBuilderTable,
 	createCapabilityMagnet,
 } from "../hcp-client/assembly/capability.ts";
+import type { CompactionPreparation, CompactionResult } from "../modules/compaction/contract.ts";
 import { type CompactionProvider, piCompactionProvider } from "../modules/compaction/pi/provider.ts";
 
 const models = createModels();
@@ -33,7 +34,7 @@ function spyProvider(): { provider: CompactionProvider; calls: string[] } {
 		turnPrefixMessages: [],
 		isSplitTurn: false,
 		tokensBefore: 42,
-		fileOps: { readFiles: [], modifiedFiles: [] },
+		fileOps: { read: new Set(), written: new Set(), edited: new Set() },
 		settings: piCompactionProvider.defaultSettings,
 	};
 	const result: CompactionResult = {

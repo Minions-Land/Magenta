@@ -80,7 +80,7 @@ describe("SSH tool operations", () => {
 		const chunks: string[] = [];
 
 		await ops.read.access("/local/project/src/a file.ts");
-		await expect(ops.read.detectImageMimeType("/local/project/image.png")).resolves.toBe("image/png");
+		await expect(ops.read.detectImageMimeType!("/local/project/image.png")).resolves.toBe("image/png");
 		await ops.write.mkdir("/local/project/src");
 		await ops.write.writeFile("/local/project/src/a file.ts", "hello");
 		await ops.edit.readFile("/local/project/src/a file.ts");

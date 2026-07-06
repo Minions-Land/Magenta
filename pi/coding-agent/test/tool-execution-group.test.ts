@@ -24,7 +24,11 @@ function definition(name: string): ToolDefinition {
 		execute: async () => ({ content: [{ type: "text", text: "ok" }], details: {} }),
 		renderCall: (args) => new Text(`call ${name} ${JSON.stringify(args)}`, 0, 0),
 		renderResult: (result) =>
-			new Text(`result ${name} ${result.content.map((item) => item.text ?? "").join("")}`, 0, 0),
+			new Text(
+				`result ${name} ${result.content.map((item) => (item.type === "text" ? item.text : "")).join("")}`,
+				0,
+				0,
+			),
 	};
 }
 

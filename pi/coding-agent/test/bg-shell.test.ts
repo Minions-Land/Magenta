@@ -83,7 +83,7 @@ describe("built-in bg_shell tool", () => {
 		returned = [];
 		controller = new BackgroundShellController(manager, {
 			sendMessage: (message, options) => {
-				returned.push({ message, options });
+				returned.push({ message, options: options ?? {} });
 			},
 		});
 	});

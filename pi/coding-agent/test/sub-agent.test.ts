@@ -88,9 +88,11 @@ type SpawnRecord = {
 function createFakeSpawn(records: SpawnRecord[], options?: { autoClose?: boolean; output?: string }): SubAgentSpawn {
 	return (command: string, args: string[], spawnOptions: SpawnOptions): ChildProcess => {
 		const child = new EventEmitter() as SpawnRecord["child"];
-		child.stdout = new EventEmitter();
-		child.stderr = new EventEmitter();
-		child.pid = 999999;
+		Object.assign(child, {
+			stdout: new EventEmitter(),
+			stderr: new EventEmitter(),
+			pid: 999999,
+		});
 		child.kill = vi.fn(() => true);
 		records.push({ command, args, options: spawnOptions, child });
 		if (options?.autoClose !== false) {
@@ -118,7 +120,7 @@ describe("built-in sub_agent tool", () => {
 		spawnRecords = [];
 		controller = new SubAgentController(manager, {
 			sendMessage: (message, options) => {
-				returned.push({ message, options });
+				returned.push({ message, options: options ?? {} });
 			},
 			spawnAgent: createFakeSpawn(spawnRecords, { output: "sub-result" }),
 		});
@@ -235,7 +237,7 @@ describe("built-in sub_agent tool", () => {
 	it("cancels a running sub-agent", async () => {
 		controller = new SubAgentController(manager, {
 			sendMessage: (message, options) => {
-				returned.push({ message, options });
+				returned.push({ message, options: options ?? {} });
 			},
 			spawnAgent: createFakeSpawn(spawnRecords, { autoClose: false }),
 		});
@@ -297,7 +299,7 @@ describe("built-in sub_agent tool", () => {
 		};
 		controller = new SubAgentController(manager, {
 			sendMessage: (message, options) => {
-				returned.push({ message, options });
+				returned.push({ message, options: options ?? {} });
 			},
 			spawnAgent: createFakeSpawn(spawnRecords, { output: "unused" }),
 			workflowRunner: fakeRunner as never,
@@ -342,7 +344,7 @@ describe("buildOrchestrationRequest slot remapping", () => {
 			pattern: "adversarial_verify",
 			verifyCount: 5,
 			threshold: 0.6,
-		} as never) as Record<string, unknown>;
+		} as never) as unknown as Record<string, unknown>;
 		expect(req.confidenceThreshold).toBe(0.6);
 		expect(req.verifyCount).toBe(5);
 		expect(req.threshold).toBeUndefined();
@@ -353,7 +355,7 @@ describe("buildOrchestrationRequest slot remapping", () => {
 			pattern: "generate_and_filter",
 			candidateCount: 7,
 			topK: 3,
-		} as never) as Record<string, unknown>;
+		} as never) as unknown as Record<string, unknown>;
 		expect(req.count).toBe(7);
 		expect(req.keepTop).toBe(3);
 		expect(req.candidateCount).toBeUndefined();
@@ -366,7 +368,7 @@ describe("buildOrchestrationRequest slot remapping", () => {
 			name: "my run",
 			maxConcurrent: 4,
 			workers: [{ task: "a" }],
-		} as never) as Record<string, unknown>;
+		} as never) as unknown as Record<string, unknown>;
 		expect(req.name).toBeUndefined();
 		expect(req.maxConcurrent).toBe(4);
 		expect(req.workers).toEqual([{ task: "a" }]);
@@ -375,7 +377,7 @@ describe("buildOrchestrationRequest slot remapping", () => {
 	it("omits remapped keys entirely when they are not supplied", () => {
 		const req = buildOrchestrationRequest({
 			pattern: "adversarial_verify",
-		} as never) as Record<string, unknown>;
+		} as never) as unknown as Record<string, unknown>;
 		expect("confidenceThreshold" in req).toBe(false);
 		expect("count" in req).toBe(false);
 		expect("keepTop" in req).toBe(false);

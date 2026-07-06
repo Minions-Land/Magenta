@@ -3,6 +3,7 @@ import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { TObject } from "typebox";
 import { describe, expect, it } from "vitest";
 import { NodeExecutionEnv } from "../core/env/pi/nodejs.ts";
 import {
@@ -11,9 +12,15 @@ import {
 	loadPackageOverlay,
 	parsePackageSelector,
 } from "../hcp-client/overlay/package-overlay.ts";
+import type { ProcessToolMagnet } from "../hcp-magnet/process.ts";
 import { loadSkills } from "../modules/skills/pi/skills.ts";
 
 const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
+
+function firstText(result: { content: readonly { type: string; text?: string }[] } | undefined): string {
+	const part = result?.content[0];
+	return part && part.type === "text" ? (part.text ?? "") : "";
+}
 
 describe("harness package overlay", () => {
 	it("parses package selectors", () => {
@@ -329,7 +336,7 @@ description = "Value to echo."
 
 			const result = await assembly.tools[0]?.execute("tool-call", { value: "abc" });
 			expect(result?.content[0]?.type).toBe("text");
-			expect(result?.content[0]?.text).toContain('"--value","abc"');
+			expect(firstText(result)).toContain('"--value","abc"');
 			expect(result?.details.runtime).toBe("runtime://process");
 			expect(result?.details.sandboxEnforced).toBe(true);
 			expect(result?.details.runtimePolicy).toMatchObject({
@@ -390,7 +397,7 @@ type = "object"
 				expect(assembly.diagnostics).toEqual([]);
 
 				const result = await assembly.tools[0]?.execute("tool-call", {});
-				expect(result?.content[0]?.text).toContain('"secret":null');
+				expect(firstText(result)).toContain('"secret":null');
 				expect(result?.details.runtimePolicy?.fs_read).toEqual([await realpath(repoRoot)]);
 			} finally {
 				delete process.env.MAGENTA_PACKAGE_SECRET;
@@ -458,7 +465,7 @@ process.stdin.on("end", () => {
 			expect(assembly.tools.map((tool) => tool.name)).toEqual(["node_script"]);
 
 			const result = await assembly.tools[0]?.execute("tool-call", { value: "abc" });
-			expect(result?.content[0]?.text).toContain('"value":"abc"');
+			expect(firstText(result)).toContain('"value":"abc"');
 			expect(result?.details.runtime).toBe("runtime://process");
 			expect(result?.details.command).toBe("node");
 			expect(result?.details.runtimePolicy).toMatchObject({
@@ -516,7 +523,7 @@ process.stdin.on("end", () => {
 			expect(toolNames.some((name) => name.startsWith("biofetch_"))).toBe(false);
 		}
 		const compute = assembly.tools.find((tool) => tool.name === "omics_compute");
-		expect(compute?.parameters.properties).toMatchObject({
+		expect((compute?.parameters as TObject | undefined)?.properties).toMatchObject({
 			subcommand: {
 				enum: expect.arrayContaining(["summarize", "preprocess", "score"]),
 			},
@@ -524,7 +531,9 @@ process.stdin.on("end", () => {
 		// omics_install_env downloads packages and writes the env prefix, so it
 		// must land in the trusted sandbox (network + workspace write). Guard that.
 		const installIdx = assembly.tools.findIndex((tool) => tool.name === "omics_install_env");
-		expect(assembly.magnets[installIdx]?.spec.sandbox.selection.profile).toBe("trusted");
+		expect((assembly.magnets[installIdx] as ProcessToolMagnet | undefined)?.sandboxSelection().profile).toBe(
+			"trusted",
+		);
 	});
 
 	it("executes package-local python module runtime tools", async () => {
@@ -592,7 +601,7 @@ print(json.dumps({"argv": sys.argv[1:]}))
 
 			const result = await assembly.tools[0]?.execute("tool-call", { value: "xyz" });
 			expect(result?.content[0]?.type).toBe("text");
-			const payload = JSON.parse(result?.content[0]?.text ?? "{}") as { argv?: string[] };
+			const payload = JSON.parse(firstText(result) || "{}") as { argv?: string[] };
 			expect(payload.argv).toEqual(["--value", "xyz"]);
 		});
 	});
@@ -698,7 +707,7 @@ print(json.dumps({"argv": sys.argv[1:], "cwd": os.getcwd(), "path": os.environ.g
 				expect(result?.details.args).toEqual(expect.arrayContaining(["--environment", "task1"]));
 				expect(result?.details.args).toEqual(expect.arrayContaining(["--executable", "python"]));
 				expect(result?.details.args).toEqual(expect.arrayContaining(["-m", "example_runtime"]));
-				const payload = JSON.parse(result?.content[0]?.text ?? "{}") as { argv?: string[]; cwd?: string };
+				const payload = JSON.parse(firstText(result) || "{}") as { argv?: string[]; cwd?: string };
 				expect(payload.argv).toEqual(["--modality", "scrna", "--value", "xyz"]);
 				expect(payload.cwd).toBe(await realpath(repoRoot));
 			} finally {

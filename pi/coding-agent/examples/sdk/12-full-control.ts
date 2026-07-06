@@ -42,6 +42,10 @@ const resourceLoader: ResourceLoader = {
 	getSkills: () => ({ skills: [], diagnostics: [] }),
 	getPrompts: () => ({ prompts: [], diagnostics: [] }),
 	getThemes: () => ({ themes: [], diagnostics: [] }),
+	getPackageOverlay: () => undefined,
+	getPackageTools: () => ({ tools: [], diagnostics: [] }),
+	getTrunkTools: () => ({ tools: [], diagnostics: [] }),
+	getUserMcpTools: () => ({ tools: [], diagnostics: [] }),
 	getAgentsFiles: () => ({ agentsFiles: [] }),
 	getSystemPrompt: () => `You are a minimal assistant.
 Available: read, bash. Be concise.`,

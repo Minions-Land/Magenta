@@ -1,4 +1,4 @@
-import type { AgentContext, AgentTool } from "@earendil-works/pi-agent-core";
+import type { AgentTool } from "@earendil-works/pi-agent-core";
 import {
 	createModels,
 	type FauxProviderHandle,
@@ -191,14 +191,14 @@ describe("Tool Search — end-to-end deferral through AgentHarness", () => {
 		const toolsPerTurn: string[][] = [];
 		registration.setResponses([
 			// Turn 1: only tool_search is active; the model searches + activates "calculate".
-			(context: AgentContext) => {
+			(context) => {
 				toolsPerTurn.push((context.tools ?? []).map((t) => t.name).sort());
 				return fauxAssistantMessage(fauxToolCall("tool_search", { query: "arithmetic" }, { id: "call-1" }), {
 					stopReason: "toolUse",
 				});
 			},
 			// Turn 2: the activated tool must now be visible to the model.
-			(context: AgentContext) => {
+			(context) => {
 				toolsPerTurn.push((context.tools ?? []).map((t) => t.name).sort());
 				return fauxAssistantMessage("done");
 			},
