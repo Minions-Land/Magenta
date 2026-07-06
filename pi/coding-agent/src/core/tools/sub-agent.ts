@@ -101,6 +101,13 @@ type SubAgentEvent = {
 	tail: string;
 	timeout?: NodeJS.Timeout;
 	waiters: Array<() => void>;
+	/**
+	 * True while a returnToMain auto-delivery is still pending for this event.
+	 * Cleared when the model synchronously consumes the result inline (via
+	 * action=wait, or action=status showing the finished result) so the deferred
+	 * auto-return does not redundantly re-deliver and trigger an extra turn.
+	 */
+	autoReturnPending?: boolean;
 };
 
 export type SubAgentSpawn = (command: string, args: string[], options: SpawnOptions) => ChildProcess;
@@ -549,7 +556,7 @@ export class SubAgentController {
 				"Prefer default read-only sub-agents. The parent agent should synthesize results and perform final edits.",
 				`Do not start more than ${MAX_START_MANY} sub-agents at once unless the user explicitly requests a different approach; this tool enforces a hard limit of ${MAX_START_MANY} running sub-agents.`,
 				"Sub-agents receive parent tool progress as situational awareness; if they need the freshest state and have read access, they can read the provided progress file.",
-				"After sub_agent action=start, either call sub_agent action=wait before relying on results, or set returnToMain=true so results are automatically returned as a follow-up to the main agent.",
+				"After sub_agent action=start, either call sub_agent action=wait before relying on results, or set returnToMain=true so results are automatically returned as a follow-up to the main agent — use one or the other, not both. If you wait (or view a finished agent via action=status) the pending automatic return is cancelled, so you will not get a duplicate return.",
 				"Sub-agents run with --no-extensions, so they cannot recursively create more sub-agents.",
 				"Use action=start with a workflow object when the task needs a structured multi-agent pattern (route-and-handle, fan-out-and-synthesize, generate-and-verify, candidate tournament, or iterate-until-done) rather than independent parallel tasks. The orchestration control flow is deterministic and owned by the harness; you only supply each slot's task content. A workflow shows up as a single background event whose expansion reveals its internal workers.",
 			],
@@ -770,10 +777,16 @@ export class SubAgentController {
 	private status(params: SubAgentInput) {
 		const ids = this.resolveEventIds(params.eventId, params.eventIds);
 		if (!ids.length) return { content: [{ type: "text" as const, text: "No sub-agents." }], details: { events: 0 } };
+		// Full output is only included when specific ids are requested.
+		const includeOutput = Boolean(params.eventId || params.eventIds?.length);
 		const summaries = ids.map((id) => {
 			const event = this.events.get(id);
 			if (!event) return `Unknown sub-agent: ${id}`;
-			return summarizeEvent(event, Boolean(params.eventId || params.eventIds?.length));
+			// If the model is shown a finished event's full result inline here, a
+			// pending returnToMain auto-delivery for it would be redundant — cancel
+			// it. Polling a still-running agent must not cancel.
+			if (includeOutput && event.status !== "running") event.autoReturnPending = false;
+			return summarizeEvent(event, includeOutput);
 		});
 		return { content: [{ type: "text" as const, text: summaries.join("\n\n---\n\n") }], details: { ids } };
 	}
@@ -794,6 +807,15 @@ export class SubAgentController {
 			const remaining = deadline ? Math.max(0.001, (deadline - Date.now()) / 1000) : undefined;
 			const result = await waitForEvent(event, remaining, signal);
 			if (result === "aborted" || result === "timeout") break;
+		}
+
+		// The model is being shown these results inline now, so cancel any pending
+		// returnToMain auto-delivery for the events that actually finished — that
+		// avoids a duplicate "[sub-agent-return]" message and an extra triggered
+		// turn. Events still running (e.g. we hit the wait timeout) keep their
+		// pending auto-return so they are delivered when they eventually complete.
+		for (const event of knownEvents) {
+			if (event.status !== "running") event.autoReturnPending = false;
 		}
 
 		const summaries = knownEvents.map((event) => summarizeEvent(event));
@@ -1016,9 +1038,20 @@ export class SubAgentController {
 		delivery: ReturnDelivery,
 		instruction?: string,
 	): void {
+		// Mark these events as awaiting an auto-return. If the model synchronously
+		// consumes their results this turn (action=wait / status), that handler
+		// clears the flag so we don't redundantly deliver + trigger another turn.
+		for (const event of completedEvents) event.autoReturnPending = true;
 		void (async () => {
 			for (const event of completedEvents) await waitForEvent(event, undefined, undefined);
-			this.returnSubAgentResultsToMain(completedEvents, delivery, instruction);
+			// Yield once so a wait/status tool call resolving on the same tick as the
+			// final completion clears its flag before we read it (avoids a race where
+			// the auto-return still fires for the last-finishing event).
+			await Promise.resolve();
+			const pending = completedEvents.filter((event) => event.autoReturnPending);
+			if (pending.length === 0) return;
+			for (const event of pending) event.autoReturnPending = false;
+			this.returnSubAgentResultsToMain(pending, delivery, instruction);
 		})().catch(() => undefined);
 	}
 

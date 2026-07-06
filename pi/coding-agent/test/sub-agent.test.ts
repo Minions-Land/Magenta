@@ -127,7 +127,7 @@ describe("built-in sub_agent tool", () => {
 		}
 	});
 
-	it("starts, waits for, and returns a completed sub-agent", async () => {
+	it("action=wait consumes results inline and cancels the pending auto-return", async () => {
 		const tool = controller.createToolDefinition();
 		const ctx = createContext(tempDir);
 		controller.handleAgentEvent({
@@ -173,11 +173,35 @@ describe("built-in sub_agent tool", () => {
 		expect(textOf(waited)).toContain("Status: exited");
 		expect(textOf(waited)).toContain("sub-result");
 
+		// Because the model synchronously waited for (and was shown) the result,
+		// the pending returnToMain auto-delivery must be cancelled: no duplicate
+		// "[sub-agent-return]" message and no extra triggered turn.
+		await new Promise((resolve) => setTimeout(resolve, 50));
+		expect(returned).toHaveLength(0);
+	});
+
+	it("returnToMain without waiting delivers results to the main agent once", async () => {
+		const tool = controller.createToolDefinition();
+		const ctx = createContext(tempDir);
+
+		await tool.execute(
+			"call-start",
+			{ action: "start", task: "Inspect the file", returnToMain: true },
+			undefined,
+			undefined,
+			ctx,
+		);
+
+		// No wait/status this turn, so the auto-return is the only delivery path.
 		await waitUntil(() => returned.length === 1);
 		expect(returned[0]?.message.customType).toBe("sub-agent-return");
 		expect(returned[0]?.message.content).toContain("sub-result");
-		expect(returned[0]?.message.details).toMatchObject({ ids: [eventId], statuses: ["exited"] });
-		expect(returned[0]?.options).toMatchObject({ deliverAs: "nextTurn", triggerTurn: false });
+		// Default delivery is followUp, which triggers a continuation turn.
+		expect(returned[0]?.options).toMatchObject({ deliverAs: "followUp", triggerTurn: true });
+
+		// Exactly one delivery — it must not fire again.
+		await new Promise((resolve) => setTimeout(resolve, 50));
+		expect(returned).toHaveLength(1);
 	});
 
 	it("starts multiple sub-agents concurrently", async () => {
