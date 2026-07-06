@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { APP_NAME, CONFIG_DIR_NAME, ENV_AGENT_DIR, PACKAGE_NAME, VERSION } from "../src/config.ts";
+import { APP_BINARY_NAME, APP_NAME, CONFIG_DIR_NAME, ENV_AGENT_DIR, PACKAGE_NAME, VERSION } from "../src/config.ts";
 import { ProjectTrustStore } from "../src/core/trust-manager.ts";
 import { main } from "../src/main.ts";
 import { handlePackageCommand } from "../src/package-manager-cli.ts";
@@ -102,7 +102,10 @@ describe("package commands", () => {
 
 	it("skips untrusted project package settings", async () => {
 		mkdirSync(join(projectDir, CONFIG_DIR_NAME), { recursive: true });
-		writeFileSync(join(projectDir, CONFIG_DIR_NAME, "settings.json"), JSON.stringify({ packages: ["npm:@project/pkg"] }));
+		writeFileSync(
+			join(projectDir, CONFIG_DIR_NAME, "settings.json"),
+			JSON.stringify({ packages: ["npm:@project/pkg"] }),
+		);
 		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
 		try {
@@ -118,7 +121,10 @@ describe("package commands", () => {
 
 	it("uses remembered project trust for list", async () => {
 		mkdirSync(join(projectDir, CONFIG_DIR_NAME), { recursive: true });
-		writeFileSync(join(projectDir, CONFIG_DIR_NAME, "settings.json"), JSON.stringify({ packages: ["npm:@project/pkg"] }));
+		writeFileSync(
+			join(projectDir, CONFIG_DIR_NAME, "settings.json"),
+			JSON.stringify({ packages: ["npm:@project/pkg"] }),
+		);
 		new ProjectTrustStore(agentDir).set(projectDir, true);
 		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
@@ -137,7 +143,10 @@ describe("package commands", () => {
 
 	it("overrides remembered trust for list with --no-approve", async () => {
 		mkdirSync(join(projectDir, CONFIG_DIR_NAME), { recursive: true });
-		writeFileSync(join(projectDir, CONFIG_DIR_NAME, "settings.json"), JSON.stringify({ packages: ["npm:@project/pkg"] }));
+		writeFileSync(
+			join(projectDir, CONFIG_DIR_NAME, "settings.json"),
+			JSON.stringify({ packages: ["npm:@project/pkg"] }),
+		);
 		new ProjectTrustStore(agentDir).set(projectDir, true);
 		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
@@ -155,7 +164,10 @@ describe("package commands", () => {
 
 	it("approves project trust for list with --approve", async () => {
 		mkdirSync(join(projectDir, CONFIG_DIR_NAME), { recursive: true });
-		writeFileSync(join(projectDir, CONFIG_DIR_NAME, "settings.json"), JSON.stringify({ packages: ["npm:@project/pkg"] }));
+		writeFileSync(
+			join(projectDir, CONFIG_DIR_NAME, "settings.json"),
+			JSON.stringify({ packages: ["npm:@project/pkg"] }),
+		);
 		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
 		try {
@@ -174,7 +186,10 @@ describe("package commands", () => {
 	it("uses default project trust for list", async () => {
 		mkdirSync(join(projectDir, CONFIG_DIR_NAME), { recursive: true });
 		writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ defaultProjectTrust: "always" }));
-		writeFileSync(join(projectDir, CONFIG_DIR_NAME, "settings.json"), JSON.stringify({ packages: ["npm:@project/pkg"] }));
+		writeFileSync(
+			join(projectDir, CONFIG_DIR_NAME, "settings.json"),
+			JSON.stringify({ packages: ["npm:@project/pkg"] }),
+		);
 		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
 		try {
@@ -192,7 +207,10 @@ describe("package commands", () => {
 
 	it("uses project_trust extensions for package commands", async () => {
 		mkdirSync(join(projectDir, CONFIG_DIR_NAME), { recursive: true });
-		writeFileSync(join(projectDir, CONFIG_DIR_NAME, "settings.json"), JSON.stringify({ packages: ["npm:@project/pkg"] }));
+		writeFileSync(
+			join(projectDir, CONFIG_DIR_NAME, "settings.json"),
+			JSON.stringify({ packages: ["npm:@project/pkg"] }),
+		);
 		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
 		try {
@@ -282,7 +300,10 @@ describe("package commands", () => {
 	it("lets trust.json override default project trust", async () => {
 		mkdirSync(join(projectDir, CONFIG_DIR_NAME), { recursive: true });
 		writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ defaultProjectTrust: "always" }));
-		writeFileSync(join(projectDir, CONFIG_DIR_NAME, "settings.json"), JSON.stringify({ packages: ["npm:@project/pkg"] }));
+		writeFileSync(
+			join(projectDir, CONFIG_DIR_NAME, "settings.json"),
+			JSON.stringify({ packages: ["npm:@project/pkg"] }),
+		);
 		new ProjectTrustStore(agentDir).set(projectDir, false);
 		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
@@ -334,7 +355,7 @@ describe("package commands", () => {
 
 			const stdout = logSpy.mock.calls.map(([message]) => String(message)).join("\n");
 			expect(stdout).toContain("Usage:");
-			expect(stdout).toContain(`${APP_NAME} install <source> [-l]`);
+			expect(stdout).toContain(`${APP_BINARY_NAME} install <source> [-l]`);
 			expect(errorSpy).not.toHaveBeenCalled();
 			expect(process.exitCode).toBeUndefined();
 		} finally {
@@ -352,7 +373,7 @@ describe("package commands", () => {
 			const stderr = errorSpy.mock.calls.map(([message]) => String(message)).join("\n");
 			expect(stderr).toContain('Unknown option --unknown for "install".');
 			expect(stderr).toContain(
-				`Use "${APP_NAME} --help" or "${APP_NAME} install <source> [-l] [--approve|--no-approve]".`,
+				`Use "${APP_BINARY_NAME} --help" or "${APP_BINARY_NAME} install <source> [-l] [--approve|--no-approve]".`,
 			);
 			expect(process.exitCode).toBe(1);
 		} finally {
@@ -368,7 +389,7 @@ describe("package commands", () => {
 
 			const stderr = errorSpy.mock.calls.map(([message]) => String(message)).join("\n");
 			expect(stderr).toContain("Missing install source.");
-			expect(stderr).toContain(`Usage: ${APP_NAME} install <source> [-l]`);
+			expect(stderr).toContain(`Usage: ${APP_BINARY_NAME} install <source> [-l]`);
 			expect(stderr).not.toContain("at ");
 			expect(process.exitCode).toBe(1);
 		} finally {

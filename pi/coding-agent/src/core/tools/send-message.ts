@@ -21,8 +21,8 @@
  * the live session (its id, its message injector), and exposes one tool.
  */
 
-import { type Static, Type } from "typebox";
 import { MessageStore, type PresenceState } from "@magenta/harness";
+import { type Static, Type } from "typebox";
 import type { ToolDefinition } from "../extensions/types.ts";
 
 /** customType used for injected peer messages. Namespaced to mark it Magenta. */
@@ -187,9 +187,7 @@ export function formatPeerMessages(messages: DrainedMessage[]): string {
 			? "📨 You have a new message from a teammate agent:"
 			: `📨 You have ${messages.length} new messages from teammate agents:`;
 	const body = messages
-		.map(
-			(m) => `— from session ${m.sender} (sent ${m.createdAt}, sender ${presenceClause(m)}):\n${m.content}`,
-		)
+		.map((m) => `— from session ${m.sender} (sent ${m.createdAt}, sender ${presenceClause(m)}):\n${m.content}`)
 		.join("\n\n");
 	return `${header}\n\n${body}`;
 }

@@ -757,6 +757,19 @@ function mapThinkingLevelToEffort(
 	}
 }
 
+function getModelMatchCandidates(model: Model<"anthropic-messages">): string[] {
+	const values = [model.id, model.name].filter((value): value is string => typeof value === "string");
+	return values.flatMap((value) => {
+		const lower = value.toLowerCase();
+		return [lower, lower.replace(/[\s_.:]+/g, "-")];
+	});
+}
+
+function supportsDisabledThinking(model: Model<"anthropic-messages">): boolean {
+	if (model.thinkingLevelMap?.off !== null) return true;
+	return !getModelMatchCandidates(model).some((candidate) => candidate.includes("fable-5"));
+}
+
 export const streamSimple: StreamFunction<"anthropic-messages", SimpleStreamOptions> = (
 	model: Model<"anthropic-messages">,
 	context: Context,
@@ -971,7 +984,7 @@ function buildParams(
 					display,
 				};
 			}
-		} else if (options?.thinkingEnabled === false && model.thinkingLevelMap?.off !== null) {
+		} else if (options?.thinkingEnabled === false && supportsDisabledThinking(model)) {
 			params.thinking = { type: "disabled" };
 		}
 	}

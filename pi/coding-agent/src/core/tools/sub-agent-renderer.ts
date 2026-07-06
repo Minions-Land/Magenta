@@ -7,10 +7,10 @@
  */
 
 import { Container, Spacer, Text } from "@earendil-works/pi-tui";
-import type { ToolRenderer } from "./renderer-registry.ts";
-import { theme } from "../../modes/interactive/theme/theme.ts";
 import { keyHint } from "../../modes/interactive/components/keybinding-hints.ts";
 import { renderToolCallActivity, type ToolCallTile } from "../../modes/interactive/components/tool-call-gallery.ts";
+import { theme } from "../../modes/interactive/theme/theme.ts";
+import type { ToolRenderer } from "./renderer-registry.ts";
 
 // Number of lines to show at head and tail when collapsed
 const COLLAPSED_HEAD_LINES = 5;
@@ -30,9 +30,7 @@ function parseSubAgentOutput(text: string): {
 	outputContent: string[];
 } {
 	const lines = text.split("\n");
-	const outputIndex = lines.findIndex((line) =>
-		line.startsWith("Output:") || line.startsWith("[Output truncated")
-	);
+	const outputIndex = lines.findIndex((line) => line.startsWith("Output:") || line.startsWith("[Output truncated"));
 
 	if (outputIndex === -1) {
 		// No output section found, treat everything as header
@@ -99,7 +97,7 @@ function parseMultiAgentStart(text: string): {
 export const subAgentRenderer: ToolRenderer = {
 	renderShell: "default",
 
-	renderResult: (result, options, themeArg, _context) => {
+	renderResult: (result, options, _themeArg, _context) => {
 		const container = new Container();
 
 		// Extract text content from result
@@ -127,7 +125,7 @@ export const subAgentRenderer: ToolRenderer = {
 				render: (width: number) => {
 					const lines = renderToolCallActivity(tiles, width, {
 						maxRows: 8,
-						hint: undefined // No hint needed for sub-agent starts
+						hint: undefined, // No hint needed for sub-agent starts
 					});
 					// Prepend a blank line and append footer
 					const output = ["", ...lines];

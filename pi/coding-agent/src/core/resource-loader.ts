@@ -1038,7 +1038,11 @@ export class DefaultResourceLoader implements ResourceLoader {
 	}
 
 	/** Attach pi-specific fields (baseDir, sourceInfo, qualifiedName) to a harness-loaded skill. */
-	private enrichSkill(skill: HarnessSkill, metadataByPath: Map<string, PathMetadata> | undefined, shadowed: boolean): Skill {
+	private enrichSkill(
+		skill: HarnessSkill,
+		metadataByPath: Map<string, PathMetadata> | undefined,
+		shadowed: boolean,
+	): Skill {
 		const baseDir = skill.filePath.split("/").slice(0, -1).join("/") || "/";
 		// Preserve a sourceInfo the skill already carries (e.g. injected by skillsOverride) before
 		// falling back to extension/default resolution, which may stat the filePath.

@@ -146,8 +146,8 @@ const TaskSchema = Type.Object({
 			description: `Allowed tools for the sub-agent. Defaults to read-only: ${DEFAULT_TOOLS.join(",")}.`,
 		}),
 	),
-	model: Type.Optional(Type.String({ description: "Optional pi model pattern or provider/model id." })),
-	provider: Type.Optional(Type.String({ description: "Optional pi provider name." })),
+	model: Type.Optional(Type.String({ description: `Optional ${APP_NAME} model pattern or provider/model id.` })),
+	provider: Type.Optional(Type.String({ description: `Optional ${APP_NAME} provider name.` })),
 	thinking: Type.Optional(StringEnum(["off", "minimal", "low", "medium", "high", "xhigh"] as const)),
 	timeoutSeconds: Type.Optional(
 		Type.Number({ description: "Optional maximum runtime before the sub-agent is terminated." }),
@@ -576,8 +576,7 @@ export class SubAgentController {
 		return {
 			name: "sub_agent",
 			label: "Sub Agent",
-			description:
-				`Start, inspect, wait for, or cancel headless ${APP_NAME} sub-agents. action=start accepts either one task or a tasks array for parallel work, or a workflow object to run a deterministic multi-agent orchestration (classify_and_act, fan_out_synthesize, adversarial_verify, generate_and_filter, tournament, loop_until_done). Set returnToMain=true to automatically send completed results back to the main agent. Sub-agents are read-only by default, inherit the parent model unless a task specifies model/provider, run with --no-session --no-extensions, and receive parent progress.`,
+			description: `Start, inspect, wait for, or cancel headless ${APP_NAME} sub-agents. action=start accepts either one task or a tasks array for parallel work, or a workflow object to run a deterministic multi-agent orchestration (classify_and_act, fan_out_synthesize, adversarial_verify, generate_and_filter, tournament, loop_until_done). Set returnToMain=true to automatically send completed results back to the main agent. Sub-agents are read-only by default, inherit the parent model unless a task specifies model/provider, run with --no-session --no-extensions, and receive parent progress.`,
 			promptSnippet: `Run one or more headless ${APP_NAME} sub-agents for delegated analysis`,
 			promptGuidelines: [
 				"Use sub_agent action=start with tasks:[...] when a task can be decomposed into independent research, code review, test analysis, or planning subtasks that benefit from concurrent agents.",

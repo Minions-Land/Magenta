@@ -1056,7 +1056,10 @@ export default function(pi: ExtensionAPI) {
 	describe("skill namespacing", () => {
 		function writeSkillDir(dir: string, name: string, description: string): string {
 			mkdirSync(dir, { recursive: true });
-			writeFileSync(join(dir, "SKILL.md"), `---\nname: ${name}\ndescription: ${description}\n---\nBody for ${name}.`);
+			writeFileSync(
+				join(dir, "SKILL.md"),
+				`---\nname: ${name}\ndescription: ${description}\n---\nBody for ${name}.`,
+			);
 			return dir;
 		}
 
@@ -1127,7 +1130,10 @@ export default function(pi: ExtensionAPI) {
 	describe("skill hot-reload", () => {
 		function writeSkill(dir: string, name: string, description: string): void {
 			mkdirSync(dir, { recursive: true });
-			writeFileSync(join(dir, "SKILL.md"), `---\nname: ${name}\ndescription: ${description}\n---\nBody for ${name}.`);
+			writeFileSync(
+				join(dir, "SKILL.md"),
+				`---\nname: ${name}\ndescription: ${description}\n---\nBody for ${name}.`,
+			);
 		}
 
 		async function waitFor(predicate: () => boolean, timeoutMs = 3000): Promise<boolean> {

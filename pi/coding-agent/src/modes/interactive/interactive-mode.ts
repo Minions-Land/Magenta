@@ -56,6 +56,7 @@ import {
 import chalk from "chalk";
 import { spawn, spawnSync } from "child_process";
 import {
+	APP_BINARY_NAME,
 	APP_NAME,
 	APP_TITLE,
 	CONFIG_DIR_NAME,
@@ -293,7 +294,7 @@ export function formatResumeCommand(sessionManager: SessionManager): string | un
 	const sessionFile = sessionManager.getSessionFile();
 	if (!sessionFile || !fs.existsSync(sessionFile)) return undefined;
 
-	const args = [APP_NAME];
+	const args = [APP_BINARY_NAME];
 	if (!sessionManager.usesDefaultSessionDir()) {
 		args.push("--session-dir", quoteIfNeeded(sessionManager.getSessionDir()));
 	}
@@ -3557,7 +3558,7 @@ export class InteractiveMode {
 			new Text(
 				theme.fg(
 					"warning",
-					`This project is not trusted. Project ${CONFIG_DIR_NAME} resources and packages are ignored. Use /trust to save a trust decision, then restart pi.`,
+					`This project is not trusted. Project ${CONFIG_DIR_NAME} resources and packages are ignored. Use /trust to save a trust decision, then restart ${APP_NAME}.`,
 				),
 				1,
 				0,
@@ -3666,7 +3667,7 @@ export class InteractiveMode {
 		this.stop();
 		await this.runtimeHost.dispose();
 
-		// Spawn new pi process with same arguments and environment
+		// Spawn a new process with the same arguments and environment.
 		const { spawn } = await import("child_process");
 		const args = process.argv.slice(1); // Skip node executable path
 
@@ -3719,7 +3720,7 @@ export class InteractiveMode {
 		try {
 			this.ui.stop();
 		} catch {}
-		console.error("pi exiting due to uncaughtException:");
+		console.error(`${APP_NAME} exiting due to uncaughtException:`);
 		console.error(error);
 		process.exit(1);
 	}
@@ -3766,7 +3767,7 @@ export class InteractiveMode {
 
 		// Restore the terminal before the process dies on any uncaught throw.
 		// Without this, an unhandled exception from extension code (or anywhere
-		// in pi) leaves the terminal in raw mode with no cursor.
+		// in the app) leaves the terminal in raw mode with no cursor.
 		const uncaughtExceptionHandler = (error: Error) => this.uncaughtCrash(error);
 		process.prependListener("uncaughtException", uncaughtExceptionHandler);
 		this.signalCleanupHandlers.push(() => process.off("uncaughtException", uncaughtExceptionHandler));
@@ -4015,7 +4016,7 @@ export class InteractiveMode {
 
 	showNewVersionNotification(_release: LatestPiRelease): void {
 		// Temporarily disabled update notification
-		// const action = theme.fg("accent", `${APP_NAME} update`);
+		// const action = theme.fg("accent", `${APP_BINARY_NAME} update`);
 		// const updateInstruction = theme.fg("muted", `New version ${release.version} is available. Run `) + action;
 		// const changelogUrl = "https://pi.dev/changelog";
 		// const changelogLink = getCapabilities().hyperlinks
@@ -4043,7 +4044,7 @@ export class InteractiveMode {
 	}
 
 	showPackageUpdateNotification(packages: string[]): void {
-		const action = theme.fg("accent", `${APP_NAME} update --extensions`);
+		const action = theme.fg("accent", `${APP_BINARY_NAME} update --extensions`);
 		const updateInstruction = theme.fg("muted", "Package updates are available. Run ") + action;
 		const packageLines = packages.map((pkg) => `- ${pkg}`).join("\n");
 
@@ -5994,7 +5995,7 @@ export class InteractiveMode {
 		if (!option) return;
 		trustStore.setMany(option.updates);
 		this.showStatus(
-			`Saved trust decision: ${option.trusted ? "trusted" : "untrusted"}. Restart pi for this to take effect.`,
+			`Saved trust decision: ${option.trusted ? "trusted" : "untrusted"}. Restart ${APP_NAME} for this to take effect.`,
 		);
 	}
 

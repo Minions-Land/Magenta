@@ -396,12 +396,39 @@ export function calculateCost<TApi extends Api>(model: Model<TApi>, usage: Usage
 
 const EXTENDED_THINKING_LEVELS: ModelThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
+function supportsOpenAiXhigh(modelId: string): boolean {
+	return (
+		modelId.includes("gpt-5.2") ||
+		modelId.includes("gpt-5.3") ||
+		modelId.includes("gpt-5.4") ||
+		modelId.includes("gpt-5.5")
+	);
+}
+
+function supportsDefaultXhigh<TApi extends Api>(model: Model<TApi>): boolean {
+	const id = model.id.toLowerCase();
+	const compat = model.compat as { forceAdaptiveThinking?: boolean } | undefined;
+	if (model.api === "anthropic-messages" && compat?.forceAdaptiveThinking === true) return true;
+	if (model.api === "openai-codex-responses" && supportsOpenAiXhigh(id)) return true;
+	if (model.provider !== "openrouter") return false;
+	return (
+		supportsOpenAiXhigh(id) ||
+		id.includes("claude-opus-4.6") ||
+		id.includes("claude-opus-4.7") ||
+		id.includes("claude-opus-4.8") ||
+		id.includes("claude-sonnet-4.6") ||
+		id.includes("claude-sonnet-5") ||
+		id.includes("claude-fable-5")
+	);
+}
+
 export function getSupportedThinkingLevels<TApi extends Api>(model: Model<TApi>): ModelThinkingLevel[] {
 	if (!model.reasoning) return ["off"];
 
 	return EXTENDED_THINKING_LEVELS.filter((level) => {
 		const mapped = model.thinkingLevelMap?.[level];
 		if (mapped === null) return false;
+		if (level === "xhigh" && mapped === undefined) return supportsDefaultXhigh(model);
 		if (level === "xhigh" || level === "max") return mapped !== undefined;
 		return true;
 	});

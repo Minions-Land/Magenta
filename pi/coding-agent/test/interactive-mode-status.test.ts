@@ -634,21 +634,27 @@ describe("InteractiveMode.showLoadedResources", () => {
 			},
 			{
 				path: "/tmp/project/.magenta/npm/node_modules/pi-markdown-preview/extensions/index.ts",
-				sourceInfo: createSourceInfo("/tmp/project/.magenta/npm/node_modules/pi-markdown-preview/extensions/index.ts", {
-					source: "npm:pi-markdown-preview",
-					scope: "project",
-					origin: "package",
-					baseDir: "/tmp/project/.magenta/npm/node_modules/pi-markdown-preview",
-				}),
+				sourceInfo: createSourceInfo(
+					"/tmp/project/.magenta/npm/node_modules/pi-markdown-preview/extensions/index.ts",
+					{
+						source: "npm:pi-markdown-preview",
+						scope: "project",
+						origin: "package",
+						baseDir: "/tmp/project/.magenta/npm/node_modules/pi-markdown-preview",
+					},
+				),
 			},
 			{
 				path: "/tmp/project/.magenta/npm/node_modules/@scope/pi-scoped/extensions/index.ts",
-				sourceInfo: createSourceInfo("/tmp/project/.magenta/npm/node_modules/@scope/pi-scoped/extensions/index.ts", {
-					source: "npm:@scope/pi-scoped",
-					scope: "project",
-					origin: "package",
-					baseDir: "/tmp/project/.magenta/npm/node_modules/@scope/pi-scoped",
-				}),
+				sourceInfo: createSourceInfo(
+					"/tmp/project/.magenta/npm/node_modules/@scope/pi-scoped/extensions/index.ts",
+					{
+						source: "npm:@scope/pi-scoped",
+						scope: "project",
+						origin: "package",
+						baseDir: "/tmp/project/.magenta/npm/node_modules/@scope/pi-scoped",
+					},
+				),
 			},
 			{
 				path: "/tmp/project/.magenta/git/github.com/HazAT/pi-interactive-subagents/extensions/index.ts",
@@ -1013,12 +1019,15 @@ describe("InteractiveMode.showLoadedResources", () => {
 		const extensions: ExtensionFixture[] = [
 			{
 				path: "/tmp/project/.magenta/npm/node_modules/pi-markdown-preview/extensions/index.ts",
-				sourceInfo: createSourceInfo("/tmp/project/.magenta/npm/node_modules/pi-markdown-preview/extensions/index.ts", {
-					source: "npm:pi-markdown-preview",
-					scope: "project",
-					origin: "package",
-					baseDir: "/tmp/project/.magenta/npm/node_modules/pi-markdown-preview",
-				}),
+				sourceInfo: createSourceInfo(
+					"/tmp/project/.magenta/npm/node_modules/pi-markdown-preview/extensions/index.ts",
+					{
+						source: "npm:pi-markdown-preview",
+						scope: "project",
+						origin: "package",
+						baseDir: "/tmp/project/.magenta/npm/node_modules/pi-markdown-preview",
+					},
+				),
 			},
 		];
 
@@ -1072,7 +1081,10 @@ describe("InteractiveMode.showLoadedResources", () => {
 		const fakeThis = createShowLoadedResourcesThis({
 			quietStartup: false,
 			cwd,
-			contextFiles: [{ path: path.join(home, CONFIG_DIR_NAME, "agent", "AGENTS.md") }, { path: path.join(cwd, "AGENTS.md") }],
+			contextFiles: [
+				{ path: path.join(home, CONFIG_DIR_NAME, "agent", "AGENTS.md") },
+				{ path: path.join(cwd, "AGENTS.md") },
+			],
 		});
 
 		(InteractiveMode as any).prototype.showLoadedResources.call(fakeThis, {
@@ -1092,7 +1104,10 @@ describe("InteractiveMode.showLoadedResources", () => {
 			quietStartup: false,
 			toolOutputExpanded: true,
 			cwd,
-			contextFiles: [{ path: path.join(home, CONFIG_DIR_NAME, "agent", "AGENTS.md") }, { path: path.join(cwd, "AGENTS.md") }],
+			contextFiles: [
+				{ path: path.join(home, CONFIG_DIR_NAME, "agent", "AGENTS.md") },
+				{ path: path.join(cwd, "AGENTS.md") },
+			],
 		});
 
 		(InteractiveMode as any).prototype.showLoadedResources.call(fakeThis, {

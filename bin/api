@@ -10,4 +10,7 @@ set -e
 # 环境里已 export 的凭证会被子进程继承。
 
 # 相对本脚本定位构建好的 CLI，保证从任意 cwd 启动都能工作。
-exec node "$(dirname "$0")/../pi/coding-agent/dist/cli.js" "$@"
+# 把 bin 目录放进 PATH，这样子进程（例如 sub-agent）也能启动同一套 Magenta 命令。
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+export PATH="$SCRIPT_DIR:$PATH"
+exec node "$SCRIPT_DIR/../pi/coding-agent/dist/cli.js" "$@"

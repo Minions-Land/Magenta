@@ -9,12 +9,11 @@
  *  3. Footer with SessionID
  */
 
-import { stripAnsi } from "../src/utils/ansi.ts";
+import type { AgentSession } from "../src/core/agent-session.ts";
+import type { ReadonlyFooterDataProvider } from "../src/core/footer-data-provider.ts";
 import { CustomMessageComponent } from "../src/modes/interactive/components/custom-message.ts";
 import { FooterComponent } from "../src/modes/interactive/components/footer.ts";
 import { getMarkdownTheme, initTheme, theme } from "../src/modes/interactive/theme/theme.ts";
-import type { AgentSession } from "../src/core/agent-session.ts";
-import type { ReadonlyFooterDataProvider } from "../src/core/footer-data-provider.ts";
 
 initTheme(undefined, false);
 
@@ -53,7 +52,7 @@ console.log("═".repeat(80));
 // 1. SENDING a message (what the agent/user sees when calling send_message)
 // ============================================================================
 
-console.log("\n" + theme.fg("accent", "1. SENDING a message") + " (tool call + result)\n");
+console.log(`\n${theme.fg("accent", "1. SENDING a message")} (tool call + result)\n`);
 console.log(theme.fg("dim", "─".repeat(80)));
 
 const sendArgs = {
@@ -64,25 +63,17 @@ const sendArgs = {
 
 console.log(theme.fg("toolTitle", "send_message") + theme.fg("dim", "("));
 console.log(theme.fg("dim", "  to: ") + theme.fg("syntaxString", `"${sendArgs.to}"`));
-console.log(
-	theme.fg("dim", "  content: ") +
-		theme.fg("syntaxString", `"${sendArgs.content.slice(0, 60)}..."`),
-);
+console.log(theme.fg("dim", "  content: ") + theme.fg("syntaxString", `"${sendArgs.content.slice(0, 60)}..."`));
 console.log(theme.fg("dim", ")"));
 
-console.log("\n" + theme.fg("dim", "Result:"));
-console.log(
-	theme.fg(
-		"toolOutput",
-		"Message m:1a2b3c4d delivered to session e5f6g7h8 — recipient is active.",
-	),
-);
+console.log(`\n${theme.fg("dim", "Result:")}`);
+console.log(theme.fg("toolOutput", "Message m:1a2b3c4d delivered to session e5f6g7h8 — recipient is active."));
 
 // ============================================================================
 // 2. RECEIVING messages (injected custom block from drain)
 // ============================================================================
 
-console.log("\n" + theme.fg("accent", "2. RECEIVING messages") + " (custom message injection)\n");
+console.log(`\n${theme.fg("accent", "2. RECEIVING messages")} (custom message injection)\n`);
 console.log(theme.fg("dim", "─".repeat(80)));
 
 const receivedMessage = {
@@ -109,7 +100,7 @@ for (const line of rendered) {
 // 3. Footer with SessionID
 // ============================================================================
 
-console.log("\n" + theme.fg("accent", "3. FOOTER") + " (SessionID on first line)\n");
+console.log(`\n${theme.fg("accent", "3. FOOTER")} (SessionID on first line)\n`);
 console.log(theme.fg("dim", "─".repeat(80)));
 
 const footer = new FooterComponent(mockSession, mockFooterData);
@@ -122,24 +113,12 @@ for (const line of footerLines) {
 // Summary
 // ============================================================================
 
-console.log("\n" + theme.fg("dim", "─".repeat(80)));
+console.log(`\n${theme.fg("dim", "─".repeat(80))}`);
 console.log(theme.fg("dim", "\nKey points:"));
-console.log(
-	theme.fg("dim", "  • ") +
-		"send_message renders as a standard tool call with recipient presence in result",
-);
-console.log(
-	theme.fg("dim", "  • ") +
-		"Received messages show in a labeled [magenta-peer-message] block, visually",
-);
+console.log(`${theme.fg("dim", "  • ")}send_message renders as a standard tool call with recipient presence in result`);
+console.log(`${theme.fg("dim", "  • ")}Received messages show in a labeled [magenta-peer-message] block, visually`);
 console.log(theme.fg("dim", "    distinct from user/assistant conversation"));
-console.log(
-	theme.fg("dim", "  • ") +
-		"Each message includes sender presence (active/idle/offline + last seen)",
-);
-console.log(
-	theme.fg("dim", "  • ") +
-		"SessionID sits on footer line 1 after cwd/branch, easy to select & copy",
-);
-console.log(theme.fg("dim", "  • ") + "followUp delivery: messages arrive at turn start, never interrupt tools");
+console.log(`${theme.fg("dim", "  • ")}Each message includes sender presence (active/idle/offline + last seen)`);
+console.log(`${theme.fg("dim", "  • ")}SessionID sits on footer line 1 after cwd/branch, easy to select & copy`);
+console.log(`${theme.fg("dim", "  • ")}followUp delivery: messages arrive at turn start, never interrupt tools`);
 console.log("\n");

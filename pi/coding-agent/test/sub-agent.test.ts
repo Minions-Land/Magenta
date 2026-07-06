@@ -4,9 +4,9 @@ import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { APP_BINARY_NAME } from "../src/config.ts";
 import type { AgentSessionEvent } from "../src/core/agent-session.ts";
 import { BackgroundEventManager } from "../src/core/background-events.ts";
-import { APP_BINARY_NAME } from "../src/config.ts";
 import type { ExtensionContext } from "../src/core/extensions/types.ts";
 import {
 	buildOrchestrationRequest,
@@ -212,6 +212,50 @@ describe("built-in sub_agent tool", () => {
 		expect(returned).toHaveLength(1);
 	});
 
+	it("inherits the parent model when a task has no explicit model", async () => {
+		controller.shutdown();
+		controller = new SubAgentController(manager, {
+			sendMessage: (message, options) => {
+				returned.push({ message, options: options ?? {} });
+			},
+			spawnAgent: createFakeSpawn(spawnRecords, { output: "sub-result" }),
+			getDefaultModel: () => ({ provider: "anthropic", model: "claude-opus-4-8" }),
+		});
+		const tool = controller.createToolDefinition();
+		const ctx = createContext(tempDir);
+
+		await tool.execute("call-start", { action: "start", task: "Review current changes" }, undefined, undefined, ctx);
+
+		expect(spawnRecords[0]?.command).toBe(APP_BINARY_NAME);
+		expect(spawnRecords[0]?.args).toEqual(
+			expect.arrayContaining(["--provider", "anthropic", "--model", "claude-opus-4-8"]),
+		);
+	});
+
+	it("uses an explicit task model instead of inheriting the parent model", async () => {
+		controller.shutdown();
+		controller = new SubAgentController(manager, {
+			sendMessage: (message, options) => {
+				returned.push({ message, options: options ?? {} });
+			},
+			spawnAgent: createFakeSpawn(spawnRecords, { output: "sub-result" }),
+			getDefaultModel: () => ({ provider: "anthropic", model: "claude-opus-4-8" }),
+		});
+		const tool = controller.createToolDefinition();
+		const ctx = createContext(tempDir);
+
+		await tool.execute(
+			"call-start",
+			{ action: "start", task: "Review current changes", provider: "openai", model: "gpt-5.4" },
+			undefined,
+			undefined,
+			ctx,
+		);
+
+		expect(spawnRecords[0]?.args).toEqual(expect.arrayContaining(["--provider", "openai", "--model", "gpt-5.4"]));
+		expect(spawnRecords[0]?.args).not.toEqual(expect.arrayContaining(["claude-opus-4-8"]));
+	});
+
 	it("starts multiple sub-agents concurrently", async () => {
 		const tool = controller.createToolDefinition();
 		const ctx = createContext(tempDir);
@@ -327,7 +371,7 @@ describe("built-in sub_agent tool", () => {
 		expect(textOf(start)).toContain("Pattern: fan_out_synthesize");
 		const eventId = start.details?.id as string;
 
-		// The orchestration runs in-process (fake runner), so no real pi is spawned.
+		// The orchestration runs in-process (fake runner), so no real child agent is spawned.
 		// Wait for it to finish via the wait action.
 		await tool.execute("call-wait", { action: "wait", eventId }, undefined, undefined, ctx);
 

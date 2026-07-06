@@ -10,4 +10,8 @@ set -e
 # Any credentials already exported in the environment are inherited by the child process.
 
 # Resolve the built CLI relative to this script so the launcher works from any cwd.
-exec node "$(dirname "$0")/../pi/coding-agent/dist/cli.js" "$@"
+# Keep this directory on PATH so child Magenta processes (for example sub-agents)
+# can spawn the same branded command even when the user invoked this file by path.
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+export PATH="$SCRIPT_DIR:$PATH"
+exec node "$SCRIPT_DIR/../pi/coding-agent/dist/cli.js" "$@"

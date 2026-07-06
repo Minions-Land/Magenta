@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Build pi binaries for all platforms locally.
+# Build branded binaries for all platforms locally.
 # Mirrors .github/workflows/build-binaries.yml
 #
 # Usage:
@@ -15,12 +15,12 @@
 #
 # Output:
 #   pi/coding-agent/binaries/
-#     pi-darwin-arm64.tar.gz
-#     pi-darwin-x64.tar.gz
-#     pi-linux-x64.tar.gz
-#     pi-linux-arm64.tar.gz
-#     pi-windows-x64.zip
-#     pi-windows-arm64.zip
+#     <binary>-darwin-arm64.tar.gz
+#     <binary>-darwin-x64.tar.gz
+#     <binary>-linux-x64.tar.gz
+#     <binary>-linux-arm64.tar.gz
+#     <binary>-windows-x64.zip
+#     <binary>-windows-arm64.zip
 
 set -euo pipefail
 
@@ -81,6 +81,8 @@ if [[ "$OUTPUT_DIR" != /* ]]; then
     OUTPUT_DIR="$(pwd)/$OUTPUT_DIR"
 fi
 
+BINARY_NAME=$(node -p "const pkg=require('./pi/coding-agent/package.json'); pkg.piConfig?.binaryName || Object.keys(pkg.bin || {})[0] || 'pi'")
+
 if [[ "$SKIP_INSTALL" == "false" ]]; then
     echo "==> Installing dependencies..."
     npm ci --ignore-scripts
@@ -134,9 +136,9 @@ for platform in "${PLATFORMS[@]}"; do
     # explicit build entrypoints. The runtime can still use new URL(...), but the
     # worker must be present in the compiled executable.
     if [[ "$platform" == windows-* ]]; then
-        bun build --compile --target=bun-$platform ./dist/bun/cli.js ./src/utils/image-resize-worker.ts --outfile "$OUTPUT_DIR/$platform/pi.exe"
+        bun build --compile --target=bun-$platform ./dist/bun/cli.js ./src/utils/image-resize-worker.ts --outfile "$OUTPUT_DIR/$platform/$BINARY_NAME.exe"
     else
-        bun build --compile --target=bun-$platform ./dist/bun/cli.js ./src/utils/image-resize-worker.ts --outfile "$OUTPUT_DIR/$platform/pi"
+        bun build --compile --target=bun-$platform ./dist/bun/cli.js ./src/utils/image-resize-worker.ts --outfile "$OUTPUT_DIR/$platform/$BINARY_NAME"
     fi
 done
 
@@ -202,12 +204,12 @@ cd "$OUTPUT_DIR"
 for platform in "${PLATFORMS[@]}"; do
     if [[ "$platform" == windows-* ]]; then
         # Windows (zip)
-        echo "Creating pi-$platform.zip..."
-        (cd "$platform" && zip -r ../pi-$platform.zip .)
+        echo "Creating $BINARY_NAME-$platform.zip..."
+        (cd "$platform" && zip -r ../"$BINARY_NAME-$platform.zip" .)
     else
         # Unix platforms (tar.gz) - use wrapper directory for mise compatibility
-        echo "Creating pi-$platform.tar.gz..."
-        mv "$platform" pi && tar -czf pi-$platform.tar.gz pi && mv pi "$platform"
+        echo "Creating $BINARY_NAME-$platform.tar.gz..."
+        mv "$platform" "$BINARY_NAME" && tar -czf "$BINARY_NAME-$platform.tar.gz" "$BINARY_NAME" && mv "$BINARY_NAME" "$platform"
     fi
 done
 
@@ -216,9 +218,9 @@ echo "==> Extracting archives for testing..."
 for platform in "${PLATFORMS[@]}"; do
     rm -rf "$platform"
     if [[ "$platform" == windows-* ]]; then
-        mkdir -p "$platform" && (cd "$platform" && unzip -q ../pi-$platform.zip)
+        mkdir -p "$platform" && (cd "$platform" && unzip -q ../"$BINARY_NAME-$platform.zip")
     else
-        tar -xzf pi-$platform.tar.gz && mv pi "$platform"
+        tar -xzf "$BINARY_NAME-$platform.tar.gz" && mv "$BINARY_NAME" "$platform"
     fi
 done
 
@@ -230,8 +232,8 @@ echo ""
 echo "Extracted directories for testing:"
 for platform in "${PLATFORMS[@]}"; do
     if [[ "$platform" == windows-* ]]; then
-        echo "  $OUTPUT_DIR/$platform/pi.exe"
+        echo "  $OUTPUT_DIR/$platform/$BINARY_NAME.exe"
     else
-        echo "  $OUTPUT_DIR/$platform/pi"
+        echo "  $OUTPUT_DIR/$platform/$BINARY_NAME"
     fi
 done

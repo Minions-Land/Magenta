@@ -27,10 +27,10 @@ describe("getSupportedThinkingLevels", () => {
 		expect(getSupportedThinkingLevels(model!)).not.toContain("off");
 	});
 
-	it("does not include xhigh for Claude Sonnet 4.5", () => {
+	it("includes xhigh for Claude Sonnet 4.5", () => {
 		const model = getModel("anthropic", "claude-sonnet-4-5");
 		expect(model).toBeDefined();
-		expect(getSupportedThinkingLevels(model!)).not.toContain("xhigh");
+		expect(getSupportedThinkingLevels(model!)).toContain("xhigh");
 	});
 
 	it.each(["gpt-5.4", "gpt-5.5"] as const)("includes xhigh for %s models", (modelId) => {

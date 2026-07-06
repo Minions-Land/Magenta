@@ -3,6 +3,7 @@ import chalk from "chalk";
 import { selectConfig } from "./cli/config-selector.ts";
 import { createProjectTrustContext } from "./cli/project-trust.ts";
 import {
+	APP_BINARY_NAME,
 	APP_NAME,
 	CONFIG_DIR_NAME,
 	detectInstallMethod,
@@ -77,13 +78,13 @@ function reportSettingsErrors(settingsManager: SettingsManager, context: string)
 function getPackageCommandUsage(command: PackageCommand): string {
 	switch (command) {
 		case "install":
-			return `${APP_NAME} install <source> [-l] [--approve|--no-approve]`;
+			return `${APP_BINARY_NAME} install <source> [-l] [--approve|--no-approve]`;
 		case "remove":
-			return `${APP_NAME} remove <source> [-l] [--approve|--no-approve]`;
+			return `${APP_BINARY_NAME} remove <source> [-l] [--approve|--no-approve]`;
 		case "update":
-			return `${APP_NAME} update [source|self|pi] [--self|--extensions|--all] [--extension <source>] [--approve|--no-approve] [--force]`;
+			return `${APP_BINARY_NAME} update [source|self|${APP_BINARY_NAME}] [--self|--extensions|--all] [--extension <source>] [--approve|--no-approve] [--force]`;
 		case "list":
-			return `${APP_NAME} list [--approve|--no-approve]`;
+			return `${APP_BINARY_NAME} list [--approve|--no-approve]`;
 	}
 }
 
@@ -101,12 +102,12 @@ Options:
   -na, --no-approve Ignore project-local files for this command
 
 Examples:
-  ${APP_NAME} install npm:@foo/bar
-  ${APP_NAME} install git:github.com/user/repo
-  ${APP_NAME} install git:git@github.com:user/repo
-  ${APP_NAME} install https://github.com/user/repo
-  ${APP_NAME} install ssh://git@github.com/user/repo
-  ${APP_NAME} install ./local/path
+  ${APP_BINARY_NAME} install npm:@foo/bar
+  ${APP_BINARY_NAME} install git:github.com/user/repo
+  ${APP_BINARY_NAME} install git:git@github.com:user/repo
+  ${APP_BINARY_NAME} install https://github.com/user/repo
+  ${APP_BINARY_NAME} install ssh://git@github.com:user/repo
+  ${APP_BINARY_NAME} install ./local/path
 `);
 			return;
 
@@ -115,7 +116,7 @@ Examples:
   ${getPackageCommandUsage("remove")}
 
 Remove a package and its source from settings.
-Alias: ${APP_NAME} uninstall <source> [-l]
+Alias: ${APP_BINARY_NAME} uninstall <source> [-l]
 
 Options:
   -l, --local       Remove from project settings (${CONFIG_DIR_NAME}/settings.json)
@@ -123,8 +124,8 @@ Options:
   -na, --no-approve Ignore project-local files for this command
 
 Examples:
-  ${APP_NAME} remove npm:@foo/bar
-  ${APP_NAME} uninstall npm:@foo/bar
+  ${APP_BINARY_NAME} remove npm:@foo/bar
+  ${APP_BINARY_NAME} uninstall npm:@foo/bar
 `);
 			return;
 
@@ -132,22 +133,22 @@ Examples:
 			console.log(`${chalk.bold("Usage:")}
   ${getPackageCommandUsage("update")}
 
-Update pi and installed packages.
+Update ${APP_NAME} and installed packages.
 
 Options:
-  --self                  Update pi only (default when no target is given)
+  --self                  Update ${APP_NAME} only (default when no target is given)
   --extensions            Update installed packages only
-  --all                   Update pi and installed packages
+  --all                   Update ${APP_NAME} and installed packages
   --extension <source>    Update one package only
   -a, --approve           Trust project-local files for this command
   -na, --no-approve       Ignore project-local files for this command
-  --force                 Reinstall pi even if the current version is latest
+  --force                 Reinstall ${APP_NAME} even if the current version is latest
 
 Short forms:
-  ${APP_NAME} update                Update pi only
-  ${APP_NAME} update --all          Update pi and all extensions
-  ${APP_NAME} update <source>       Update one package
-  ${APP_NAME} update pi             Update pi only (self works as alias to pi)
+  ${APP_BINARY_NAME} update                Update ${APP_NAME} only
+  ${APP_BINARY_NAME} update --all          Update ${APP_NAME} and all extensions
+  ${APP_BINARY_NAME} update <source>       Update one package
+  ${APP_BINARY_NAME} update ${APP_BINARY_NAME}        Update ${APP_NAME} only (self works as alias to ${APP_BINARY_NAME})
 `);
 			return;
 
@@ -305,7 +306,12 @@ function parsePackageCommand(args: string[]): PackageCommandOptions | undefined 
 			}
 			updateTarget = { type: "extensions", source: extensionFlagSource };
 		} else if (source) {
-			const sourceIsSelf = source === "self" || source === "pi";
+			const normalizedSource = source.toLowerCase();
+			const sourceIsSelf =
+				normalizedSource === "self" ||
+				normalizedSource === "pi" ||
+				normalizedSource === APP_BINARY_NAME.toLowerCase() ||
+				normalizedSource === APP_NAME.toLowerCase();
 			if (sourceIsSelf) {
 				updateTarget = extensionsFlag ? { type: "all" } : { type: "self" };
 			} else {
@@ -364,7 +370,7 @@ function printSelfUpdateUnavailable(
 	const entrypoint = process.argv[1];
 	if (entrypoint) {
 		console.error("");
-		console.error(`Location of pi executable: ${entrypoint}`);
+		console.error(`Location of ${APP_NAME} executable: ${entrypoint}`);
 	}
 }
 
@@ -587,7 +593,7 @@ export async function handlePackageCommand(
 
 	if (options.invalidOption) {
 		console.error(chalk.red(`Unknown option ${options.invalidOption} for "${options.command}".`));
-		console.error(chalk.dim(`Use "${APP_NAME} --help" or "${getPackageCommandUsage(options.command)}".`));
+		console.error(chalk.dim(`Use "${APP_BINARY_NAME} --help" or "${getPackageCommandUsage(options.command)}".`));
 		process.exitCode = 1;
 		return true;
 	}
@@ -706,7 +712,7 @@ export async function handlePackageCommand(
 				const target = options.updateTarget ?? { type: "self" };
 				if (options.showExtensionsSkippedNote) {
 					console.log(
-						chalk.dim(`Extensions are skipped. Run ${APP_NAME} update --extensions to update extensions.`),
+						chalk.dim(`Extensions are skipped. Run ${APP_BINARY_NAME} update --extensions to update extensions.`),
 					);
 				}
 				if (updateTargetIncludesExtensions(target)) {

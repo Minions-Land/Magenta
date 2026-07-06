@@ -21,10 +21,10 @@
  *   presence table + injection wiring — Magenta feature.
  */
 
-import { DatabaseSync } from "node:sqlite";
+import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { randomUUID } from "node:crypto";
+import { DatabaseSync } from "node:sqlite";
 
 /** Liveness of an agent, as recorded in the `presence` table. */
 export type PresenceState = "active" | "idle" | "offline";
@@ -171,9 +171,7 @@ export class MessageStore {
 	/** Count unread messages for a recipient without consuming them. */
 	unreadCount(recipient: string): number {
 		const row = this.db
-			.prepare(
-				`SELECT COUNT(*) AS c FROM messages WHERE recipient = ? AND status = 'unread'`,
-			)
+			.prepare(`SELECT COUNT(*) AS c FROM messages WHERE recipient = ? AND status = 'unread'`)
 			.get(recipient) as { c: number };
 		return row.c;
 	}
@@ -198,9 +196,9 @@ export class MessageStore {
 	 * heartbeat freshness. Returns undefined when the agent has no record.
 	 */
 	getPresence(agentId: string): Presence | undefined {
-		const row = this.db
-			.prepare(`SELECT state, last_seen FROM presence WHERE agent_id = ?`)
-			.get(agentId) as { state: PresenceState; last_seen: string } | undefined;
+		const row = this.db.prepare(`SELECT state, last_seen FROM presence WHERE agent_id = ?`).get(agentId) as
+			| { state: PresenceState; last_seen: string }
+			| undefined;
 		if (!row) return undefined;
 		const ageMs = Date.now() - new Date(row.last_seen).getTime();
 		const fresh = Number.isFinite(ageMs) && ageMs >= 0 && ageMs < this.stalenessMs;

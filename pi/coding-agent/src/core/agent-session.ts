@@ -33,7 +33,13 @@ import {
 	resetApiProviders,
 	streamSimple,
 } from "@earendil-works/pi-ai/compat";
-import { createSshToolOperations, formatSkillInvocation, type SshTarget, type SshToolOperations } from "@magenta/harness";
+import {
+	createSshToolOperations,
+	formatSkillInvocation,
+	type SshTarget,
+	type SshToolOperations,
+} from "@magenta/harness";
+import { getPeerMessageDbPath } from "../config.ts";
 import { getThemeByName, theme } from "../modes/interactive/theme/theme.ts";
 import { resolvePath } from "../utils/paths.ts";
 import { sleep } from "../utils/sleep.ts";
@@ -98,9 +104,8 @@ import { ToolProgressTracker } from "./tool-progress.ts";
 import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts";
 import { BackgroundShellController } from "./tools/bg-shell.ts";
 import { createAllToolDefinitions } from "./tools/index.ts";
-import { SubAgentController } from "./tools/sub-agent.ts";
 import { formatPeerMessages, PEER_MESSAGE_CUSTOM_TYPE, SendMessageController } from "./tools/send-message.ts";
-import { getPeerMessageDbPath } from "../config.ts";
+import { SubAgentController } from "./tools/sub-agent.ts";
 import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.ts";
 
 // ============================================================================
