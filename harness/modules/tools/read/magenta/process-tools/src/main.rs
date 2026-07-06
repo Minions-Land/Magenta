@@ -12,8 +12,11 @@ use std::{
     env, fs,
     hash::Hasher,
     io::{self, Read as IoRead},
+    net::{SocketAddr, TcpStream},
     path::{Path, PathBuf},
     process::{Command, Stdio},
+    sync::Arc,
+    time::Duration,
 };
 use walkdir::WalkDir;
 
@@ -1327,6 +1330,267 @@ fn render_lsp_locations(label: &str, locations: &[LspLocation], limit: usize) ->
     Ok(out.join("\n"))
 }
 
+// ============================================================================
+// Proxy Auto-Detection and Retry
+// ============================================================================
+
+#[derive(Debug, Clone, Copy)]
+enum ProxyProtocol {
+    Http,
+    Socks5,
+}
+
+impl std::fmt::Display for ProxyProtocol {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ProxyProtocol::Http => write!(f, "HTTP"),
+            ProxyProtocol::Socks5 => write!(f, "SOCKS5"),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ProxyConfig {
+    port: u16,
+    protocol: ProxyProtocol,
+}
+
+/// 检测本地端口是否有代理服务在监听
+fn detect_proxy_port(port: u16) -> Option<ProxyConfig> {
+    let addr: SocketAddr = format!("127.0.0.1:{}", port).parse().ok()?;
+    
+    // 快速 TCP 连接测试（50ms 超时）
+    if TcpStream::connect_timeout(&addr, Duration::from_millis(50)).is_ok() {
+        // 根据常见端口推测协议类型
+        let protocol = match port {
+            1080 | 10808 | 9050 | 1087 => ProxyProtocol::Socks5,
+            7890 | 7891 | 10809 | 8118 => ProxyProtocol::Http,
+            _ => ProxyProtocol::Http, // 默认尝试 HTTP
+        };
+        Some(ProxyConfig { port, protocol })
+    } else {
+        None
+    }
+}
+
+/// 检测是否是连接类错误（值得用代理重试）
+fn is_connection_error(err: &ureq::Error) -> bool {
+    match err {
+        ureq::Error::Transport(transport) => {
+            let err_str = transport.to_string().to_lowercase();
+            err_str.contains("connect") 
+                || err_str.contains("timeout") 
+                || err_str.contains("refused")
+                || err_str.contains("unreachable")
+        }
+        _ => false,
+    }
+}
+
+/// 自动代理重试包装器
+fn try_with_auto_proxy<F>(make_request: F) -> Result<ureq::Response, ureq::Error>
+where
+    F: Fn(Option<&ProxyConfig>) -> Result<ureq::Response, ureq::Error> + Send + Sync + 'static,
+{
+    // 1. 首先直连尝试
+    match make_request(None) {
+        Ok(response) => return Ok(response),
+        Err(err) => {
+            // 只有在连接失败的情况下才尝试代理
+            if !is_connection_error(&err) {
+                return Err(err);
+            }
+            eprintln!("[Proxy] Direct connection failed: {}", err);
+            eprintln!("[Proxy] Detecting local proxy ports...");
+        }
+    }
+    
+    // 2. 先尝试从系统代理配置读取端口
+    let mut proxy_ports_to_check = Vec::new();
+    
+    // 2.1 尝试读取 macOS 系统代理配置
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(output) = Command::new("networksetup")
+            .args(["-getwebproxy", "Wi-Fi"])
+            .output()
+        {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            if let Some(port_line) = stdout.lines().find(|l| l.starts_with("Port:")) {
+                if let Some(port_str) = port_line.strip_prefix("Port:").map(str::trim) {
+                    if let Ok(port) = port_str.parse::<u16>() {
+                        eprintln!("[Proxy] Found system HTTP proxy: 127.0.0.1:{}", port);
+                        proxy_ports_to_check.push(port);
+                    }
+                }
+            }
+        }
+        if let Ok(output) = Command::new("networksetup")
+            .args(["-getsocksfirewallproxy", "Wi-Fi"])
+            .output()
+        {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            if let Some(port_line) = stdout.lines().find(|l| l.starts_with("Port:")) {
+                if let Some(port_str) = port_line.strip_prefix("Port:").map(str::trim) {
+                    if let Ok(port) = port_str.parse::<u16>() {
+                        eprintln!("[Proxy] Found system SOCKS proxy: 127.0.0.1:{}", port);
+                        proxy_ports_to_check.push(port);
+                    }
+                }
+            }
+        }
+    }
+    
+    // 2.2 添加常见代理端口（按常用程度排序）
+    const COMMON_PROXY_PORTS: &[u16] = &[
+        7890,  // Clash for Windows (HTTP)
+        7897,  // Clash Verge (HTTP)
+        1080,  // Shadowsocks (SOCKS5)
+        10809, // V2RayN (HTTP)
+        10808, // V2RayN (SOCKS5)
+        7891,  // Clash 备用
+        7892,  // Clash 备用
+        1087,  // ClashX macOS
+        9050,  // Tor
+        8118,  // Privoxy
+        8080,  // 通用 HTTP 代理
+        3128,  // Squid
+    ];
+    
+    // 合并并去重
+    for &port in COMMON_PROXY_PORTS {
+        if !proxy_ports_to_check.contains(&port) {
+            proxy_ports_to_check.push(port);
+        }
+    }
+    
+    let proxy_ports = &proxy_ports_to_check;
+    
+    let available_proxies: Vec<_> = proxy_ports
+        .iter()
+        .filter_map(|&port| detect_proxy_port(port))
+        .collect();
+    
+    if available_proxies.is_empty() {
+        eprintln!("[Proxy] No local proxy detected on common ports");
+        return Err(std::io::Error::new(std::io::ErrorKind::ConnectionRefused, "No proxy available").into());
+    }
+    
+    eprintln!(
+        "[Proxy] Found {} available proxy port(s)",
+        available_proxies.len()
+    );
+    
+    // 3. 并行竞速：同时尝试所有代理，第一个成功的返回
+    use std::sync::mpsc;
+    use std::thread;
+    
+    eprintln!(
+        "[Proxy] Racing {} proxy port(s) in parallel...",
+        available_proxies.len()
+    );
+    
+    let (tx, rx) = mpsc::channel();
+    let mut handles = vec![];
+    
+    // 用 Arc 包装闭包，让多个线程可以共享
+    let make_request = Arc::new(make_request);
+    
+    // 为每个代理启动一个线程
+    for proxy in available_proxies {
+        let tx = tx.clone();
+        let proxy = proxy.clone();
+        let make_request = Arc::clone(&make_request);
+        
+        let handle = thread::spawn(move || {
+            eprintln!(
+                "[Proxy] Trying {}://127.0.0.1:{}...",
+                match proxy.protocol {
+                    ProxyProtocol::Http => "http",
+                    ProxyProtocol::Socks5 => "socks5",
+                },
+                proxy.port
+            );
+            
+            let result = make_request(Some(&proxy));
+            
+            match &result {
+                Ok(_) => {
+                    eprintln!(
+                        "[Proxy] ✓ Success via {}://127.0.0.1:{}",
+                        match proxy.protocol {
+                            ProxyProtocol::Http => "http",
+                            ProxyProtocol::Socks5 => "socks5",
+                        },
+                        proxy.port
+                    );
+                }
+                Err(err) => {
+                    eprintln!("[Proxy] ✗ Failed on port {}: {}", proxy.port, err);
+                }
+            }
+            
+            // 发送结果到主线程（无论成功或失败）
+            let _ = tx.send((proxy.port, result));
+        });
+        
+        handles.push(handle);
+    }
+    
+    // 释放发送端的原始副本，这样当所有线程完成后 rx 会收到 disconnected
+    drop(tx);
+    
+    // 等待第一个成功的结果
+    let mut last_error = None;
+    for (port, result) in rx {
+        match result {
+            Ok(response) => {
+                eprintln!("[Proxy] Using first successful proxy on port {}", port);
+                // 找到成功的就立即返回，其他线程会自然结束
+                return Ok(response);
+            }
+            Err(err) => {
+                last_error = Some(err);
+            }
+        }
+    }
+    
+    // 所有代理都失败了
+    eprintln!("[Proxy] All proxy attempts failed");
+    if let Some(err) = last_error {
+        Err(err)
+    } else {
+        Err(std::io::Error::new(std::io::ErrorKind::ConnectionRefused, "All proxy attempts failed").into())
+    }
+}
+
+/// 创建带代理配置的 HTTP 请求
+fn make_http_request(
+    url: &str,
+    proxy: Option<&ProxyConfig>,
+    user_agent: &str,
+    accept: &str,
+) -> Result<ureq::Response, ureq::Error> {
+    let agent = if let Some(proxy_cfg) = proxy {
+        let proxy_url = match proxy_cfg.protocol {
+            ProxyProtocol::Http => format!("http://127.0.0.1:{}", proxy_cfg.port),
+            ProxyProtocol::Socks5 => format!("socks5://127.0.0.1:{}", proxy_cfg.port),
+        };
+        
+        ureq::AgentBuilder::new()
+            .proxy(ureq::Proxy::new(proxy_url)?)
+            .build()
+    } else {
+        ureq::Agent::new()
+    };
+    
+    agent
+        .get(url)
+        .set("User-Agent", user_agent)
+        .set("Accept", accept)
+        .call()
+}
+
 fn tool_web_search(input: WebSearchInput) -> Result<String> {
     let query = input.query.trim();
     if query.is_empty() {
@@ -1349,11 +1613,16 @@ fn try_duckduckgo_search(
         "https://api.duckduckgo.com/?q={}&format=json&no_html=1&skip_disambig=1",
         urlencoding::encode(query)
     );
-    let response = match ureq::get(&url)
-        .set("Accept", "application/json")
-        .set("User-Agent", "Magenta-WebSearch/0.1")
-        .call()
-    {
+    
+    let url_clone = url.clone();
+    let response = match try_with_auto_proxy(move |proxy| {
+        make_http_request(
+            &url_clone,
+            proxy,
+            "Magenta-WebSearch/0.1",
+            "application/json",
+        )
+    }) {
         Ok(response) => response,
         Err(err) => {
             provider_notes.push(format!("DuckDuckGo failed: {}", err));
@@ -1395,14 +1664,16 @@ fn try_bing_search(
     provider_notes: &[String],
 ) -> Result<String> {
     let url = bing_search_url(query, recency);
-    let response = ureq::get(&url)
-        .set(
-            "Accept",
+    let url_clone = url.clone();
+    let response = try_with_auto_proxy(move |proxy| {
+        make_http_request(
+            &url_clone,
+            proxy,
+            "Magenta-WebSearch/0.1",
             "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         )
-        .set("User-Agent", "Magenta-WebSearch/0.1")
-        .call()
-        .map_err(|err| anyhow!("Bing search request failed after fallback: {}", err))?;
+    })
+    .map_err(|err| anyhow!("Bing search request failed after fallback: {}", err))?;
     let html = response
         .into_string()
         .context("failed to read Bing search HTML")?;
@@ -1440,14 +1711,16 @@ fn try_bing_search(
 
 fn tool_read_url(input: ReadUrlInput) -> Result<String> {
     let url = normalize_url(&input.url)?;
-    let response = ureq::get(&url)
-        .set(
-            "Accept",
+    let url_clone = url.clone();
+    let response = try_with_auto_proxy(move |proxy| {
+        make_http_request(
+            &url_clone,
+            proxy,
+            "Magenta-ReadUrl/0.1",
             "text/markdown,text/plain,application/json,text/html,*/*;q=0.8",
         )
-        .set("User-Agent", "Magenta-ReadUrl/0.1")
-        .call()
-        .map_err(|err| anyhow!("URL request failed for {}: {}", url, err))?;
+    })
+    .map_err(|err| anyhow!("URL request failed for {}: {}", url, err))?;
     let final_url = response.get_url().to_string();
     let status = response.status();
     let content_type = response
