@@ -1,6 +1,7 @@
 # Magenta3
 
 <p align="center">
+  <img alt="Magenta CLI" src="https://img.shields.io/badge/CLI-magenta-d946ef">
   <img alt="Built on Pi" src="https://img.shields.io/badge/built%20on-Pi-8250df">
   <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-3178c6?logo=typescript&logoColor=white">
   <img alt="HCP Protocol" src="https://img.shields.io/badge/HCP-protocol-2da44e">
@@ -8,25 +9,80 @@
 </p>
 
 <p align="center">
+  <a href="#what-magenta-is">What It Is</a> •
   <a href="#quick-start">Quick Start</a> •
+  <a href="#feature-map">Features</a> •
+  <a href="#cli--tui">CLI & TUI</a> •
   <a href="#architecture">Architecture</a> •
-  <a href="#the-hcp-protocol">HCP Protocol</a> •
-  <a href="#packages-shippable-domains">Packages</a> •
-  <a href="#cli--tui-usage">Usage</a> •
-  <a href="#documentation">Docs</a>
+  <a href="#development">Development</a>
 </p>
 
-Magenta3 is an AI coding assistant built **on top of [Pi](https://pi.dev)**. It
-keeps Pi's agent loop, TUI, and multi-provider LLM layer as the foundation, and
-adds a **Harness** — a modular, source-separated component system — plus the
-**HCP** assembly protocol and a **package** system that lets whole domains
-(tools + skills + prompts + brand + runtime) drop in as a unit.
+Magenta3 is a terminal-native AI coding environment. It keeps the practical
+parts of Pi: the agent loop, terminal UI, session system, model providers, and
+tool calling. On top of that foundation, Magenta adds a Harness layer for
+source-separated tools and capabilities, HCP for assembly, packages for
+domain-specific work, remote SSH execution, sub-agents, peer messaging, and a
+Magenta-branded CLI that stores its state under `~/.magenta/`.
+
+The working command is:
+
+```bash
+magenta
+```
+
+In this repository, use:
+
+```bash
+./bin/magenta
+```
 
 > [!NOTE]
-> Pi holds the abstractions (loop, rendering, providers). Magenta holds the
-> reusable execution layer (tools, capabilities, packages) and the assembly
-> protocol that wires them together. The upstream Pi README is preserved at
-> [`pi/README-upstream.md`](./pi/README-upstream.md) for reference.
+> Pi is the foundation. Magenta is the product layer: Harness components,
+> package overlays, Magenta storage, peer messaging, remote execution, branding,
+> update flow, and the `magenta` command. The upstream Pi README is preserved at
+> [`pi/README-upstream.md`](./pi/README-upstream.md).
+
+---
+
+## What Magenta Is
+
+Magenta is built for real coding sessions: long-lived terminal work, fast
+repository navigation, controlled edits, background commands, delegated
+sub-agents, and model/provider switching without leaving the TUI.
+
+```mermaid
+flowchart TD
+    DEV["Developer"] --> CLI["magenta CLI / TUI"]
+    CLI --> SESSION["Agent session<br/>context, tools, events, model state"]
+
+    SESSION --> MODEL["LLM providers<br/>Anthropic · OpenAI · Gemini · OpenRouter<br/>Copilot · Bedrock · local/proxy providers"]
+    SESSION --> TOOLS["Built-in tools<br/>read · write · edit · bash · grep · find · ls · lsp · web"]
+    SESSION --> EVENTS["Background events<br/>long shell runs · sub-agents · progress"]
+    SESSION --> STORE["~/.magenta<br/>sessions · settings · packages · peer messages"]
+
+    TOOLS --> LOCAL["Local workspace"]
+    TOOLS --> SSH["Remote workspace<br/>SSH + headless PTY"]
+    EVENTS --> SUB["Headless sub-agents<br/>parallel review, research, verification"]
+    SUB --> PEER["Peer messages<br/>SQLite mailbox + presence"]
+    STORE --> CLI
+```
+
+Magenta aims to make a terminal agent feel like a working environment rather
+than a chat window:
+
+- A dense TUI with command palette, model selector, settings, events, session
+  management, export/share, and inline tool rendering.
+- A safe file workflow: read first, exact-match edit, write only when needed,
+  and tests/checks visible as tool output.
+- Remote coding over SSH, with file and shell operations executed in the remote
+  checkout rather than copied locally.
+- Sub-agents that run headlessly, inherit the parent model by default, and can
+  work in parallel while the main session keeps context.
+- Peer-to-peer agent messages, so independent sessions can coordinate through a
+  local mailbox.
+- Package overlays for specialized domains such as AutOmicScience.
+- A single Magenta storage root: `~/.magenta/`, replacing legacy `~/.pi/`
+  behavior for Magenta state.
 
 ---
 
@@ -34,341 +90,427 @@ adds a **Harness** — a modular, source-separated component system — plus the
 
 ```bash
 npm install
-npm run build          # build pi packages + harness
+npm run build
 
-./bin/magenta          # launch the interactive TUI
-./bin/magenta --help   # full flag reference
+./bin/magenta
+./bin/magenta --help
 ```
 
-> [!TIP]
-> `bin/magenta` autodetects credentials from Claude Code, Codex, or environment
-> variables — no manual configuration needed for most setups. See
-> [`docs/AUTHENTICATION.md`](./docs/AUTHENTICATION.md) for details.
+Common first runs:
+
+```bash
+# Open the interactive TUI
+./bin/magenta
+
+# Start with an initial prompt
+./bin/magenta "Review this repository and summarize the architecture"
+
+# One-shot mode for scripts
+./bin/magenta -p "List the files that define the SSH tool"
+
+# JSON output for automation
+./bin/magenta --mode json -p "Find failing tests and explain them"
+```
+
+Credentials are detected from existing environment variables, Codex auth, and
+Claude Code auth. Manual setup is still supported:
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+./bin/magenta --provider anthropic --model "*sonnet*"
+```
+
+See [`docs/AUTHENTICATION.md`](./docs/AUTHENTICATION.md) for the exact lookup
+order.
+
+---
+
+## Feature Map
+
+| Area | What Magenta Provides |
+|---|---|
+| Interactive coding | Full terminal UI, streaming tool calls, command palette, status/footer, model picker, settings, session browser |
+| File operations | `read`, `write`, `edit`, `grep`, `find`, `ls`, image/file attachment with `@path` |
+| Shell work | Foreground `bash`, background shell events, interrupt handling, collapsible output |
+| Remote workspace | `--ssh user@host:/path`, remote shell/file tools, headless PTY support through `node-pty` |
+| Model control | Provider/model selection, `--models` cycling patterns, thinking levels, scoped models, provider auth detection |
+| Sub-agents | `sub_agent` tool, parallel tasks, read-only defaults, parent-model inheritance, explicit provider/model override |
+| Peer messaging | `send_message` tool, shared local SQLite mailbox, active/idle/offline presence, turn-boundary delivery |
+| Packages | Install/list/update/remove package resources, local/project settings, package trust decisions |
+| Domain overlays | Harness package manifests with tools, skills, system prompts, brand, runtime |
+| Skills/resources | Built-in and package skills, namespacing, hot reload, source attribution |
+| Updates | `magenta update`, `magenta update --extensions`, `magenta update --all` |
+| Storage | `~/.magenta/agent` for settings/sessions, `~/.magenta/messages.db` for peer messages |
+
+### Built-In Tools
+
+| Tool | Purpose | Tool | Purpose |
+|---|---|---|---|
+| `read` | Read files, snippets, images | `write` | Create or overwrite files |
+| `edit` | Exact-match edits | `bash` | Run shell commands |
+| `grep` | Search file contents | `find` | Find paths by glob/name |
+| `ls` | List directories | `show` | Render or inspect content |
+| `lsp` | Language server queries | `web-search` | Web lookup when enabled |
+| `todo` | Track task state | `ssh` | Operate on a remote checkout |
+| `sub_agent` | Delegate work to headless agents | `send_message` | Message another live session |
+
+Packages can add tools. For example, AutOmicScience contributes
+`omics_compute`, `omics_environment`, and `omics_preflight`.
+
+### Sub-Agents And Peer Messaging
+
+Sub-agents are background Magenta processes launched by the main agent. They are
+useful for review, research, independent verification, and fan-out work. By
+default they are read-only and inherit the parent provider/model, which avoids
+accidentally falling back to a different model gateway.
+
+```mermaid
+sequenceDiagram
+    participant Main as Main Magenta session
+    participant SubA as Sub-agent A
+    participant SubB as Sub-agent B
+    participant DB as ~/.magenta/messages.db
+
+    Main->>SubA: sub_agent(start, task, inherited model)
+    Main->>SubB: sub_agent(start, task, inherited model)
+    SubA->>DB: send_message(result or question)
+    SubB->>DB: send_message(result or question)
+    Main->>DB: drain unread messages at turn boundary
+    DB-->>Main: messages + sender presence
+```
+
+> [!NOTE]
+> Magenta does not depend on MinionsOS2 at runtime. The peer-message SQLite
+> delivery kernel in `@magenta/harness` is a TypeScript port of MinionsOS2's
+> message semantics; Magenta adds presence, turn-boundary injection, TUI
+> rendering, and the `send_message` tool integration.
+
+### Remote SSH Work
+
+Run the same Magenta session against a remote checkout:
+
+```bash
+./bin/magenta --ssh user@host:/srv/project
+```
+
+When SSH mode is active, file and shell tools operate on the remote path. The
+SSH tool can allocate a headless PTY for terminal-oriented commands, which is
+why `node-pty` is included as an optional native dependency.
+
+---
+
+## CLI & TUI
+
+### CLI Commands
+
+```bash
+# Interactive
+magenta
+magenta "Start by reading package.json"
+
+# Non-interactive
+magenta -p "Summarize the latest failing test output"
+magenta --mode json -p "Return changed files as JSON"
+
+# Provider and model
+magenta --provider anthropic --model "*opus*" --thinking high
+magenta --model openai/gpt-5.5-pro:high
+magenta --models "anthropic/*,*sonnet*,openrouter/*"
+
+# Sessions
+magenta --continue "What did we do last time?"
+magenta --resume
+magenta --session <id-or-path>
+magenta --fork <id-or-path>
+magenta --name "Refactor SSH tool"
+magenta --no-session "Quick answer only"
+
+# Packages and updates
+magenta install <source>
+magenta remove <source>
+magenta list
+magenta config
+magenta update
+magenta update --extensions
+magenta update --all
+```
+
+During local development, replace `magenta` with `./bin/magenta`.
+
+### TUI Commands
+
+Type `/` in the TUI to open commands.
+
+| Command | What It Does |
+|---|---|
+| `/model` | Switch active model |
+| `/scoped-models` | Limit model choices for the session |
+| `/events` | Inspect background shell runs and sub-agents |
+| `/session`, `/resume`, `/fork`, `/new` | Manage sessions |
+| `/compact` | Compact conversation context |
+| `/harness` | Inspect assembled Harness components |
+| `/trust` | Save project trust decisions |
+| `/settings` | Open settings UI |
+| `/hotkeys` | View keybindings |
+| `/side`, `/btw` | Ask without giving tools |
+| `/export`, `/share`, `/copy` | Export/share/copy session output |
+| `/login`, `/logout` | Manage credentials |
+| `/exit`, `/quit` | Leave the TUI |
+
+Useful keys:
+
+| Key | Action |
+|---|---|
+| `Enter` | Send the prompt |
+| `Esc` | Interrupt/cancel the current turn |
+| `Ctrl+P` | Cycle configured models |
+| `Ctrl+D` | Exit when the editor is empty |
+| `Ctrl+Shift+R` | Restart Magenta |
+| `@path` | Attach a file or image to the next message |
+
+---
+
+## Packages And Domains
+
+A Magenta package is a shippable domain bundle. It can contain tools, skills,
+system prompts, brand assets, and runtime metadata. Packages are assembled above
+the built-in Harness, so a domain can override or extend lower-level resources
+without patching the core app.
+
+```mermaid
+flowchart LR
+    subgraph PKG["packages/<Domain>/"]
+        MAN["package.toml"]
+        TOOLS["tools/"]
+        SKILLS["skills/"]
+        PROMPT["system-prompt/"]
+        BRAND["brands/"]
+        RUNTIME["runtime metadata<br/>Node · Python · process · MCP"]
+    end
+
+    PKG --> OVERLAY["Package overlay loader"]
+    OVERLAY --> HCP["HCP assembly"]
+    HCP --> SESSION["Agent session"]
+    SESSION --> TUI["Magenta TUI"]
+```
+
+The included domain package:
+
+| Package | Domain | Contents |
+|---|---|---|
+| [`AutOmicScience`](./packages/AutOmicScience/) | Single-cell, spatial, scATAC-seq, multi-omics | Domain tools, skills, system prompt, brand, Python/Pixi runtime |
+
+Package commands:
+
+```bash
+magenta install npm:@scope/package
+magenta install git:github.com/user/repo
+magenta install ./local/package
+magenta list
+magenta update --extensions
+magenta remove <source>
+```
+
+Project-local package settings live under `.magenta/settings.json` in the
+project and require a trust decision before they are honored.
 
 ---
 
 ## Architecture
 
-Magenta3 is three layers that meet at one assembly protocol.
+Magenta3 has three main layers:
+
+1. Pi foundation: the agent loop, terminal UI, session machinery, and model API.
+2. Harness: source-separated implementations of tools, capabilities, resources,
+   package overlays, MCP bridges, and HCP assembly.
+3. Magenta product layer: branded command, storage, update flow, peer messaging,
+   SSH workflow, package commands, and user-facing TUI integration.
 
 ```mermaid
 graph TD
-    subgraph PI["🟦 Pi foundation (vendored)"]
+    subgraph PI["Pi foundation"]
         LOOP["Agent loop"]
-        TUI["TUI"]
-        AI["LLM providers"]
+        TUI["Terminal UI"]
+        AI["Provider/model layer"]
+        SESS["Session manager"]
     end
-    subgraph HARNESS["🟩 Harness (execution layer)"]
-        TOOLS["Tools<br/>bash · read · edit · grep · …"]
-        CAPS["Capabilities<br/>compaction · context · memory<br/>policy · runtime · sandbox · hook"]
-        RES["Resources<br/>system-prompt · skills · prompts · brand"]
-    end
-    subgraph PKG["🟨 Packages (domain bundles)"]
-        AOS["AutOmicScience<br/>(omics domain)"]
-    end
-    HCP{{"HCP assembly<br/>HcpClient · HcpServer · HcpMagnet"}}
 
-    TOOLS --> HCP
-    CAPS --> HCP
-    RES --> HCP
-    PKG --> HCP
-    HCP -->|"assembly time only"| LOOP
-    LOOP -.->|"runtime: direct call"| TOOLS
-    AI --- LOOP
-    TUI --- LOOP
+    subgraph HARNESS["Magenta Harness"]
+        TOOLS["Tools"]
+        CAP["Capabilities<br/>context · memory · policy · runtime · sandbox"]
+        RES["Resources<br/>skills · prompts · brand"]
+        MCP["MCP bridge"]
+        PKG["Package overlay"]
+    end
+
+    subgraph PRODUCT["Magenta product layer"]
+        CLI["magenta command"]
+        UPDATE["update flow"]
+        SSH["SSH remote workspace"]
+        PEER["peer messages"]
+        STORE["~/.magenta"]
+    end
+
+    CLI --> TUI
+    TUI --> LOOP
+    LOOP --> AI
+    LOOP --> SESS
+    LOOP --> TOOLS
+    HARNESS --> HCP{{HCP assembly}}
+    HCP --> LOOP
+    PRODUCT --> LOOP
+    PEER --> STORE
+    SESS --> STORE
 ```
 
-### What Magenta adds on top of Pi
+### HCP In One Picture
 
-| Area | Pi (upstream) | Magenta3 adds |
-|---|---|---|
-| 🛠️ Tool execution | Bundled in the agent | Extracted into `harness/` as source-separated modules |
-| 🔌 Component wiring | Ad-hoc | **HCP** protocol: `HcpClient → HcpServer → HcpMagnet` |
-| 📦 Extensibility | Extensions | **Packages** — shippable domain bundles under `packages/` |
-| 🎨 Identity/theming | Single brand | **Brand registry** (`brands/`) with multi-brand sync |
-| 🔐 Auth | API key | Auto-detects Claude Code / Codex credentials |
-| 📋 Terminology | "job" | "event" (`/events`, `BackgroundEvent`, …) |
-
-### Repository structure
-
-```
-Magenta3/
-├── pi/                     # Pi foundation (vendored — see pi/README.md)
-│   ├── ai/                 #   multi-provider LLM API
-│   ├── agent/              #   agent runtime (tool calling, state)
-│   ├── tui/                #   terminal UI library
-│   └── coding-agent/       #   the full CLI/TUI application
-├── harness/                # Magenta execution + assembly layer
-│   ├── core/               #   runtime foundation (loop, session, messages, types, env, utils)
-│   ├── modules/            #   capabilities + tools
-│   │   ├── tools/          #     callable tools (bash, read, edit, grep, …)
-│   │   └── <capability>/   #     loop slots (compaction, context, memory, policy, …)
-│   ├── hcp-contract/       #   HCP protocol contract (server + magnet interfaces)
-│   ├── hcp-client/         #   HCP client (registry, assembly, package overlay)
-│   ├── hcp-magnet/         #   Magnet connectors (wrap impls as AgentTools/HcpServers)
-│   ├── mcp/                #   MCP client/server bridge
-│   └── docs/DEVELOPING.md  #   how to add tools/capabilities/packages
-├── packages/               # domain packages (e.g. AutOmicScience)
-├── brands/                 # brand registry (identity, theme, versioning)
-├── scripts/                # repo-level release / check / analysis scripts
-├── tests/                  # repo-level end-to-end (Playwright) tests
-├── docs/                   # project documentation
-└── bin/magenta             # launcher (auth autodetect → pi CLI)
-```
-
-Inside the harness, components follow one rule: **module → capability →
-source**. A *module* is a mechanism the loop needs; a *source* is who implements
-it, named by **origin agent** (`pi/`, `magenta/`, `codex/`, `claude-code/`) —
-never by language or runtime. Rust/Python/process/MCP details live *inside* a
-source directory; they never become one.
-
----
-
-## The HCP protocol
-
-> [!IMPORTANT]
-> HCP (Harness Component Protocol) is Magenta's **assembly layer** — the analogue
-> of MCP, generalized from tools to every harness primitive. Its defining
-> principle: **HCP runs at assembly time, never on the execution hot path.** Once
-> a component is resolved, the loop calls it directly.
-
-The three roles form a chain from concrete implementation up to the loop:
+HCP is the assembly layer. It is similar in spirit to MCP, but applies to every
+Harness primitive, not just tools. HCP resolves components before execution; the
+hot path calls the resolved implementation directly.
 
 ```mermaid
 flowchart LR
-    IMPL["Implementation<br/><i>a TS tool, a provider,<br/>a package's SYSTEM.md</i>"]
-    MAG["🧲 HcpMagnet<br/><i>thin adapter — binds one impl,<br/>produces at most ONE of<br/>tool / capability / resource</i>"]
-    SRV["🔌 HcpServer<br/><i>a reachable endpoint:<br/>describe() + call() +<br/>instance() handoff</i>"]
-    CLI["🎛️ HcpClient<br/><i>in-process registry;<br/>resolves a slot to the<br/>selected source's instance</i>"]
+    IMPL["Implementation<br/>tool · capability · resource"]
+    MAGNET["HcpMagnet<br/>bind one implementation"]
+    SERVER["HcpServer<br/>describe · call · instance"]
+    CLIENT["HcpClient<br/>registry + source selection"]
     LOOP["Agent loop"]
 
-    IMPL --> MAG --> SRV --> CLI
-    CLI -->|resolveCapability&#40;name&#41;| LOOP
-    LOOP -.->|"then direct calls, HCP out of the way"| IMPL
+    IMPL --> MAGNET --> SERVER --> CLIENT --> LOOP
+    LOOP -.->|"direct runtime call"| IMPL
 ```
 
-- **HcpMagnet** — the last-inch connector. It *attracts* one implementation
-  (native TS, process/CLI, or out-of-process JSONL) into the harness and emits
-  at most one of `toTool()` / `toCapability()` / `toResource()`, plus an
-  optional `toHcpServer()` for management. It holds no business logic and makes
-  no selection decisions.
-- **HcpServer** — a component endpoint reachable by address (e.g. `tool:read`,
-  `capability:memory`). It can `describe()` itself, handle a management
-  `call()`, and hand off its live `instance()` for the hot path.
-- **HcpClient** — the in-process registry. A consumer asks for a capability *by
-  name* (`resolveCapability("memory")`) and gets back whichever source the
-  assembly chose — never knowing if it was `pi`, `magenta`, or a package. This
-  is the **single place source selection is consumed**; there is no second
-  selection registry.
+Core roles:
 
-Built-in capability slots and their default sources:
+| Role | Responsibility |
+|---|---|
+| `HcpMagnet` | Thin adapter around one implementation |
+| `HcpServer` | Reachable component endpoint |
+| `HcpClient` | In-process registry and source resolver |
+| Package overlay | Adds package-declared tools/resources into assembly |
 
-| Slot | Default | Slot | Default |
-|---|---|---|---|
-| 📦 `compaction` | pi | ⚡ `runtime` | magenta |
-| 📄 `context` | magenta | 🛡️ `sandbox` | magenta |
-| 🧠 `memory` | magenta | 🪝 `hook` | magenta |
-| 🛡️ `policy` | magenta | 📜 `system-prompt` (resource) | pi |
+### Repository Layout
 
-> [!WARNING]
-> **One rule that bites people:** a `system-prompt`/`skill`/`brand` is a
-> **Resource** (content, referenced) — not a Capability (code, called). It flows
-> through the resource path and never gets a code builder.
-
-See [`harness/hcp-client/HCP-OVERVIEW.md`](./harness/hcp-client/HCP-OVERVIEW.md)
-for the full walkthrough and
-[`harness/docs/governance/hcp-architecture.md`](./harness/docs/governance/hcp-architecture.md)
-for the authoritative contract.
+```text
+Magenta3/
+├── bin/                    # magenta launchers
+├── brands/                 # brand registry
+├── docs/                   # project documentation
+├── harness/                # Harness, HCP, MCP, tools, package overlay
+├── packages/               # domain packages
+├── pi/                     # vendored Pi foundation
+│   ├── ai/                 # model/provider layer
+│   ├── agent/              # agent runtime
+│   ├── tui/                # terminal UI library
+│   └── coding-agent/       # CLI/TUI application
+├── scripts/                # release, checks, model generation, analysis
+└── tests/                  # browser/e2e tests
+```
 
 ---
 
-## Packages: shippable domains
+## Storage And Configuration
 
-A **package** is a self-contained domain bundle under `packages/<Name>/` with a
-root `package.toml` manifest. It can carry tools, skills, a system prompt, a
-brand, and — for process/Python tools — its own pinned runtime and environment.
-Packages are selected *above* the built-in harness and override lower layers by
-`kind:name`.
+Magenta stores its user state under `~/.magenta/`.
 
 ```mermaid
-graph LR
-    subgraph P["packages/AutOmicScience/"]
-        MAN["package.toml<br/><i>manifest</i>"]
-        BR["brands/"]
-        SK["skills/<br/>rna · spatial · scatac-seq · …"]
-        SP["system-prompt/SYSTEM.md"]
-        TL["tools/<br/>omics_compute · omics_environment<br/>omics_preflight"]
-        RT["python-runtime + pixi env<br/><i>(pinned, gitignored builds)</i>"]
-    end
-    MAN --> OVL["package overlay loader<br/><i>harness/hcp-client/overlay</i>"]
-    OVL --> HCP{{HCP}} --> LOOP["Agent loop"]
+flowchart TD
+    ROOT["~/.magenta/"]
+    ROOT --> AGENT["agent/"]
+    AGENT --> SETTINGS["settings.json"]
+    AGENT --> SESSIONS["sessions/"]
+    AGENT --> TRUST["trust.json"]
+    ROOT --> MESSAGES["messages.db<br/>peer-agent mailbox"]
+    PROJECT["project/.magenta/settings.json"] --> TRUST
 ```
 
-The overlay reads each `[[components]]` entry, hands tool descriptors to the
-Magnet layer (which picks the transport from the tool's `runtime` field —
-in-process, `process`, or a Python module), and merges resources into the
-assembly. You **declare**, the overlay **wires**.
+Important paths:
 
-| Package | Domain | Tools | Skills | Runtime |
-|---|---|---|---|---|
-| 🧬 **[AutOmicScience](./packages/AutOmicScience/)** | Single-cell & spatial omics | `omics_compute`<br/>`omics_environment`<br/>`omics_preflight` | RNA, spatial,<br/>scATAC-seq,<br/>multi-omics | Python + Pixi |
-
-> [!NOTE]
-> AutOmicScience migrated from the AOSE `optimize_omics` harness and ships a
-> Nature-inspired brand with modality-specific skills.
-
-To create your own, copy
-[`packages/templates/harness-package/`](./packages/templates/harness-package/)
-and follow [`harness/docs/DEVELOPING.md`](./harness/docs/DEVELOPING.md).
-
----
-
-## Authentication
-
-`bin/magenta` autodetects credentials in this order:
-
-1. existing environment variables (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, …)
-2. Codex — `~/.codex/auth.json` + `config.toml`
-3. Claude Code — `~/.claude/settings.json`
-
-Or set one explicitly:
-
-```bash
-export ANTHROPIC_API_KEY=sk-ant-xxx                         # env var, or
-./bin/magenta --api-key sk-ant-xxx --provider anthropic     # flag, or
-./bin/magenta   →   /login                                  # interactive
-```
-
-See [`docs/AUTHENTICATION.md`](./docs/AUTHENTICATION.md) for details.
-
----
-
-## CLI & TUI usage
-
-Magenta runs interactively by default, but can also do one-shot and scripted runs.
-
-```bash
-# Interactive, optionally with an opening prompt
-./bin/magenta
-./bin/magenta "List all .ts files in src/"
-
-# Attach files/images to the first message with @
-./bin/magenta @prompt.md @diagram.png "Explain this design"
-
-# One-shot: process the prompt and exit (great for scripts / pipes)
-./bin/magenta -p "summarize package.json"
-./bin/magenta -p --mode json "list open TODOs"   # machine-readable output
-
-# Pick model / provider / thinking depth
-./bin/magenta --provider anthropic --model "*sonnet*" --thinking high
-
-# Load a domain package (see Packages above)
-./bin/magenta --harness-package AutOmicScience
-./bin/magenta --harness-list                     # show assembled harness modules
-
-# Scope which tools are available
-./bin/magenta --tools read,grep,find             # allowlist
-./bin/magenta --exclude-tools bash               # denylist
-
-# Remote workspace over SSH (read/write/edit/bash run on the remote)
-./bin/magenta --ssh user@host:/path/to/project
-```
-
-Session control from the CLI:
-
-```bash
-./bin/magenta --continue "what did we change?"   # resume the last session
-./bin/magenta --resume                           # pick a session to resume
-./bin/magenta --name "Refactor auth module"      # start a named session
-./bin/magenta --no-session "quick question"      # ephemeral, nothing saved
-```
-
-### In the TUI
-
-Type to chat; the agent reads, edits, and runs commands, streaming its work back
-inline.
-
-- **Enter** sends; **Esc** interrupts the current turn.
-- **Ctrl+P** cycles models (configure the set with `--models "anthropic/*,*sonnet*"`).
-- Prefix a message with `@path` to attach a file or image.
-- Type `/` to open the command palette; `/hotkeys` lists all keybindings.
-
-| Command | What it does |
+| Path | Purpose |
 |---|---|
-| `/model`, `/scoped-models` | Switch or scope the active model |
-| `/events` | Monitor background events (long shell runs / sub-agents) |
-| `/session`, `/resume`, `/fork`, `/new` | Session management |
-| `/compact` | Compact the conversation context |
-| `/harness` | Inspect the assembled harness components |
-| `/side`, `/btw` | No-tools side chat (ask without touching the repo) |
-| `/export`, `/share`, `/copy` | Export session to HTML / share / copy output |
-| `/settings`, `/hotkeys` | Configure the session / view keybindings |
-| `/login`, `/logout` | Manage credentials |
-| `/exit`, `/quit` | Leave (bare `exit`/`quit`/`clear` also work) |
+| `~/.magenta/agent/settings.json` | Global settings |
+| `~/.magenta/agent/sessions/` | Session history |
+| `~/.magenta/agent/trust.json` | Project trust decisions |
+| `~/.magenta/messages.db` | Cross-session peer message mailbox |
+| `<project>/.magenta/settings.json` | Project-local settings and packages |
 
-Background work is first-class: long shell commands and delegated sub-agents run
-as **events** you watch via `/events`, so the main conversation stays responsive.
+Environment overrides:
 
-### Built-in tools
-
-The agent calls these directly (they live in `harness/modules/tools/`):
-
-| Tool | Purpose | Tool | Purpose |
-|---|---|---|---|
-| 📝 `read` | Read files/images | ✨ `write` | Create/overwrite files |
-| ✏️ `edit` | Exact-match edits | 💻 `bash` | Run shell commands |
-| 🔍 `grep` | Search contents | 📁 `find` | Find files by glob |
-| 📊 `ls` | List directories | 🎨 `show` | Render/inspect content |
-| 🔧 `lsp` | Language-server queries | 🌐 `web-search` | Web lookup |
-| ☑️ `todo` | Task tracking | 🔐 `ssh` | Remote workspace ops |
-
-> [!TIP]
-> Packages add more tools — e.g. AutOmicScience contributes `omics_compute`,
-> `omics_environment`, `omics_preflight`.
+| Variable | Purpose |
+|---|---|
+| `MAGENTA_CODING_AGENT_DIR` | Override `~/.magenta/agent` |
+| `MAGENTA_CODING_AGENT_SESSION_DIR` | Override session directory |
 
 ---
 
 ## Development
 
 ```bash
-# Build a single workspace
-npm run build -w @earendil-works/pi-coding-agent
+# Build everything
+npm run build
 
-# Clean rebuild everything
-npm run clean && npm run build
-
-# Repo-wide checks (biome, pinned deps, imports, shrinkwrap, typecheck)
+# Repo-wide checks
 npm run check
 
-# Harness checks (from harness/)
-cd harness
-npm test                 # unit tests
-npm run check:structure  # enforce module/source layout
-npm run inspect          # resolve the real registry + packages, show diagnostics
+# Workspace tests
+npm test --workspaces --if-present
 
-# End-to-end tests (from repo root)
-npx playwright test
+# Build one workspace
+npm run build -w @earendil-works/pi-coding-agent
+
+# Run the local CLI
+./bin/magenta --help
 ```
 
-See [`scripts/README.md`](./scripts/README.md) for the full set of maintenance
-and release scripts, and [`tests/README.md`](./tests/README.md) for the e2e
-suite.
+Common focused commands:
+
+```bash
+# Harness
+npm test -w @magenta/harness
+
+# AI provider/model tests
+npm test -w @earendil-works/pi-ai
+
+# Coding agent tests
+npm test -w @earendil-works/pi-coding-agent
+
+# TUI tests
+npm test -w @earendil-works/pi-tui
+```
+
+Release/build helpers:
+
+```bash
+npm run release:local
+npm run shrinkwrap:coding-agent
+scripts/build-binaries.sh
+```
+
+The standard validation path before pushing is:
+
+```bash
+npm run check
+npm test --workspaces --if-present
+npm run build
+```
 
 ---
 
 ## Documentation
 
 - [`docs/README.md`](./docs/README.md) — documentation index
-- [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) — layered package architecture
-- [`harness/README.md`](./harness/README.md) — harness overview
-- [`harness/hcp-client/HCP-OVERVIEW.md`](./harness/hcp-client/HCP-OVERVIEW.md) — HCP / Magnet / Registry
-- [`harness/docs/DEVELOPING.md`](./harness/docs/DEVELOPING.md) — add tools, capabilities, resources, packages
+- [`docs/AUTHENTICATION.md`](./docs/AUTHENTICATION.md) — credential lookup and setup
 - [`docs/BRANDING.md`](./docs/BRANDING.md) — brand system
-- [`docs/AUTHENTICATION.md`](./docs/AUTHENTICATION.md) — credential setup
+- [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) — layered package architecture
+- [`harness/README.md`](./harness/README.md) — Harness overview
+- [`harness/hcp-client/HCP-OVERVIEW.md`](./harness/hcp-client/HCP-OVERVIEW.md) — HCP walkthrough
+- [`harness/docs/DEVELOPING.md`](./harness/docs/DEVELOPING.md) — add tools, capabilities, resources, packages
+- [`docs/sub-agent-collapsible-output.md`](./docs/sub-agent-collapsible-output.md) — sub-agent output behavior
 
 ---
 
 ## License
 
-See individual package LICENSE files. The Pi foundation is vendored from the
+See individual package license files. The Pi foundation is vendored from the
 upstream [Pi](https://pi.dev) project.
