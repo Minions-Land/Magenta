@@ -13,8 +13,8 @@ import { keyHint } from "../../modes/interactive/components/keybinding-hints.ts"
 import { getLanguageFromPath, highlightCode, type Theme } from "../../modes/interactive/theme/theme.ts";
 import type { ToolDefinition, ToolRenderResultOptions } from "../extensions/types.ts";
 import { normalizeDisplayText, renderToolPath, replaceTabs, str } from "./render-utils.ts";
-import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
 import type { ToolRenderer } from "./renderer-registry.ts";
+import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
 
 export type { WriteOperations, WriteToolDetails, WriteToolInput, WriteToolOptions };
 

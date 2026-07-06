@@ -7,8 +7,7 @@ import { createMagnetFromCatalogEntry } from "../hcp-client/assembly/factory.ts"
 import { registerMagnetHcpServers } from "../hcp-client/assembly/register-servers.ts";
 import { HcpClient } from "../hcp-client/hcp-client.ts";
 import { HcpProcessMagnet } from "../hcp-magnet/hcp-process.ts";
-import { ProcessToolMagnet } from "../hcp-magnet/process.ts";
-import { processToolManifestFromToml } from "../hcp-magnet/process.ts";
+import { ProcessToolMagnet, processToolManifestFromToml } from "../hcp-magnet/process.ts";
 
 async function writeExecutableScript(dir: string, name: string, source: string): Promise<string> {
 	const path = join(dir, name);

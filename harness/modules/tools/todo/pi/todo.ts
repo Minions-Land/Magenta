@@ -8,7 +8,6 @@
  * correct for that point in history.
  */
 
-import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import type { NativeToolSpec } from "../../../../hcp-magnet/native.ts";
@@ -43,13 +42,13 @@ export const todoSpec: NativeToolSpec<typeof todoSchema, TodoDetails> = {
 		"Manage a session-scoped todo list. Actions: list (show all), add (create new), toggle (mark done/undone by id), clear (remove all).",
 	parameters: todoSchema,
 
-	createExecute: (cwd) => {
+	createExecute: (_cwd) => {
 		// Session state - will be persisted via details
 		// In a real implementation, this would be restored from session storage
 		let todos: Todo[] = [];
 		let nextId = 1;
 
-		return async (toolCallId, params, signal, onUpdate) => {
+		return async (_toolCallId, params, _signal, _onUpdate) => {
 			const { action, text, id } = params;
 
 			let error: string | undefined;
@@ -67,7 +66,7 @@ export const todoSpec: NativeToolSpec<typeof todoSchema, TodoDetails> = {
 				case "add":
 					if (!text) {
 						error = "text is required for add action";
-						content = "Error: " + error;
+						content = `Error: ${error}`;
 					} else {
 						const newTodo: Todo = { id: nextId++, text, done: false };
 						todos.push(newTodo);
@@ -78,12 +77,12 @@ export const todoSpec: NativeToolSpec<typeof todoSchema, TodoDetails> = {
 				case "toggle":
 					if (id === undefined) {
 						error = "id is required for toggle action";
-						content = "Error: " + error;
+						content = `Error: ${error}`;
 					} else {
 						const todo = todos.find((t) => t.id === id);
 						if (!todo) {
 							error = `Todo #${id} not found`;
-							content = "Error: " + error;
+							content = `Error: ${error}`;
 						} else {
 							todo.done = !todo.done;
 							content = `Toggled #${todo.id}: [${todo.done ? "x" : " "}] ${todo.text}`;

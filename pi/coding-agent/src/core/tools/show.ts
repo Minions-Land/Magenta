@@ -9,11 +9,10 @@ import { basename, extname, resolve } from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Container, Text } from "@earendil-works/pi-tui";
 import type { Static } from "typebox";
-import { theme } from "../../modes/interactive/theme/theme.ts";
 import type { ToolDefinition } from "../extensions/types.ts";
 import { str } from "./render-utils.ts";
-import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
 import type { ToolRenderer } from "./renderer-registry.ts";
+import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
 
 export interface ContentItem {
 	type: "image" | "pdf" | "html" | "markdown" | "code" | "chart" | "file";

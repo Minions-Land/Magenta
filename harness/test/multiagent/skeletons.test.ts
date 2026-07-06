@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { WorkerResult } from "../../modules/multiagent/contract.ts";
-import {
-	MultiAgentOrchestrator,
-	type WorkerRunner,
-} from "../../modules/multiagent/magenta/orchestrator.ts";
+import { MultiAgentOrchestrator, type WorkerRunner } from "../../modules/multiagent/magenta/orchestrator.ts";
 import type { SpawnWorkerOptions } from "../../modules/multiagent/magenta/worker.ts";
 
 /**
@@ -22,9 +19,10 @@ interface ScriptedResponse {
 	success?: boolean;
 }
 
-function makeRunner(
-	respond: (opts: SpawnWorkerOptions, callIndex: number) => ScriptedResponse,
-): { runner: WorkerRunner; calls: SpawnWorkerOptions[] } {
+function makeRunner(respond: (opts: SpawnWorkerOptions, callIndex: number) => ScriptedResponse): {
+	runner: WorkerRunner;
+	calls: SpawnWorkerOptions[];
+} {
 	const calls: SpawnWorkerOptions[] = [];
 	let counter = 0;
 

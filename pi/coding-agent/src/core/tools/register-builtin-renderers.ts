@@ -9,16 +9,16 @@
  * produces, pi decides how that shape is drawn.
  */
 
-import { registerRenderer } from "./renderer-registry.ts";
-import { readRenderer } from "./read.ts";
 import { bashRenderer } from "./bash.ts";
 import { editRenderer } from "./edit.ts";
-import { writeRenderer } from "./write.ts";
-import { grepRenderer } from "./grep.ts";
 import { findRenderer } from "./find.ts";
+import { grepRenderer } from "./grep.ts";
 import { lsRenderer } from "./ls.ts";
+import { readRenderer } from "./read.ts";
+import { registerRenderer } from "./renderer-registry.ts";
 import { showRenderer } from "./show.ts";
 import { searchResultsRenderer, webContentRenderer } from "./web-renderers.ts";
+import { writeRenderer } from "./write.ts";
 
 let registered = false;
 

@@ -9,16 +9,12 @@ import { basename } from "node:path";
 import {
 	type Component,
 	Container,
-	CURSOR_MARKER,
 	type Focusable,
 	Image,
 	Markdown,
 	matchesKey,
 	Spacer,
 	Text,
-	truncateToWidth,
-	visibleWidth,
-	wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
 import type { Theme } from "../theme/theme.ts";
 import type { RichContentReference } from "./rich-content-reference.ts";
@@ -133,7 +129,6 @@ export class MarkdownViewer extends Container implements Focusable {
 	private content?: string;
 	private error?: string;
 	private scrollOffset = 0;
-	private maxLines = 30;
 
 	constructor(reference: RichContentReference, theme: Theme) {
 		super();
@@ -263,7 +258,7 @@ export class CodeViewer extends Container implements Focusable {
 			this.addChild(new Text(this.theme.fg("error", `Error: ${this.error}`), 1, 0));
 		} else if (this.content) {
 			// 使用 Markdown 代码块渲染
-			const codeBlock = "```" + language + "\n" + this.content + "\n```";
+			const codeBlock = `\`\`\`${language}\n${this.content}\n\`\`\``;
 			const markdown = new Markdown(codeBlock, 1, 0, {
 				heading: (s: string) => this.theme.fg("accent", s),
 				link: (s: string) => this.theme.fg("mdLink", s),
@@ -309,7 +304,7 @@ export class FileViewer extends Container implements Focusable {
 		this.theme = theme;
 	}
 
-	handleInput(data: string): void {
+	handleInput(_data: string): void {
 		// 基础查看器不处理输入
 	}
 
@@ -340,10 +335,6 @@ export function createRichContentViewer(reference: RichContentReference, theme: 
 			return new MarkdownViewer(reference, theme);
 		case "code":
 			return new CodeViewer(reference, theme);
-		case "pdf":
-		case "html":
-		case "chart":
-		case "file":
 		default:
 			return new FileViewer(reference, theme);
 	}

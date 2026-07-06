@@ -11,7 +11,7 @@ import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import { loadProcessToolManifest, type ProcessToolManifest, ProcessToolMagnet } from "../../hcp-magnet/process.ts";
+import { loadProcessToolManifest, ProcessToolMagnet, type ProcessToolManifest } from "../../hcp-magnet/process.ts";
 import type { SandboxProfile } from "../../modules/sandbox/contract.ts";
 import { loadSandboxProviderFromPack, selectSandboxProfile } from "../../modules/sandbox/magenta/sandbox.ts";
 import { parseToml, type TomlTable } from "../registry/registry.ts";

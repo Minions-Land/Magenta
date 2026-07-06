@@ -19,10 +19,7 @@ import { createMcpToolMagnets } from "../hcp-magnet/mcp.ts";
  */
 
 const repoRoot = resolve(__dirname, "..", "..");
-const binary = resolve(
-	repoRoot,
-	"packages/AutOmicScience/tools/bio-api/rust/target/release/aose-bio-mcp",
-);
+const binary = resolve(repoRoot, "packages/AutOmicScience/tools/bio-api/rust/target/release/aose-bio-mcp");
 const hasBinary = existsSync(binary);
 
 describe.skipIf(!hasBinary)("bio-api MCP server (vendored)", () => {

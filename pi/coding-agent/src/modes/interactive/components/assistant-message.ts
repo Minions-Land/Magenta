@@ -1,7 +1,7 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { Container, Markdown, type MarkdownTheme, Spacer, Text } from "@earendil-works/pi-tui";
-import { formatMessageUsageStats } from "./footer.ts";
 import { getMarkdownTheme, theme } from "../theme/theme.ts";
+import { formatMessageUsageStats } from "./footer.ts";
 
 const OSC133_ZONE_START = "\x1b]133;A\x07";
 const OSC133_ZONE_END = "\x1b]133;B\x07";

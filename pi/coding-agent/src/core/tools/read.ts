@@ -208,9 +208,7 @@ export const readRenderer: ToolRenderer<ReadToolDetails | undefined> = {
 		const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
 		const classification = !context.expanded ? getCompactReadClassification(args, context.cwd) : undefined;
 		text.setText(
-			classification
-				? formatCompactReadCall(classification, args, theme)
-				: formatReadCall(args, theme, context.cwd),
+			classification ? formatCompactReadCall(classification, args, theme) : formatReadCall(args, theme, context.cwd),
 		);
 		return text;
 	},

@@ -231,7 +231,7 @@ export async function spawnWorker(options: SpawnWorkerOptions, signal?: AbortSig
 	if (options.thinking) args.push("--thinking", options.thinking);
 
 	let systemPromptPath: string | null = null;
-	if (options.systemPrompt && options.systemPrompt.trim()) {
+	if (options.systemPrompt?.trim()) {
 		systemPromptPath = writeSystemPromptFile(options.workerId, options.systemPrompt);
 		args.push("--append-system-prompt", systemPromptPath);
 	}
@@ -393,7 +393,7 @@ export async function parallel(
  */
 export function buildSystemPrompt(guard: string, slot: WorkerSlot): string {
 	const parts = [guard.trim()];
-	if (slot.focus && slot.focus.trim()) parts.push(`Focus:\n${slot.focus.trim()}`);
+	if (slot.focus?.trim()) parts.push(`Focus:\n${slot.focus.trim()}`);
 	if (slot.schema) {
 		parts.push(`Return your final answer as JSON matching this schema:\n${JSON.stringify(slot.schema, null, 2)}`);
 	}

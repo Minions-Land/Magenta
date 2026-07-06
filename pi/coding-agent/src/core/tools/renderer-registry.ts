@@ -1,6 +1,6 @@
 /**
  * Tool renderer registry —按数据形状(renderKind)注册渲染器,实现 1:N 复用。
- * 
+ *
  * 渲染器是纯展示逻辑:读取 details 的结构化数据,产出 TUI 组件。harness 工具通过
  * manifest 声明 render_kind,pi 按 kind 匹配渲染器,不认识具体工具名。这样
  * server(harness)描述"我产出什么形状的数据",client(pi)决定"这种形状怎么画",

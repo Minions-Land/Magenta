@@ -9,8 +9,8 @@ import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
 import type { Component } from "@earendil-works/pi-tui";
 import type { Theme } from "../../modes/interactive/theme/theme.ts";
 import type { ToolDefinition, ToolRenderContext } from "../extensions/types.ts";
-import { getRenderer } from "../tools/renderer-registry.ts";
 import { registerBuiltinRenderers } from "../tools/register-builtin-renderers.ts";
+import { getRenderer } from "../tools/renderer-registry.ts";
 import { ansiLinesToHtml } from "./ansi-to-html.ts";
 
 export interface ToolHtmlRendererDeps {

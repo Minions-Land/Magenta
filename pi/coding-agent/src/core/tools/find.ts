@@ -16,8 +16,8 @@ import type { Theme } from "../../modes/interactive/theme/theme.ts";
 import { ensureTool } from "../../utils/tools-manager.ts";
 import type { ToolDefinition, ToolRenderResultOptions } from "../extensions/types.ts";
 import { getTextOutput, invalidArgText, shortenPath, str } from "./render-utils.ts";
-import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
 import type { ToolRenderer } from "./renderer-registry.ts";
+import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
 
 // Re-export pure types from harness so downstream pi consumers keep importing them from this module.
 export type { FindToolInput, FindToolDetails, FindToolOptions, FindOperations };

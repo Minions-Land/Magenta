@@ -1,9 +1,9 @@
 import { Box, type Component, Container, getCapabilities, Image, Spacer, Text, type TUI } from "@earendil-works/pi-tui";
 import type { ToolDefinition, ToolRenderContext } from "../../../core/extensions/types.ts";
 import { createAllToolDefinitions, type ToolName } from "../../../core/tools/index.ts";
-import { getRenderer, type ToolRenderer } from "../../../core/tools/renderer-registry.ts";
 import { registerBuiltinRenderers } from "../../../core/tools/register-builtin-renderers.ts";
 import { getTextOutput as getRenderedTextOutput } from "../../../core/tools/render-utils.ts";
+import { getRenderer, type ToolRenderer } from "../../../core/tools/renderer-registry.ts";
 import { type ToolDisplayProvenance, toolProvenanceBadgeText } from "../../../core/tools/tool-display.ts";
 import { convertToPng } from "../../../utils/image-convert.ts";
 import { theme } from "../theme/theme.ts";

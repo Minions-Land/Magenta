@@ -17,8 +17,8 @@ import { renderDiff } from "../../modes/interactive/components/diff.ts";
 import type { Theme } from "../../modes/interactive/theme/theme.ts";
 import type { ToolDefinition } from "../extensions/types.ts";
 import { renderToolPath, str } from "./render-utils.ts";
-import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
 import type { ToolRenderer } from "./renderer-registry.ts";
+import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
 
 // Re-export pure types from harness so downstream pi consumers keep importing them from this module.
 export type { EditToolInput, EditToolDetails, EditToolOptions, EditOperations };
@@ -200,9 +200,7 @@ export const editRenderer: ToolRenderer<EditToolDetails | undefined> = {
 	renderCall(args, theme, context) {
 		const component = getEditCallRenderComponent(context.state as EditRenderState, context.lastComponent);
 		const previewInput = getRenderablePreviewInput(args as RenderableEditArgs | undefined);
-		const argsKey = previewInput
-			? JSON.stringify({ path: previewInput.path, edits: previewInput.edits })
-			: undefined;
+		const argsKey = previewInput ? JSON.stringify({ path: previewInput.path, edits: previewInput.edits }) : undefined;
 
 		if (component.previewArgsKey !== argsKey) {
 			component.preview = undefined;
@@ -227,9 +225,7 @@ export const editRenderer: ToolRenderer<EditToolDetails | undefined> = {
 	renderResult(result, _options, theme, context) {
 		const callComponent = (context.state as EditRenderState).callComponent;
 		const previewInput = getRenderablePreviewInput(context.args as RenderableEditArgs | undefined);
-		const argsKey = previewInput
-			? JSON.stringify({ path: previewInput.path, edits: previewInput.edits })
-			: undefined;
+		const argsKey = previewInput ? JSON.stringify({ path: previewInput.path, edits: previewInput.edits }) : undefined;
 		const typedResult = result as EditToolResultLike;
 		const resultDiff = !context.isError ? typedResult.details?.diff : undefined;
 		let changed = false;
@@ -247,12 +243,7 @@ export const editRenderer: ToolRenderer<EditToolDetails | undefined> = {
 				changed = true;
 			}
 			if (changed) {
-				buildEditCallComponent(
-					callComponent,
-					context.args as RenderableEditArgs | undefined,
-					theme,
-					context.cwd,
-				);
+				buildEditCallComponent(callComponent, context.args as RenderableEditArgs | undefined, theme, context.cwd);
 			}
 		}
 

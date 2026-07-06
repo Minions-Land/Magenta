@@ -135,7 +135,7 @@ export class RichContentLink implements Component, Focusable {
 		}
 	}
 
-	render(width: number): string[] {
+	render(_width: number): string[] {
 		const icon = getIconForType(this.reference.type);
 		const filename = this.reference.metadata?.title || basename(this.reference.path);
 		const description = getTypeDescription(this.reference);
@@ -319,7 +319,7 @@ export class ExpandableRichContent extends Container implements Focusable {
 			const language = this.reference.metadata?.language || "";
 
 			// 使用 Markdown 的代码块渲染
-			const codeBlock = "```" + language + "\n" + content + "\n```";
+			const codeBlock = `\`\`\`${language}\n${content}\n\`\`\``;
 			return new Markdown(codeBlock, 1, 0, {
 				heading: (s: string) => this.theme.fg("accent", s),
 				link: (s: string) => this.theme.fg("mdLink", s),

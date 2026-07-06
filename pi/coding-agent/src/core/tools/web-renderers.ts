@@ -5,9 +5,8 @@
  */
 
 import { Container, hyperlink, Text } from "@earendil-works/pi-tui";
-import type { Theme } from "../../modes/interactive/theme/theme.ts";
-import type { ToolRenderer } from "./renderer-registry.ts";
 import { getTextOutput } from "./render-utils.ts";
+import type { ToolRenderer } from "./renderer-registry.ts";
 
 /**
  * Renderer for the "search-results" data shape (WebSearch tool).
@@ -60,7 +59,7 @@ export const searchResultsRenderer: ToolRenderer = {
 				// [N] Title
 				const titleMatch = trimmed.match(/^\[(\d+)\]\s+(.+)$/);
 				if (titleMatch) {
-					if (currentSource && currentSource.title) {
+					if (currentSource?.title) {
 						sourceBlocks.push({
 							title: currentSource.title,
 							url: currentSource.url || "",
@@ -80,7 +79,7 @@ export const searchResultsRenderer: ToolRenderer = {
 			}
 		}
 		// Flush last source
-		if (currentSource && currentSource.title) {
+		if (currentSource?.title) {
 			sourceBlocks.push({
 				title: currentSource.title,
 				url: currentSource.url || "",
@@ -116,7 +115,7 @@ export const searchResultsRenderer: ToolRenderer = {
 					container.addChild(new Text(`    ${linked}`, 0, 0));
 				}
 				if (src.snippet) {
-					const snippet = src.snippet.length > 200 ? src.snippet.slice(0, 200) + "..." : src.snippet;
+					const snippet = src.snippet.length > 200 ? `${src.snippet.slice(0, 200)}...` : src.snippet;
 					container.addChild(new Text(_theme.fg("dim", `    ${snippet}`), 0, 0));
 				}
 			}

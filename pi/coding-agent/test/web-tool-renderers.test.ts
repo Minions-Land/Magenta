@@ -1,6 +1,6 @@
-import { beforeAll, describe, expect, test } from "vitest";
+import type { TUI } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import { type TUI } from "@earendil-works/pi-tui";
+import { beforeAll, describe, expect, test } from "vitest";
 import type { ToolDefinition } from "../src/core/extensions/types.ts";
 import { ToolExecutionComponent } from "../src/modes/interactive/components/tool-execution.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
@@ -75,10 +75,7 @@ describe("web tool renderers (renderKind-routed)", () => {
 		// Call view shows the query.
 		expect(stripAnsi(component.render(120).join("\n"))).toContain("what is rust");
 
-		component.updateResult(
-			{ content: [{ type: "text", text: SEARCH_OUTPUT }], details: {}, isError: false },
-			false,
-		);
+		component.updateResult({ content: [{ type: "text", text: SEARCH_OUTPUT }], details: {}, isError: false }, false);
 
 		const rendered = stripAnsi(component.render(120).join("\n"));
 		expect(rendered).toContain("Rust is a systems programming language.");
@@ -101,10 +98,7 @@ describe("web tool renderers (renderKind-routed)", () => {
 
 		expect(stripAnsi(component.render(120).join("\n"))).toContain("https://example.com");
 
-		component.updateResult(
-			{ content: [{ type: "text", text: FETCH_OUTPUT }], details: {}, isError: false },
-			false,
-		);
+		component.updateResult({ content: [{ type: "text", text: FETCH_OUTPUT }], details: {}, isError: false }, false);
 
 		const rendered = stripAnsi(component.render(120).join("\n"));
 		expect(rendered).toContain("https://example.com");

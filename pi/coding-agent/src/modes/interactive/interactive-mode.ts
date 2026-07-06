@@ -33,8 +33,6 @@ import {
 	type Component,
 	Container,
 	fuzzyFilter,
-	getCapabilities,
-	hyperlink,
 	Loader,
 	type LoaderIndicatorOptions,
 	Markdown,
@@ -4003,7 +4001,7 @@ export class InteractiveMode {
 		this.ui.requestRender();
 	}
 
-	showNewVersionNotification(release: LatestPiRelease): void {
+	showNewVersionNotification(_release: LatestPiRelease): void {
 		// Temporarily disabled update notification
 		// const action = theme.fg("accent", `${APP_NAME} update`);
 		// const updateInstruction = theme.fg("muted", `New version ${release.version} is available. Run `) + action;
@@ -4376,7 +4374,8 @@ export class InteractiveMode {
 
 	private getHarnessImplementationReadiness(implementationPath: string | undefined): string {
 		if (!implementationPath) return "no path";
-		const cache = (this.harnessReadinessCache ??= new Map());
+		this.harnessReadinessCache ??= new Map();
+		const cache = this.harnessReadinessCache;
 		const cached = cache.get(implementationPath);
 		if (cached !== undefined) return cached;
 		const readiness = this.computeHarnessImplementationReadiness(implementationPath);
