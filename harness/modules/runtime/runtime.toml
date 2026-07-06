@@ -8,6 +8,14 @@ origin_rel = "ported/adapted"
 target = "runtime://process"
 impl = ["runtime/magenta/process-runtime.ts"]
 
+[assumption]
+compensates = "Safety boundary: portable guards (path-traversal, workspace cwd, env allowlist, network deny/allowlist, wall-clock timeout) enforce limits the model cannot be trusted to respect. Boundary persists regardless of model capability."
+rationale = "stated"  # [policy].portable_guards + validatePolicy() throws in magenta/process-runtime.ts
+calibrated_for = ["any"]
+review_trigger = "never"
+load_bearing = "verified"  # portable guards enforced; OS-level backend not-ported (see [policy].os_enforcement)
+eval_scenarios = []
+
 [policy]
 portable_guards = ["direct-exec gate", "workspace cwd", "environment allowlist", "wall-clock timeout", "filesystem read/write checks for declared paths", "network deny tag checks", "network allowlist checks for declared URL/host inputs"]
 os_enforcement = "not-ported"

@@ -85,7 +85,9 @@ capabilities:
    artifacts out of git.
 5. **Declare tools/skills/resources** with package-local relative paths. Tools
    get process/runtime metadata; skills are flat `SKILL.md`; resources get
-   `content_path`.
+   `content_path`. Packaged tools, skills, and resources do **not** carry
+   `[assumption]` (see the decision matrix in `docs/assumption-metadata.md`);
+   only a packaged *Capability* would, following the same rule as the trunk.
 6. **Preserve provenance.** Record origin repo + commit in
    `package.toml`/metadata (as AutOmicScience records its AOSE origin ref). The
    package's origin tag reflects the external source, not `magenta`.

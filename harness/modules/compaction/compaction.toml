@@ -2,3 +2,11 @@ kind = "compaction"
 name = "compaction"
 description = "Branch summarization and context compaction for agent loop memory management"
 source = "pi"
+
+[assumption]
+compensates = "The model has a fixed context window and cannot retain an ever-growing conversation, so old history is AI-summarized to a checkpoint while recent work is kept."
+rationale = "stated"  # shouldCompact()/SUMMARIZATION_PROMPT in pi/compaction.ts state the size-limit purpose
+calibrated_for = ["claude-sonnet-4-5", "claude-opus-4-5"]
+review_trigger = "model-change"
+load_bearing = "unmeasured"
+eval_scenarios = ["long-horizon-coherence"]

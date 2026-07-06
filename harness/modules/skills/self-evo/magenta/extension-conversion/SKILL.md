@@ -48,8 +48,15 @@ gate between them.
    convention (kebab tool name, `create<Name>Magnet` factory). The `source` dir
    is `pi` because the code's origin is Pi.
 4. **Write the descriptor.** `<name>.toml` with `kind`, `name`, `description`,
-   and `[exports]` (`module`, `factory`). Follow `tools/todo/todo.toml` as the
-   shape reference.
+   and the shape for its primitive:
+   - A **native tool with a factory** uses `[exports]` (`module`, `factory`) —
+     `tools/todo/todo.toml` is the reference for that shape. A **process/
+     schema-declared tool** instead declares `[parameters]` (most trunk tools,
+     e.g. `tools/edit/edit.toml`, do this and have no `[exports]`). Pick the
+     shape that matches how the tool actually executes.
+   - A **Capability** additionally carries an `[assumption]` block (what model
+     limitation it compensates for). Required for capabilities; see
+     `docs/assumption-metadata.md`. Tools and Resources do **not** get one.
 5. **Wire the Magnet** per the table. Keep it thin: binding + transport
    selection only.
 6. **Register.** Add `[[components]]` to `harness.toml`.

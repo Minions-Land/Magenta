@@ -150,7 +150,16 @@ authoritative contract). The short version:
    agent name** (`pi`, `magenta`, `codex`, `claude-code`), never a language or
    protocol.
 2. Write the `<name>.toml` descriptor (`kind`, `name`, `description`,
-   `[exports]` module + factory, or process/runtime metadata).
+   `[exports]` module + factory, or process/runtime metadata). See
+   `scripts/templates/module/module-name.toml` for the base shape.
+   - **If the primitive is a Capability**, add an `[assumption]` block recording
+     what model limitation it compensates for. This is required for capability
+     modules and is how a future model bump knows what to re-check or prune.
+     Schema and the full decision matrix (which primitives carry it, which do
+     not) live in `docs/assumption-metadata.md`. In short: **only the Capability
+     primitive carries `[assumption]`** — Tools, Resources, sources, config,
+     and core do not. Safety-boundary capabilities (policy/sandbox/runtime) use
+     `review_trigger = "never"`.
 3. Wire the Magnet:
    - **Tool** → a `NativeToolMagnet` (or process Magnet) factory.
    - **Capability** → a `<module>/<source>/magnet.ts` exporting a
@@ -170,6 +179,7 @@ authoritative contract). The short version:
 npm run build            # tsc + asset copy — must be green
 npm test                 # vitest — no regression vs baseline
 npm run check:structure  # enforces module/source layout rules
+npm run check:assumptions # enforces [assumption] placement (capabilities only)
 npm run inspect          # resolves the real registry + packages; check diagnostics
 ```
 

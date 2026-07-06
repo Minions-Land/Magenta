@@ -7,6 +7,14 @@ origin_rel = "ported/adapted"
 impl = ["hooks/magenta/hooks.ts", "sandbox/magenta/sandbox.ts"]
 targets = ["hook://init", "hook://pre-turn", "hook://pre-llm", "hook://post-llm", "hook://pre-tool", "hook://post-tool", "hook://compact", "hook://workflow", "hook://sandbox-select"]
 
+[assumption]
+compensates = "The model cannot reliably self-trigger cross-cutting lifecycle actions (context injection, policy/sandbox checks before tools, compaction, logging), so hooks fire them deterministically instead of depending on the prompt."
+rationale = "inferred"  # runLifecycleHook wiring shows the structural role; not stated as a model-limitation comment
+calibrated_for = ["claude-sonnet-4-5", "claude-opus-4-5"]
+review_trigger = "model-change"
+load_bearing = "unmeasured"
+eval_scenarios = []
+
 [[hooks]]
 name = "init"
 target = "hook://init"

@@ -51,6 +51,9 @@ test-external-auth.mjs
 packages/**/.pixi/
 # Omics run outputs (generated analysis artifacts, not fixtures)
 runs/
+# Downloaded datasets / demo figures (regenerated, never fixtures)
+data/
+figures/
 .npm/
 coverage/
 .nyc_output/

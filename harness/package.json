@@ -7,6 +7,7 @@
 	"scripts": {
 		"build": "shx rm -rf dist && tsc -p tsconfig.build.json && node scripts/copy-assets.mjs",
 		"check:structure": "node scripts/check-structure.mjs",
+		"check:assumptions": "node scripts/audit-assumptions.mjs --check",
 		"inspect": "node scripts/inspect.mjs",
 		"test": "vitest --run"
 	},

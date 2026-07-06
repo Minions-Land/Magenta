@@ -7,6 +7,14 @@ origin_rel = "ported/adapted"
 impl = ["multiagent/magenta/orchestrator.ts", "multiagent/magenta/worker.ts", "multiagent/magenta/magnet.ts"]
 targets = ["multiagent://local"]
 
+[assumption]
+compensates = "The model tends to skip the disciplined 'soul step' of a procedure (classify-first, cover-every, independent re-check) and cannot reliably control its own flow or termination, so patterns hard-code the control flow and guard prompts in code."
+rationale = "stated"  # orchestrator.ts:2-8 states it verbatim: "The LLM ... never decides the order, the concurrency, or when to stop"
+calibrated_for = ["claude-sonnet-4-5", "claude-opus-4-5"]
+review_trigger = "model-change"
+load_bearing = "unmeasured"
+eval_scenarios = []
+
 [[patterns]]
 name = "classify_and_act"
 description = "Classify mixed input first, then route each item to a type-specific handler. Forces the classify step that a generic 'handle these' prompt would skip."

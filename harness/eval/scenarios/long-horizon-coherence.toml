@@ -1,0 +1,38 @@
+name = "long-horizon-coherence"
+description = "Measures whether compaction still helps the current model stay coherent and finish a long task, rather than wrapping up prematurely as context fills."
+targets_component = "compaction"
+
+# The task the agent is asked to perform. Long enough that context management
+# matters. Kept as a fixture so it can grow without editing this file.
+prompt_ref = "fixtures/long-build-spec.md"
+
+# Compaction has no first-class CLI off-switch yet. To A/B it today:
+#   - "compaction-on": run normally; compaction fires when the window fills.
+#   - "compaction-off": raise the effective window / shrink the task so
+#     compaction never triggers, OR run against a build of the loop with
+#     compaction disabled. This is a MANUAL step for now; see notes below.
+# When a --no-compaction flag exists, replace `manual_note` with `off_flag`.
+
+[[variants]]
+name = "compaction-on"
+components = { compaction = true }
+
+[[variants]]
+name = "compaction-off"
+components = { compaction = false }
+manual_note = "No CLI flag yet. Disable by running the loop with a compaction provider that never triggers (raise reserveTokens above contextWindow), or use a build with compaction unregistered."
+
+[scoring]
+# Primary signal: did the run complete the task without prematurely declaring
+# done (the 'context anxiety' failure mode). Measured by an evaluator worker.
+method = "evaluator-agent"           # reuses multiagent adversarial_verify
+signal = "task-completed-without-premature-wrapup"
+
+# Secondary mechanical signals recorded for every run (no judgement needed).
+[scoring.mechanical]
+record = ["turns", "total_tokens", "ended_with_completion_claim", "unfinished_todo_count"]
+
+# Interpretation guide for humans reading results. Not executed.
+[scoring.interpretation]
+compaction_load_bearing = "compaction-on completes and compaction-off stalls/wraps early → compaction is load-bearing on this model"
+compaction_dead_weight = "both variants complete comparably → compaction may be dead weight on this model; consider load_bearing = dead-weight"

@@ -2,3 +2,11 @@ kind = "memory"
 name = "memory"
 description = "Session-grounding memory: retains and recalls local facts across sessions"
 source = "magenta"
+
+[assumption]
+compensates = "The model is stateless across sessions and forgets user constraints, preferences, and project facts between runs, so memory persists and recalls them."
+rationale = "inferred"  # description + DEFAULT_CONTENT state WHAT (retain constraints across sessions), not an explicit "model forgets" rationale
+calibrated_for = ["claude-sonnet-4-5", "claude-opus-4-5"]
+review_trigger = "model-change"
+load_bearing = "unmeasured"
+eval_scenarios = []

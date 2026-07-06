@@ -3,6 +3,18 @@ name = "module-name"
 description = "Brief description of what this module does"
 source = "pi"  # or codex, claude-code, magenta, etc.
 
+# Capability modules ONLY: record the model limitation this component
+# compensates for, so a future model bump knows what to re-check or prune.
+# Do NOT add this to tools, resources, sources, config, or core.
+# Full schema + decision matrix: docs/assumption-metadata.md
+# [assumption]
+# compensates = "What the model cannot do on its own that makes this necessary."
+# rationale = "stated"        # stated (a code comment says so) | inferred
+# calibrated_for = ["claude-sonnet-4-5"]
+# review_trigger = "model-change"  # model-change | never (safety boundaries)
+# load_bearing = "unmeasured"      # unmeasured | verified | suspected-stale | dead-weight
+# eval_scenarios = []
+
 # Optional: if this component accepts parameters
 # [parameters]
 # type = "object"

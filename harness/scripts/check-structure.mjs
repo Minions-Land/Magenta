@@ -18,6 +18,7 @@ const allowedTopLevel = new Set([
 	"catalog",
 	"core",
 	"docs",
+	"eval",
 	"harness.toml",
 	"index.ts",
 	"modules",
