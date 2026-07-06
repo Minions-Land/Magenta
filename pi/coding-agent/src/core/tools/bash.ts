@@ -1,7 +1,7 @@
 import { constants } from "node:fs";
 import { access as fsAccess } from "node:fs/promises";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import { Container, Text, truncateToWidth } from "@earendil-works/pi-tui";
+import { type Component, Container, Text, truncateToWidth } from "@earendil-works/pi-tui";
 import {
 	BASH_TOOL_DESCRIPTION,
 	type BashToolDetails,
@@ -12,7 +12,6 @@ import {
 } from "@magenta/harness";
 import { spawn } from "child_process";
 import { keyHint } from "../../modes/interactive/components/keybinding-hints.ts";
-import { truncateToVisualLines } from "../../modes/interactive/components/visual-truncate.ts";
 import { theme } from "../../modes/interactive/theme/theme.ts";
 import { waitForChildProcess } from "../../utils/child-process.ts";
 import {
@@ -112,37 +111,86 @@ export function createLocalBashOperations(options?: { shellPath?: string }): Har
 	};
 }
 
-const BASH_PREVIEW_LINES = 5;
-
 type BashRenderState = {
 	startedAt: number | undefined;
 	endedAt: number | undefined;
 	interval: NodeJS.Timeout | undefined;
 };
 
-type BashResultRenderState = {
-	cachedWidth: number | undefined;
-	cachedLines: string[] | undefined;
-	cachedSkipped: number | undefined;
-};
+class BashResultRenderComponent extends Container {}
 
-class BashResultRenderComponent extends Container {
-	state: BashResultRenderState = {
-		cachedWidth: undefined,
-		cachedLines: undefined,
-		cachedSkipped: undefined,
-	};
+class BashCallRenderComponent implements Component {
+	private text = new Text("", 0, 0);
+	private args: { command?: string; timeout?: number } | undefined;
+	private expanded = false;
+
+	setArgs(args: { command?: string; timeout?: number } | undefined, expanded: boolean): void {
+		this.args = args;
+		this.expanded = expanded;
+		this.text.setText(formatBashCall(args, expanded));
+	}
+
+	render(width: number): string[] {
+		if (this.expanded) {
+			return this.text.render(width);
+		}
+		return [truncateToWidth(formatBashCall(this.args, false), width, "...")];
+	}
+
+	invalidate(): void {
+		this.text.invalidate();
+	}
 }
 
 function formatDuration(ms: number): string {
 	return `${(ms / 1000).toFixed(1)}s`;
 }
 
-function formatBashCall(args: { command?: string; timeout?: number } | undefined): string {
+function compactCommand(command: string): string {
+	const normalized = command.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+	const lines = normalized
+		.split("\n")
+		.map((line) => line.trim())
+		.filter(Boolean);
+	if (lines.length <= 1) {
+		return normalized.replace(/\s+/g, " ").trim();
+	}
+	const visibleLines = lines.slice(0, 2).join(" && ");
+	return lines.length > 2 ? `${visibleLines} && ...` : visibleLines;
+}
+
+function countOutputLines(output: string): number {
+	if (!output) return 0;
+	return output.split("\n").length;
+}
+
+function formatHiddenOutputLine(outputLineCount: number): string {
+	const label = outputLineCount === 1 ? "line" : "lines";
+	return (
+		theme.fg("muted", `... ${outputLineCount} output ${label} hidden (`) +
+		keyHint("app.tools.expand", "to expand") +
+		theme.fg("muted", ")")
+	);
+}
+
+function formatCollapsedTruncationWarning(): string {
+	return (
+		theme.fg("warning", "[Output truncated; ") + keyHint("app.tools.expand", "for details") + theme.fg("warning", "]")
+	);
+}
+
+function formatBashCall(args: { command?: string; timeout?: number } | undefined, expanded: boolean): string {
 	const command = str(args?.command);
 	const timeout = args?.timeout as number | undefined;
 	const timeoutSuffix = timeout ? theme.fg("muted", ` (timeout ${timeout}s)`) : "";
-	const commandDisplay = command === null ? invalidArgText(theme) : command ? command : theme.fg("toolOutput", "...");
+	const commandDisplay =
+		command === null
+			? invalidArgText(theme)
+			: command
+				? expanded
+					? command
+					: compactCommand(command)
+				: theme.fg("toolOutput", "...");
 	return theme.fg("toolTitle", theme.bold(`$ ${commandDisplay}`)) + timeoutSuffix;
 }
 
@@ -157,7 +205,6 @@ function rebuildBashResultRenderComponent(
 	startedAt: number | undefined,
 	endedAt: number | undefined,
 ): void {
-	const state = component.state;
 	component.clear();
 
 	let output = getTextOutput(result as any, showImages).trim();
@@ -171,54 +218,36 @@ function rebuildBashResultRenderComponent(
 	}
 
 	if (output) {
-		const styledOutput = output
-			.split("\n")
-			.map((line) => theme.fg("toolOutput", line))
-			.join("\n");
-
 		if (options.expanded) {
+			const styledOutput = output
+				.split("\n")
+				.map((line) => theme.fg("toolOutput", line))
+				.join("\n");
 			component.addChild(new Text(`\n${styledOutput}`, 0, 0));
 		} else {
-			component.addChild({
-				render: (width: number) => {
-					if (state.cachedLines === undefined || state.cachedWidth !== width) {
-						const preview = truncateToVisualLines(styledOutput, BASH_PREVIEW_LINES, width);
-						state.cachedLines = preview.visualLines;
-						state.cachedSkipped = preview.skippedCount;
-						state.cachedWidth = width;
-					}
-					if (state.cachedSkipped && state.cachedSkipped > 0) {
-						const hint =
-							theme.fg("muted", `... (${state.cachedSkipped} earlier lines,`) +
-							` ${keyHint("app.tools.expand", "to expand")}${theme.fg("muted", ")")}`;
-						return ["", truncateToWidth(hint, width, "..."), ...(state.cachedLines ?? [])];
-					}
-					return ["", ...(state.cachedLines ?? [])];
-				},
-				invalidate: () => {
-					state.cachedWidth = undefined;
-					state.cachedLines = undefined;
-					state.cachedSkipped = undefined;
-				},
-			});
+			component.addChild(new Text(`\n${formatHiddenOutputLine(countOutputLines(output))}`, 0, 0));
 		}
 	}
 
 	if (truncation?.truncated || fullOutputPath) {
-		const warnings: string[] = [];
-		if (fullOutputPath) {
-			warnings.push(`Full output: ${fullOutputPath}`);
-		}
-		if (truncation?.truncated) {
-			if (truncation.truncatedBy === "lines") {
-				warnings.push(`Truncated: showing ${truncation.outputLines} of ${truncation.totalLines} lines`);
-			} else {
-				warnings.push(
-					`Truncated: ${truncation.outputLines} lines shown (${formatSize(truncation.maxBytes ?? DEFAULT_MAX_BYTES)} limit)`,
-				);
+		if (options.expanded) {
+			const warnings: string[] = [];
+			if (fullOutputPath) {
+				warnings.push(`Full output: ${fullOutputPath}`);
 			}
+			if (truncation?.truncated) {
+				if (truncation.truncatedBy === "lines") {
+					warnings.push(`Truncated: showing ${truncation.outputLines} of ${truncation.totalLines} lines`);
+				} else {
+					warnings.push(
+						`Truncated: ${truncation.outputLines} lines shown (${formatSize(truncation.maxBytes ?? DEFAULT_MAX_BYTES)} limit)`,
+					);
+				}
+			}
+			component.addChild(new Text(`\n${theme.fg("warning", `[${warnings.join(". ")}]`)}`, 0, 0));
+		} else {
+			component.addChild(new Text(`\n${formatCollapsedTruncationWarning()}`, 0, 0));
 		}
-		component.addChild(new Text(`\n${theme.fg("warning", `[${warnings.join(". ")}]`)}`, 0, 0));
 	}
 
 	if (startedAt !== undefined) {
@@ -241,9 +270,12 @@ export const bashRenderer: ToolRenderer<BashToolDetails | undefined> = {
 			state.startedAt = Date.now();
 			state.endedAt = undefined;
 		}
-		const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
-		text.setText(formatBashCall(args));
-		return text;
+		const component =
+			context.lastComponent instanceof BashCallRenderComponent
+				? context.lastComponent
+				: new BashCallRenderComponent();
+		component.setArgs(args, context.expanded);
+		return component;
 	},
 	renderResult(result, options, _theme, context) {
 		const state = context.state as BashRenderState;
