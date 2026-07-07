@@ -1,0 +1,237 @@
+schema_version = "magenta.package.v1"
+id = "Biomni"
+name = "Biomni"
+kind = "domain"
+domain = "biomedical-ai"
+description = "General-purpose biomedical AI toolkit from Stanford SNAP Lab with 248+ tool functions and knowledge guides covering database queries, genomics, pharmacology, and lab automation."
+
+# Default: load all skills
+default_profiles = ["all"]
+
+# === Profiles for selective loading ===
+
+[[profiles]]
+name = "knowledge"
+description = "Knowledge guides (sgRNA design, single-cell annotation)"
+extends = []
+
+[[profiles]]
+name = "database"
+description = "Database query tools (PubMed, UniProt, KEGG, etc.)"
+extends = []
+
+[[profiles]]
+name = "genomics"
+description = "Genomics and genetics tools"
+extends = []
+
+[[profiles]]
+name = "drug"
+description = "Pharmacology and drug design tools"
+extends = []
+
+[[profiles]]
+name = "molbio"
+description = "Molecular biology tools (PCR, cloning, etc.)"
+extends = []
+
+[[profiles]]
+name = "imaging"
+description = "Bio-imaging and pathology tools"
+extends = []
+
+[[profiles]]
+name = "automation"
+description = "Lab automation and robotics tools"
+extends = []
+
+[[profiles]]
+name = "all"
+description = "All Biomni skills and tools"
+extends = ["knowledge", "database", "genomics", "drug", "molbio", "imaging", "automation"]
+
+# === Knowledge Guide Skills ===
+
+[[components]]
+kind = "skill"
+name = "sgrna-design"
+path = "skills/sgrna-design"
+description = "CRISPR sgRNA design guide with 300+ validated sequences"
+include_in_context = false
+profiles = ["knowledge"]
+
+[[components]]
+kind = "skill"
+name = "single-cell-annotation"
+path = "skills/single-cell-annotation"
+description = "scRNA-seq cell type annotation best practices"
+include_in_context = false
+profiles = ["knowledge"]
+
+# === Database Tools ===
+
+[[components]]
+kind = "tool"
+name = "biomni_database"
+path = "tools/database/database.toml"
+description = "45 database query functions (PubMed, UniProt, KEGG, STRING, etc.)"
+profiles = ["database"]
+
+[[components]]
+kind = "tool"
+name = "biomni_literature"
+path = "tools/literature/literature.toml"
+description = "Literature search and analysis tools"
+profiles = ["database"]
+
+# === Genomics Tools ===
+
+[[components]]
+kind = "tool"
+name = "biomni_genomics"
+path = "tools/genomics/genomics.toml"
+description = "20 genomics functions (NGS, variant annotation, alignment)"
+profiles = ["genomics"]
+
+[[components]]
+kind = "tool"
+name = "biomni_genetics"
+path = "tools/genetics/genetics.toml"
+description = "8 genetics functions (GWAS, linkage analysis)"
+profiles = ["genomics"]
+
+# === Pharmacology Tools ===
+
+[[components]]
+kind = "tool"
+name = "biomni_pharmacology"
+path = "tools/pharmacology/pharmacology.toml"
+description = "42 drug design functions (ADME, toxicity, interactions)"
+profiles = ["drug"]
+
+# === Molecular Biology Tools ===
+
+[[components]]
+kind = "tool"
+name = "biomni_molecular_biology"
+path = "tools/molecular-biology/molecular-biology.toml"
+description = "18 functions (PCR design, cloning, protein expression)"
+profiles = ["molbio"]
+
+[[components]]
+kind = "tool"
+name = "biomni_biochemistry"
+path = "tools/biochemistry/biochemistry.toml"
+description = "5 functions (protein analysis, enzyme kinetics)"
+profiles = ["molbio"]
+
+# === Imaging Tools ===
+
+[[components]]
+kind = "tool"
+name = "biomni_bioimaging"
+path = "tools/bioimaging/bioimaging.toml"
+description = "10 imaging functions (cell segmentation, quantification)"
+profiles = ["imaging"]
+
+[[components]]
+kind = "tool"
+name = "biomni_pathology"
+path = "tools/pathology/pathology.toml"
+description = "6 pathology image analysis functions"
+profiles = ["imaging"]
+
+# === Lab Automation Tools ===
+
+[[components]]
+kind = "tool"
+name = "biomni_lab_automation"
+path = "tools/lab-automation/lab-automation.toml"
+description = "11 automation functions (robot control, workflow)"
+profiles = ["automation"]
+
+# === Other Domain Tools ===
+
+[[components]]
+kind = "tool"
+name = "biomni_immunology"
+path = "tools/immunology/immunology.toml"
+description = "9 immunology functions (antibody design, repertoire)"
+profiles = ["molbio"]
+
+[[components]]
+kind = "tool"
+name = "biomni_microbiology"
+path = "tools/microbiology/microbiology.toml"
+description = "11 microbiology functions (microbiome, metagenomics)"
+profiles = ["genomics"]
+
+[[components]]
+kind = "tool"
+name = "biomni_cancer_biology"
+path = "tools/cancer-biology/cancer-biology.toml"
+description = "5 cancer biology analysis functions"
+profiles = ["genomics"]
+
+[[components]]
+kind = "tool"
+name = "biomni_cell_biology"
+path = "tools/cell-biology/cell-biology.toml"
+description = "4 cell biology functions"
+profiles = ["imaging"]
+
+[[components]]
+kind = "tool"
+name = "biomni_synthetic_biology"
+path = "tools/synthetic-biology/synthetic-biology.toml"
+description = "7 synthetic biology design functions"
+profiles = ["molbio"]
+
+[[components]]
+kind = "tool"
+name = "biomni_systems_biology"
+path = "tools/systems-biology/systems-biology.toml"
+description = "6 systems biology functions (network, pathway)"
+profiles = ["genomics"]
+
+[[components]]
+kind = "tool"
+name = "biomni_bioengineering"
+path = "tools/bioengineering/bioengineering.toml"
+description = "6 bioengineering functions"
+profiles = ["molbio"]
+
+[[components]]
+kind = "tool"
+name = "biomni_biophysics"
+path = "tools/biophysics/biophysics.toml"
+description = "2 biophysics functions"
+profiles = ["molbio"]
+
+[[components]]
+kind = "tool"
+name = "biomni_physiology"
+path = "tools/physiology/physiology.toml"
+description = "10 physiology functions"
+profiles = ["molbio"]
+
+[[components]]
+kind = "tool"
+name = "biomni_glycoengineering"
+path = "tools/glycoengineering/glycoengineering.toml"
+description = "3 glycoengineering functions"
+profiles = ["molbio"]
+
+[[components]]
+kind = "tool"
+name = "biomni_protocols"
+path = "tools/protocols/protocols.toml"
+description = "5 protocol execution functions"
+profiles = ["automation"]
+
+[[components]]
+kind = "tool"
+name = "biomni_support"
+path = "tools/support/support.toml"
+description = "7 support utility functions"
+profiles = ["automation"]

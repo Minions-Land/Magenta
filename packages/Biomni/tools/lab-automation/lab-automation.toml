@@ -1,0 +1,54 @@
+schema_version = "magenta.tool.v1"
+name = "biomni_lab_automation"
+description = "11 lab automation functions from Biomni for liquid handling robot control, workflow automation, and plate layout optimization"
+source = "biomni/tool/lab_automation.py"
+runtime = "python"
+requires = ["biomni", "opentrons", "pyhamilton"]
+
+[metadata]
+display-name = "Biomni Lab Automation Tools"
+authors = "Stanford SNAP Lab"
+license = "MIT"
+version = "1.0"
+
+[[functions]]
+name = "control_liquid_handler"
+description = "Control liquid handling robots (Opentrons, Hamilton, etc.)"
+parameters = ["protocol", "robot_type", "deck_layout"]
+
+[[functions]]
+name = "optimize_plate_layout"
+description = "Optimize well plate layout for experiments"
+parameters = ["samples", "replicates", "controls", "plate_format"]
+
+[[functions]]
+name = "generate_worklist"
+description = "Generate worklist for liquid handling"
+parameters = ["transfers", "format"]
+
+[[functions]]
+name = "design_experiment_workflow"
+description = "Design automated experiment workflow"
+parameters = ["steps", "equipment", "timing"]
+
+[[functions]]
+name = "calculate_volumes"
+description = "Calculate reagent volumes for automation"
+parameters = ["concentrations", "target_amounts", "dead_volume"]
+
+[[functions]]
+name = "validate_protocol"
+description = "Validate automation protocol for errors"
+parameters = ["protocol", "constraints"]
+
+[[functions]]
+name = "track_samples"
+description = "Track sample locations and history"
+parameters = ["barcodes", "operations"]
+
+[[functions]]
+name = "schedule_instruments"
+description = "Schedule instrument usage and conflicts"
+parameters = ["tasks", "instruments", "constraints"]
+
+# Total: 11 functions available in lab_automation.py

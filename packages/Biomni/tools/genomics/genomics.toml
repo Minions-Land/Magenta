@@ -1,0 +1,54 @@
+schema_version = "magenta.tool.v1"
+name = "biomni_genomics"
+description = "20 genomics analysis functions from Biomni for NGS data analysis, variant annotation, sequence alignment, and genome browsing"
+source = "biomni/tool/genomics.py"
+runtime = "python"
+requires = ["biomni", "biopython", "pysam"]
+
+[metadata]
+display-name = "Biomni Genomics Tools"
+authors = "Stanford SNAP Lab"
+license = "MIT"
+version = "1.0"
+
+[[functions]]
+name = "annotate_variants"
+description = "Annotate genetic variants with functional predictions"
+parameters = ["vcf_file", "genome_version"]
+
+[[functions]]
+name = "align_sequences"
+description = "Perform sequence alignment (local or global)"
+parameters = ["seq1", "seq2", "algorithm"]
+
+[[functions]]
+name = "call_variants"
+description = "Call variants from BAM/CRAM files"
+parameters = ["bam_file", "reference", "caller"]
+
+[[functions]]
+name = "calculate_coverage"
+description = "Calculate sequencing coverage statistics"
+parameters = ["bam_file", "regions"]
+
+[[functions]]
+name = "filter_variants"
+description = "Filter variants by quality, depth, frequency"
+parameters = ["vcf_file", "filters"]
+
+[[functions]]
+name = "predict_effects"
+description = "Predict functional effects of variants"
+parameters = ["variants", "transcript_db"]
+
+[[functions]]
+name = "extract_sequences"
+description = "Extract genomic sequences from reference"
+parameters = ["coordinates", "reference"]
+
+[[functions]]
+name = "compare_genomes"
+description = "Compare two or more genome assemblies"
+parameters = ["genome_files", "method"]
+
+# Total: 20 functions available in genomics.py
