@@ -3,296 +3,251 @@ name: self-evo-skill-creator
 disable-model-invocation: true
 ---
 
-# Sub-skill: Skill Creator (Create and Improve Magenta Skills)
+# Sub-skill: Skill Creator
 
 > Chapter of `self-evo`. Not indexed, not independently invocable. Enter here
 > from the parent skill when the user wants to create a new skill, modify an
 > existing skill, or optimize skill performance.
 
-This sub-skill helps create **Skills** as one of Magenta's four primitives
-(alongside Tools, Capabilities, and Resources). Skills are specialized
-instruction sets that guide the agent through complex, domain-specific workflows.
+A skill for creating new skills and iteratively improving them.
+
+At a high level, the process of creating a skill goes like this:
+
+1. Decide what you want the skill to do and roughly how it should do it
+2. Write a draft of the skill
+3. Create a few test prompts and run magenta-with-access-to-the-skill on them
+4. Help the user evaluate the results both qualitatively and quantitatively
+   - While the runs happen in the background, draft some quantitative evals if there aren't any
+   - Then explain them to the user
+5. Use sub-agents to show the user the results for them to look at, and also show quantitative metrics
+6. Rewrite the skill based on feedback from the user's evaluation of the results
+7. Repeat until you're satisfied
+8. Expand the test set and try again at larger scale
+
+Your job when using this skill is to figure out where the user is in this process and then jump in and help them progress through these stages. So for instance, maybe they're like "I want to make a skill for X". You can help narrow down what they mean, write a draft, write the test cases, figure out how they want to evaluate, run all the prompts, and repeat.
+
+On the other hand, maybe they already have a draft of the skill. In this case you can go straight to the eval/iterate part of the loop.
+
+Of course, you should always be flexible and if the user is like "I don't need to run a bunch of evaluations, just vibe with me", you can do that instead.
+
+Then after the skill is done (but again, the order is flexible), you can also run skill description optimization to improve the triggering accuracy of the skill.
+
+Cool? Cool.
 
 ---
 
-## What is a Skill in Magenta?
+## Communicating with the User
 
-A Skill is a **Resource primitive** containing structured instructions for the
-agent. Unlike Claude's skills (which are invoked by the model), Magenta skills
-are **loaded into context** when matched and provide:
+The skill creator is liable to be used by people across a wide range of familiarity with coding jargon. Pay attention to context cues to understand how to phrase your communication!
 
-- Domain-specific workflows and best practices
-- Step-by-step procedures
-- Examples and templates
-- References to relevant tools and capabilities
+In the default case, just to give you some idea:
+- "evaluation" and "benchmark" are borderline, but OK
+- for "JSON" and "assertion" you want to see serious cues from the user that they know what those things are before using them without explaining them
 
-**Key differences from Claude skills:**
-- Magenta skills are **Resources** (content-only, no code builder)
-- Loaded via pattern matching in `description` field
-- Can reference bundled assets, scripts, and documentation
-- Must follow Magenta's module structure
+It's OK to briefly explain terms if you're in doubt, and feel free to clarify terms with a short definition if you're unsure if the user will get it.
 
 ---
 
-## When to Create a Skill
+## Creating a Skill
 
-Create a skill when:
-- There's a recurring complex workflow that benefits from structured guidance
-- Domain expertise needs to be captured (e.g., paper-analysis, pptx, research)
-- The task involves multiple steps with specific ordering or dependencies
-- Examples and templates significantly improve output quality
+### Capture Intent
 
-**Don't create a skill when:**
-- A simple Tool would suffice (single function, objectively verifiable)
-- The task is one-off or highly variable
-- Instructions would be trivial (< 50 lines)
-
----
-
-## The Skill Creation Loop
-
-At a high level:
-
-1. **Capture Intent** — What workflow does this skill enable?
-2. **Interview and Research** — Understand edge cases, examples, success criteria
-3. **Write the SKILL.md** — Draft the structured instructions
-4. **Create Test Cases** — Realistic prompts that should trigger the skill
-5. **Run and Evaluate** — Test with sub-agents, gather feedback
-6. **Iterate** — Improve based on qualitative feedback and test results
-7. **Gate and Register** — Verify structure and register in harness
-
-Your job is to guide the user through these stages, adapting the pace to their
-familiarity and needs. Some users want rigorous testing; others prefer to "vibe"
-with quick iterations.
-
----
-
-## Step 1: Capture Intent
-
-Start by understanding what the user wants. The current conversation may already
-contain a workflow they want to capture. If so, extract from history first.
+Start by understanding the user's intent. The current conversation might already contain a workflow the user wants to capture (e.g., they say "turn this into a skill"). If so, extract answers from the conversation history first — the tools used, the sequence of steps, corrections the user made, input/output formats observed. The user may need to fill the gaps, and should confirm before proceeding to the next step.
 
 **Key questions:**
 1. What should this skill enable Magenta to do?
-2. When should this skill load? (What user phrases/contexts trigger it?)
-3. What domain expertise or workflow steps are involved?
-4. What's the expected output format or success criteria?
-5. Should we set up test cases? (Recommended for skills with verifiable workflows)
+2. When should this skill trigger? (what user phrases/contexts)
+3. What's the expected output format?
+4. Should we set up test cases to verify the skill works?
+   - Skills with objectively verifiable outputs (file transforms, data extraction, code generation, fixed workflow steps) benefit from test cases
+   - Skills with subjective outputs (writing style, art) often don't need them
+   - Suggest the appropriate default based on the skill type, but let the user decide
 
-**Communicate clearly:** Gauge the user's technical level. Terms like "YAML
-frontmatter", "sub-agent", "assertion" may need brief explanation for
-non-technical users.
+### Interview and Research
 
+Proactively ask questions about edge cases, input/output formats, example files, success criteria, and dependencies. Wait to write test prompts until you've got this part ironed out.
+
+If useful for research (searching docs, finding similar skills, looking up best practices), research in parallel via sub-agents if available, otherwise inline. Come prepared with context to reduce burden on the user.
+
+### Write the SKILL.md
+
+Based on the user interview, fill in these components:
+
+**YAML Frontmatter:**
+```yaml
 ---
-
-## Step 2: Interview and Research
-
-Proactively ask about:
-- Edge cases and common failure modes
-- Input/output formats and examples
-- Success criteria and quality standards
-- Dependencies (tools, files, external services)
-- Existing similar workflows to learn from
-
-**Research in parallel:** If useful, spawn sub-agents to:
-- Search Magenta docs for similar skills or patterns
-- Review existing skills in `harness/modules/skills/`
-- Find relevant tools in `harness/modules/tools/`
-- Look up best practices or domain conventions
-
-Come prepared with context to reduce burden on the user.
-
+name: skill-identifier
+description: >
+  When to trigger, what it does. This is the primary triggering mechanism —
+  include both what the skill does AND specific contexts for when to use it.
+  All "when to use" info goes here, not in the body.
+  
+  Note: currently Magenta has a tendency to "undertrigger" skills — to not use
+  them when they'd be useful. To combat this, make the skill descriptions a
+  little bit "pushy". For instance, instead of "How to build a dashboard to
+  display data", write "How to build a dashboard to display data. Make sure to
+  use this skill whenever the user mentions dashboards, data visualization,
+  metrics, or wants to display any kind of data, even if they don't explicitly
+  ask for a 'dashboard.'"
 ---
+```
 
-## Step 3: Write the SKILL.md
-
-### Location and Structure
+#### Anatomy of a Skill
 
 ```
-harness/modules/skills/<skill-name>/
-├── <source>/              (e.g., magenta/, pi/, codex/)
-│   └── SKILL.md           (required)
-│       ├── YAML frontmatter
+skill-name/
+├── <source>/               (magenta/, pi/, codex/)
+│   └── SKILL.md            (required)
+│       ├── YAML frontmatter (name, description required)
 │       └── Markdown instructions
 └── assets/ (optional)
-    ├── scripts/           - Executable helpers
-    ├── references/        - Docs loaded as needed
-    └── templates/         - Output templates
+    ├── scripts/    - Executable code for deterministic/repetitive tasks
+    ├── references/ - Docs loaded into context as needed
+    └── templates/  - Files used in output (templates, icons, fonts)
 ```
 
-**Source discipline:** The `<source>` directory reflects the skill's origin:
+**Source discipline:** The `<source>` directory reflects origin:
 - `magenta/` — created by Magenta for Magenta
 - `pi/` — converted from Claude Code/Pi extension
 - `codex/` — from GitHub Copilot
-- Never mislabel provenance
 
-### YAML Frontmatter (Required)
+Never mislabel provenance with `magenta` just because Magenta did the integration.
 
-```yaml
----
-name: skill-name
-description: >
-  When to use this skill and what it does. This is the PRIMARY TRIGGERING
-  MECHANISM. Include both the capability AND specific contexts. Be slightly
-  "pushy" to combat undertriggering — mention related keywords and scenarios.
-  
-  Example: "Deeply analyze academic papers. Use when the user provides a PDF,
-  arXiv/DOI/link, abstract, or pasted paper text and asks to analyze, explain,
-  summarize, review, critique, reproduce, compare, extract contributions,
-  understand methods/experiments, or prepare literature notes/slides for a
-  research paper."
----
-```
+#### Progressive Disclosure
 
-**Description best practices:**
-- Combine "what it does" + "when to use it"
-- Include trigger keywords and related terms
-- Be specific about input types and contexts
-- Slightly over-inclusive to ensure triggering
-
-### Skill Body Structure
-
-Use **progressive disclosure** (three-level loading):
+Skills use a three-level loading system:
 
 1. **Metadata** (name + description) — Always in context (~100 words)
-2. **SKILL.md body** — Loaded when skill triggers (<500 lines ideal)
-3. **Bundled resources** — Loaded as needed (unlimited)
+2. **SKILL.md body** — In context whenever skill triggers (<500 lines ideal)
+3. **Bundled resources** — As needed (unlimited, scripts can execute without loading)
 
-**Recommended structure:**
+These word counts are approximate and you can feel free to go longer if needed.
 
+**Key patterns:**
+- Keep SKILL.md under 500 lines; if you're approaching this limit, add an additional layer of hierarchy along with clear pointers about where the model should go next
+- Reference files clearly from SKILL.md with guidance on when to read them
+- For large reference files (>300 lines), include a table of contents
+
+**Domain organization:** When a skill supports multiple domains/frameworks, organize by variant:
+
+```
+cloud-deploy/
+├── magenta/
+│   └── SKILL.md (workflow + selection)
+└── assets/
+    └── references/
+        ├── aws.md
+        ├── gcp.md
+        └── azure.md
+```
+
+Magenta reads only the relevant reference file.
+
+#### Principle of Lack of Surprise
+
+Skills must not contain malware, exploit code, or any content that could compromise system security. A skill's contents should not surprise the user in their intent if described. Don't go along with requests to create misleading skills or skills designed to facilitate unauthorized access, data exfiltration, or other malicious activities.
+
+#### Writing Patterns
+
+Prefer using the imperative form in instructions.
+
+**Defining output formats:**
 ```markdown
-# [Skill Name]
-
-Brief overview of what this skill does and when to use it.
-
-## 1. Input Check (if applicable)
-
-What inputs are required? What to do if missing?
-
-## 2. Core Workflow
-
-Step-by-step procedure. Use numbered lists for sequential steps.
-
-### 2.1 Sub-step Name
-
-Details, examples, code snippets.
-
-## 3. Output Format
-
-What should the final result look like? Templates or examples.
-
-## 4. Quality Requirements
-
-Standards, validation checks, common pitfalls to avoid.
-
-## 5. Examples (optional but recommended)
-
-**Example 1: [Descriptive name]**
-Input: [...]
-Output: [...]
-
-## 6. References (if large docs exist)
-
-See `references/domain-guide.md` for [specific topic].
+## Report structure
+ALWAYS use this exact template:
+# [Title]
+## Executive summary
+## Key findings
+## Recommendations
 ```
 
-### Writing Style
+**Examples pattern:**
+```markdown
+## Commit message format
 
-- **Use imperative form**: "Extract the title" not "You should extract the title"
-- **Explain the why**: Help the agent understand reasoning, not just rules
-- **Be specific but flexible**: Provide structure without being rigid
-- **Include examples**: Real-world scenarios help immensely
-- **Keep it under 500 lines**: If approaching this, split into sub-topics with
-  clear pointers to `references/` files
+**Example 1:**
+Input: Added user authentication with JWT tokens
+Output: feat(auth): implement JWT-based authentication
 
-**Avoid:**
-- Heavy-handed MUSTs and NEVERs in all caps (except for critical requirements)
-- Overly rigid structures that don't allow flexibility
-- Jargon without brief explanation
-- Assuming the agent knows domain-specific conventions
+**Example 2:**
+Input: Fixed bug in password reset
+Output: fix(auth): resolve password reset token expiration
+```
+
+#### Writing Style
+
+Try to explain to the model why things are important in lieu of heavy-handed musty MUSTs. Use theory of mind and try to make the skill general and not super-narrow to specific examples. Start by writing a draft and then look at it with fresh eyes and improve it.
 
 ---
 
-## Step 4: Create Test Cases
+### Test Cases
 
-After drafting the skill, create 2-3 realistic test prompts — the kind a real
-user would actually type. These should be:
-- Specific and detailed (not abstract)
-- Cover different aspects of the skill
-- Include edge cases or common variations
+After writing the skill draft, come up with 2-3 realistic test prompts — the kind of thing a real user would actually say. Share them with the user: "Here are a few test cases I'd like to try. Do these look right, or do you want to add more?" Then run them.
 
-**Good test prompts:**
-- "I have a PDF of a machine learning paper on arXiv (2401.12345). Can you
-  analyze the methodology and tell me if the results are reproducible?"
-- "Create a presentation deck from this markdown outline. It needs to look
-  professional and be under 10 slides."
+Save test cases to `evals/evals.json`. Don't write assertions yet — just the prompts. You'll draft assertions in the next step while the runs are in progress.
 
-**Bad test prompts:**
-- "Analyze a paper" (too vague)
-- "Make slides" (no context or requirements)
-
-Share test prompts with the user: "Here are test cases I'd like to try. Do these
-look right, or should we add more?"
+```json
+{
+  "skill_name": "example-skill",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "User's task prompt",
+      "expected_output": "Description of expected result",
+      "files": []
+    }
+  ]
+}
+```
 
 ---
 
-## Step 5: Run and Evaluate (with Sub-agents)
+## Running and Evaluating Test Cases
 
-This is a continuous sequence. Don't stop partway through.
+**This section is one continuous sequence — don't stop partway through.**
 
-### Workspace Organization
+Put results in `<skill-name>-workspace/` as a sibling to the skill directory. Within the workspace, organize results by iteration (`iteration-1/`, `iteration-2/`, etc.) and within that, each test case gets a directory (`eval-0/`, `eval-1/`, etc.). Don't create all of this upfront — just create directories as you go.
 
-```
-<skill-name>-workspace/
-├── skill-snapshot/          (if improving existing skill)
-└── iteration-1/
-    ├── eval-0-descriptive-name/
-    │   ├── with_skill/
-    │   │   ├── outputs/     (files produced by the skill)
-    │   │   ├── timing.json
-    │   │   └── transcript.txt (if available)
-    │   ├── without_skill/   (baseline: no skill)
-    │   │   └── outputs/
-    │   └── eval_metadata.json
-    ├── eval-1-another-case/
-    │   └── ...
-    └── feedback.json        (user's qualitative feedback)
-```
+### Step 1: Spawn All Runs (with-skill AND baseline) in the Same Turn
 
-### 5.1 Spawn All Runs (Parallel)
-
-For each test case, spawn **two sub-agents simultaneously**:
+For each test case, spawn two sub-agents in the same turn — one with the skill, one without. This is important: don't spawn the with-skill runs first and then come back for baselines later. Launch everything at once so it all finishes around the same time.
 
 **With-skill run:**
 ```
-Execute this task with the new skill loaded:
-- Skill path: <path-to-skill>/SKILL.md
+Execute this task:
+- Skill path: <path-to-skill>
 - Task: <eval prompt>
-- Input files: <if any, or "none">
-- Save outputs to: <workspace>/iteration-1/eval-<N>/with_skill/outputs/
-- Capture: the final deliverables (e.g., .docx, .pdf, final analysis)
+- Input files: <eval files if any, or "none">
+- Save outputs to: <workspace>/iteration-<N>/eval-<ID>/with_skill/outputs/
+- Outputs to save: <what the user cares about — e.g., "the .docx file", "the final CSV">
 ```
 
-**Baseline run** (choose based on context):
-- **New skill:** No skill at all. Save to `without_skill/outputs/`
-- **Improving existing:** Snapshot the old version first, use it as baseline
+**Baseline run** (same prompt, but the baseline depends on context):
+- **Creating a new skill:** no skill at all. Same prompt, no skill path, save to `without_skill/outputs/`
+- **Improving an existing skill:** the old version. Before editing, snapshot the skill (`cp -r <skill-path> <workspace>/skill-snapshot/`), then point the baseline sub-agent at the snapshot. Save to `old_skill/outputs/`
 
-Create `eval_metadata.json` for each test case:
+Write an `eval_metadata.json` for each test case (assertions can be empty for now). Give each eval a descriptive name based on what it's testing — not just "eval-0". Use this name for the directory too.
 
 ```json
 {
   "eval_id": 0,
   "eval_name": "descriptive-name-here",
   "prompt": "The user's task prompt",
-  "expected_outcome": "What success looks like",
   "assertions": []
 }
 ```
 
-### 5.2 Capture Timing Data
+### Step 2: While Runs are in Progress, Draft Assertions
 
-When each sub-agent completes, you receive `total_tokens` and `duration_ms` in
-the task notification. **Save immediately** to `timing.json`:
+Don't just wait for the runs to finish — you can use this time productively. Draft quantitative assertions for each test case and explain them to the user. If assertions already exist in `evals/evals.json`, review them and explain what they check.
+
+Good assertions are objectively verifiable and have descriptive names — they should read clearly so someone glancing at the results immediately understands what each one checks. Subjective skills (writing style, design quality) are better evaluated qualitatively — don't force assertions onto things that need human judgment.
+
+Update the `eval_metadata.json` files and `evals/evals.json` with the assertions once drafted. Also explain to the user what they'll see — both the qualitative outputs and the quantitative benchmark.
+
+### Step 3: As Runs Complete, Capture Timing Data
+
+When each sub-agent task completes, you receive a notification containing `total_tokens` and `duration_ms`. Save this data immediately to `timing.json` in the run directory:
 
 ```json
 {
@@ -302,12 +257,11 @@ the task notification. **Save immediately** to `timing.json`:
 }
 ```
 
-This is the only chance to capture this data.
+This is the only opportunity to capture this data — it comes through the task notification and isn't persisted elsewhere. Process each notification as it arrives rather than trying to batch them.
 
-### 5.3 Qualitative Review
+### Step 4: Present Results to User
 
-Since Magenta doesn't have Claude's eval-viewer infrastructure, use a **manual
-review workflow**:
+Since Magenta doesn't have Claude's eval-viewer infrastructure yet, use a **manual review workflow**:
 
 1. **Present outputs to the user:** For each test case, show:
    - The prompt
@@ -332,72 +286,90 @@ review workflow**:
    }
    ```
 
-### 5.4 Optional: Quantitative Assertions
-
-For skills with objectively verifiable outputs, you can add assertions:
+**Optional: Grade assertions** — If you wrote assertions, spawn a grader sub-agent that evaluates each assertion against the outputs. Save results to `grading.json`:
 
 ```json
-"assertions": [
-  {
-    "name": "Contains all required sections",
-    "check": "Output includes: title, abstract, method, results, conclusion"
-  },
-  {
-    "name": "Output format is correct",
-    "check": "File is valid .docx and opens without errors"
-  }
-]
+{
+  "expectations": [
+    {
+      "text": "Contains all required sections",
+      "passed": true,
+      "evidence": "Found: title, abstract, method, results, conclusion"
+    }
+  ]
+}
 ```
 
-Grade these programmatically when possible (scripts > eyeballing).
+For assertions that can be checked programmatically, write and run a script rather than eyeballing it.
 
 ---
 
-## Step 6: Improve the Skill
+## Improving the Skill
 
-This is the heart of the loop. Based on feedback, improve the skill.
+This is the heart of the loop. You've run the test cases, the user has reviewed the results, and now you need to make the skill better based on their feedback.
 
 ### How to Think About Improvements
 
-1. **Generalize from feedback:** These test cases are training examples. The
-   skill will be used millions of times. Don't overfit to specific examples —
-   look for patterns and underlying principles.
+**Generalize from the feedback.** The big picture thing that's happening here is that we're trying to create skills that can be used a million times (maybe literally) across many different prompts. Here you and the user are iterating on only a few examples over and over again because it helps move faster. The user knows these examples in and out and it's quick for them to assess new outputs.
 
-2. **Keep it lean:** Remove instructions that aren't pulling their weight. If
-   transcripts show the agent wasting time on unproductive tasks, trim those
-   parts.
+But if the skill you and the user are codeveloping works only for those examples, it's useless. Rather than put in fiddly overfitty changes, or oppressively constrictive MUSTs, if there's some stubborn issue, you might try branching out and using different metaphors, or recommending different patterns of working. It's relatively cheap to try and maybe you'll land on something great.
 
-3. **Explain the why:** LLMs are smart and have good theory of mind. Instead of
-   rigid ALWAYS/NEVER rules, explain the reasoning so the agent understands why
-   something matters.
+**Keep the prompt lean.** Remove things that aren't pulling their weight. Make sure to read the transcripts, not just the final outputs — if it looks like the skill is making the model waste a bunch of time doing things that are unproductive, you can try getting rid of the parts of the skill that are making it do that and seeing what happens.
 
-4. **Look for repeated work:** If all test runs independently wrote similar
-   helper scripts (e.g., `create_docx.py`, `parse_bibtex.py`), bundle those
-   scripts in `assets/scripts/` and instruct the skill to use them. Save future
-   invocations from reinventing the wheel.
+**Explain the why.** Try hard to explain the why behind everything you're asking the model to do. Today's LLMs are smart. They have good theory of mind and when given a good harness can go beyond rote instructions and really make things happen. Even if the feedback from the user is terse or frustrated, try to actually understand the task and why the user is writing what they wrote, and what they actually wrote, and then transmit this understanding into the instructions. If you find yourself writing ALWAYS or NEVER in all caps, or using super rigid structures, that's a yellow flag — if possible, reframe and explain the reasoning so that the model understands why the thing you're asking for is important. That's a more humane, powerful, and effective approach.
 
-**Process:**
-- Write a draft revision
-- Step back and look at it with fresh eyes
-- Make improvements
-- Consider alternate approaches or metaphors if something is stubborn
+**Look for repeated work across test cases.** Read the transcripts from the test runs and notice if the sub-agents all independently wrote similar helper scripts or took the same multi-step approach to something. If all 3 test cases resulted in the sub-agent writing a `create_docx.py` or a `build_chart.py`, that's a strong signal the skill should bundle that script. Write it once, put it in `assets/scripts/`, and tell the skill to use it. This saves every future invocation from reinventing the wheel.
+
+This task is pretty important (we are trying to create billions a year in economic value here!) and your thinking time is not the blocker; take your time and really mull things over. I'd suggest writing a draft revision and then looking at it anew and making improvements. Really do your best to get into the head of the user and understand what they want and need.
 
 ### The Iteration Loop
 
-1. Apply improvements to SKILL.md
-2. Rerun all test cases into `iteration-2/`
-3. Compare with `iteration-1/` outputs
-4. Get user feedback
-5. Repeat until satisfied
+After improving the skill:
 
-**Stopping criteria:**
-- User says they're happy
-- Feedback is consistently empty (everything looks good)
-- Not making meaningful progress
+1. Apply your improvements to the skill
+2. Rerun all test cases into a new `iteration-<N+1>/` directory, including baseline runs
+   - If creating a new skill, the baseline is always `without_skill` (no skill)
+   - If improving an existing skill, use your judgment on what makes sense as the baseline
+3. Present results to the user for review
+4. Wait for the user to review and tell you they're done
+5. Read the new feedback, improve again, repeat
+
+Keep going until:
+- The user says they're happy
+- The feedback is all empty (everything looks good)
+- You're not making meaningful progress
 
 ---
 
-## Step 7: Gate and Register
+## Description Optimization (Advanced)
+
+The `description` field in SKILL.md frontmatter is the primary mechanism that determines whether Magenta invokes a skill. After creating or improving a skill, offer to optimize the description for better triggering accuracy.
+
+### Step 1: Generate Trigger Eval Queries
+
+Create 20 eval queries — a mix of should-trigger and should-not-trigger. The queries must be realistic and something a Magenta user would actually type. Not abstract requests, but requests that are concrete and specific and have a good amount of detail.
+
+**Bad:** "Format this data", "Extract text from PDF", "Create a chart"
+
+**Good:** "ok so my boss just sent me this xlsx file (its in my downloads, called something like 'Q4 sales final FINAL v2.xlsx') and she wants me to add a column that shows the profit margin as a percentage. The revenue is in column C and costs are in column D i think"
+
+For the **should-trigger queries** (8-10), think about coverage. You want different phrasings of the same intent — some formal, some casual. Include cases where the user doesn't explicitly name the skill or file type but clearly needs it. Throw in some uncommon use cases and cases where this skill competes with another but should win.
+
+For the **should-not-trigger queries** (8-10), the most valuable ones are the near-misses — queries that share keywords or concepts with the skill but actually need something different. Think adjacent domains, ambiguous phrasing where a naive keyword match would trigger but shouldn't, and cases where the query touches on something the skill does but in a context where another tool is more appropriate.
+
+The key thing to avoid: don't make should-not-trigger queries obviously irrelevant. "Write a fibonacci function" as a negative test for a PDF skill is too easy — it doesn't test anything. The negative cases should be genuinely tricky.
+
+### Step 2: Test and Iterate
+
+For each query, test whether the skill triggers. Collect results and identify patterns:
+- False negatives: should have triggered but didn't
+- False positives: shouldn't have triggered but did
+
+Propose an improved description based on these patterns. Iterate up to 5 times, using a held-out test set to avoid overfitting.
+
+---
+
+## Gate and Register
 
 Before landing the skill, run Magenta's verification gates:
 
@@ -433,35 +405,6 @@ Confirm the skill appears in the registry and has no warnings.
 
 ---
 
-## Advanced: Description Optimization
-
-After creating the skill, you can optimize the `description` field to improve
-triggering accuracy. This is optional but recommended for skills that compete
-with others or have subtle triggers.
-
-**Process:**
-1. Generate 20 test queries (10 should-trigger, 10 should-not-trigger)
-2. Make them realistic and detailed (not abstract)
-3. Test current description: how many queries trigger correctly?
-4. Propose improved description based on failures
-5. Test again, iterate up to 5 times
-6. Use held-out test set to avoid overfitting
-
-**Should-trigger queries** — Different phrasings of valid use cases:
-- Formal and casual variants
-- Implicit needs (user doesn't name the skill explicitly)
-- Uncommon but valid use cases
-
-**Should-not-trigger queries** — Near misses that share keywords but need
-something different:
-- Adjacent domains
-- Ambiguous phrasing
-- Cases where another skill/tool is more appropriate
-
-**Key:** Negative cases should be genuinely tricky, not obviously irrelevant.
-
----
-
 ## Magenta-Specific Guidelines
 
 ### Skills are Resources, Not Capabilities
@@ -477,13 +420,11 @@ The `<source>` directory reflects origin:
 - Converted from Claude → `pi/`
 - From external agent → tag with origin
 
-Never mislabel provenance with `magenta` just because Magenta did the
-integration.
+Never mislabel provenance with `magenta` just because Magenta did the integration.
 
 ### One-of Invariant
 
-A skill should focus on **one domain or workflow**. If you find yourself creating
-multiple distinct sub-workflows, consider:
+A skill should focus on **one domain or workflow**. If you find yourself creating multiple distinct sub-workflows, consider:
 - Splitting into separate skills
 - Using a skill that routes to reference docs for each variant
 
@@ -496,44 +437,18 @@ When improving an existing skill:
 
 ---
 
-## Cowork / Headless Environments
-
-If running in Cowork or a headless environment:
-- Sub-agents work normally
-- No browser-based viewer — use manual review
-- Present outputs directly in conversation
-- Ask for feedback inline
-- Save feedback to `feedback.json`
-
----
-
-## Communication Principles
-
-Pay attention to the user's technical level:
-
-**Terms that are borderline** (explain if unsure):
-- "YAML frontmatter", "assertion", "sub-agent", "iteration"
-
-**Terms that are generally OK:**
-- "test case", "evaluation", "benchmark", "feedback"
-
-**When in doubt:** Briefly explain technical terms or include a short definition.
-
----
-
-## The Core Loop (Repeated for Emphasis)
+## Summary: The Core Loop
 
 1. **Understand** what the skill should do
 2. **Draft** the SKILL.md
-3. **Test** with realistic prompts (with-skill vs baseline)
+3. **Test** with realistic prompts (with-skill vs baseline, parallel sub-agents)
 4. **Review** outputs with the user (qualitative + quantitative)
 5. **Improve** based on feedback
 6. **Iterate** until satisfied
-7. **Gate** with `npm run build/test/check`
-8. **Register** in `harness.toml`
+7. **Optimize** description (optional)
+8. **Gate** with `npm run build/test/check`
+9. **Register** in `harness.toml`
 
-Take your time. Think carefully. This is important work — these skills will be
-used extensively. Write a draft, step back, and improve it before showing the
-user.
+Take your time. Think carefully. This is important work — these skills will be used extensively. Write a draft, step back, and improve it before showing the user.
 
 Good luck! 🚀
