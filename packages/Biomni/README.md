@@ -1,13 +1,14 @@
 # Biomni Package for Magenta
 
-Biomni is a general-purpose biomedical AI toolkit from Stanford SNAP Lab, converted to Magenta harness package format with 2 knowledge guide skills and 23+ tool modules covering 248 functions.
+Biomni is a general-purpose biomedical AI toolkit from Stanford SNAP Lab, fully integrated into Magenta with all 23 Python tool modules (248 functions) copied locally, plus 2 knowledge guide skills.
 
 ## Package Overview
 
 **Source**: Stanford SNAP Lab - Biomni Project  
 **Original Repo**: https://github.com/snap-stanford/Biomni  
 **Paper**: bioRxiv 2025.05.30.656746v1  
-**License**: MIT (tools), CC BY 4.0 (knowledge guides)
+**License**: MIT (tools), CC BY 4.0 (knowledge guides)  
+**Integration**: Full code copy (1.8 MB), no external dependencies
 
 ## Contents
 
@@ -15,92 +16,77 @@ Biomni is a general-purpose biomedical AI toolkit from Stanford SNAP Lab, conver
 
 1. **sgrna-design** - CRISPR sgRNA design guide
    - 300+ validated sgRNA sequences from Addgene
-   - Three-tier design strategy
-   - CRISPick integration
+   - Three-tier design strategy (validated → CRISPick → de novo)
+   - Citation guidelines and experimental validation
 
 2. **single-cell-annotation** - scRNA-seq cell type annotation
    - Marker-based, automated, reference-based methods
    - Distilled from sc-best-practices.org
-   - Practical workflows with code
+   - Practical workflows with Python code examples
 
-### Tools (248 Functions in 23 Modules)
+### Python Tool Modules (23 Modules, 248 Functions)
 
-| Domain | Tool Module | Functions | Description |
-|--------|-------------|-----------|-------------|
-| 🗄️ **Database** | biomni_database | 45 | PubMed, UniProt, KEGG, STRING, cBioPortal |
-| 💊 **Pharmacology** | biomni_pharmacology | 42 | Drug design, ADME, toxicity prediction |
-| 🧬 **Genomics** | biomni_genomics | 20 | NGS analysis, variant annotation |
-| 🧪 **Molecular Biology** | biomni_molecular_biology | 18 | PCR design, cloning, protein expression |
-| 🤖 **Lab Automation** | biomni_lab_automation | 11 | Robot control, workflow automation |
-| 🦠 **Microbiology** | biomni_microbiology | 11 | Microbiome, metagenomics |
-| 🔬 **Bioimaging** | biomni_bioimaging | 10 | Cell segmentation, image analysis |
-| 🫀 **Physiology** | biomni_physiology | 10 | Physiological modeling |
-| 🛡️ **Immunology** | biomni_immunology | 9 | Antibody design, immune repertoire |
-| 🧬 **Genetics** | biomni_genetics | 8 | GWAS, linkage analysis |
-| + 13 more | ... | 64 | Cancer, systems bio, pathology, etc. |
+All Python code **copied locally** from Biomni source:
+
+| Module | Functions | Size | Description |
+|--------|-----------|------|-------------|
+| **database** | 45 | 194 KB | PubMed, UniProt, KEGG, STRING, cBioPortal, Ensembl, NCBI, PDB |
+| **pharmacology** | 42 | 164 KB | Drug design, ADME prediction, toxicity, interactions |
+| **genomics** | 20 | 110 KB | NGS analysis, variant annotation, alignment |
+| **molecular_biology** | 18 | 89 KB | PCR design, cloning, protein expression |
+| **immunology** | 9 | 79 KB | Antibody design, immune repertoire analysis |
+| **genetics** | 8 | 65 KB | GWAS, linkage analysis |
+| **microbiology** | 11 | 57 KB | Microbiome, metagenomics |
+| **bioimaging** | 10 | 52 KB | Cell segmentation, image quantification |
+| **synthetic_biology** | 7 | 51 KB | Synthetic biology design |
+| **physiology** | 10 | 50 KB | Physiological modeling |
+| **cancer_biology** | 5 | 51 KB | Cancer biology analysis |
+| **pathology** | 6 | 40 KB | Pathology image analysis |
+| **biochemistry** | 5 | 41 KB | Protein analysis, enzyme kinetics |
+| **cell_biology** | 4 | 29 KB | Cell biology functions |
+| **lab_automation** | 11 | 24 KB | Robot control, workflow automation |
+| **bioengineering** | 6 | 51 KB | Bioengineering tools |
+| **biophysics** | 2 | 19 KB | Biophysics calculations |
+| **literature** | 8 | 14 KB | Literature search and analysis |
+| **support_tools** | 7 | 14 KB | Support utilities |
+| **protocols** | 5 | 11 KB | Protocol execution |
+| **glycoengineering** | 3 | 6 KB | Glycoengineering design |
+| **systems_biology** | 6 | 34 KB | Network analysis, pathway simulation |
+| **tool_registry** | - | 3 KB | Tool discovery system |
+
+**Total**: 1.8 MB of Python code
+
+### Supporting Data
+
+- **schema_db**: 25+ pre-integrated database schemas
+- **tool_description**: Tool metadata and JSON schemas
 
 ## Usage
 
-### Load All Resources
+### Load All Resources (整包加载)
 
 ```bash
 magenta --harness-package Biomni
 ```
 
-### Selective Loading by Profile
+Loads:
+- 2 skills (knowledge guides)
+- 23 Python modules (248 functions)
+- 2 data components (schemas + descriptions)
+
+**Total**: 27 components
+
+### Integration with Other Packages
 
 ```bash
-# Knowledge guides only
-magenta --harness-package Biomni:knowledge
+# Full biomedical stack
+magenta --harness-package AutOmicScience --harness-package ClaudeScience --harness-package PantheonOS --harness-package Biomni
 
-# Database tools
-magenta --harness-package Biomni:database
+# Genomics focus
+magenta --harness-package AutOmicScience --harness-package Biomni
 
-# Drug discovery stack
-magenta --harness-package Biomni:drug,molbio
-
-# Full genomics + automation
-magenta --harness-package Biomni:genomics,automation
-
-# Everything
-magenta --harness-package Biomni:all
-```
-
-## Available Profiles
-
-| Profile | Description | Components |
-|---------|-------------|------------|
-| `knowledge` | Knowledge guides | 2 skills |
-| `database` | Database query tools | 2 tools, 53 functions |
-| `genomics` | Genomics + genetics | 4 tools, 39 functions |
-| `drug` | Pharmacology | 1 tool, 42 functions |
-| `molbio` | Molecular biology | 8 tools, 52 functions |
-| `imaging` | Bio-imaging + pathology | 3 tools, 20 functions |
-| `automation` | Lab automation | 3 tools, 23 functions |
-| `all` | All resources | 2 skills + 23 tools |
-
-## Integration with Other Packages
-
-### Recommended Combinations
-
-**Research Workflow**:
-```bash
-magenta --harness-package ClaudeScience --harness-package Biomni:knowledge,database
-```
-
-**Genomics Analysis**:
-```bash
-magenta --harness-package AutOmicScience --harness-package Biomni:genomics
-```
-
-**Drug Discovery**:
-```bash
-magenta --harness-package Biomni:drug,molbio,database
-```
-
-**Full Biomedical Stack**:
-```bash
-magenta --harness-package AutOmicScience --harness-package ClaudeScience --harness-package PantheonOS --harness-package Biomni:all
+# Drug discovery
+magenta --harness-package Biomni  # pharmacology module included
 ```
 
 ## Unique Features
@@ -109,58 +95,104 @@ magenta --harness-package AutOmicScience --harness-package ClaudeScience --harne
 
 | Feature | Biomni | AutOmicScience | ClaudeScience | PantheonOS |
 |---------|--------|----------------|---------------|------------|
-| Database APIs | ✅ 25+ | ✗ | ✗ | ✗ |
-| Lab Automation | ✅ | ✗ | ✗ | ✗ |
-| Drug Design | ✅ 42 functions | ✗ | ✗ | ✗ |
-| sgRNA Database | ✅ 300+ | ✗ | ✗ | ✗ |
-| Tool Functions | ✅ 248 | 5 | 0 | 0 |
-| Knowledge Docs | 2 | 0 | 0 | 88 |
+| **Code Copy** | ✅ 1.8 MB | ✗ | ✗ | ✗ |
+| **Database APIs** | ✅ 45 functions | ✗ | ✗ | ✗ |
+| **Lab Automation** | ✅ 11 functions | ✗ | ✗ | ✗ |
+| **Drug Design** | ✅ 42 functions | ✗ | ✗ | ✗ |
+| **sgRNA Database** | ✅ 300+ sequences | ✗ | ✗ | ✗ |
+| **Python Functions** | ✅ 248 | ✗ | ✗ | ✗ |
+| **Skills (Docs)** | 2 | 11 | 32 | 16 |
 
 ### Biomni's Strengths
 
-1. **Extensive Database Coverage** - 25+ pre-integrated APIs
-2. **Lab Automation** - Only package with robot control
-3. **Drug Discovery** - Largest pharmacology toolkit
-4. **Function Library** - 248 ready-to-use Python functions
+1. **Self-Contained** - All code copied locally, no external Biomni install needed
+2. **Database Coverage** - 45 functions for 25+ databases
+3. **Lab Automation** - Only package with robot control (Opentrons, Hamilton)
+4. **Drug Discovery** - Largest pharmacology toolkit (42 functions)
 5. **Validated Data** - 300+ experimental sgRNA sequences
+6. **Executable** - 248 ready-to-use Python functions
+
+## Architecture
+
+### File Structure
+
+```
+Biomni/
+├── package.toml              # Manifest (27 components)
+├── README.md                 # This file
+├── skills/                   # Knowledge guides
+│   ├── sgrna-design/
+│   │   └── SKILL.md
+│   └── single-cell-annotation/
+│       └── SKILL.md
+└── tools/
+    └── python/              # 1.8 MB of Python code
+        ├── biochemistry.py
+        ├── database.py       # 45 functions
+        ├── pharmacology.py   # 42 functions
+        ├── genomics.py       # 20 functions
+        ├── ... (23 modules total)
+        ├── schema_db/        # Database schemas
+        └── tool_description/ # Tool metadata
+```
+
+### Component Types
+
+- **skill**: Knowledge guide documents (2)
+- **python-module**: Executable Python code (23)
+- **data**: Supporting data files (2)
+
+### No Profiles
+
+Biomni uses **整包加载** (full package loading) - no selective profiles. All 27 components load together.
+
+## Using Biomni Tools
+
+### Direct Python Import
+
+```python
+# Import Biomni modules directly
+import sys
+sys.path.append('/Users/mjm/Magenta3/packages/Biomni/tools/python')
+
+from database import query_pubmed, query_uniprot
+from pharmacology import predict_adme, predict_toxicity
+from genomics import annotate_variants
+from molecular_biology import design_pcr_primers
+
+# Use functions
+papers = query_pubmed("CRISPR")
+adme = predict_adme(compound_smiles)
+primers = design_pcr_primers(template, region)
+```
+
+### Through Magenta Harness
+
+When loaded via `--harness-package Biomni`, tools are available through Magenta's tool system.
 
 ## Requirements
 
-### Python Dependencies
+### Minimal (Included)
+
+- All Python code copied locally (1.8 MB)
+- No external Biomni installation needed
+
+### Optional for Full Functionality
+
+Some functions may require additional packages:
 
 ```bash
-pip install biomni rdkit biopython primer3-py pysam
-```
+# Cheminformatics (pharmacology module)
+pip install rdkit chembl-webresource-client
 
-### Optional for Full Features
+# Bioinformatics (genomics/molecular biology)
+pip install biopython primer3-py pysam
 
-```bash
 # Lab automation
 pip install opentrons pyhamilton
 
-# Drug discovery
-pip install chembl-webresource-client
-
-# Single-cell
+# Single-cell (for skill examples)
 pip install scanpy celltypist scvi-tools
-```
-
-## Tool Implementation Notes
-
-Tools are **descriptors** pointing to Biomni's Python modules. To use:
-
-1. Install Biomni: `pip install biomni`
-2. Load package in Magenta
-3. Tools are available through Biomni's API
-
-**Example**:
-```python
-from biomni.tool.pharmacology import predict_adme
-from biomni.tool.database import query_pubmed
-
-# Use Biomni functions directly
-results = predict_adme(compound_smiles)
-papers = query_pubmed("CRISPR")
 ```
 
 ## Citation
@@ -171,11 +203,12 @@ If using Biomni resources:
 ```
 Biomni: A General-Purpose Biomedical AI Agent
 bioRxiv 2025.05.30.656746v1
+https://github.com/snap-stanford/Biomni
 ```
 
 **sgRNA Database**:
 - Cite original publications (PubMed IDs in database)
-- Acknowledge Addgene
+- Acknowledge: "Validated sgRNA sequences obtained from Addgene"
 
 **Single-Cell Guide**:
 ```
@@ -186,51 +219,37 @@ Molecular Systems Biology
 
 ## License
 
-- **Tools**: MIT License (from Biomni)
+- **Python Tools**: MIT License (from Biomni)
 - **Knowledge Guides**: CC BY 4.0
 - **Commercial Use**: ✅ Allowed with attribution
 
-## Development
+## Migration Notes
 
-### Package Structure
+### From Original Biomni
 
-```
-Biomni/
-├── package.toml           # Manifest with 2 skills + 23 tools
-├── README.md             # This file
-├── skills/
-│   ├── sgrna-design/
-│   │   └── SKILL.md
-│   └── single-cell-annotation/
-│       └── SKILL.md
-└── tools/
-    ├── database/
-    │   └── database.toml
-    ├── genomics/
-    │   └── genomics.toml
-    ├── pharmacology/
-    │   └── pharmacology.toml
-    ├── molecular-biology/
-    │   └── molecular-biology.toml
-    ├── lab-automation/
-    │   └── lab-automation.toml
-    └── ... (18 more tool modules)
-```
+This package contains:
+- ✅ All 23 tool modules from `biomni/tool/`
+- ✅ All supporting data (`schema_db`, `tool_description`)
+- ✅ 2 knowledge guides from `biomni/know_how/`
+- ✗ Agent framework (not needed in Magenta context)
+- ✗ Task definitions (use Magenta's task system)
 
-### Adding More Tools
+### Code Attribution
 
-To add remaining 18 tool modules:
+All Python code in `tools/python/` is copied from:
+- **Source**: Stanford SNAP Lab Biomni
+- **Commit**: Based on Biomni v1.0 release
+- **License**: MIT License
+- **Modifications**: None - exact copy
 
-1. Create `tools/<module>/` directory
-2. Create `<module>.toml` descriptor
-3. Reference Biomni source: `biomni/tool/<module>.py`
-4. Update `package.toml` components section
+## Summary
 
-## See Also
+**Biomni package provides**:
+- ✅ 2 knowledge guide skills
+- ✅ 248 executable Python functions across 23 modules
+- ✅ 25+ database schemas
+- ✅ 1.8 MB of copied code (self-contained)
+- ✅整包加载 (all-in-one loading)
+- ✅ No external dependencies on original Biomni
 
-- [Biomni GitHub](https://github.com/snap-stanford/Biomni)
-- [Biomni Paper](https://www.biorxiv.org/content/10.1101/2025.05.30.656746v1)
-- [AutOmicScience Package](../AutOmicScience/)
-- [ClaudeScience Package](../ClaudeScience/)
-- [PantheonOS Package](../PantheonOS/)
-- [Magenta Self-evo skill-creator](../../harness/modules/skills/self-evo/magenta/skill-creator/SKILL.md)
+**Perfect for**: Drug discovery, database queries, lab automation, genomics analysis, and molecular biology workflows.
