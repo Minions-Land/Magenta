@@ -23,7 +23,7 @@ Interpretation: a population with high **ATAC** weight is separated mainly by ch
 
 These require the eGRN pipeline, **not** this step:
 - **multiome** (paired RNA+ATAC) → **`regulation.md`** (SCENIC+): `region_to_gene_adj.tsv` is the reusable region→gene linkage, and `eRegulon_*.tsv` carries TF→region→gene.
-- **pure scATAC** (no RNA) → `scatac-seq` `method/peak_gene_linkage.md` (co-accessibility / gene-activity correlation).
+- **pure scATAC** (no RNA) → `atac` `../../../atac/assets/references/peak_gene_linkage.md` (co-accessibility / gene-activity correlation).
 
 ## Failure Modes
 

@@ -22,12 +22,16 @@ describe("SendMessageController", () => {
 		rmSync(dir, { recursive: true, force: true });
 	});
 
-	function controller(sessionId: string): SendMessageController {
-		// heartbeatMs: 0 disables the timer so tests stay deterministic.
-		return new SendMessageController({ dbPath, getSessionId: () => sessionId, heartbeatMs: 0 });
+	function controller(sessionId: string, deps?: { wakeForMessages?: () => void; isStreaming?: () => boolean }): SendMessageController {
+		return new SendMessageController({
+			dbPath,
+			getSessionId: () => sessionId,
+			wakeForMessages: deps?.wakeForMessages,
+			isStreaming: deps?.isStreaming,
+		});
 	}
 
-	async function call(c: SendMessageController, params: { to: string; content: string }) {
+	async function call(c: SendMessageController, params: { to: string; content: string; urgent?: boolean }) {
 		const def = c.createToolDefinition();
 		return def.execute("call-1", params, undefined, undefined, {} as never);
 	}
@@ -88,7 +92,8 @@ describe("SendMessageController", () => {
 	});
 
 	it("attaches sender presence to drained messages", async () => {
-		const alice = controller("alice");
+		// A wakeable controller advertises its (live) pid, so it reads back as online.
+		const alice = controller("alice", { wakeForMessages: () => {} });
 		const bob = controller("bob");
 		try {
 			alice.recordPresence("active");
@@ -104,12 +109,78 @@ describe("SendMessageController", () => {
 
 	it("reports recipient presence back to the sender in the result text", async () => {
 		const alice = controller("alice");
-		const bob = controller("bob");
+		const bob = controller("bob", { wakeForMessages: () => {} });
 		try {
 			bob.recordPresence("idle");
 			const res = await call(alice, { to: "bob", content: "hi" });
 			const text = res.content.map((p) => ("text" in p ? p.text : "")).join("");
 			expect(text).toContain("idle");
+		} finally {
+			alice.shutdown();
+			bob.shutdown();
+		}
+	});
+
+	it("marks a message urgent and drains it with urgent priority", async () => {
+		const alice = controller("alice");
+		const bob = controller("bob");
+		try {
+			const res = await call(alice, { to: "bob", content: "drop everything", urgent: true });
+			expect(res.details?.urgent).toBe(true);
+			const text = res.content.map((p) => ("text" in p ? p.text : "")).join("");
+			expect(text).toContain("[urgent]");
+			const drained = bob.drainForInjection();
+			expect(drained[0].priority).toBe("urgent");
+		} finally {
+			alice.shutdown();
+			bob.shutdown();
+		}
+	});
+
+	it("defaults to normal priority when urgent is omitted", async () => {
+		const alice = controller("alice");
+		const bob = controller("bob");
+		try {
+			const res = await call(alice, { to: "bob", content: "whenever" });
+			expect(res.details?.urgent).toBe(false);
+			const drained = bob.drainForInjection();
+			expect(drained[0].priority).toBe("normal");
+		} finally {
+			alice.shutdown();
+			bob.shutdown();
+		}
+	});
+
+	it("wakes an idle recipient on an urgent message", async () => {
+		let woke = 0;
+		const alice = controller("alice");
+		// bob is wakeable and idle: an urgent message should signal its process,
+		// firing the wake handler in-process (same pid).
+		const bob = controller("bob", { wakeForMessages: () => woke++, isStreaming: () => false });
+		try {
+			bob.recordPresence("idle");
+			const res = await call(alice, { to: "bob", content: "urgent!", urgent: true });
+			// The wake signal is delivered synchronously within the same process, but
+			// signal handlers run on the next tick; allow the microtask/timer to flush.
+			await new Promise((r) => setTimeout(r, 20));
+			expect(res.details?.woken).toBe(true);
+			expect(woke).toBeGreaterThan(0);
+		} finally {
+			alice.shutdown();
+			bob.shutdown();
+		}
+	});
+
+	it("does not wake an idle recipient on a normal message", async () => {
+		let woke = 0;
+		const alice = controller("alice");
+		const bob = controller("bob", { wakeForMessages: () => woke++, isStreaming: () => false });
+		try {
+			bob.recordPresence("idle");
+			const res = await call(alice, { to: "bob", content: "whenever" });
+			await new Promise((r) => setTimeout(r, 20));
+			expect(res.details?.woken).toBe(false);
+			expect(woke).toBe(0);
 		} finally {
 			alice.shutdown();
 			bob.shutdown();

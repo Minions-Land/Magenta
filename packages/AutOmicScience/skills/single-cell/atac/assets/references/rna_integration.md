@@ -12,7 +12,7 @@ Assign cell-type labels to ATAC clusters using a labeled scRNA reference (the co
 
 - **The bridge is gene activity** (from `gene_activity.md`) — convert ATAC to gene space, then integrate with the scRNA reference in that shared space and transfer labels.
 
-- **Method for the shared space** — **scVI/scANVI-style or ingest/kNN label transfer** reusing the **scRNA integration recipe** (`skills/rna/method/integration.md`). Choose by reference size and batch:
+- **Method for the shared space** — **scVI/scANVI-style or ingest/kNN label transfer** reusing the **scRNA integration recipe** (`../../../rna/assets/references/integration.md`). Choose by reference size and batch:
   - Small reference, no batch → simple kNN in PCA/UMAP space
   - Large reference, batch → scVI-style integration (e.g., scANVI for semi-supervised transfer)
 
@@ -54,7 +54,7 @@ sc.pp.log1p(ga)
 
 ### Integrate with scRNA reference (reuse the scRNA recipes)
 
-The agent **reads `skills/rna/method/integration.md`** and **`annotation.md`** — they are already written and cover:
+The agent **reads `../../../rna/assets/references/integration.md`** and **`../../../rna/assets/references/annotation.md`** — they are already written and cover:
 - HVG selection on the shared space
 - Integration (Harmony / BBKNN / Scanorama / scVI)
 - Label transfer (kNN / scANVI ingest / consensus)

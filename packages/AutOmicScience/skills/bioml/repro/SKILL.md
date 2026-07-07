@@ -164,7 +164,7 @@ Complex fetch scenarios (multi-GB LFS repos, auth tokens, rate limits, git-lfs c
 | Problem | Likely Cause | Fix |
 |---------|--------------|-----|
 | **Repo won't install** | Dependency conflict, pinned to old Python | Try the paper's Docker image if provided; or downgrade Python/torch to match |
-| **Weights download times out** | Canonical HF is slow/blocked | Use mirror endpoint (see `huggingface_fetch.md`) |
+| **Weights download times out** | Canonical HF is slow/blocked | Use mirror endpoint (see `assets/references/huggingface_fetch.md`) |
 | **OOM during training** | Batch size too large, data not streamed | Halve batch size, load data lazily |
 | **Output shape wrong** | Misunderstood the contract | Read evaluator.py to see exactly what it expects |
 | **Score far below SOTA** | Wrong hyperparams, data leakage, or the baseline was cherry-picked | Check the paper's exact train/test split and config; try the escape-hatch baseline |

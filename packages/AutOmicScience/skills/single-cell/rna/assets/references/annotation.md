@@ -21,7 +21,7 @@ If the dataset already carries an `obs["cell_type"]` (or similar) column, treat 
 
 ### Step 1 — Ensure clusters exist
 
-Annotation needs a Leiden partition. `omics_compute preprocess` writes `obs["leiden"]`; if your h5ad lacks it, run preprocess first (`method/qc.md`). Over-clustering forces spurious labels — if markers come back non-specific (Step 3), lower resolution and re-cluster **before** labeling.
+Annotation needs a Leiden partition. `omics_compute preprocess` writes `obs["leiden"]`; if your h5ad lacks it, run preprocess first (`qc.md`). Over-clustering forces spurious labels — if markers come back non-specific (Step 3), lower resolution and re-cluster **before** labeling.
 
 ### Step 2 — Compute the marker table (grounded)
 
@@ -137,7 +137,7 @@ It is **PARTIAL** because it needs a curated reference bundle and heavier transf
 
 1. **Prior labels copied into output (circular annotation).** *Symptom:* `cell_type` matches an existing column with ARI ≈ 1.0 and no independent marker support. *Diagnosis:* the existing column was reused as the grouping or copied through. *Fix:* cluster fresh with Leiden, annotate from markers, and report ARI/NMI vs the prior as a comparison — do not adopt it.
 
-2. **Non-specific markers → forced labels.** *Symptom:* top markers per cluster are ribosomal/housekeeping or shared across many clusters; labels feel arbitrary. *Diagnosis:* over-clustering (resolution too high) splitting one population, or unremoved ambient RNA. *Fix:* lower Leiden resolution and re-run markers; if a gene is ubiquitous, return to QC (`method/qc.md`); abstain where still ambiguous.
+2. **Non-specific markers → forced labels.** *Symptom:* top markers per cluster are ribosomal/housekeeping or shared across many clusters; labels feel arbitrary. *Diagnosis:* over-clustering (resolution too high) splitting one population, or unremoved ambient RNA. *Fix:* lower Leiden resolution and re-run markers; if a gene is ubiquitous, return to QC (`qc.md`); abstain where still ambiguous.
 
 3. **Co-expressed lineage markers in one cluster.** *Symptom:* a cluster shows both, e.g., CD3D (T) and CD79A (B), or epithelial + immune markers. *Diagnosis:* doublets that survived QC, or a true transitional / ambient-mixed state. *Fix:* check the cluster's doublet score and `pct_counts_mt`; if doublet-driven, re-QC; otherwise label "unknown"/"doublet" rather than pick one lineage.
 

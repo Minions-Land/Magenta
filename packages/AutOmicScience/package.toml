@@ -18,32 +18,62 @@ include_in_context = true
 
 [[components]]
 kind = "skill"
-name = "multi-omics"
-path = "skills/multi-omics"
-include_in_context = true
-
-[[components]]
-kind = "skill"
-name = "scatac-seq"
-path = "skills/scatac-seq"
-include_in_context = true
-
-[[components]]
-kind = "skill"
-name = "rna"
-path = "skills/rna"
-include_in_context = true
-
-[[components]]
-kind = "skill"
-name = "bulk-rna"
-path = "skills/bulk-rna"
+name = "single-cell"
+path = "skills/single-cell"
 include_in_context = true
 
 [[components]]
 kind = "skill"
 name = "spatial"
 path = "skills/spatial"
+include_in_context = true
+
+[[components]]
+kind = "skill"
+name = "bulk"
+path = "skills/bulk"
+include_in_context = true
+
+[[components]]
+kind = "skill"
+name = "bioml"
+path = "skills/bioml"
+include_in_context = true
+
+[[components]]
+kind = "skill"
+name = "cancer-genomics"
+path = "skills/cancer-genomics"
+include_in_context = true
+
+[[components]]
+kind = "skill"
+name = "proteomics"
+path = "skills/proteomics"
+include_in_context = true
+
+[[components]]
+kind = "skill"
+name = "cancer-dependency"
+path = "skills/cancer-dependency"
+include_in_context = true
+
+[[components]]
+kind = "skill"
+name = "metabolomics"
+path = "skills/metabolomics"
+include_in_context = true
+
+[[components]]
+kind = "skill"
+name = "clinical-survival"
+path = "skills/clinical-survival"
+include_in_context = true
+
+[[components]]
+kind = "skill"
+name = "microbiome"
+path = "skills/microbiome"
 include_in_context = true
 
 [[components]]

@@ -31,7 +31,7 @@ snap.tl.spectral(mdata["atac"])                                      # -> obsm["
 mu.pp.intersect_obs(mdata)
 ```
 
-Point at the modality recipes — **don't duplicate them here**: `rna` (`method/qc.md`, `method/integration.md`) and `scatac-seq` (`method/atac_qc.md`, `method/feature_matrix.md`, `method/dimred_cluster.md`).
+Point at the modality recipes — **don't duplicate them here**: `rna` (`../../../rna/assets/references/qc.md`, `../../../rna/assets/references/integration.md`) and `atac` (`../../../atac/assets/references/atac_qc.md`, `../../../atac/assets/references/feature_matrix.md`, `../../../atac/assets/references/dimred_cluster.md`).
 
 ## Failure Modes
 

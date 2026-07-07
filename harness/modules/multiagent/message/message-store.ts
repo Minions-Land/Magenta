@@ -10,9 +10,14 @@
  *
  * The `presence` table is a Magenta addition on top of that kernel: every agent
  * records whether it is `active` (in an agent loop), `idle` (process alive, not
- * looping), or `offline` (cleanly shut down), with a heartbeat timestamp. When
- * messages are drained they are enriched with the *sender's* presence at that
- * moment, so a recipient can decide whether a reply will reach anyone.
+ * looping), or `offline` (cleanly shut down), along with its owning process's
+ * pid and a per-process boot id. Liveness is probed directly from the pid
+ * (`kill(pid, 0)`) rather than a heartbeat, so a crashed agent reads as offline
+ * the instant its process is gone. The pid also lets a sender wake an `idle`
+ * recipient by signalling its process (SIGUSR1); the boot id guards that wake
+ * against PID reuse. When messages are drained they are enriched with the
+ * *sender's* presence at that moment, so a recipient can decide whether a reply
+ * will reach anyone.
  *
  * Provenance:
  *   messages kernel — ported from MinionsOS2 (src/eacn3/messages.rs):
@@ -29,6 +34,9 @@ import { DatabaseSync } from "node:sqlite";
 /** Liveness of an agent, as recorded in the `presence` table. */
 export type PresenceState = "active" | "idle" | "offline";
 
+/** Message priority: urgent injects mid-loop, normal at loop end. */
+export type MessagePriority = "urgent" | "normal";
+
 /** A snapshot of one agent's presence, as seen at read time. */
 export interface Presence {
 	/** Last explicitly-recorded state. */
@@ -41,6 +49,14 @@ export interface Presence {
 	 * `active`/`idle` row; staleness makes it read as offline.
 	 */
 	online: boolean;
+	/** Process ID of the agent, when it's running. Null when offline. */
+	pid: number | null;
+	/**
+	 * Boot identifier: a random UUID generated on process start. Used to detect
+	 * PID reuse — if a signal target's pid matches but boot_id differs, that pid
+	 * has been reassigned to a different process instance.
+	 */
+	bootId: string | null;
 }
 
 /** One delivered message, enriched with the sender's presence at drain time. */
@@ -53,6 +69,8 @@ export interface PeerMessage {
 	content: string;
 	/** RFC3339 timestamp of insertion. */
 	createdAt: string;
+	/** Delivery priority. Urgent messages inject mid-loop; normal at loop end. */
+	priority: MessagePriority;
 	/**
 	 * The sender's presence at the time this message was drained. Undefined when
 	 * the sender never recorded any presence.
@@ -66,6 +84,14 @@ export interface PeerMessage {
  * not reported as online forever. Kept comfortably larger than the pi-side
  * heartbeat interval.
  */
+/**
+ * Staleness window for reclaiming stuck `pending` messages. A message claimed by
+ * a drain that never confirmed delivery (crash between drain and
+ * markDelivered/requeue) is returned to `unread` once its claim is older than
+ * this. Presence liveness no longer uses this window — it probes the process
+ * directly via {@link MessageStore.isProcessAlive} — so this only bounds how long
+ * a message can be stranded in `pending` after a mid-delivery crash.
+ */
 const DEFAULT_STALENESS_MS = 30_000;
 
 const SCHEMA = `
@@ -76,7 +102,8 @@ CREATE TABLE IF NOT EXISTS messages (
     content    TEXT NOT NULL,
     created_at TEXT NOT NULL,
     status     TEXT NOT NULL DEFAULT 'unread',
-    drained_at TEXT
+    drained_at TEXT,
+    priority   TEXT NOT NULL DEFAULT 'normal'
 );
 CREATE INDEX IF NOT EXISTS idx_messages_recipient ON messages(recipient, status);
 CREATE INDEX IF NOT EXISTS idx_messages_created   ON messages(created_at);
@@ -84,7 +111,9 @@ CREATE INDEX IF NOT EXISTS idx_messages_created   ON messages(created_at);
 CREATE TABLE IF NOT EXISTS presence (
     agent_id   TEXT PRIMARY KEY,
     state      TEXT NOT NULL,
-    last_seen  TEXT NOT NULL
+    last_seen  TEXT NOT NULL,
+    pid        INTEGER,
+    boot_id    TEXT
 );
 `;
 
@@ -115,33 +144,47 @@ export class MessageStore {
 	}
 
 	/**
-	 * Bring an older database up to the current schema. The `drained_at` column
-	 * and the `pending` status were added when delivery gained an at-least-once
-	 * guarantee (drain → inject → confirm). A pre-migration database has neither,
-	 * so add the column if missing. Existing `read` rows are terminal (already
-	 * delivered under the old fire-once model) and are left untouched.
+	 * Bring an older database up to the current schema. Columns are added
+	 * incrementally as the feature set grew:
+	 *  - `drained_at` + the `pending` status: added when delivery gained an
+	 *    at-least-once guarantee (drain → inject → confirm).
+	 *  - `priority`: added for urgent vs normal message delivery.
+	 *  - presence `pid` + `boot_id`: added for signal-based idle wake (a sender
+	 *    signals an idle recipient's process to make it drain immediately).
+	 * Each column is added only if missing. Existing `read` rows are terminal and
+	 * left untouched.
 	 */
 	private migrate(): void {
-		const cols = this.db.prepare(`PRAGMA table_info(messages)`).all() as Array<{ name: string }>;
-		if (!cols.some((c) => c.name === "drained_at")) {
+		const msgCols = this.db.prepare(`PRAGMA table_info(messages)`).all() as Array<{ name: string }>;
+		if (!msgCols.some((c) => c.name === "drained_at")) {
 			this.db.exec(`ALTER TABLE messages ADD COLUMN drained_at TEXT`);
+		}
+		if (!msgCols.some((c) => c.name === "priority")) {
+			this.db.exec(`ALTER TABLE messages ADD COLUMN priority TEXT NOT NULL DEFAULT 'normal'`);
+		}
+		const presCols = this.db.prepare(`PRAGMA table_info(presence)`).all() as Array<{ name: string }>;
+		if (!presCols.some((c) => c.name === "pid")) {
+			this.db.exec(`ALTER TABLE presence ADD COLUMN pid INTEGER`);
+		}
+		if (!presCols.some((c) => c.name === "boot_id")) {
+			this.db.exec(`ALTER TABLE presence ADD COLUMN boot_id TEXT`);
 		}
 	}
 
 	/**
 	 * Deliver one message to one recipient. Id and timestamp are
-	 * system-generated; callers provide only sender, recipient, and content.
-	 * Returns the generated message id.
+	 * system-generated; callers provide only sender, recipient, content, and an
+	 * optional priority (defaults to `normal`). Returns the generated message id.
 	 */
-	send(sender: string, recipient: string, content: string): string {
+	send(sender: string, recipient: string, content: string, priority: MessagePriority = "normal"): string {
 		const id = `m:${randomUUID().replace(/-/g, "")}`;
 		const createdAt = new Date().toISOString();
 		this.db
 			.prepare(
-				`INSERT INTO messages (id, sender, recipient, content, created_at, status)
-				 VALUES (?, ?, ?, ?, ?, 'unread')`,
+				`INSERT INTO messages (id, sender, recipient, content, created_at, status, priority)
+				 VALUES (?, ?, ?, ?, ?, 'unread', ?)`,
 			)
-			.run(id, sender, recipient, content, createdAt);
+			.run(id, sender, recipient, content, createdAt, priority);
 		return id;
 	}
 
@@ -160,10 +203,11 @@ export class MessageStore {
 	 * message is never lost just because the injection step threw.
 	 *
 	 * `RETURNING` gives no ordering guarantee, so results are explicitly sorted
-	 * by rowid — the monotonic insertion order, which is the true global send
-	 * order across processes even when several messages share a millisecond
-	 * timestamp. This makes "the first thing an agent sees on entering its loop
-	 * is every message that piled up while it was busy, in send order" exact.
+	 * by priority (urgent first) then rowid — the monotonic insertion order, which
+	 * is the true global send order across processes even when several messages
+	 * share a millisecond timestamp. This makes "the first thing an agent sees on
+	 * entering its loop is every urgent message, then everything else that piled
+	 * up while it was busy, in send order" exact.
 	 */
 	drainUnread(recipient: string): PeerMessage[] {
 		// Recover any messages left `pending` by a previous drain whose injection
@@ -175,7 +219,7 @@ export class MessageStore {
 			.prepare(
 				`UPDATE messages SET status = 'pending', drained_at = ?
 				 WHERE recipient = ? AND status = 'unread'
-				 RETURNING rowid, id, sender, recipient, content, created_at`,
+				 RETURNING rowid, id, sender, recipient, content, created_at, priority`,
 			)
 			.all(drainedAt, recipient) as Array<{
 			rowid: number;
@@ -184,15 +228,21 @@ export class MessageStore {
 			recipient: string;
 			content: string;
 			created_at: string;
+			priority: MessagePriority;
 		}>;
 
-		const ordered = rows.slice().sort((a, b) => a.rowid - b.rowid);
+		// Priority DESC (urgent before normal), then rowid ASC (FIFO within a priority).
+		const ordered = rows.slice().sort((a, b) => {
+			if (a.priority !== b.priority) return a.priority === "urgent" ? -1 : 1;
+			return a.rowid - b.rowid;
+		});
 		return ordered.map((r) => ({
 			id: r.id,
 			sender: r.sender,
 			recipient: r.recipient,
 			content: r.content,
 			createdAt: r.created_at,
+			priority: r.priority,
 			senderPresence: this.getPresence(r.sender),
 		}));
 	}
@@ -252,36 +302,77 @@ export class MessageStore {
 	}
 
 	/**
-	 * Record an agent's presence. Upserts state and refreshes the heartbeat
-	 * timestamp. Called both on state transitions (active/idle/offline) and as a
-	 * periodic heartbeat with the current state to prove liveness.
+	 * Record an agent's presence. Upserts state, records the owning process's pid
+	 * and boot id, and stamps the update time. Called on state transitions
+	 * (active/idle/offline). Unlike the old design there is no periodic heartbeat:
+	 * liveness is probed directly from the pid at read time (see {@link getPresence}).
+	 *
+	 * `pid`/`bootId` identify the concrete process instance that currently owns
+	 * this session, so a sender can signal it to wake and the recipient can reject
+	 * a signal aimed at a stale pid that the OS has since reused. On a clean
+	 * `offline` transition they are cleared.
 	 */
-	updatePresence(agentId: string, state: PresenceState): void {
+	updatePresence(agentId: string, state: PresenceState, opts?: { pid?: number | null; bootId?: string | null }): void {
 		const now = new Date().toISOString();
+		const pid = state === "offline" ? null : (opts?.pid ?? null);
+		const bootId = state === "offline" ? null : (opts?.bootId ?? null);
 		this.db
 			.prepare(
-				`INSERT INTO presence (agent_id, state, last_seen) VALUES (?, ?, ?)
-				 ON CONFLICT(agent_id) DO UPDATE SET state = excluded.state, last_seen = excluded.last_seen`,
+				`INSERT INTO presence (agent_id, state, last_seen, pid, boot_id) VALUES (?, ?, ?, ?, ?)
+				 ON CONFLICT(agent_id) DO UPDATE SET
+				   state = excluded.state,
+				   last_seen = excluded.last_seen,
+				   pid = excluded.pid,
+				   boot_id = excluded.boot_id`,
 			)
-			.run(agentId, state, now);
+			.run(agentId, state, now, pid, bootId);
 	}
 
 	/**
-	 * Read an agent's presence, computing the effective `online` flag from the
-	 * heartbeat freshness. Returns undefined when the agent has no record.
+	 * Read an agent's presence, computing the effective `online` flag by probing
+	 * the recorded pid directly (no heartbeat). Online means: not cleanly offline,
+	 * a pid is recorded, and that pid is currently a live process. A crashed agent
+	 * leaves a stale `active`/`idle` row whose pid is dead, so it reads as offline
+	 * the instant its process is gone — more immediate and precise than a staleness
+	 * window. Returns undefined when the agent has no record.
 	 */
 	getPresence(agentId: string): Presence | undefined {
-		const row = this.db.prepare(`SELECT state, last_seen FROM presence WHERE agent_id = ?`).get(agentId) as
-			| { state: PresenceState; last_seen: string }
-			| undefined;
+		const row = this.db
+			.prepare(`SELECT state, last_seen, pid, boot_id FROM presence WHERE agent_id = ?`)
+			.get(agentId) as { state: PresenceState; last_seen: string; pid: number | null; boot_id: string | null } | undefined;
 		if (!row) return undefined;
-		const ageMs = Date.now() - new Date(row.last_seen).getTime();
-		const fresh = Number.isFinite(ageMs) && ageMs >= 0 && ageMs < this.stalenessMs;
+		const alive = row.pid != null && MessageStore.isProcessAlive(row.pid);
 		return {
 			state: row.state,
 			lastSeen: row.last_seen,
-			online: row.state !== "offline" && fresh,
+			online: row.state !== "offline" && alive,
+			pid: row.pid,
+			bootId: row.boot_id,
 		};
+	}
+
+	/**
+	 * Probe whether a pid is a currently-live process on this machine. Uses the
+	 * POSIX signal-0 trick: `kill(pid, 0)` delivers nothing but performs the
+	 * existence + permission check the kernel would do for a real signal.
+	 *  - no throw  → process exists and is signalable → alive.
+	 *  - ESRCH     → no such process → dead.
+	 *  - EPERM     → process exists but owned by another user → alive for our
+	 *                purposes (it is running; we just can't signal it).
+	 * NOTE: this cannot distinguish the original process from a PID the OS has
+	 * reused. Callers that act on the result (e.g. sending a wake signal) must also
+	 * verify the boot id to guard against PID reuse.
+	 */
+	static isProcessAlive(pid: number): boolean {
+		if (!Number.isInteger(pid) || pid <= 0) return false;
+		try {
+			process.kill(pid, 0);
+			return true;
+		} catch (e) {
+			const code = (e as NodeJS.ErrnoException).code;
+			if (code === "EPERM") return true;
+			return false;
+		}
 	}
 
 	close(): void {

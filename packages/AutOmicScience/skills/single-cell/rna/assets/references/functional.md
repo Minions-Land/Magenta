@@ -69,7 +69,7 @@ omics_compute(
 
 **Why these defaults:** runs DE of **each** non-control value vs the named control. `perturbation-column` is the `obs` column holding the labels and `control-value` its baseline level — **both required**. `method` defaults to `"wilcoxon"` (robust, non-parametric, scanpy's default for single cell). Add `"test-values": "stim,drugA"` to restrict comparisons, `"n-top-genes": "50"` to cap reported genes, or tune `"logfc-threshold"` / `"padj-threshold"` for stringency.
 
-> **Cell-level Wilcoxon over-counts.** Each cell is treated as a replicate, so p-values are anticonservative. For a publication-grade condition contrast with biological replicates, prefer **pseudobulk DESeq2/edgeR** (REFERENCE, `method/markers_de.md`) and treat this subcommand's output as an exploratory screen.
+> **Cell-level Wilcoxon over-counts.** Each cell is treated as a replicate, so p-values are anticonservative. For a publication-grade condition contrast with biological replicates, prefer **pseudobulk DESeq2/edgeR** (REFERENCE, `markers_de.md`) and treat this subcommand's output as an exploratory screen.
 
 **Output:** `uns["perturbation_analysis"]` (per-perturbation significant-gene counts, thresholds) in `perturbation.h5ad`; the returned `report` gives `n_significant_genes` per perturbation plus the top genes (evidence recorded automatically).
 

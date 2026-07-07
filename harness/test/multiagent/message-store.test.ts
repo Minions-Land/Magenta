@@ -164,43 +164,55 @@ describe("MessageStore", () => {
 	});
 
 	describe("presence", () => {
+		// A pid that is essentially never a live process, used to model a crashed
+		// or departed agent whose presence row was never cleaned up.
+		const DEAD_PID = 2147483646;
+
 		it("returns undefined for an agent that never recorded presence", () => {
 			expect(store.getPresence("ghost")).toBeUndefined();
 		});
 
-		it("records and reads back an active agent as online", () => {
-			store.updatePresence("gru", "active");
+		it("records and reads back an active agent (with a live pid) as online", () => {
+			store.updatePresence("gru", "active", { pid: process.pid, bootId: "boot-1" });
 			const p = store.getPresence("gru");
 			expect(p?.state).toBe("active");
 			expect(p?.online).toBe(true);
+			expect(p?.pid).toBe(process.pid);
+			expect(p?.bootId).toBe("boot-1");
 			expect(p?.lastSeen).toBeTruthy();
 		});
 
-		it("reports an offline agent as not online but keeps last_seen", () => {
-			store.updatePresence("gru", "active");
+		it("reports an offline agent as not online and clears pid/boot_id", () => {
+			store.updatePresence("gru", "active", { pid: process.pid, bootId: "boot-1" });
 			store.updatePresence("gru", "offline");
 			const p = store.getPresence("gru");
 			expect(p?.state).toBe("offline");
 			expect(p?.online).toBe(false);
+			expect(p?.pid).toBeNull();
+			expect(p?.bootId).toBeNull();
 			expect(p?.lastSeen).toBeTruthy();
 		});
 
-		it("treats a stale heartbeat as offline even when state is active", () => {
-			// Zero staleness window: any recorded heartbeat is immediately stale,
-			// modelling a crashed process that never got to mark itself offline.
-			const strict = new MessageStore(join(dir, "strict", "messages.db"), { stalenessMs: 0 });
-			try {
-				strict.updatePresence("gru", "active");
-				const p = strict.getPresence("gru");
-				expect(p?.state).toBe("active");
-				expect(p?.online).toBe(false);
-			} finally {
-				strict.close();
-			}
+		it("treats a dead pid as offline even when the recorded state is active", () => {
+			// A crashed process leaves an `active` row whose pid no longer exists.
+			// Probing the pid directly reports it offline immediately.
+			store.updatePresence("gru", "active", { pid: DEAD_PID, bootId: "boot-dead" });
+			const p = store.getPresence("gru");
+			expect(p?.state).toBe("active");
+			expect(p?.online).toBe(false);
+		});
+
+		it("treats a missing pid as offline", () => {
+			// A state recorded without a pid can never be probed as alive.
+			store.updatePresence("gru", "idle");
+			const p = store.getPresence("gru");
+			expect(p?.state).toBe("idle");
+			expect(p?.online).toBe(false);
+			expect(p?.pid).toBeNull();
 		});
 
 		it("enriches drained messages with the sender's presence", () => {
-			store.updatePresence("kevin", "idle");
+			store.updatePresence("kevin", "idle", { pid: process.pid, bootId: "boot-kevin" });
 			store.send("kevin", "gru", "ping");
 			const drained = store.drainUnread("gru");
 			expect(drained).toHaveLength(1);
@@ -212,6 +224,45 @@ describe("MessageStore", () => {
 			store.send("unknown", "gru", "ping");
 			const drained = store.drainUnread("gru");
 			expect(drained[0].senderPresence).toBeUndefined();
+		});
+	});
+
+	describe("isProcessAlive", () => {
+		it("reports the current process as alive", () => {
+			expect(MessageStore.isProcessAlive(process.pid)).toBe(true);
+		});
+
+		it("reports a departed pid as dead", () => {
+			expect(MessageStore.isProcessAlive(2147483646)).toBe(false);
+		});
+
+		it("rejects invalid pids", () => {
+			expect(MessageStore.isProcessAlive(0)).toBe(false);
+			expect(MessageStore.isProcessAlive(-1)).toBe(false);
+			expect(MessageStore.isProcessAlive(1.5)).toBe(false);
+		});
+	});
+
+	describe("priority", () => {
+		it("defaults to normal priority", () => {
+			store.send("a", "b", "hello");
+			const drained = store.drainUnread("b");
+			expect(drained[0].priority).toBe("normal");
+		});
+
+		it("records urgent priority", () => {
+			store.send("a", "b", "hello", "urgent");
+			const drained = store.drainUnread("b");
+			expect(drained[0].priority).toBe("urgent");
+		});
+
+		it("drains urgent messages before normal ones, FIFO within each priority", () => {
+			store.send("a", "b", "normal-1", "normal");
+			store.send("a", "b", "urgent-1", "urgent");
+			store.send("a", "b", "normal-2", "normal");
+			store.send("a", "b", "urgent-2", "urgent");
+			const drained = store.drainUnread("b");
+			expect(drained.map((m) => m.content)).toEqual(["urgent-1", "urgent-2", "normal-1", "normal-2"]);
 		});
 	});
 });

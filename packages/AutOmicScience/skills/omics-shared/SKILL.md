@@ -39,14 +39,37 @@ Each capability is tagged so you know what actually runs:
 
 ## Modality playbooks (read after preflight)
 
-After `omics_preflight` confirms the modality, read its skill and the specific method doc you need:
+After `omics_preflight` confirms the modality, read its skill and the specific method doc you need. Skills are grouped by three orthogonal axes — pick by **what data you have** (resolution or molecule), then optionally add a **cross-cutting** skill for downstream statistics or ML engineering.
+
+**By resolution (transcriptomics-centric):**
 
 | Modality | Skill | Method docs |
 |----------|-------|-------------|
-| scRNA-seq | `skills/rna/SKILL.md` | `skills/rna/assets/references/*.md` |
-| Spatial | `skills/spatial/SKILL.md` | `skills/spatial/assets/references/*.md` |
-| scATAC-seq | `skills/scatac-seq/SKILL.md` | `skills/scatac-seq/assets/references/*.md` |
-| Multiome | `skills/multi-omics/SKILL.md` | `skills/multi-omics/assets/references/*.md` |
+| Single-cell (scRNA / scATAC / multiome) | `skills/single-cell/SKILL.md` | routes to `rna/`, `atac/`, `multiome/` subskills |
+| Spatial transcriptomics | `skills/spatial/SKILL.md` | `skills/spatial/assets/references/*.md` |
+| Bulk (RNA-seq / epigenomics) | `skills/bulk/SKILL.md` | routes to `rna/`, `epigenomics/` subskills |
+
+**By molecule / assay (beyond transcriptomics):**
+
+| Modality | Skill | Method docs |
+|----------|-------|-------------|
+| Cancer genomics — DNA variants only (MAF / CNA) | `skills/cancer-genomics/SKILL.md` | `skills/cancer-genomics/assets/references/*.md` |
+| Proteomics (Olink / MS) | `skills/proteomics/SKILL.md` | `skills/proteomics/assets/references/*.md` |
+| Metabolomics / lipidomics | `skills/metabolomics/SKILL.md` | `skills/metabolomics/assets/references/*.md` |
+| Microbiome (16S / metagenomics) | `skills/microbiome/SKILL.md` | `skills/microbiome/assets/references/*.md` |
+| Cancer dependency (DepMap / CCLE CRISPR screens) | `skills/cancer-dependency/SKILL.md` | `skills/cancer-dependency/assets/references/*.md` |
+
+**Cross-cutting layers (combine with any data skill above):**
+
+| Layer | Skill | Method docs |
+|-------|-------|-------------|
+| Survival analysis (KM / Cox on features from any modality) | `skills/clinical-survival/SKILL.md` | `skills/clinical-survival/assets/references/*.md` |
+| ML engineering / deep models (reproduce DL methods, foundation models) | `skills/bioml/SKILL.md` | routes to `repro/`, `deep-models/`, `sequence-fm/`, `coding/`, `figure-check/` subskills |
+
+Routing notes for ambiguous cases:
+- **Tumor bulk/single-cell RNA-seq** → the resolution skill (`bulk` / `single-cell`), not `cancer-genomics`. `cancer-genomics` handles somatic DNA variants (MAF/CNA) only, not expression.
+- **"Associate features with patient survival"** → first the data skill to derive features, then `clinical-survival` for the KM/Cox step.
+- **Foundation-model application (scGPT, Geneformer, UCE, perturbation prediction)** → `bioml`, not the resolution skill.
 
 The shared method docs (`skills/omics-shared/assets/references/*.md`) cover containers, data context, preprocessing, grounding, visualization, figure inspection, and data acquisition — read them on demand.
 

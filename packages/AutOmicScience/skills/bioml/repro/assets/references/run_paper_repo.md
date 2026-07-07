@@ -158,7 +158,7 @@ When the run finishes, emit:
 - Training logs (loss curves, final metrics)
 - Wall-clock time, GPU used
 
-This is your audit trail. See `../coding/assets/references/reproducible_snapshot.md` for the full packaging template.
+This is your audit trail. See `../../../coding/assets/references/reproducible_snapshot.md` for the full packaging template.
 
 ## Pitfalls
 

@@ -248,11 +248,11 @@ harness = "missing/harness.toml"
 		expect(overlay.componentMap.get("skill:omics-shared")?.path).toBe(
 			join(repoRoot, "packages", "AutOmicScience", "skills", "omics-shared"),
 		);
-		expect(overlay.componentMap.get("skill:rna")?.path).toBe(
-			join(repoRoot, "packages", "AutOmicScience", "skills", "rna"),
+		expect(overlay.componentMap.get("skill:single-cell")?.path).toBe(
+			join(repoRoot, "packages", "AutOmicScience", "skills", "single-cell"),
 		);
-		expect(overlay.componentMap.get("skill:multi-omics")?.path).toBe(
-			join(repoRoot, "packages", "AutOmicScience", "skills", "multi-omics"),
+		expect(overlay.componentMap.get("skill:bulk")?.path).toBe(
+			join(repoRoot, "packages", "AutOmicScience", "skills", "bulk"),
 		);
 		const runtimeComponent = overlay.componentMap.get("python-runtime:aose_omics_runtime");
 		expect(runtimeComponent?.path).toBe(
@@ -271,11 +271,16 @@ harness = "missing/harness.toml"
 			join(repoRoot, "packages", "AutOmicScience", "system-prompt", "system-prompt.toml"),
 		);
 		expect(overlay.resources.skillPaths.map((resource) => resource.name).sort()).toEqual([
-			"bulk-rna",
-			"multi-omics",
+			"bioml",
+			"bulk",
+			"cancer-dependency",
+			"cancer-genomics",
+			"clinical-survival",
+			"metabolomics",
+			"microbiome",
 			"omics-shared",
-			"rna",
-			"scatac-seq",
+			"proteomics",
+			"single-cell",
 			"spatial",
 		]);
 		expect(overlay.resources.appendSystemPromptPaths.map((resource) => resource.name)).toEqual(["system-prompt"]);
@@ -911,11 +916,16 @@ source = "pi"
 
 		expect(result.diagnostics).toEqual([]);
 		expect(result.skills.map((skill) => skill.name).sort()).toEqual([
-			"bulk-rna",
-			"multi-omics",
+			"bioml",
+			"bulk",
+			"cancer-dependency",
+			"cancer-genomics",
+			"clinical-survival",
+			"metabolomics",
+			"microbiome",
 			"omics-shared",
-			"rna",
-			"scatac-seq",
+			"proteomics",
+			"single-cell",
 			"spatial",
 		]);
 	});

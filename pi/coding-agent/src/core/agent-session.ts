@@ -402,6 +402,13 @@ export class AgentSession {
 		this._peerMessages = new SendMessageController({
 			dbPath: config.agentDir ? join(config.agentDir, "messages.db") : getPeerMessageDbPath(),
 			getSessionId: () => this.sessionId,
+			// Idle wake: when a peer sends this session an urgent message while it is
+			// idle, its process is signalled and this fires. Trigger a drain by
+			// prompting the session with an empty message; _injectPeerMessages runs at
+			// turn_start and pulls the queued messages into context. Guarded so a wake
+			// that races with an already-running loop is a no-op.
+			wakeForMessages: () => this._wakeForPeerMessages(),
+			isStreaming: () => this.isStreaming,
 		});
 		this._sideChat = new SideChatManager({ toolProgress: this._toolProgressTracker });
 
@@ -684,13 +691,12 @@ export class AgentSession {
 			this._peerMessages.recordPresence("idle");
 			await this._extensionRunner.emit({ type: "agent_end", messages: event.messages });
 		} else if (event.type === "turn_start") {
-			// Magenta feature: heartbeat + drain peer messages addressed to this
-			// session and inject them as follow-up context. The heartbeat refreshes
-			// liveness on every turn so a long loop never looks stale. followUp
-			// delivers after the current tool calls settle, so a teammate's message
-			// reaches the model on its next loop without interrupting the tool in
-			// flight. Draining is fire-once (marks read atomically), so each message
-			// is injected once, and everything queued while busy arrives together.
+			// Magenta feature: mark active and drain peer messages addressed to this
+			// session, injecting them into context. Urgent messages steer (before the
+			// next tool-calling turn); normal messages follow up (at loop end). Presence
+			// is refreshed on every turn so a long loop always advertises a live pid.
+			// Draining is fire-once (marks read atomically), so each message is injected
+			// once, and everything queued while busy arrives together.
 			this._peerMessages.recordPresence("active");
 			await this._injectPeerMessages();
 			const extensionEvent: TurnStartEvent = {
@@ -1373,36 +1379,113 @@ export class AgentSession {
 
 	/**
 	 * Magenta feature: drain this session's unread peer messages and inject them
-	 * as a follow-up custom message so they enter the model's context on the next
-	 * loop. No-op when there are no messages. Injection failures must never break
-	 * the turn, so errors are swallowed.
+	 * into the model's context. Urgent messages are injected as steering (they
+	 * land before the next tool-calling turn); normal messages are injected as
+	 * follow-up (they land when the loop would otherwise end). Both groups drain
+	 * together, but are delivered via separate custom messages so their timing
+	 * differs. No-op when there are no messages. Injection failures must never
+	 * break the turn, so errors are swallowed and the affected messages are
+	 * requeued for the next drain.
 	 */
 	private async _injectPeerMessages(): Promise<void> {
 		let drained: ReturnType<typeof this._peerMessages.drainForInjection> = [];
 		try {
 			drained = this._peerMessages.drainForInjection();
 			if (drained.length === 0) return;
-			await this.sendCustomMessage(
-				{
-					customType: PEER_MESSAGE_CUSTOM_TYPE,
-					content: formatPeerMessages(drained),
-					display: true,
-					details: { count: drained.length, ids: drained.map((m) => m.id) },
-				},
-				{ deliverAs: "followUp" },
-			);
-			// Injection succeeded: move the claimed messages to their terminal state
-			// so they are never redelivered.
-			this._peerMessages.confirmDelivered(drained.map((m) => m.id));
+			const urgent = drained.filter((m) => m.priority === "urgent");
+			const normal = drained.filter((m) => m.priority !== "urgent");
+			// Deliver each group with its own timing. Each group confirms/requeues
+			// independently so a failure in one does not strand the other.
+			await this._injectPeerMessageGroup(urgent, "steer");
+			await this._injectPeerMessageGroup(normal, "followUp");
 		} catch {
-			// Injection failed after the drain claimed these messages. Return them to
-			// `unread` so the next turn retries rather than losing them. Mailbox
-			// errors must never abort the agent turn, so requeue is itself guarded.
+			// A drain-level failure (before per-group handling) leaves everything
+			// claimed as `pending`; requeue so the next turn retries rather than losing
+			// them. Mailbox errors must never abort the agent turn.
 			if (drained.length > 0) {
 				try {
 					this._peerMessages.requeue(drained.map((m) => m.id));
 				} catch {
 					// Best-effort; a stuck `pending` row is reclaimed by staleness later.
+				}
+			}
+		}
+	}
+
+	/**
+	 * Inject one priority group of drained peer messages with the given delivery
+	 * mode, then confirm them as delivered. On failure, requeue just this group so
+	 * it is retried on the next drain. No-op for an empty group.
+	 */
+	private async _injectPeerMessageGroup(
+		messages: ReturnType<typeof this._peerMessages.drainForInjection>,
+		deliverAs: "steer" | "followUp",
+	): Promise<void> {
+		if (messages.length === 0) return;
+		const ids = messages.map((m) => m.id);
+		try {
+			await this.sendCustomMessage(
+				{
+					customType: PEER_MESSAGE_CUSTOM_TYPE,
+					content: formatPeerMessages(messages),
+					display: true,
+					details: { count: messages.length, ids, priority: messages[0].priority },
+				},
+				{ deliverAs },
+			);
+			this._peerMessages.confirmDelivered(ids);
+		} catch {
+			try {
+				this._peerMessages.requeue(ids);
+			} catch {
+				// Best-effort; a stuck `pending` row is reclaimed by staleness later.
+			}
+		}
+	}
+
+	/**
+	 * Magenta feature: wake this session to drain pending peer messages. Fired
+	 * when a peer signals this (idle) process after sending an urgent message.
+	 * If the session is already streaming, the next turn_start drains anyway, so
+	 * this is a no-op. Otherwise it drains the mailbox and injects the messages as
+	 * a custom message that triggers a fresh turn — the peer content itself is the
+	 * turn payload, so no empty prompt is sent to the model. Failures requeue the
+	 * messages and never crash the process.
+	 */
+	private _wakeForPeerMessages(): void {
+		if (this.isStreaming) return;
+		let drained: ReturnType<typeof this._peerMessages.drainForInjection> = [];
+		try {
+			drained = this._peerMessages.drainForInjection();
+			if (drained.length === 0) return;
+			const ids = drained.map((m) => m.id);
+			// Cold wake: inject all pending messages as one turn-triggering custom
+			// message. Priority ordering is already applied by the drain, and since we
+			// are not looping the steer/followUp distinction does not apply — the turn
+			// starts immediately regardless.
+			void this.sendCustomMessage(
+				{
+					customType: PEER_MESSAGE_CUSTOM_TYPE,
+					content: formatPeerMessages(drained),
+					display: true,
+					details: { count: drained.length, ids, wake: true },
+				},
+				{ triggerTurn: true },
+			)
+				.then(() => this._peerMessages.confirmDelivered(ids))
+				.catch(() => {
+					try {
+						this._peerMessages.requeue(ids);
+					} catch {
+						// Best-effort; a stuck `pending` row is reclaimed by staleness later.
+					}
+				});
+		} catch {
+			if (drained.length > 0) {
+				try {
+					this._peerMessages.requeue(drained.map((m) => m.id));
+				} catch {
+					// Best-effort.
 				}
 			}
 		}
