@@ -11,6 +11,7 @@ import {
 } from "@magenta/harness";
 import { type Static, Type } from "typebox";
 import { APP_BINARY_NAME, APP_NAME, getAgentDir } from "../../config.ts";
+import { formatMessageUsageStats } from "../../modes/interactive/components/footer.ts";
 import type { AgentSessionEvent } from "../agent-session.ts";
 import type { BackgroundEventManager } from "../background-events.ts";
 import {
@@ -443,6 +444,11 @@ function formatWorkflowResult(result: MultiAgentOrchestrationResult): string {
 	if (result.confidence !== undefined) header.push(`confidence: ${result.confidence.toFixed(2)}`);
 	if (result.iterations !== undefined) header.push(`iterations: ${result.iterations}`);
 	const lines = [header.join(" · ")];
+	// Aggregated token/cost usage across all workers, when the harness reported it.
+	if (result.usage) {
+		const stats = formatMessageUsageStats(result.usage);
+		if (stats) lines.push(`usage: ${stats}`);
+	}
 	const workers = result.workers ?? [];
 	workers.forEach((w, i) => {
 		const branch = i === workers.length - 1 && !result.outcome ? "└─" : "├─";

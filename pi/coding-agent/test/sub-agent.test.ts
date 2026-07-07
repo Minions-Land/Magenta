@@ -381,6 +381,70 @@ describe("built-in sub_agent tool", () => {
 		expect(text).toContain("pattern: fan_out_synthesize");
 		expect(text).toContain("outcome");
 	});
+
+	it("surfaces aggregated token/cost usage in the workflow result tree", async () => {
+		// Fake runner whose workers report usage, so the orchestrator aggregates it
+		// onto OrchestrationResult.usage and the result tree renders a usage line.
+		const usageOf = (input: number, output: number, cost: number) => ({
+			input,
+			output,
+			cacheRead: 0,
+			cacheWrite: 0,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: cost },
+		});
+		const fakeRunner = {
+			spawn: async (options: { workerId: string }) => ({
+				workerId: options.workerId,
+				text: `synth of ${options.workerId}`,
+				durationMs: 1,
+				success: true,
+				usage: usageOf(1000, 200, 0.05),
+			}),
+			parallel: async (specs: Array<{ workerId: string }>) =>
+				specs.map((s) => ({
+					workerId: s.workerId,
+					text: `did ${s.workerId}`,
+					durationMs: 1,
+					success: true,
+					usage: usageOf(2000, 400, 0.1),
+				})),
+		};
+		controller = new SubAgentController(manager, {
+			sendMessage: (message, options) => {
+				returned.push({ message, options: options ?? {} });
+			},
+			spawnAgent: createFakeSpawn(spawnRecords, { output: "unused" }),
+			workflowRunner: fakeRunner as never,
+		});
+		const tool = controller.createToolDefinition();
+		const ctx = createContext(tempDir);
+
+		const start = await tool.execute(
+			"call-wf",
+			{
+				action: "start",
+				workflow: {
+					pattern: "fan_out_synthesize",
+					name: "triage",
+					workers: [{ task: "look at A" }, { task: "look at B" }],
+					synthesizer: { task: "merge findings" },
+				},
+			},
+			undefined,
+			undefined,
+			ctx,
+		);
+		const eventId = start.details?.id as string;
+		await tool.execute("call-wait", { action: "wait", eventId }, undefined, undefined, ctx);
+
+		const status = await tool.execute("call-status", { action: "status", eventId }, undefined, undefined, ctx);
+		const text = textOf(status);
+		// Two parallel workers (2000+400 tokens each) + synthesizer (1000+200):
+		// the usage line shows summed input/output arrows and a total cost.
+		expect(text).toContain("usage:");
+		expect(text).toMatch(/usage:.*↑/);
+		expect(text).toMatch(/usage:.*\$/);
+	});
 });
 
 describe("buildOrchestrationRequest slot remapping", () => {

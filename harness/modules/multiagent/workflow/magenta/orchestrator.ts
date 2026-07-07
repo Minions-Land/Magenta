@@ -22,6 +22,7 @@ import type {
 	WorkflowContext,
 	WorkflowModule,
 } from "../../contract.ts";
+import { aggregateWorkerUsage } from "../../contract.ts";
 import { parallel, parallelAgents, pipeline, type SpawnWorkerOptions, spawnWorker } from "./worker.ts";
 
 /**
@@ -260,7 +261,7 @@ function assembleResult(
 			success: false,
 			error: result.error,
 		};
-		return { pattern, workers: [...result.spawned, outcome], outcome, terminatedBy: "budget" };
+		return { pattern, workers: [...result.spawned, outcome], outcome, terminatedBy: "budget", usage: aggregateWorkerUsage([...result.spawned, outcome]) };
 	}
 
 	const ret = result.returned;
@@ -289,6 +290,7 @@ function assembleResult(
 				...(envelope.finalists ? { finalists: envelope.finalists } : {}),
 				...(envelope.iterations !== undefined ? { iterations: envelope.iterations } : {}),
 				terminatedBy: envelope.terminatedBy ?? "completed",
+				usage: aggregateWorkerUsage(result.spawned),
 			};
 		}
 	}
@@ -301,7 +303,7 @@ function assembleResult(
 		durationMs: 0,
 		success: true,
 	};
-	return { pattern, workers: [...result.spawned, outcome], outcome, terminatedBy: "completed" };
+	return { pattern, workers: [...result.spawned, outcome], outcome, terminatedBy: "completed", usage: aggregateWorkerUsage(result.spawned) };
 }
 
 // --- Script resolution -----------------------------------------------------

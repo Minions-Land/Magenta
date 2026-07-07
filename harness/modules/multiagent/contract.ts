@@ -88,6 +88,25 @@ export interface CommonOptions {
 	cwd?: string;
 }
 
+/**
+ * Token and cost usage for one worker. Aligns with the pi-ai Usage shape.
+ * All fields are cumulative across the worker's full execution (multi-turn if
+ * the worker runs multiple model calls).
+ */
+export interface WorkerUsage {
+	input: number;
+	output: number;
+	cacheRead: number;
+	cacheWrite: number;
+	cost: {
+		input: number;
+		output: number;
+		cacheRead: number;
+		cacheWrite: number;
+		total: number;
+	};
+}
+
 /** The structured result of one worker run (shape aligned with AOSE AgentResult). */
 export interface WorkerResult {
 	workerId: string;
@@ -95,7 +114,10 @@ export interface WorkerResult {
 	text: string;
 	/** Parsed structured output, when the slot supplied a schema. */
 	structured?: unknown;
+	/** @deprecated Legacy field. Use `usage` for full breakdown. */
 	tokensUsed?: number;
+	/** Full token and cost usage, cumulative across all turns. */
+	usage?: WorkerUsage;
 	durationMs: number;
 	success: boolean;
 	error?: string;
@@ -121,6 +143,8 @@ export interface OrchestrationResult {
 	confidence?: number;
 	/** Iterations executed, for loop_until_done. */
 	iterations?: number;
+	/** Aggregated token/cost usage across all workers + outcome. */
+	usage?: WorkerUsage;
 	terminatedBy: TerminationReason;
 }
 
@@ -268,6 +292,36 @@ export interface WorkflowModule {
 	};
 	/** The workflow entry point. Receives caller args + the injected context. */
 	default: (args: unknown, context: WorkflowContext) => Promise<unknown>;
+}
+
+/**
+ * Aggregate usage across multiple WorkerResults. Sums all fields. Returns
+ * undefined if no worker reported usage (so consumers can distinguish "no data"
+ * from "zero cost").
+ */
+export function aggregateWorkerUsage(workers: WorkerResult[]): WorkerUsage | undefined {
+	const agg: WorkerUsage = {
+		input: 0,
+		output: 0,
+		cacheRead: 0,
+		cacheWrite: 0,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+	};
+	let hasAnyUsage = false;
+	for (const w of workers) {
+		if (!w.usage) continue;
+		hasAnyUsage = true;
+		agg.input += w.usage.input;
+		agg.output += w.usage.output;
+		agg.cacheRead += w.usage.cacheRead;
+		agg.cacheWrite += w.usage.cacheWrite;
+		agg.cost.input += w.usage.cost.input;
+		agg.cost.output += w.usage.cost.output;
+		agg.cost.cacheRead += w.usage.cost.cacheRead;
+		agg.cost.cacheWrite += w.usage.cost.cacheWrite;
+		agg.cost.total += w.usage.cost.total;
+	}
+	return hasAnyUsage ? agg : undefined;
 }
 
 /**

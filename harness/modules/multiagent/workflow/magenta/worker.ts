@@ -14,7 +14,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { Isolation, WorkerResult, WorkerSlot } from "../../contract.ts";
+import type { Isolation, WorkerResult, WorkerSlot, WorkerUsage } from "../../contract.ts";
 
 /** Default tools handed to a worker when none are specified: read-only. */
 const DEFAULT_TOOLS = ["read", "grep", "find", "ls"];
@@ -100,7 +100,20 @@ export interface SpawnWorkerOptions {
 interface PiMessage {
 	role?: string;
 	content?: Array<{ type?: string; text?: string }>;
-	usage?: { totalTokens?: number };
+	usage?: {
+		input?: number;
+		output?: number;
+		cacheRead?: number;
+		cacheWrite?: number;
+		totalTokens?: number;
+		cost?: {
+			input?: number;
+			output?: number;
+			cacheRead?: number;
+			cacheWrite?: number;
+			total?: number;
+		};
+	};
 	errorMessage?: string;
 }
 
@@ -240,6 +253,14 @@ export async function spawnWorker(options: SpawnWorkerOptions, signal?: AbortSig
 	const messages: PiMessage[] = [];
 	let stderr = "";
 	let totalTokens = 0;
+	// Accumulate usage across all assistant turns
+	const usage: WorkerUsage = {
+		input: 0,
+		output: 0,
+		cacheRead: 0,
+		cacheWrite: 0,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+	};
 	let errorMessage: string | undefined;
 	let timedOut = false;
 
@@ -267,7 +288,21 @@ export async function spawnWorker(options: SpawnWorkerOptions, signal?: AbortSig
 					const msg = event.message;
 					messages.push(msg);
 					if (msg.role === "assistant") {
-						if (msg.usage?.totalTokens) totalTokens = msg.usage.totalTokens;
+						if (msg.usage) {
+							// Sum usage across all assistant turns
+							usage.input += msg.usage.input ?? 0;
+							usage.output += msg.usage.output ?? 0;
+							usage.cacheRead += msg.usage.cacheRead ?? 0;
+							usage.cacheWrite += msg.usage.cacheWrite ?? 0;
+							if (msg.usage.cost) {
+								usage.cost.input += msg.usage.cost.input ?? 0;
+								usage.cost.output += msg.usage.cost.output ?? 0;
+								usage.cost.cacheRead += msg.usage.cost.cacheRead ?? 0;
+								usage.cost.cacheWrite += msg.usage.cost.cacheWrite ?? 0;
+								usage.cost.total += msg.usage.cost.total ?? 0;
+							}
+							if (msg.usage.totalTokens) totalTokens = msg.usage.totalTokens; // legacy compat
+						}
 						if (msg.errorMessage) errorMessage = msg.errorMessage;
 					}
 				}
@@ -332,7 +367,8 @@ export async function spawnWorker(options: SpawnWorkerOptions, signal?: AbortSig
 			workerId: options.workerId,
 			text,
 			structured: options.schema ? tryParseStructured(text) : undefined,
-			tokensUsed: totalTokens || undefined,
+			tokensUsed: totalTokens || undefined, // legacy compat
+			usage: usage.input + usage.output + usage.cacheRead + usage.cacheWrite > 0 ? usage : undefined,
 			durationMs: Date.now() - start,
 			success,
 			error: success
