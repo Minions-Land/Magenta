@@ -261,7 +261,13 @@ function assembleResult(
 			success: false,
 			error: result.error,
 		};
-		return { pattern, workers: [...result.spawned, outcome], outcome, terminatedBy: "budget", usage: aggregateWorkerUsage([...result.spawned, outcome]) };
+		return {
+			pattern,
+			workers: [...result.spawned, outcome],
+			outcome,
+			terminatedBy: "budget",
+			usage: aggregateWorkerUsage([...result.spawned, outcome]),
+		};
 	}
 
 	const ret = result.returned;
@@ -303,7 +309,13 @@ function assembleResult(
 		durationMs: 0,
 		success: true,
 	};
-	return { pattern, workers: [...result.spawned, outcome], outcome, terminatedBy: "completed", usage: aggregateWorkerUsage(result.spawned) };
+	return {
+		pattern,
+		workers: [...result.spawned, outcome],
+		outcome,
+		terminatedBy: "completed",
+		usage: aggregateWorkerUsage(result.spawned),
+	};
 }
 
 // --- Script resolution -----------------------------------------------------

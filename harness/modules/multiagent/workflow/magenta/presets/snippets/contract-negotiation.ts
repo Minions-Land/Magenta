@@ -22,7 +22,7 @@ export async function negotiateContract(ctx: any, objective: string): Promise<st
 		`You are the Generator. The objective is:\n\n${objective}\n\n` +
 			`Draft a numbered list of testable assertions (completion criteria) that define ` +
 			`when the work is done. Each assertion must be checkable as PASS / FAIL / UNCLEAR. ` +
-			`Be concrete: \"all test cases pass\" not \"quality is good\". Return as a JSON array of strings.`,
+			`Be concrete: "all test cases pass" not "quality is good". Return as a JSON array of strings.`,
 		{
 			label: "contract-draft",
 			schema: { type: "object", properties: { assertions: { type: "array", items: { type: "string" } } } },
@@ -50,7 +50,9 @@ export async function negotiateContract(ctx: any, objective: string): Promise<st
 
 	// Log the contract for auditability
 	ctx.log(`Contract finalized: ${finalized.length} assertions`);
-	finalized.forEach((a, i) => ctx.log(`  ${i + 1}. ${a}`));
+	finalized.forEach((a, i) => {
+		ctx.log(`  ${i + 1}. ${a}`);
+	});
 
 	return finalized;
 }

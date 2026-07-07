@@ -2712,7 +2712,9 @@ export class AgentSession {
 		// Add built-in message renderers extension (for bg-shell-return, etc.)
 		// Only in non-print modes where custom messages are displayed
 		if (this._extensionMode !== "print") {
-			const { createBuiltInMessageRenderersExtension } = require("../modes/interactive/builtin-message-renderers.ts");
+			const {
+				createBuiltInMessageRenderersExtension,
+			} = require("../modes/interactive/builtin-message-renderers.ts");
 			extensionsResult.extensions.push(createBuiltInMessageRenderersExtension());
 		}
 

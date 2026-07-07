@@ -17,7 +17,9 @@ export default async function fanOutSynthesize(args: unknown, ctx: any) {
 	);
 
 	const merged = results
-		.map((r: any, i: number) => `--- Worker ${i + 1} (${r.success ? "ok" : "failed"}) ---\n${r.text || r.error || ""}`)
+		.map(
+			(r: any, i: number) => `--- Worker ${i + 1} (${r.success ? "ok" : "failed"}) ---\n${r.text || r.error || ""}`,
+		)
 		.join("\n\n");
 
 	const outcome = await ctx.agent(`${req.synthesizer.task}\n\n${merged}`, {

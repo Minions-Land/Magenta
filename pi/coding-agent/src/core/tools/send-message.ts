@@ -26,7 +26,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { MessageStore, type MessagePriority, type PresenceState } from "@magenta/harness";
+import { type MessagePriority, MessageStore, type PresenceState } from "@magenta/harness";
 import { type Static, Type } from "typebox";
 import type { ToolDefinition } from "../extensions/types.ts";
 
@@ -224,7 +224,9 @@ export class SendMessageController {
 		const urgentNote = urgent ? " [urgent]" : "";
 		const wokenNote = woken ? " (woke recipient)" : "";
 		return {
-			content: [{ type: "text", text: `Message ${id} delivered to session ${to}${urgentNote} — ${status}${wokenNote}.` }],
+			content: [
+				{ type: "text", text: `Message ${id} delivered to session ${to}${urgentNote} — ${status}${wokenNote}.` },
+			],
 			details: { id, to, from, urgent, recipientStatus: status, woken },
 		};
 	}

@@ -40,12 +40,13 @@ export default async function generateAndFilter(args: unknown, ctx: any) {
 
 	// Score each candidate by explicit criteria (evaluator returns a number).
 	const evaluations = await ctx.parallelAgents(
-		candidates.map((c: any, i: number) => () =>
-			ctx.agent(`${req.evaluator.task}\n\nCandidate to score:\n${c.text}`, {
-				label: `eval-${i}`,
-				guard: ctx.guards.evaluator,
-				schema: SCORE_SCHEMA,
-			}),
+		candidates.map(
+			(c: any, i: number) => () =>
+				ctx.agent(`${req.evaluator.task}\n\nCandidate to score:\n${c.text}`, {
+					label: `eval-${i}`,
+					guard: ctx.guards.evaluator,
+					schema: SCORE_SCHEMA,
+				}),
 		),
 		req.maxConcurrent,
 	);

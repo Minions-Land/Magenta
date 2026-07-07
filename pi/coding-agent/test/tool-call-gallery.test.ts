@@ -70,7 +70,7 @@ describe("tool-call gallery", () => {
 		expect(plain).toContain("✓1");
 		expect(plain).toContain("▸1");
 		expect(plain).toContain("✕1");
-		expect(plain).toContain("Ctrl+O gallery");
+		expect(plain).toContain("Ctrl+o gallery");
 		for (const line of lines) {
 			expect(visibleWidth(line)).toBeLessThanOrEqual(80);
 		}

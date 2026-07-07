@@ -35,12 +35,14 @@ export default async function adversarialVerify(args: unknown, ctx: any) {
 
 	// Independently verify, N times in parallel. Each returns a boolean verdict.
 	const verifiers = await ctx.parallelAgents(
-		Array.from({ length: verifyCount }, (_, i) => () =>
-			ctx.agent(`${req.verifier.task}\n\nCandidate(s) to verify:\n${generator.text}`, {
-				label: `verify-${i}`,
-				guard: ctx.guards.verifier,
-				schema: BOOLEAN_VERDICT_SCHEMA,
-			}),
+		Array.from(
+			{ length: verifyCount },
+			(_, i) => () =>
+				ctx.agent(`${req.verifier.task}\n\nCandidate(s) to verify:\n${generator.text}`, {
+					label: `verify-${i}`,
+					guard: ctx.guards.verifier,
+					schema: BOOLEAN_VERDICT_SCHEMA,
+				}),
 		),
 		req.maxConcurrent,
 	);

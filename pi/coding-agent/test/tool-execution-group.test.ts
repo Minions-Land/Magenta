@@ -53,7 +53,7 @@ describe("ToolExecutionGroupComponent", () => {
 		expect(collapsed).toContain("tools ×2");
 		expect(collapsed).toContain("✓1");
 		expect(collapsed).toContain("✕1");
-		expect(collapsed).toContain("Ctrl+O gallery");
+		expect(collapsed).toContain("Ctrl+o gallery");
 		expect(collapsed).not.toContain("result custom_a");
 
 		group.setExpanded(true);

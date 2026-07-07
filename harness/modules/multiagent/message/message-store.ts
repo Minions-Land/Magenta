@@ -339,7 +339,9 @@ export class MessageStore {
 	getPresence(agentId: string): Presence | undefined {
 		const row = this.db
 			.prepare(`SELECT state, last_seen, pid, boot_id FROM presence WHERE agent_id = ?`)
-			.get(agentId) as { state: PresenceState; last_seen: string; pid: number | null; boot_id: string | null } | undefined;
+			.get(agentId) as
+			| { state: PresenceState; last_seen: string; pid: number | null; boot_id: string | null }
+			| undefined;
 		if (!row) return undefined;
 		const alive = row.pid != null && MessageStore.isProcessAlive(row.pid);
 		return {

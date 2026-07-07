@@ -22,7 +22,10 @@ describe("SendMessageController", () => {
 		rmSync(dir, { recursive: true, force: true });
 	});
 
-	function controller(sessionId: string, deps?: { wakeForMessages?: () => void; isStreaming?: () => boolean }): SendMessageController {
+	function controller(
+		sessionId: string,
+		deps?: { wakeForMessages?: () => void; isStreaming?: () => boolean },
+	): SendMessageController {
 		return new SendMessageController({
 			dbPath,
 			getSessionId: () => sessionId,

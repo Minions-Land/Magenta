@@ -247,7 +247,10 @@ function summarizeEvent(event: BackgroundShellEvent, includeOutput = true, colla
 		if (collapsed && output.text) {
 			// Collapsed mode: show count of output lines with expand hint
 			const outputLineCount = output.text.split("\n").length;
-			lines.push("", `... ${outputLineCount} output ${outputLineCount === 1 ? "line" : "lines"} hidden (ctrl+o to expand)`);
+			lines.push(
+				"",
+				`... ${outputLineCount} output ${outputLineCount === 1 ? "line" : "lines"} hidden (ctrl+o to expand)`,
+			);
 		} else {
 			lines.push(
 				"",

@@ -36,11 +36,7 @@ const FOUR_AXIS_SCHEMA = {
 	required: ["correctness", "coverage", "rigor", "format"],
 } as const;
 
-export async function fourAxisScore(
-	ctx: any,
-	artifact: string,
-	contract: string[],
-): Promise<FourAxisScores> {
+export async function fourAxisScore(ctx: any, artifact: string, contract: string[]): Promise<FourAxisScores> {
 	const prompt =
 		`You are the Evaluator. Grade the following artifact against the contract.\n\n` +
 		`**Contract (testable assertions):**\n${contract.map((a, i) => `${i + 1}. ${a}`).join("\n")}\n\n` +
@@ -63,7 +59,9 @@ export async function fourAxisScore(
 
 	const total = (scores.correctness.score + scores.coverage.score + scores.rigor.score + scores.format.score) / 4;
 
-	ctx.log(`Four-axis scores: correctness=${scores.correctness.score}, coverage=${scores.coverage.score}, rigor=${scores.rigor.score}, format=${scores.format.score}, total=${total.toFixed(2)}`);
+	ctx.log(
+		`Four-axis scores: correctness=${scores.correctness.score}, coverage=${scores.coverage.score}, rigor=${scores.rigor.score}, format=${scores.format.score}, total=${total.toFixed(2)}`,
+	);
 
 	return { ...scores, total };
 }
