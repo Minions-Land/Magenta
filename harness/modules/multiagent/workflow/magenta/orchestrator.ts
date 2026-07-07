@@ -11,25 +11,18 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { HcpServer } from "../../../../hcp-contract/hcp-server.ts";
 import type {
-	AdversarialVerifyRequest,
-	ClassifyAndActRequest,
 	CommonOptions,
-	FanOutSynthesizeRequest,
-	GenerateAndFilterRequest,
-	LoopUntilDoneRequest,
 	MultiAgentDiscoverResult,
 	MultiAgentProviderContract,
 	OrchestrationRequest,
 	OrchestrationResult,
 	Pattern,
 	ScriptWorkflowRequest,
-	TournamentRequest,
 	WorkerResult,
-	WorkerSlot,
 	WorkflowContext,
 	WorkflowModule,
 } from "../../contract.ts";
-import { buildSystemPrompt, parallel, type SpawnWorkerOptions, spawnWorker } from "./worker.ts";
+import { parallel, type SpawnWorkerOptions, spawnWorker } from "./worker.ts";
 
 /**
  * The two primitives every pattern needs to run workers. Abstracted so the
@@ -274,69 +267,17 @@ async function runWorkflowModule(
 	}
 }
 
-async function runScript(
-	req: ScriptWorkflowRequest,
-	runner: WorkerRunner,
-	defaultCwd: string,
-	signal?: AbortSignal,
-): Promise<OrchestrationResult> {
-	const result = await runWorkflowModule(req.scriptPath, req.args, runner, req.cwd ?? defaultCwd, signal);
-
-	// For user scripts, the return value is opaque; wrap it as outcome.
-	const outcome: WorkerResult = result.success
-		? {
-				workerId: result.workflowId,
-				text: typeof result.returned === "string" ? result.returned : JSON.stringify(result.returned),
-				structured: typeof result.returned === "string" ? undefined : result.returned,
-				durationMs: 0,
-				success: true,
-		  }
-		: {
-				workerId: result.workflowId,
-				text: "",
-				durationMs: 0,
-				success: false,
-				error: result.error,
-		  };
-
-	return {
-		pattern: "script",
-		workers: [...result.spawned, outcome],
-		outcome,
-		terminatedBy: outcome.success ? "completed" : "budget",
-	};
-}
-
-/** The magenta multi-agent orchestration provider. */
-// --- Preset dispatch -------------------------------------------------------
-
 /**
- * The six built-in patterns are just preset workflow scripts, authored with the
- * exact same (args, ctx) => {} shape a user script uses and executed through the
- * same runWorkflowModule path. The only difference: a preset returns a small
- * structured envelope ({ outcome?, confidence?, finalists?, iterations?,
- * terminatedBy? }) so the dispatcher can preserve each pattern's semantic fields
- * in the OrchestrationResult. A user script's return value stays opaque.
+ * Assemble an OrchestrationResult from a workflow module's output. Inspects the
+ * return value shape (not who authored the script): if it carries known
+ * semantic fields (outcome, confidence, finalists, iterations, terminatedBy),
+ * preserve them; otherwise treat the return as opaque and wrap it as outcome.
+ * This is the single result-assembly path for presets and user scripts alike.
  */
-const PRESET_SCRIPTS: Record<Exclude<Pattern, "script">, string> = {
-	fan_out_synthesize: "./presets/fan-out-synthesize.js",
-	classify_and_act: "./presets/classify-and-act.js",
-	adversarial_verify: "./presets/adversarial-verify.js",
-	generate_and_filter: "./presets/generate-and-filter.js",
-	tournament: "./presets/tournament.js",
-	loop_until_done: "./presets/loop-until-done.js",
-};
-
-async function runPreset(
-	pattern: Exclude<Pattern, "script">,
-	req: OrchestrationRequest,
-	runner: WorkerRunner,
-	defaultCwd: string,
-	signal?: AbortSignal,
-): Promise<OrchestrationResult> {
-	const scriptPath = new URL(PRESET_SCRIPTS[pattern], import.meta.url).href;
-	const result = await runWorkflowModule(scriptPath, req, runner, (req as CommonOptions).cwd ?? defaultCwd, signal);
-
+function assembleResult(
+	pattern: Pattern,
+	result: { workflowId: string; spawned: WorkerResult[]; returned: unknown; success: boolean; error?: string },
+): OrchestrationResult {
 	if (!result.success) {
 		const outcome: WorkerResult = {
 			workerId: result.workflowId,
@@ -348,25 +289,71 @@ async function runPreset(
 		return { pattern, workers: [...result.spawned, outcome], outcome, terminatedBy: "budget" };
 	}
 
-	// Preset envelope: pull semantic fields, default outcome to the last spawned worker.
-	const envelope = (result.returned ?? {}) as {
-		outcome?: WorkerResult;
-		confidence?: number;
-		finalists?: WorkerResult[];
-		iterations?: number;
-		terminatedBy?: OrchestrationResult["terminatedBy"];
-	};
-	const outcome = envelope.outcome ?? result.spawned[result.spawned.length - 1];
+	const ret = result.returned;
+	// Structured envelope: the return object carries known semantic fields.
+	if (ret && typeof ret === "object" && !Array.isArray(ret)) {
+		const envelope = ret as {
+			outcome?: WorkerResult;
+			confidence?: number;
+			finalists?: WorkerResult[];
+			iterations?: number;
+			terminatedBy?: OrchestrationResult["terminatedBy"];
+		};
+		const hasSemanticFields =
+			"outcome" in envelope ||
+			"confidence" in envelope ||
+			"finalists" in envelope ||
+			"iterations" in envelope ||
+			"terminatedBy" in envelope;
+		if (hasSemanticFields) {
+			const outcome = envelope.outcome ?? result.spawned[result.spawned.length - 1];
+			return {
+				pattern,
+				workers: result.spawned,
+				outcome,
+				...(envelope.confidence !== undefined ? { confidence: envelope.confidence } : {}),
+				...(envelope.finalists ? { finalists: envelope.finalists } : {}),
+				...(envelope.iterations !== undefined ? { iterations: envelope.iterations } : {}),
+				terminatedBy: envelope.terminatedBy ?? "completed",
+			};
+		}
+	}
 
-	return {
-		pattern,
-		workers: result.spawned,
-		outcome,
-		...(envelope.confidence !== undefined ? { confidence: envelope.confidence } : {}),
-		...(envelope.finalists ? { finalists: envelope.finalists } : {}),
-		...(envelope.iterations !== undefined ? { iterations: envelope.iterations } : {}),
-		terminatedBy: envelope.terminatedBy ?? "completed",
+	// Opaque return: wrap it as the outcome.
+	const outcome: WorkerResult = {
+		workerId: result.workflowId,
+		text: typeof ret === "string" ? ret : JSON.stringify(ret),
+		structured: typeof ret === "string" ? undefined : ret,
+		durationMs: 0,
+		success: true,
 	};
+	return { pattern, workers: [...result.spawned, outcome], outcome, terminatedBy: "completed" };
+}
+
+// --- Script resolution -----------------------------------------------------
+
+/**
+ * The six built-in patterns are just preset workflow scripts, authored with the
+ * exact same (args, ctx) => {} shape a user script uses. Choosing a preset and
+ * writing your own workflow are the same action: load a module and run it. The
+ * only difference is where the module comes from — an in-tree preset or a
+ * user-supplied path.
+ */
+const PRESET_SCRIPTS: Record<Exclude<Pattern, "script">, string> = {
+	fan_out_synthesize: "./presets/fan-out-synthesize.js",
+	classify_and_act: "./presets/classify-and-act.js",
+	adversarial_verify: "./presets/adversarial-verify.js",
+	generate_and_filter: "./presets/generate-and-filter.js",
+	tournament: "./presets/tournament.js",
+	loop_until_done: "./presets/loop-until-done.js",
+};
+
+/** Resolve a request to the workflow module path it should load. */
+function resolveScriptPath(req: OrchestrationRequest): string {
+	if (req.pattern === "script") {
+		return (req as ScriptWorkflowRequest).scriptPath;
+	}
+	return new URL(PRESET_SCRIPTS[req.pattern], import.meta.url).href;
 }
 
 export class MultiAgentOrchestrator implements MultiAgentProviderContract {
@@ -385,11 +372,13 @@ export class MultiAgentOrchestrator implements MultiAgentProviderContract {
 
 	async orchestrate(request: OrchestrationRequest, signal?: AbortSignal): Promise<OrchestrationResult> {
 		const req = { cwd: this.defaultCwd, ...request } as OrchestrationRequest;
-		const runner = this.runner;
-		if (req.pattern === "script") {
-			return runScript(req as ScriptWorkflowRequest, runner, this.defaultCwd, signal);
-		}
-		return runPreset(req.pattern, req, runner, this.defaultCwd, signal);
+		// One path for everything: resolve which module to load (a built-in preset
+		// or a user-supplied script), run it, assemble the result from its return.
+		const scriptPath = resolveScriptPath(req);
+		const args = req.pattern === "script" ? (req as ScriptWorkflowRequest).args : req;
+		const cwd = (req as CommonOptions).cwd ?? this.defaultCwd;
+		const result = await runWorkflowModule(scriptPath, args, this.runner, cwd, signal);
+		return assembleResult(req.pattern, result);
 	}
 
 	toHcpServer(): HcpServer {

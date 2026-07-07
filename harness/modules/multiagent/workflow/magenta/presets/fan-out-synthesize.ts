@@ -25,5 +25,5 @@ export default async function fanOutSynthesize(args: unknown, ctx: any) {
 		guard: ctx.guards.synthesizer,
 	});
 
-	return outcome;
+	return { outcome, terminatedBy: "completed" };
 }
