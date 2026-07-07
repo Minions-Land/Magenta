@@ -83,9 +83,19 @@ export class SendMessageController {
 		}
 	}
 
-	/** Drain this session's unread messages (fire-once, marks them read). */
+	/** Drain this session's unread messages, claiming them as `pending`. */
 	drainForInjection(): ReturnType<MessageStore["drainUnread"]> {
 		return this.store.drainUnread(this.getSessionId());
+	}
+
+	/** Confirm drained messages were injected; moves them to the terminal state. */
+	confirmDelivered(ids: string[]): void {
+		this.store.markDelivered(ids);
+	}
+
+	/** Return drained messages to `unread` so a later drain retries them. */
+	requeue(ids: string[]): void {
+		this.store.requeue(ids);
 	}
 
 	/** Record this session's presence (state transition or heartbeat). */

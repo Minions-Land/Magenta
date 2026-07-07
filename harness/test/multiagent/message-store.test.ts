@@ -90,6 +90,64 @@ describe("MessageStore", () => {
 		expect(store.drainUnread("gru")).toHaveLength(2);
 	});
 
+	describe("at-least-once delivery (drain → confirm/requeue)", () => {
+		it("does not redeliver a drained message once it is confirmed delivered", () => {
+			const id = store.send("kevin", "gru", "hello");
+			const drained = store.drainUnread("gru");
+			expect(drained).toHaveLength(1);
+			store.markDelivered([id]);
+			// Terminal state: never comes back, even after the staleness window.
+			expect(store.drainUnread("gru")).toHaveLength(0);
+			expect(store.unreadCount("gru")).toBe(0);
+		});
+
+		it("redelivers a drained message that was never confirmed, via requeue", () => {
+			// Models an injection that failed after the drain claimed the message:
+			// the caller returns it to unread so the next drain retries it.
+			const id = store.send("kevin", "gru", "retry me");
+			const first = store.drainUnread("gru");
+			expect(first).toHaveLength(1);
+			store.requeue([id]);
+			const second = store.drainUnread("gru");
+			expect(second).toHaveLength(1);
+			expect(second[0].id).toBe(id);
+		});
+
+		it("holds a drained-but-unconfirmed message out of the next drain until it goes stale", () => {
+			// Within the staleness window a pending (in-flight) message is not
+			// re-claimed, so a second drain in the same turn does not double-deliver.
+			store.send("kevin", "gru", "in flight");
+			expect(store.drainUnread("gru")).toHaveLength(1);
+			expect(store.drainUnread("gru")).toHaveLength(0);
+		});
+
+		it("reclaims a message stuck pending past the staleness window", () => {
+			// Zero staleness: a claimed-but-unconfirmed message is immediately
+			// considered abandoned (crash-after-claim) and redelivered on next drain.
+			const strict = new MessageStore(join(dir, "reclaim", "messages.db"), { stalenessMs: 0 });
+			try {
+				const id = strict.send("kevin", "gru", "orphaned");
+				expect(strict.drainUnread("gru")).toHaveLength(1);
+				// No confirm, no requeue — simulate a crash. Next drain recovers it.
+				const recovered = strict.drainUnread("gru");
+				expect(recovered).toHaveLength(1);
+				expect(recovered[0].id).toBe(id);
+			} finally {
+				strict.close();
+			}
+		});
+
+		it("markDelivered and requeue ignore ids that are not pending", () => {
+			// Idempotent no-ops: confirming/requeuing an unknown or already-terminal
+			// id must not throw or resurrect anything.
+			store.send("kevin", "gru", "x");
+			expect(() => store.markDelivered(["m:nonexistent"])).not.toThrow();
+			expect(() => store.requeue(["m:nonexistent"])).not.toThrow();
+			// The still-unread message is untouched.
+			expect(store.unreadCount("gru")).toBe(1);
+		});
+	});
+
 	it("shares state across separate store handles on the same file", () => {
 		const dbPath = join(dir, "shared", "messages.db");
 		const writer = new MessageStore(dbPath);

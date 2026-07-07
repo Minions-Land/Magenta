@@ -1378,20 +1378,33 @@ export class AgentSession {
 	 * the turn, so errors are swallowed.
 	 */
 	private async _injectPeerMessages(): Promise<void> {
+		let drained: ReturnType<typeof this._peerMessages.drainForInjection> = [];
 		try {
-			const messages = this._peerMessages.drainForInjection();
-			if (messages.length === 0) return;
+			drained = this._peerMessages.drainForInjection();
+			if (drained.length === 0) return;
 			await this.sendCustomMessage(
 				{
 					customType: PEER_MESSAGE_CUSTOM_TYPE,
-					content: formatPeerMessages(messages),
+					content: formatPeerMessages(drained),
 					display: true,
-					details: { count: messages.length, ids: messages.map((m) => m.id) },
+					details: { count: drained.length, ids: drained.map((m) => m.id) },
 				},
 				{ deliverAs: "followUp" },
 			);
+			// Injection succeeded: move the claimed messages to their terminal state
+			// so they are never redelivered.
+			this._peerMessages.confirmDelivered(drained.map((m) => m.id));
 		} catch {
-			// Mailbox errors must not abort the agent turn.
+			// Injection failed after the drain claimed these messages. Return them to
+			// `unread` so the next turn retries rather than losing them. Mailbox
+			// errors must never abort the agent turn, so requeue is itself guarded.
+			if (drained.length > 0) {
+				try {
+					this._peerMessages.requeue(drained.map((m) => m.id));
+				} catch {
+					// Best-effort; a stuck `pending` row is reclaimed by staleness later.
+				}
+			}
 		}
 	}
 

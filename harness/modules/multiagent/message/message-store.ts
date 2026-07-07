@@ -75,7 +75,8 @@ CREATE TABLE IF NOT EXISTS messages (
     recipient  TEXT NOT NULL,
     content    TEXT NOT NULL,
     created_at TEXT NOT NULL,
-    status     TEXT NOT NULL DEFAULT 'unread'
+    status     TEXT NOT NULL DEFAULT 'unread',
+    drained_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_messages_recipient ON messages(recipient, status);
 CREATE INDEX IF NOT EXISTS idx_messages_created   ON messages(created_at);
@@ -109,7 +110,22 @@ export class MessageStore {
 		this.db.exec("PRAGMA journal_mode = WAL;");
 		this.db.exec("PRAGMA busy_timeout = 5000;");
 		this.db.exec(SCHEMA);
+		this.migrate();
 		this.stalenessMs = options?.stalenessMs ?? DEFAULT_STALENESS_MS;
+	}
+
+	/**
+	 * Bring an older database up to the current schema. The `drained_at` column
+	 * and the `pending` status were added when delivery gained an at-least-once
+	 * guarantee (drain → inject → confirm). A pre-migration database has neither,
+	 * so add the column if missing. Existing `read` rows are terminal (already
+	 * delivered under the old fire-once model) and are left untouched.
+	 */
+	private migrate(): void {
+		const cols = this.db.prepare(`PRAGMA table_info(messages)`).all() as Array<{ name: string }>;
+		if (!cols.some((c) => c.name === "drained_at")) {
+			this.db.exec(`ALTER TABLE messages ADD COLUMN drained_at TEXT`);
+		}
 	}
 
 	/**
@@ -130,10 +146,18 @@ export class MessageStore {
 	}
 
 	/**
-	 * Read and consume all currently-unread messages for `recipient`, marking
-	 * them read in the *same statement* so they are not redelivered and no
-	 * concurrently-inserted message is lost. Each message is enriched with its
-	 * sender's presence snapshot.
+	 * Atomically claim this recipient's unread messages for delivery. Rows move
+	 * from `unread` to `pending` (not straight to `read`) in a single statement,
+	 * so no concurrently-inserted message can slip through the claim. Each claimed
+	 * message is enriched with its sender's presence snapshot.
+	 *
+	 * `pending` is the in-flight state: a message has been handed to the caller
+	 * but not yet confirmed as delivered into the agent's context. The caller MUST
+	 * follow a successful injection with {@link markDelivered}; if injection fails
+	 * it should call {@link requeue} (or simply do nothing and let
+	 * {@link reclaimStalePending} recover it on a later drain). This drain → inject
+	 * → confirm handshake turns the old fire-once delivery into at-least-once, so a
+	 * message is never lost just because the injection step threw.
 	 *
 	 * `RETURNING` gives no ordering guarantee, so results are explicitly sorted
 	 * by rowid — the monotonic insertion order, which is the true global send
@@ -142,13 +166,18 @@ export class MessageStore {
 	 * is every message that piled up while it was busy, in send order" exact.
 	 */
 	drainUnread(recipient: string): PeerMessage[] {
+		// Recover any messages left `pending` by a previous drain whose injection
+		// never confirmed (crash, thrown injector, interrupted turn). They rejoin
+		// this claim so a transient failure cannot strand a message forever.
+		this.reclaimStalePending(recipient);
+		const drainedAt = new Date().toISOString();
 		const rows = this.db
 			.prepare(
-				`UPDATE messages SET status = 'read'
+				`UPDATE messages SET status = 'pending', drained_at = ?
 				 WHERE recipient = ? AND status = 'unread'
 				 RETURNING rowid, id, sender, recipient, content, created_at`,
 			)
-			.all(recipient) as Array<{
+			.all(drainedAt, recipient) as Array<{
 			rowid: number;
 			id: string;
 			sender: string;
@@ -166,6 +195,52 @@ export class MessageStore {
 			createdAt: r.created_at,
 			senderPresence: this.getPresence(r.sender),
 		}));
+	}
+
+	/**
+	 * Confirm that the given messages were successfully injected into the
+	 * recipient's context. Moves them from `pending` to the terminal `read`
+	 * state so they are never redelivered. Ids not currently `pending` are
+	 * ignored (idempotent).
+	 */
+	markDelivered(ids: string[]): void {
+		if (ids.length === 0) return;
+		const placeholders = ids.map(() => "?").join(",");
+		this.db
+			.prepare(`UPDATE messages SET status = 'read' WHERE status = 'pending' AND id IN (${placeholders})`)
+			.run(...ids);
+	}
+
+	/**
+	 * Return the given messages to the `unread` state so the next drain redelivers
+	 * them. Called when injection failed after a drain. Ids not currently
+	 * `pending` are ignored (idempotent).
+	 */
+	requeue(ids: string[]): void {
+		if (ids.length === 0) return;
+		const placeholders = ids.map(() => "?").join(",");
+		this.db
+			.prepare(
+				`UPDATE messages SET status = 'unread', drained_at = NULL WHERE status = 'pending' AND id IN (${placeholders})`,
+			)
+			.run(...ids);
+	}
+
+	/**
+	 * Return to `unread` any of this recipient's messages that have been stuck in
+	 * `pending` longer than the staleness window — i.e. a drain claimed them but no
+	 * {@link markDelivered}/{@link requeue} ever followed (the classic
+	 * crash-after-claim case). Reusing the presence staleness window keeps a
+	 * single "how long before we assume a process is gone" knob.
+	 */
+	reclaimStalePending(recipient: string): void {
+		const cutoff = new Date(Date.now() - this.stalenessMs).toISOString();
+		this.db
+			.prepare(
+				`UPDATE messages SET status = 'unread', drained_at = NULL
+				 WHERE recipient = ? AND status = 'pending' AND (drained_at IS NULL OR drained_at <= ?)`,
+			)
+			.run(recipient, cutoff);
 	}
 
 	/** Count unread messages for a recipient without consuming them. */
