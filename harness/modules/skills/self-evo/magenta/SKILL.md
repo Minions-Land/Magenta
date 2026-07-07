@@ -107,11 +107,14 @@ exists. This is the "what if there is no HCP server yet" branch.
 ## Routing to a sub-skill
 
 Once you know the primitive and whether a home exists, pick the workflow. The
-three sub-skills below are **not indexed and cannot be invoked on their own** —
+four sub-skills below are **not indexed and cannot be invoked on their own** —
 they are chapters of this handbook. Read the relevant one before acting.
 
 ```
-Where is the capability coming from?
+What are you building?
+│
+├─ A new skill (instructions, workflow, domain expertise)
+│    └─ ............................. → skill-creator/SKILL.md
 │
 ├─ A single Pi extension (local examples/, npm:<pkg>, git:<repo>)
 │    └─ acquire the source ......... → extension-intake/SKILL.md
@@ -132,6 +135,7 @@ Where is the capability coming from?
 
 Sub-skill references (relative to this file):
 
+- `skill-creator/SKILL.md` — create and iteratively improve Magenta skills.
 - `package-forge/SKILL.md` — wrap an external project as a self-contained package.
 - `extension-intake/SKILL.md` — acquire and vet a Pi extension from official/community sources.
 - `extension-conversion/SKILL.md` — translate a Pi extension's injection points into harness primitives + Magnet.
