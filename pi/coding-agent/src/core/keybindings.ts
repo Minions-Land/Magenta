@@ -196,11 +196,11 @@ export const KEYBINDINGS = {
 		description: "Tree filter: show all entries",
 	},
 	"app.tree.filter.cycleForward": {
-		defaultKeys: "ctrl+o",
+		defaultKeys: "ctrl+f",
 		description: "Tree filter: cycle forward",
 	},
 	"app.tree.filter.cycleBackward": {
-		defaultKeys: "shift+ctrl+o",
+		defaultKeys: "shift+ctrl+f",
 		description: "Tree filter: cycle backward",
 	},
 } as const satisfies KeybindingDefinitions;

@@ -137,7 +137,7 @@ function wrapTail(lines: string[], width: number, height: number): string[] {
 function renderCell(tile: ToolCallTile, innerWidth: number, innerHeight: number): string[] {
 	const color = statusColor(tile.status);
 	const sourceBadge = toolProvenanceBadgeText(tile.provenance);
-	const title = `${markerFor(tile.status)} ${resolveDisplayToolName(tile.name)}${sourceBadge ? ` [${sourceBadge}]` : ""}`;
+	const title = `${markerFor(tile.status)} ${resolveDisplayToolName(tile.name, tile.args)}${sourceBadge ? ` [${sourceBadge}]` : ""}`;
 	const badge = tile.status;
 	const boxWidth = innerWidth + 2;
 	const fixedWidth = visibleWidth("╭─ ") + visibleWidth(" ") + visibleWidth(" ") + visibleWidth(" ╮");
@@ -176,7 +176,7 @@ export function renderToolCallStrip(tiles: ToolCallTile[], width: number): strin
 	let shown = 0;
 	for (const tile of ordered) {
 		const sourceBadge = toolProvenanceBadgeText(tile.provenance);
-		const text = `${markerFor(tile.status)}${resolveDisplayToolName(tile.name)}${sourceBadge ? ` [${sourceBadge}]` : ""}`;
+		const text = `${markerFor(tile.status)}${resolveDisplayToolName(tile.name, tile.args)}${sourceBadge ? ` [${sourceBadge}]` : ""}`;
 		const chip = statusColor(tile.status)(text);
 		const chipWidth = visibleWidth(text);
 		const sep = shown === 0 ? 0 : 1;
@@ -224,7 +224,7 @@ function activityDetail(tile: ToolCallTile, width: number): string {
 function activityRow(tile: ToolCallTile, width: number): string {
 	const marker = statusColor(tile.status)(markerFor(tile.status));
 	const sourceBadge = toolProvenanceBadgeText(tile.provenance);
-	const nameRaw = padToWidth(resolveDisplayToolName(tile.name), 11);
+	const nameRaw = padToWidth(resolveDisplayToolName(tile.name, tile.args), 11);
 	const name = theme.fg("toolTitle", nameRaw);
 	const badge = sourceBadge ? `${theme.fg("accent", `[${sourceBadge}]`)} ` : "";
 	const detailBudget = Math.max(0, width - 16 - (sourceBadge ? visibleWidth(`[${sourceBadge}] `) : 0));

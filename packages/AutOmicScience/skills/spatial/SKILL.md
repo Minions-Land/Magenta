@@ -23,26 +23,26 @@ Builds on `omics-shared` (loaded automatically — its rules apply here). Load s
 
 | Capability | Maturity | How | Method doc |
 |------------|----------|-----|------------|
-| Load spatial data (Visium / Xenium / MERFISH / …) | **READY** | `omics_compute read_spatial` | `method/read_spatial.md` |
-| Spatial QC (on-tissue, segmentation, control probes) | **REFERENCE** | scanpy + squidpy | `method/spatial_qc.md` |
-| Spatial statistics + SVGs (Moran's I / Ripley / nhood / co-occ) | **REFERENCE** | squidpy | `method/spatial_stats.md` |
-| Spatial domains | **PARTIAL** | SpaGCN (Leiden baseline runs) | `method/domains.md` |
-| Mapping & deconvolution | **PARTIAL** | cell2location / Tangram | `method/mapping_deconv.md` |
-| Spatial cell-cell communication | **REFERENCE** | squidpy `gr.ligrec` (COMMOT) | `method/spatial_ccc.md` |
-| Gene imputation (targeted panels) | **PARTIAL** | Tangram | `method/imputation.md` |
-| 2D / 3D visualization | **REFERENCE** | squidpy / spatialdata-plot | `method/viz_2d_3d.md` |
+| Load spatial data (Visium / Xenium / MERFISH / …) | **READY** | `omics_compute read_spatial` | `assets/references/read_spatial.md` |
+| Spatial QC (on-tissue, segmentation, control probes) | **REFERENCE** | scanpy + squidpy | `assets/references/spatial_qc.md` |
+| Spatial statistics + SVGs (Moran's I / Ripley / nhood / co-occ) | **REFERENCE** | squidpy | `assets/references/spatial_stats.md` |
+| Spatial domains | **PARTIAL** | SpaGCN (Leiden baseline runs) | `assets/references/domains.md` |
+| Mapping & deconvolution | **PARTIAL** | cell2location / Tangram | `assets/references/mapping_deconv.md` |
+| Spatial cell-cell communication | **REFERENCE** | squidpy `gr.ligrec` (COMMOT) | `assets/references/spatial_ccc.md` |
+| Gene imputation (targeted panels) | **PARTIAL** | Tangram | `assets/references/imputation.md` |
+| 2D / 3D visualization | **REFERENCE** | squidpy / spatialdata-plot | `assets/references/viz_2d_3d.md` |
 
 Read the method doc before running a capability — each gives the opinionated default, exact parameters, failure modes, and grounding. **squidpy** is the installed workhorse (stats, CCC-ligrec, plotting); **cell2location / SpaGCN / COMMOT / Tangram / SpatialDE** are not in `task2` — install / isolated env per the doc.
 
 ## Standard workflow
 
 1. **Preflight & load** — `omics_preflight(modality="spatial")`; `omics_compute(subcommand="read_spatial", modality="spatial", args={"input":"<path>","platform":"visium"})`. Thread the summary + study description forward.
-2. **Spatial QC** — scanpy QC + squidpy spatial views; filter off-tissue / low-segmentation cells (`method/spatial_qc.md`).
+2. **Spatial QC** — scanpy QC + squidpy spatial views; filter off-tissue / low-segmentation cells (`assets/references/spatial_qc.md`).
 3. **Cluster / annotate** — reuse the scRNA recipes (`rna`: preprocess → markers → annotation) on the expression, then validate **in space**.
-4. **Spatial structure** — SVGs + neighborhood enrichment + co-occurrence via squidpy (`method/spatial_stats.md`); spatial domains (`method/domains.md`).
-5. **Composition** — spot deconvolution / reference mapping (`method/mapping_deconv.md`); gene imputation for targeted panels (`method/imputation.md`).
-6. **Interactions** — spatial cell-cell communication (`method/spatial_ccc.md`).
-7. **Visualize & ground** — every figure via `sq.pl.spatial_scatter` / spatialdata-plot, `observe_figure` before it backs a claim (`method/viz_2d_3d.md`); cite the reports as evidence.
+4. **Spatial structure** — SVGs + neighborhood enrichment + co-occurrence via squidpy (`assets/references/spatial_stats.md`); spatial domains (`assets/references/domains.md`).
+5. **Composition** — spot deconvolution / reference mapping (`assets/references/mapping_deconv.md`); gene imputation for targeted panels (`assets/references/imputation.md`).
+6. **Interactions** — spatial cell-cell communication (`assets/references/spatial_ccc.md`).
+7. **Visualize & ground** — every figure via `sq.pl.spatial_scatter` / spatialdata-plot, `observe_figure` before it backs a claim (`assets/references/viz_2d_3d.md`); cite the reports as evidence.
 
 ## Spatial-specific rules (on top of omics-shared)
 
@@ -55,6 +55,6 @@ Read the method doc before running a capability — each gives the opinionated d
 ## When things go wrong
 
 - **Empty / garbled spatial plot** — wrong platform, missing / wrong-unit coords, or load failure; re-check `read_spatial` + `obsm["spatial"]`.
-- **No SVGs / no neighborhood structure** — wrong spatial graph (`coord_type`) or noisy labels; fix the graph / validate annotation (`method/spatial_stats.md`).
-- **Speckled, non-contiguous domains** — expression clustering without a spatial term; use SpaGCN or smooth over the spatial graph (`method/domains.md`).
-- **Deconvolution flat / one type everywhere** — reference missing cell types or gene-name mismatch (`method/mapping_deconv.md`).
+- **No SVGs / no neighborhood structure** — wrong spatial graph (`coord_type`) or noisy labels; fix the graph / validate annotation (`assets/references/spatial_stats.md`).
+- **Speckled, non-contiguous domains** — expression clustering without a spatial term; use SpaGCN or smooth over the spatial graph (`assets/references/domains.md`).
+- **Deconvolution flat / one type everywhere** — reference missing cell types or gene-name mismatch (`assets/references/mapping_deconv.md`).

@@ -24,13 +24,13 @@ Paired RNA + ATAC from the same nuclei. Reuses the scRNA and scATAC per-modality
 
 | Capability | When to Use | Documentation |
 |------------|-------------|---------------|
-| **Load & Assemble** | Build validated paired MuData from various sources | `method/load_multiome.md` |
-| **Per-Modality Preprocess** | Reuse P1/P3 recipes on each modality before joining | `method/per_modality_preprocess.md` |
-| **Joint Embedding** | Combine modalities into one cell representation (WNN/MultiVI) | `method/joint_embedding.md` |
-| **Joint Cluster & Annotate** | Cluster on joint rep; label via two routes (marker+LLM / reference) | `method/joint_cluster_annotate.md` |
-| **Multiome Velocity** | Chromatin-informed RNA velocity (MultiVelo, external env) | `method/multiome_velocity.md` |
-| **eGRN & Regulation** | TF→region→gene eGRN + region-gene linkage (SCENIC+, external pipeline) | `method/regulation.md` |
-| **Cross-Modal Interpretation** | Modality weights (which modality drives a population); peak-gene & eGRN → `regulation.md` | `method/cross_modality.md` |
+| **Load & Assemble** | Build validated paired MuData from various sources | `assets/references/load_multiome.md` |
+| **Per-Modality Preprocess** | Reuse P1/P3 recipes on each modality before joining | `assets/references/per_modality_preprocess.md` |
+| **Joint Embedding** | Combine modalities into one cell representation (WNN/MultiVI) | `assets/references/joint_embedding.md` |
+| **Joint Cluster & Annotate** | Cluster on joint rep; label via two routes (marker+LLM / reference) | `assets/references/joint_cluster_annotate.md` |
+| **Multiome Velocity** | Chromatin-informed RNA velocity (MultiVelo, external env) | `assets/references/multiome_velocity.md` |
+| **eGRN & Regulation** | TF→region→gene eGRN + region-gene linkage (SCENIC+, external pipeline) | `assets/references/regulation.md` |
+| **Cross-Modal Interpretation** | Modality weights (which modality drives a population); peak-gene & eGRN → `regulation.md` | `assets/references/cross_modality.md` |
 
 ## Global Rules
 

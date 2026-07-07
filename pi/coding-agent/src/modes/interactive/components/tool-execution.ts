@@ -4,7 +4,11 @@ import { createAllToolDefinitions, type ToolName } from "../../../core/tools/ind
 import { registerBuiltinRenderers } from "../../../core/tools/register-builtin-renderers.ts";
 import { getTextOutput as getRenderedTextOutput } from "../../../core/tools/render-utils.ts";
 import { getRenderer, type ToolRenderer } from "../../../core/tools/renderer-registry.ts";
-import { type ToolDisplayProvenance, toolProvenanceBadgeText } from "../../../core/tools/tool-display.ts";
+import {
+	resolveDisplayToolName,
+	type ToolDisplayProvenance,
+	toolProvenanceBadgeText,
+} from "../../../core/tools/tool-display.ts";
 import { convertToPng } from "../../../utils/image-convert.ts";
 import { theme } from "../theme/theme.ts";
 
@@ -142,7 +146,8 @@ export class ToolExecutionComponent extends Container {
 	}
 
 	private createCallFallback(): Component {
-		return new Text(`${theme.fg("toolTitle", theme.bold(this.toolName))}${this.sourceBadgeSuffix()}`, 0, 0);
+		const displayName = resolveDisplayToolName(this.toolName, this.args);
+		return new Text(`${theme.fg("toolTitle", theme.bold(displayName))}${this.sourceBadgeSuffix()}`, 0, 0);
 	}
 
 	/** Provenance of this tool (e.g. MCP server), when known. */
@@ -383,7 +388,8 @@ export class ToolExecutionComponent extends Container {
 	}
 
 	private formatToolExecution(): string {
-		let text = `${theme.fg("toolTitle", theme.bold(this.toolName))}${this.sourceBadgeSuffix()}`;
+		const displayName = resolveDisplayToolName(this.toolName, this.args);
+		let text = `${theme.fg("toolTitle", theme.bold(displayName))}${this.sourceBadgeSuffix()}`;
 		const content = JSON.stringify(this.args, null, 2);
 		if (content) {
 			text += `\n\n${content}`;

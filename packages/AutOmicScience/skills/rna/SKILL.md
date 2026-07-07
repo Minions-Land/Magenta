@@ -23,18 +23,18 @@ Builds on `omics-shared` (loaded automatically — its rules apply here). Run co
 
 | Capability | Maturity | How | Method doc |
 |------------|----------|-----|------------|
-| QC → norm → HVG → PCA → neighbors → UMAP → Leiden | **READY** | `omics_compute preprocess` | `method/qc.md` |
-| Dataset summary for context | **READY** | `omics_compute summarize` | `../omics-shared/method/data_context.md` |
-| Batch integration (Harmony) | **READY** | `omics_compute integrate` | `method/integration.md` |
-| Batch integration (scVI / scANVI) | **PARTIAL** | needs GPU; verify preflight | `method/integration.md` |
-| Per-cluster marker genes | **READY** | `omics_compute marker_table` | `method/markers_de.md` |
-| Cell-type annotation (marker + LLM) | **READY** | markers → LLM labeling (Route 1) | `method/annotation.md` |
-| Cell-type annotation (reference pipeline) | **PARTIAL** | `run_annotation_pipeline` (Route 2) | `method/annotation.md` |
-| Pathway / TF activity, enrichment, perturbation | **READY** | `omics_compute pathway_activity` / `enrichment` / `perturbation` | `method/functional.md` |
-| Cross-condition DE (pseudobulk DESeq2) | **REFERENCE** | hand-rolled in `run_python` | `method/markers_de.md` |
-| Compositional analysis (cell type abundance) | **REFERENCE** | hand-rolled (scCODA / Milo) | `method/composition.md` |
-| Trajectory / RNA velocity / fate | **REFERENCE** | hand-rolled (scVelo / CellRank) | `method/trajectory.md` |
-| Cell-cell communication | **REFERENCE** | hand-rolled (LIANA) | `method/ccc.md` |
+| QC → norm → HVG → PCA → neighbors → UMAP → Leiden | **READY** | `omics_compute preprocess` | `assets/references/qc.md` |
+| Dataset summary for context | **READY** | `omics_compute summarize` | `../omics-shared/assets/references/data_context.md` |
+| Batch integration (Harmony) | **READY** | `omics_compute integrate` | `assets/references/integration.md` |
+| Batch integration (scVI / scANVI) | **PARTIAL** | needs GPU; verify preflight | `assets/references/integration.md` |
+| Per-cluster marker genes | **READY** | `omics_compute marker_table` | `assets/references/markers_de.md` |
+| Cell-type annotation (marker + LLM) | **READY** | markers → LLM labeling (Route 1) | `assets/references/annotation.md` |
+| Cell-type annotation (reference pipeline) | **PARTIAL** | `run_annotation_pipeline` (Route 2) | `assets/references/annotation.md` |
+| Pathway / TF activity, enrichment, perturbation | **READY** | `omics_compute pathway_activity` / `enrichment` / `perturbation` | `assets/references/functional.md` |
+| Cross-condition DE (pseudobulk DESeq2) | **REFERENCE** | hand-rolled in `run_python` | `assets/references/markers_de.md` |
+| Compositional analysis (cell type abundance) | **REFERENCE** | hand-rolled (scCODA / Milo) | `assets/references/composition.md` |
+| Trajectory / RNA velocity / fate | **REFERENCE** | hand-rolled (scVelo / CellRank) | `assets/references/trajectory.md` |
+| Cell-cell communication | **REFERENCE** | hand-rolled (LIANA) | `assets/references/ccc.md` |
 
 Read the method doc before running a capability — each gives the opinionated default, exact parameters, failure modes, and grounding.
 
@@ -43,10 +43,10 @@ Read the method doc before running a capability — each gives the opinionated d
 Run each step through `omics_compute`; read the per-step method doc for parameters and decisions.
 
 1. **Preflight & load** — `omics_preflight(modality="scrna")`; load the h5ad; `omics_compute(subcommand="summarize", modality="scrna", args={"input":"data.h5ad"})`. Thread the summary + study description forward.
-2. **QC & preprocess** — `omics_compute(subcommand="preprocess", modality="scrna", args={"input":"raw.h5ad","output":"processed.h5ad"})`. See `method/qc.md` for MAD-vs-fixed thresholds, doublets, normalization.
-3. **Integration (if multi-batch)** — only if a batch effect is visible. `omics_compute(subcommand="integrate", modality="scrna", args={"input":"processed.h5ad","output":"integrated.h5ad","batch-key":"batch","method":"harmony"})`. Validate with ARI/NMI (`method/integration.md`).
+2. **QC & preprocess** — `omics_compute(subcommand="preprocess", modality="scrna", args={"input":"raw.h5ad","output":"processed.h5ad"})`. See `assets/references/qc.md` for MAD-vs-fixed thresholds, doublets, normalization.
+3. **Integration (if multi-batch)** — only if a batch effect is visible. `omics_compute(subcommand="integrate", modality="scrna", args={"input":"processed.h5ad","output":"integrated.h5ad","batch-key":"batch","method":"harmony"})`. Validate with ARI/NMI (`assets/references/integration.md`).
 4. **Marker genes** — `omics_compute(subcommand="marker_table", modality="scrna", args={"input":"processed.h5ad","output":"markers.csv","groupby":"leiden","min-logfc":"0.5","min-pct":"0.25"})`.
-5. **Annotation** — Route 1 (default): thread the marker table + summary + study description into a labeling decision (`method/annotation.md`); abstain to "unknown" when ambiguous. Route 2: `run_annotation_pipeline` when a labeled reference exists.
+5. **Annotation** — Route 1 (default): thread the marker table + summary + study description into a labeling decision (`assets/references/annotation.md`); abstain to "unknown" when ambiguous. Route 2: `run_annotation_pipeline` when a labeled reference exists.
 6. **Visualize & ground** — plot UMAP colored by `cell_type`/`leiden`/QC; `observe_figure` each before it backs a claim; cite the `omics_compute` reports as evidence.
 
 ## Marker table schema (read before using markers)
@@ -73,7 +73,7 @@ Default to Route 1 unless the user provides/requests a labeled reference. Either
 
 - **Counts in `layers["counts"]`** before preprocess; the subcommand normalizes from there.
 - **Integration must earn its place** — compare ARI/NMI vs known labels before/after; if biology degrades, keep the unintegrated space and say so.
-- **QC removing >30% of cells** → investigate thresholds vs genuine low quality; document which (`method/qc.md`).
+- **QC removing >30% of cells** → investigate thresholds vs genuine low quality; document which (`assets/references/qc.md`).
 - **Non-specific markers** → likely over-clustering; lower resolution and re-run before annotating.
 - **Abstain over guess** — an ambiguous cluster is "unknown", not an invented label.
 

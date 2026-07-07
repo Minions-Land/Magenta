@@ -225,7 +225,7 @@ function finishEvent(
 	for (const resolveWaiter of waiters) resolveWaiter();
 }
 
-function summarizeEvent(event: BackgroundShellEvent, includeOutput = true): string {
+function summarizeEvent(event: BackgroundShellEvent, includeOutput = true, collapsed = false): string {
 	const elapsedUntil = event.endedAt ?? Date.now();
 	const output = truncateTail(event.tail.trimEnd());
 	const lines = [
@@ -244,13 +244,27 @@ function summarizeEvent(event: BackgroundShellEvent, includeOutput = true): stri
 	}
 	if (event.error) lines.push(`Error: ${event.error}`);
 	if (includeOutput) {
-		lines.push(
-			"",
-			output.truncated ? `[Output truncated to last ${RESULT_LIMIT_BYTES} bytes]` : "Output:",
-			output.text || "(no output yet)",
-		);
+		if (collapsed && output.text) {
+			// Collapsed mode: show count of output lines with expand hint
+			const outputLineCount = output.text.split("\n").length;
+			lines.push("", `... ${outputLineCount} output ${outputLineCount === 1 ? "line" : "lines"} hidden (ctrl+o to expand)`);
+		} else {
+			lines.push(
+				"",
+				output.truncated ? `[Output truncated to last ${RESULT_LIMIT_BYTES} bytes]` : "Output:",
+				output.text || "(no output yet)",
+			);
+		}
 	}
 	return lines.join("\n");
+}
+
+export function summarizeEventCollapsed(event: BackgroundShellEvent): string {
+	return summarizeEvent(event, true, true);
+}
+
+export function summarizeEventExpanded(event: BackgroundShellEvent): string {
+	return summarizeEvent(event, true, false);
 }
 
 function waitForEvent(
@@ -379,9 +393,15 @@ export class BackgroundShellController {
 		void this.sendMessage(
 			{
 				customType: "bg-shell-return",
-				content: `${instruction?.trim() || defaultInstruction}\n\n${summarizeEvent(event)}`,
+				content: `${instruction?.trim() || defaultInstruction}\n\n${summarizeEventCollapsed(event)}`,
 				display: true,
-				details: { id: event.id, status: event.status, exitCode: event.exitCode, logPath: event.logPath },
+				details: {
+					id: event.id,
+					status: event.status,
+					exitCode: event.exitCode,
+					logPath: event.logPath,
+					eventData: event, // Pass full event data for custom renderer
+				},
 			},
 			{ deliverAs: delivery, triggerTurn: delivery !== "nextTurn" },
 		);

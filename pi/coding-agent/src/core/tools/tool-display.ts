@@ -23,7 +23,7 @@ export function toolProvenanceBadgeText(provenance: ToolDisplayProvenance | unde
 	return provenance.kind ? provenance.kind.toLowerCase() : undefined;
 }
 
-export function resolveDisplayToolName(name: string): string {
+export function resolveDisplayToolName(name: string, args?: unknown): string {
 	switch (name) {
 		case "communicate":
 			return "swarm";
@@ -33,7 +33,7 @@ export function resolveDisplayToolName(name: string): string {
 		case "shell_exec":
 			return "bash";
 		case "file_read":
-			return "read";
+			return isSkillRead(args) ? "skill" : "read";
 		case "file_write":
 			return "write";
 		case "file_edit":
@@ -52,6 +52,12 @@ export function resolveDisplayToolName(name: string): string {
 	}
 }
 
+function isSkillRead(args: unknown): boolean {
+	const record = asRecord(args);
+	const path = stringField(record, "file_path", "path");
+	return path?.endsWith("/SKILL.md") ?? false;
+}
+
 export function canonicalToolName(name: string): string {
 	switch (name) {
 		case "communicate":
@@ -66,6 +72,8 @@ export function canonicalToolName(name: string): string {
 			return "patch";
 		case "ApplyPatch":
 			return "apply_patch";
+		case "skill":
+			return "skill";
 		default:
 			return name;
 	}
@@ -272,10 +280,33 @@ function summarizePath(path: string, maxWidth: number): string {
 
 export function summarizeToolCall(call: ToolDisplayCall, maxWidth = 50): string {
 	const args = asRecord(call.args);
-	switch (canonicalToolName(resolveDisplayToolName(call.name))) {
+	switch (canonicalToolName(resolveDisplayToolName(call.name, call.args))) {
 		case "bash": {
 			const command = stringField(args, "command");
 			return command ? `$ ${summarizeCommand(command, Math.max(1, maxWidth - 2))}` : "";
+		}
+		case "skill": {
+			const path = stringField(args, "file_path", "path");
+			if (!path) return "";
+			// Extract skill name from path
+			// Pattern 1: .../skills/skill-name/SKILL.md -> skill-name
+			// Pattern 2: .../skills/skill-name/subdir/SKILL.md -> skill-name (find "skills" dir)
+			// Pattern 3: .../skill-name/SKILL.md -> skill-name (fallback to parent)
+			const parts = path.split("/").filter(Boolean);
+			const skillMdIndex = parts.findIndex((part) => part === "SKILL.md");
+			if (skillMdIndex > 0) {
+				// Look backwards for a "skills" directory
+				const skillsDirIndex = parts.slice(0, skillMdIndex).lastIndexOf("skills");
+				if (skillsDirIndex >= 0 && skillsDirIndex + 1 < skillMdIndex) {
+					// Found "skills" dir - the next directory is the skill name
+					const skillName = parts[skillsDirIndex + 1]!;
+					return truncateEnd(skillName, maxWidth);
+				}
+				// No "skills" dir - use the immediate parent of SKILL.md
+				const skillName = parts[skillMdIndex - 1]!;
+				return truncateEnd(skillName, maxWidth);
+			}
+			return "skill";
 		}
 		case "read": {
 			const path = stringField(args, "file_path", "path");

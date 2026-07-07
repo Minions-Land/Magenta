@@ -271,6 +271,7 @@ harness = "missing/harness.toml"
 			join(repoRoot, "packages", "AutOmicScience", "system-prompt", "system-prompt.toml"),
 		);
 		expect(overlay.resources.skillPaths.map((resource) => resource.name).sort()).toEqual([
+			"bulk-rna",
 			"multi-omics",
 			"omics-shared",
 			"rna",
@@ -910,6 +911,7 @@ source = "pi"
 
 		expect(result.diagnostics).toEqual([]);
 		expect(result.skills.map((skill) => skill.name).sort()).toEqual([
+			"bulk-rna",
 			"multi-omics",
 			"omics-shared",
 			"rna",

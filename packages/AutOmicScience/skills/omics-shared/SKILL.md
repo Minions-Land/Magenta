@@ -43,12 +43,12 @@ After `omics_preflight` confirms the modality, read its skill and the specific m
 
 | Modality | Skill | Method docs |
 |----------|-------|-------------|
-| scRNA-seq | `skills/rna/SKILL.md` | `skills/rna/method/*.md` |
-| Spatial | `skills/spatial/SKILL.md` | `skills/spatial/method/*.md` |
-| scATAC-seq | `skills/scatac-seq/SKILL.md` | `skills/scatac-seq/method/*.md` |
-| Multiome | `skills/multi-omics/SKILL.md` | `skills/multi-omics/method/*.md` |
+| scRNA-seq | `skills/rna/SKILL.md` | `skills/rna/assets/references/*.md` |
+| Spatial | `skills/spatial/SKILL.md` | `skills/spatial/assets/references/*.md` |
+| scATAC-seq | `skills/scatac-seq/SKILL.md` | `skills/scatac-seq/assets/references/*.md` |
+| Multiome | `skills/multi-omics/SKILL.md` | `skills/multi-omics/assets/references/*.md` |
 
-The shared method docs (`skills/omics-shared/method/*.md`) cover containers, data context, preprocessing, grounding, visualization, figure inspection, and data acquisition — read them on demand.
+The shared method docs (`skills/omics-shared/assets/references/*.md`) cover containers, data context, preprocessing, grounding, visualization, figure inspection, and data acquisition — read them on demand.
 
 ## Global rules (always follow)
 

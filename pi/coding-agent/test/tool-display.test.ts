@@ -14,7 +14,10 @@ describe("tool-display helpers", () => {
 	test("canonicalizes provider and edit tool names", () => {
 		expect(resolveDisplayToolName("shell_exec")).toBe("bash");
 		expect(resolveDisplayToolName("file_read")).toBe("read");
+		expect(resolveDisplayToolName("file_read", { file_path: "/some/file.ts" })).toBe("read");
+		expect(resolveDisplayToolName("file_read", { file_path: "/path/to/skill-name/SKILL.md" })).toBe("skill");
 		expect(canonicalToolName("ApplyPatch")).toBe("apply_patch");
+		expect(canonicalToolName("skill")).toBe("skill");
 		expect(isEditToolName("file_edit")).toBe(true);
 		expect(isEditToolName("MultiEdit")).toBe(true);
 		expect(isEditToolName("read")).toBe(false);
@@ -51,6 +54,24 @@ describe("tool-display helpers", () => {
 				80,
 			),
 		).toContain("src/a.ts");
+		expect(
+			summarizeToolCall(
+				{
+					name: "file_read",
+					args: { file_path: "/Users/mjm/Magenta3/harness/modules/skills/research-orchestration/pi/SKILL.md" },
+				},
+				80,
+			),
+		).toBe("research-orchestration");
+		expect(
+			summarizeToolCall(
+				{
+					name: "file_read",
+					args: { file_path: "/path/to/my-skill/SKILL.md" },
+				},
+				50,
+			),
+		).toBe("my-skill");
 	});
 
 	test("detects and summarizes failed output", () => {

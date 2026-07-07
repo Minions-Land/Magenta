@@ -36,6 +36,12 @@ include_in_context = true
 
 [[components]]
 kind = "skill"
+name = "bulk-rna"
+path = "skills/bulk-rna"
+include_in_context = true
+
+[[components]]
+kind = "skill"
 name = "spatial"
 path = "skills/spatial"
 include_in_context = true
