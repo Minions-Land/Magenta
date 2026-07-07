@@ -1,0 +1,330 @@
+schema_version = "magenta.package.v1"
+id = "ClaudeScience"
+name = "ClaudeScience"
+kind = "domain"
+domain = "computational-biology"
+description = "Computational biology and bioinformatics harness package covering protein structure prediction, genomics, single-cell analysis, literature review, and scientific workflows."
+
+# === Profiles for selective loading ===
+
+[[profiles]]
+name = "structure"
+description = "Protein structure prediction skills (AlphaFold2, ESMFold, etc.)"
+extends = []
+
+[[profiles]]
+name = "design"
+description = "Protein design skills (ProteinMPNN, LigandMPNN, etc.)"
+extends = []
+
+[[profiles]]
+name = "genomics"
+description = "Genomics and molecular biology skills"
+extends = []
+
+[[profiles]]
+name = "singlecell"
+description = "Single-cell analysis skills"
+extends = []
+
+[[profiles]]
+name = "research"
+description = "Literature review and research workflow skills"
+extends = []
+
+[[profiles]]
+name = "visualization"
+description = "Figure composition and visualization skills"
+extends = []
+
+[[profiles]]
+name = "compute"
+description = "Remote compute and infrastructure skills"
+extends = []
+
+[[profiles]]
+name = "meta"
+description = "Self-improvement and meta-learning skills"
+extends = []
+
+[[profiles]]
+name = "all"
+description = "All ClaudeScience skills"
+extends = ["structure", "design", "genomics", "singlecell", "research", "visualization", "compute", "meta"]
+
+# Set default profiles (commonly used skills) - empty means no auto-load
+# Users must explicitly select profiles with ClaudeScience:profile1,profile2
+# or ClaudeScience:all to load everything
+default_profiles = []
+
+# === Structure Prediction Skills ===
+
+[[components]]
+kind = "skill"
+name = "structure-alphafold2"
+path = "skills/alphafold2"
+description = "Predict protein structure with AlphaFold2"
+include_in_context = false
+profiles = ["structure"]
+
+[[components]]
+kind = "skill"
+name = "structure-esmfold2"
+path = "skills/esmfold2"
+description = "Fast structure prediction with ESMFold2"
+include_in_context = false
+profiles = ["structure"]
+
+[[components]]
+kind = "skill"
+name = "structure-chai1"
+path = "skills/chai1"
+description = "Unified structure prediction with Chai-1"
+include_in_context = false
+profiles = ["structure"]
+
+[[components]]
+kind = "skill"
+name = "structure-boltz"
+path = "skills/boltz"
+description = "Structure prediction with Boltz"
+include_in_context = false
+profiles = ["structure"]
+
+[[components]]
+kind = "skill"
+name = "structure-openfold3"
+path = "skills/openfold3"
+description = "Open-source AlphaFold3 implementation"
+include_in_context = false
+profiles = ["structure"]
+
+# === Protein Design Skills ===
+
+[[components]]
+kind = "skill"
+name = "design-proteinmpnn"
+path = "skills/proteinmpnn"
+description = "Design protein sequences with ProteinMPNN"
+include_in_context = false
+profiles = ["design"]
+
+[[components]]
+kind = "skill"
+name = "design-ligandmpnn"
+path = "skills/ligandmpnn"
+description = "Design protein-ligand interfaces with LigandMPNN"
+include_in_context = false
+profiles = ["design"]
+
+[[components]]
+kind = "skill"
+name = "design-solublempnn"
+path = "skills/solublempnn"
+description = "Design soluble proteins with SolubleMP NN"
+include_in_context = false
+profiles = ["design"]
+
+# === Molecular Docking & Genomics ===
+
+[[components]]
+kind = "skill"
+name = "genomics-diffdock"
+path = "skills/diffdock"
+description = "Molecular docking with DiffDock"
+include_in_context = false
+profiles = ["genomics"]
+
+[[components]]
+kind = "skill"
+name = "genomics-borzoi"
+path = "skills/borzoi"
+description = "Genomic sequence analysis with Borzoi"
+include_in_context = false
+profiles = ["genomics"]
+
+[[components]]
+kind = "skill"
+name = "genomics-evo2"
+path = "skills/evo2"
+description = "Long-range DNA modeling with Evo2"
+include_in_context = false
+profiles = ["genomics"]
+
+[[components]]
+kind = "skill"
+name = "genomics-fair-esm2"
+path = "skills/fair-esm2"
+description = "Protein language model with ESM-2"
+include_in_context = false
+profiles = ["genomics"]
+
+# === Single-Cell Analysis ===
+
+[[components]]
+kind = "skill"
+name = "singlecell-scvi-tools"
+path = "skills/scvi-tools"
+description = "Single-cell analysis with scvi-tools"
+include_in_context = false
+profiles = ["singlecell"]
+
+[[components]]
+kind = "skill"
+name = "singlecell-scgpt"
+path = "skills/scgpt"
+description = "Foundation model for single-cell analysis"
+include_in_context = false
+profiles = ["singlecell"]
+
+# === Research & Literature ===
+
+[[components]]
+kind = "skill"
+name = "research-literature-review"
+path = "skills/literature-review"
+description = "Comprehensive literature review workflows"
+include_in_context = false
+profiles = ["research"]
+
+[[components]]
+kind = "skill"
+name = "research-pdf-explore"
+path = "skills/pdf-explore"
+description = "Extract and analyze scientific PDFs"
+include_in_context = false
+profiles = ["research"]
+
+[[components]]
+kind = "skill"
+name = "research-paper-narrative"
+path = "skills/paper-narrative"
+description = "Generate paper narratives and summaries"
+include_in_context = false
+profiles = ["research"]
+
+[[components]]
+kind = "skill"
+name = "research-indication-dossier"
+path = "skills/indication-dossier"
+description = "Create therapeutic indication dossiers"
+include_in_context = false
+profiles = ["research"]
+
+# === Visualization & Presentation ===
+
+[[components]]
+kind = "skill"
+name = "viz-figure-composer"
+path = "skills/figure-composer"
+description = "Compose multi-panel scientific figures"
+include_in_context = false
+profiles = ["visualization"]
+
+[[components]]
+kind = "skill"
+name = "viz-figure-style"
+path = "skills/figure-style"
+description = "Apply consistent styling to figures"
+include_in_context = false
+profiles = ["visualization"]
+
+[[components]]
+kind = "skill"
+name = "viz-algorithmic-art"
+path = "skills/algorithmic-art"
+description = "Generate algorithmic art and visualizations"
+include_in_context = false
+profiles = ["visualization"]
+
+[[components]]
+kind = "skill"
+name = "viz-web-artifacts"
+path = "skills/web-artifacts-builder"
+description = "Build interactive web artifacts"
+include_in_context = false
+profiles = ["visualization"]
+
+# === Infrastructure & Compute ===
+
+[[components]]
+kind = "skill"
+name = "compute-ssh"
+path = "skills/remote-compute-ssh"
+description = "Remote compute via SSH"
+include_in_context = false
+profiles = ["compute"]
+
+[[components]]
+kind = "skill"
+name = "compute-modal"
+path = "skills/remote-compute-modal"
+description = "Serverless compute with Modal"
+include_in_context = false
+profiles = ["compute"]
+
+[[components]]
+kind = "skill"
+name = "compute-env-setup"
+path = "skills/compute-env-setup"
+description = "Setup compute environments"
+include_in_context = false
+profiles = ["compute"]
+
+[[components]]
+kind = "skill"
+name = "compute-managed-endpoints"
+path = "skills/managed-model-endpoints"
+description = "Managed model inference endpoints"
+include_in_context = false
+profiles = ["compute"]
+
+[[components]]
+kind = "skill"
+name = "compute-model-endpoint"
+path = "skills/using-model-endpoint"
+description = "Use model inference endpoints"
+include_in_context = false
+profiles = ["compute"]
+
+# === Meta & Self-Improvement ===
+
+[[components]]
+kind = "skill"
+name = "meta-skill-creator"
+path = "skills/skill-creator"
+description = "Create and improve Magenta skills"
+include_in_context = false
+profiles = ["meta"]
+
+[[components]]
+kind = "skill"
+name = "meta-learn"
+path = "skills/learn"
+description = "Learning and knowledge acquisition"
+include_in_context = false
+profiles = ["meta"]
+
+[[components]]
+kind = "skill"
+name = "meta-self-awareness"
+path = "skills/self-awareness"
+description = "Self-awareness and introspection"
+include_in_context = false
+profiles = ["meta"]
+
+[[components]]
+kind = "skill"
+name = "meta-product-knowledge"
+path = "skills/product-self-knowledge"
+description = "Product and feature knowledge"
+include_in_context = false
+profiles = ["meta"]
+
+[[components]]
+kind = "skill"
+name = "meta-customize"
+path = "skills/customize"
+description = "Customize agent behavior"
+include_in_context = false
+profiles = ["meta"]
