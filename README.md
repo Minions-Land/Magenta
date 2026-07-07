@@ -506,7 +506,6 @@ npm run build
 - [`harness/README.md`](./harness/README.md) — Harness overview
 - [`harness/hcp-client/HCP-OVERVIEW.md`](./harness/hcp-client/HCP-OVERVIEW.md) — HCP walkthrough
 - [`harness/docs/DEVELOPING.md`](./harness/docs/DEVELOPING.md) — add tools, capabilities, resources, packages
-- [`docs/sub-agent-collapsible-output.md`](./docs/sub-agent-collapsible-output.md) — sub-agent output behavior
 
 ---
 

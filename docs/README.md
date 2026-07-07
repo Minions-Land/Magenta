@@ -9,15 +9,10 @@ Magenta3 is an AI coding assistant forked from Pi, with enhanced modular archite
 ### Architecture
 - **[ARCHITECTURE.md](./ARCHITECTURE.md)** - Layered package architecture (pi-ai / agent-core / harness)
 - **[BRANDING.md](./BRANDING.md)** - Brand system and multi-brand support
-- **[specs/](./specs/)** - Technical specifications and design decisions
 - **[../harness/docs/DEVELOPING.md](../harness/docs/DEVELOPING.md)** - Developer onboarding: how to add tools, capabilities, resources, and packages
 
 ### Setup
 - **[AUTHENTICATION.md](./AUTHENTICATION.md)** - External auth (Claude Code / Codex credential auto-detect)
-
-### Features
-- **[features/](./features/)** - Planned and in-progress features
-  - [Agentic Updating](./features/agentic-updating.md) - Self-evolution capability
 
 ### Project Information
 - **[../README.md](../README.md)** - Project overview and quick start
@@ -50,13 +45,3 @@ When adding documentation:
 2. Update this index
 3. Use clear headings and examples
 4. Link related documents
-
-## Self-Evolution Vision
-
-Magenta is developing capabilities for self-development and self-evolution:
-- Intelligent upstream merging
-- Self-analysis and improvement
-- Adaptive architecture
-- Autonomous documentation
-
-See [features/](./features/) for planned capabilities.

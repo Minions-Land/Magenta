@@ -237,5 +237,3 @@ import { createReadExecute, AgentHarness, ... } from "@magenta/harness";
 4. **Clean boundaries**: Contract modules (core/types/, core/messages/, hcp-contract/) are source-agnostic. Implementation modules separate by source. Assembly layer (HCP) stays off the hot path.
 
 5. **Zone clarity**: The five-zone layout (hcp-contract, hcp-client, hcp-magnet, modules, core) makes responsibility and dependency flow explicit. Core runtime is foundational, modules are pluggable capabilities, HCP is the assembly layer.
-
-See `../docs/specs/2026-06-30-harness-reorg.md` for the full design rationale.

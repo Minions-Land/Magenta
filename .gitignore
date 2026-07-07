@@ -51,6 +51,8 @@ test-external-auth.mjs
 packages/**/.pixi/
 # Omics run outputs (generated analysis artifacts, not fixtures)
 runs/
+# Skill catalog build stamps (regenerated timestamps, not source)
+**/.catalog_stamp
 # Downloaded datasets / demo figures (regenerated, never fixtures)
 data/
 figures/
