@@ -52,10 +52,8 @@ name = "all"
 description = "All ClaudeScience skills"
 extends = ["structure", "design", "genomics", "singlecell", "research", "visualization", "compute", "meta"]
 
-# Set default profiles (commonly used skills) - empty means no auto-load
-# Users must explicitly select profiles with ClaudeScience:profile1,profile2
-# or ClaudeScience:all to load everything
-default_profiles = []
+# Set default profiles - load all skills by default
+default_profiles = ["all"]
 
 # === Structure Prediction Skills ===
 
