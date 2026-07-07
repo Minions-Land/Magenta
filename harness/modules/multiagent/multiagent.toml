@@ -38,3 +38,7 @@ description = "Candidates compete in a pairwise elimination bracket judged by a 
 [[patterns]]
 name = "loop_until_done"
 description = "Iterate a refine worker, excluding prior findings each round; stop when a round yields no new findings or a hard iteration cap is hit. For exhaustive scans."
+
+[[patterns]]
+name = "script"
+description = "Run a workflow authored as an executable TS/JS module (write the loop, not the prompt). The script drives its own control flow (if/while/await) using injected primitives (agent, parallelAgents, pipeline, phase, log, guards); the runtime enforces the safety boundary (depth guard, tool denial, timeout, guard injection) and persists state to .magenta/tmp/<id>/. The flexible counterpart to the six fixed skeletons."

@@ -10,7 +10,7 @@ import { buildSystemPrompt } from "../../modules/multiagent/workflow/magenta/wor
  * and that the skeleton's guard prompt is always prepended ahead of LLM content.
  */
 describe("multiagent orchestrator", () => {
-	it("discovers all six patterns on the local target", () => {
+	it("discovers all seven patterns on the local target", () => {
 		const orch = new MultiAgentOrchestrator();
 		const discovered = orch.discover();
 		expect(discovered.provider).toBe("multiagent");
@@ -23,6 +23,7 @@ describe("multiagent orchestrator", () => {
 				"generate_and_filter",
 				"loop_until_done",
 				"tournament",
+				"script",
 			].sort(),
 		);
 	});
@@ -33,13 +34,13 @@ describe("multiagent orchestrator", () => {
 		expect(desc.target).toBe("multiagent://local");
 		expect(desc.kind).toBe("multiagent");
 		expect(desc.ops).toContain("orchestrate");
-		expect((desc.metadata as { patterns: string[] }).patterns).toHaveLength(6);
+		expect((desc.metadata as { patterns: string[] }).patterns).toHaveLength(7);
 	});
 
 	it("dispatches every pattern to an implementation (no notImplemented rejections)", () => {
 		const orch = new MultiAgentOrchestrator();
-		// All six patterns are wired; discover() reflects the full set.
-		expect(orch.discover().patterns).toHaveLength(6);
+		// All seven patterns are wired; discover() reflects the full set.
+		expect(orch.discover().patterns).toHaveLength(7);
 	});
 });
 

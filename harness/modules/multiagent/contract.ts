@@ -24,7 +24,8 @@ export type Pattern =
 	| "adversarial_verify"
 	| "generate_and_filter"
 	| "tournament"
-	| "loop_until_done";
+	| "loop_until_done"
+	| "script";
 
 /** Worker isolation level. `container` is a future addition. */
 export type Isolation = "process" | "worktree";
@@ -180,6 +181,84 @@ export interface LoopUntilDoneRequest extends CommonOptions {
 	maxIterations?: number;
 }
 
+/**
+ * A single agent call issued from within a workflow script. Mirrors the
+ * `agent()` primitive's option surface. The workflow author supplies the
+ * prompt and per-call overrides; the runtime routes it through the same worker
+ * runner as every other pattern, so the depth guard, tool denial, timeout, and
+ * guard injection all still apply — a script cannot bypass them.
+ */
+export interface ScriptAgentOptions {
+	/** Stable label for correlation / logging. */
+	label?: string;
+	/** JSON schema constraining the worker's structured output. */
+	schema?: unknown;
+	/** Model override. */
+	model?: string;
+	/** Provider override. */
+	provider?: string;
+	/** Thinking level. */
+	thinking?: ThinkingLevel;
+	/** Tool whitelist (still sanitized: sub_agent/bg_shell always stripped). */
+	tools?: string[];
+	/** A guard string prepended to the system prompt (the pattern's soul step). */
+	guard?: string;
+	/** Per-call wall-clock timeout in seconds. */
+	timeoutSeconds?: number;
+}
+
+/**
+ * The runtime context injected into a workflow script's default export. The
+ * script uses these primitives to spawn work; it never imports the worker
+ * module directly, so the runtime stays in control of routing and safety.
+ */
+export interface WorkflowContext {
+	/** Spawn one agent. Routes through the runtime's worker runner. */
+	agent(prompt: string, options?: ScriptAgentOptions): Promise<WorkerResult>;
+	/** Run a batch of task functions in parallel (results in input order). */
+	parallelAgents<T>(tasks: Array<() => Promise<T>>, maxConcurrent?: number): Promise<T[]>;
+	/** Stream-process items (results in completion order). */
+	pipeline<T, R>(items: T[], fn: (item: T, index: number) => Promise<R>, maxConcurrent?: number): Promise<R[]>;
+	/** Mark a named phase (observability). */
+	phase(name: string): void;
+	/** Write a log line (observability). */
+	log(message: string): void;
+	/** Reusable guard atoms (the hard-coded soul steps). */
+	guards: Record<string, string>;
+	/** This workflow run's id — also the ~/.magenta/tmp/<id> directory name. */
+	workflowId: string;
+	/** Working directory workers resolve against. */
+	cwd: string;
+	/** Abort signal for cooperative cancellation. */
+	signal?: AbortSignal;
+}
+
+/** The shape a workflow script module must export. */
+export interface WorkflowModule {
+	/** Optional metadata for /events display. */
+	meta?: {
+		name: string;
+		description: string;
+		phases?: Array<{ title: string; detail: string }>;
+	};
+	/** The workflow entry point. Receives caller args + the injected context. */
+	default: (args: unknown, context: WorkflowContext) => Promise<unknown>;
+}
+
+/**
+ * Run a workflow authored as an executable TS/JS module (the "write the loop,
+ * not the prompt" path). The script controls its own control flow (if/while/
+ * await) using the injected primitives; the runtime enforces the safety
+ * boundary. This is the flexible counterpart to the six fixed skeletons.
+ */
+export interface ScriptWorkflowRequest extends CommonOptions {
+	pattern: "script";
+	/** Absolute path to the workflow module (must export a default async fn). */
+	scriptPath: string;
+	/** Arguments passed to the workflow's default function. */
+	args?: unknown;
+}
+
 /** Discriminated union of all orchestration requests. */
 export type OrchestrationRequest =
 	| ClassifyAndActRequest
@@ -187,7 +266,8 @@ export type OrchestrationRequest =
 	| AdversarialVerifyRequest
 	| GenerateAndFilterRequest
 	| TournamentRequest
-	| LoopUntilDoneRequest;
+	| LoopUntilDoneRequest
+	| ScriptWorkflowRequest;
 
 /** Result of the provider's discover() call. */
 export interface MultiAgentDiscoverResult {
