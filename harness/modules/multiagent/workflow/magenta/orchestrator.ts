@@ -90,24 +90,6 @@ function nextWorkerId(prefix: string): string {
 	return `${prefix}_${String(workerCounter).padStart(3, "0")}`;
 }
 
-/** Build a SpawnWorkerOptions from a slot + guard + common options. */
-function slotToSpawn(workerId: string, slot: WorkerSlot, guard: string, common: CommonOptions): SpawnWorkerOptions {
-	return {
-		workerId,
-		prompt: slot.task,
-		systemPrompt: buildSystemPrompt(guard, slot),
-		// Slot-level overrides win over the orchestration-wide defaults.
-		model: slot.model ?? common.model,
-		provider: slot.provider,
-		tools: slot.tools ?? common.tools,
-		thinking: slot.thinking,
-		schema: slot.schema,
-		cwd: common.cwd,
-		isolation: common.isolation,
-		timeoutMs: slot.timeoutSeconds !== undefined ? slot.timeoutSeconds * 1000 : undefined,
-	};
-}
-
 // --- Pattern 2: Fan Out and Synthesize ---------
 
 async function fanOutSynthesize(
@@ -128,7 +110,7 @@ async function fanOutSynthesize(
 		.join("\n\n");
 
 	const outcome = await ctx.agent(`${req.synthesizer.task}\n\n${merged}`, {
-		label: "synthesizer",
+		label: "synth",
 		guard: ctx.guards.synthesizer,
 	});
 
@@ -172,11 +154,6 @@ const WINNER_SCHEMA = {
 	required: ["winner"],
 } as const;
 
-/** Merge a slot's own schema with a skeleton-mandated schema (skeleton wins). */
-function withSchema(slot: WorkerSlot, schema: unknown): WorkerSlot {
-	return { ...slot, schema };
-}
-
 // --- Pattern 1: Classify and Act -------------------------------------------
 
 async function classifyAndAct(
@@ -192,7 +169,7 @@ async function classifyAndAct(
 	const classified = await ctx.agent(
 		`${req.classifier.task}\n\nAvailable labels: ${labels.join(", ")}\n\nInput:\n${req.input}`,
 		{
-			label: "classifier",
+			label: "classify",
 			guard: ctx.guards.classifier,
 			schema: { type: "object", properties: { label: { type: "string", enum: labels } }, required: ["label"] },
 		},
@@ -205,7 +182,7 @@ async function classifyAndAct(
 		return { pattern: "classify_and_act", workers: spawned, outcome: classified, terminatedBy: "completed" };
 	}
 
-	const handler = await ctx.agent(`${handlerSlot.task}\n\nInput:\n${req.input}`, { label: "handler" });
+	const handler = await ctx.agent(`${handlerSlot.task}\n\nInput:\n${req.input}`, { label: "handle" });
 	return { pattern: "classify_and_act", workers: spawned, outcome: handler, terminatedBy: "completed" };
 }
 
@@ -218,20 +195,23 @@ async function adversarialVerify(
 ): Promise<OrchestrationResult> {
 	const verifyCount = Math.max(1, req.verifyCount ?? 3);
 	const threshold = req.confidenceThreshold ?? 0.8;
-	const maxConcurrent = req.maxConcurrent ?? DEFAULT_MAX_CONCURRENT;
+	const spawned: WorkerResult[] = [];
+	const ctx = buildWorkflowContext(runner, nextWorkflowId(), req.cwd ?? process.cwd(), spawned, signal);
 
 	// Generate candidates (wide net).
-	const genSpec = slotToSpawn(nextWorkerId("generate"), req.generator, "", req);
-	const generator = await runner.spawn(genSpec, signal);
+	const generator = await ctx.agent(req.generator.task, { label: "generate" });
 
 	// Independently verify, N times in parallel. Each returns a boolean verdict.
-	const verifierSlot = withSchema(req.verifier, BOOLEAN_VERDICT_SCHEMA);
-	const verifierSpecs = Array.from({ length: verifyCount }, () => {
-		const spec = slotToSpawn(nextWorkerId("verify"), verifierSlot, GUARDS.verifier, req);
-		spec.prompt = `${req.verifier.task}\n\nCandidate(s) to verify:\n${generator.text}`;
-		return spec;
-	});
-	const verifiers = await runner.parallel(verifierSpecs, maxConcurrent, signal);
+	const verifiers = await ctx.parallelAgents(
+		Array.from({ length: verifyCount }, (_, i) => () =>
+			ctx.agent(`${req.verifier.task}\n\nCandidate(s) to verify:\n${generator.text}`, {
+				label: `verify-${i}`,
+				guard: ctx.guards.verifier,
+				schema: BOOLEAN_VERDICT_SCHEMA,
+			}),
+		),
+		req.maxConcurrent,
+	);
 
 	// Confidence = passed / verifyCount. Deterministic, not a model's self-report.
 	const passed = verifiers.filter((v) => readBooleanField(v, "verdict") === true).length;
@@ -239,7 +219,7 @@ async function adversarialVerify(
 
 	return {
 		pattern: "adversarial_verify",
-		workers: [generator, ...verifiers],
+		workers: spawned,
 		outcome: generator,
 		confidence,
 		terminatedBy: confidence >= threshold ? "completed" : "threshold",
@@ -254,20 +234,26 @@ async function generateAndFilter(
 	signal?: AbortSignal,
 ): Promise<OrchestrationResult> {
 	const count = Math.max(1, req.count);
-	const maxConcurrent = req.maxConcurrent ?? DEFAULT_MAX_CONCURRENT;
+	const spawned: WorkerResult[] = [];
+	const ctx = buildWorkflowContext(runner, nextWorkflowId(), req.cwd ?? process.cwd(), spawned, signal);
 
 	// Generate `count` independent candidates in parallel.
-	const genSpecs = Array.from({ length: count }, () => slotToSpawn(nextWorkerId("gen"), req.generator, "", req));
-	const candidates = await runner.parallel(genSpecs, maxConcurrent, signal);
+	const candidates = await ctx.parallelAgents(
+		Array.from({ length: count }, (_, i) => () => ctx.agent(req.generator.task, { label: `gen-${i}` })),
+		req.maxConcurrent,
+	);
 
 	// Score each candidate by explicit criteria (evaluator returns a number).
-	const evalSlot = withSchema(req.evaluator, SCORE_SCHEMA);
-	const evalSpecs = candidates.map((c) => {
-		const spec = slotToSpawn(nextWorkerId("eval"), evalSlot, GUARDS.evaluator, req);
-		spec.prompt = `${req.evaluator.task}\n\nCandidate to score:\n${c.text}`;
-		return spec;
-	});
-	const evaluations = await runner.parallel(evalSpecs, maxConcurrent, signal);
+	const evaluations = await ctx.parallelAgents(
+		candidates.map((c, i) => () =>
+			ctx.agent(`${req.evaluator.task}\n\nCandidate to score:\n${c.text}`, {
+				label: `eval-${i}`,
+				guard: ctx.guards.evaluator,
+				schema: SCORE_SCHEMA,
+			}),
+		),
+		req.maxConcurrent,
+	);
 
 	// Rank by score, keep top-K. Ranking is deterministic in the skeleton.
 	const ranked = candidates
@@ -279,9 +265,8 @@ async function generateAndFilter(
 
 	return {
 		pattern: "generate_and_filter",
-		workers: [...candidates, ...evaluations],
+		workers: spawned,
 		outcome: winner,
-		// Top-K candidates by score when keepTop > 1; `outcome` is always the top one.
 		...(finalists.length > 1 ? { finalists } : {}),
 		terminatedBy: "completed",
 	};
@@ -294,17 +279,18 @@ async function tournament(
 	runner: WorkerRunner,
 	signal?: AbortSignal,
 ): Promise<OrchestrationResult> {
-	const maxConcurrent = req.maxConcurrent ?? DEFAULT_MAX_CONCURRENT;
+	const spawned: WorkerResult[] = [];
+	const ctx = buildWorkflowContext(runner, nextWorkflowId(), req.cwd ?? process.cwd(), spawned, signal);
 
 	// Generate all approaches in parallel.
-	const approachSpecs = req.approaches.map((slot) => slotToSpawn(nextWorkerId("appr"), slot, "", req));
-	const approaches = await runner.parallel(approachSpecs, maxConcurrent, signal);
-
-	const allWorkers: WorkerResult[] = [...approaches];
-	const judgeSlot = withSchema(req.judge, WINNER_SCHEMA);
+	const approaches = await ctx.parallelAgents(
+		req.approaches.map((slot, i) => () => ctx.agent(slot.task, { label: `appr-${i}` })),
+		req.maxConcurrent,
+	);
 
 	// Elimination bracket: pairwise matches, winner advances, until one remains.
 	// N candidates -> exactly N-1 comparisons. Byes carry over on odd counts.
+	let matchNo = 0;
 	let round = approaches.slice();
 	while (round.length > 1) {
 		const nextRound: WorkerResult[] = [];
@@ -315,22 +301,18 @@ async function tournament(
 				nextRound.push(a); // bye
 				continue;
 			}
-			const spec = slotToSpawn(nextWorkerId("judge"), judgeSlot, GUARDS.judge, req);
-			spec.prompt = `${req.judge.task}\n\nCandidate 0:\n${a.text}\n\nCandidate 1:\n${b.text}`;
-			const verdict = await runner.spawn(spec, signal);
-			allWorkers.push(verdict);
+			const verdict = await ctx.agent(`${req.judge.task}\n\nCandidate 0:\n${a.text}\n\nCandidate 1:\n${b.text}`, {
+				label: `judge-${matchNo++}`,
+				guard: ctx.guards.judge,
+				schema: WINNER_SCHEMA,
+			});
 			const winnerIdx = readNumberField(verdict, "winner");
 			nextRound.push(winnerIdx === 1 ? b : a);
 		}
 		round = nextRound;
 	}
 
-	return {
-		pattern: "tournament",
-		workers: allWorkers,
-		outcome: round[0],
-		terminatedBy: "completed",
-	};
+	return { pattern: "tournament", workers: spawned, outcome: round[0], terminatedBy: "completed" };
 }
 
 // --- Pattern 6: Loop Until Done --------------------------------------------
@@ -341,7 +323,8 @@ async function loopUntilDone(
 	signal?: AbortSignal,
 ): Promise<OrchestrationResult> {
 	const maxIterations = Math.max(1, req.maxIterations ?? 10);
-	const workers: WorkerResult[] = [];
+	const spawned: WorkerResult[] = [];
+	const ctx = buildWorkflowContext(runner, nextWorkflowId(), req.cwd ?? process.cwd(), spawned, signal);
 	const findings: string[] = [];
 	let iterations = 0;
 	let terminatedBy: OrchestrationResult["terminatedBy"] = "max_iterations";
@@ -354,13 +337,13 @@ async function loopUntilDone(
 			break;
 		}
 		iterations += 1;
-		const spec = slotToSpawn(nextWorkerId("refine"), req.refine, GUARDS.refine, req);
 		const priorBlock = findings.length
 			? `\n\nAlready-found (exclude these):\n${findings.map((f, i) => `${i + 1}. ${f}`).join("\n")}`
 			: "";
-		spec.prompt = `${req.refine.task}\n\nStarting content:\n${req.initial}${priorBlock}`;
-		const result = await runner.spawn(spec, signal);
-		workers.push(result);
+		const result = await ctx.agent(`${req.refine.task}\n\nStarting content:\n${req.initial}${priorBlock}`, {
+			label: `refine-${iterations}`,
+			guard: ctx.guards.refine,
+		});
 
 		const newFinding = result.text.trim();
 		// "No new findings" is the stop condition, observed by the skeleton.
@@ -373,8 +356,8 @@ async function loopUntilDone(
 
 	return {
 		pattern: "loop_until_done",
-		workers,
-		outcome: workers[workers.length - 1],
+		workers: spawned,
+		outcome: spawned[spawned.length - 1],
 		iterations,
 		terminatedBy,
 	};
