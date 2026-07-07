@@ -24,7 +24,7 @@ Skills for spatial transcriptomics data analysis, mapping, and visualization.
 Map scRNA-seq to spatial data using optimal transport (MOSCOT) for gene
 imputation and cell type transfer.
 
-**Skill file**: [single-cell_spatial_mapping.md](assets/references/single-cell_spatial_mapping.md)
+**Skill file**: [single_cell_spatial_mapping.md](assets/references/single_cell_spatial_mapping.md)
 
 **When to use**:
 - You have paired scRNA-seq and spatial transcriptomics data
