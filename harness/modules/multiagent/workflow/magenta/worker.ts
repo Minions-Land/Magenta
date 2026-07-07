@@ -401,67 +401,14 @@ export function buildSystemPrompt(guard: string, slot: WorkerSlot): string {
 }
 
 // ============================================================================
-// Phase 1: New Primitives (Claude Code style API)
+// Phase 1: Workflow primitives (Claude Code style API)
+//
+// These are composed by buildWorkflowContext in orchestrator.ts to build the
+// WorkflowContext injected into every workflow module (presets and user
+// scripts alike). The single-agent `agent`/`phase`/`log` primitives live as
+// inline closures there (they need workflow-id + state-dir wiring); only the
+// pure concurrency helpers below are shared here.
 // ============================================================================
-
-/**
- * Spawn a single headless agent (对标 Claude Code 的 agent()).
- *
- * This is a convenience wrapper around spawnWorker with a simpler interface.
- * Guards, schema, and other options can be passed directly.
- *
- * @param prompt - Task prompt for the agent
- * @param options - Optional configuration
- * @param signal - Abort signal
- * @returns WorkerResult with success flag, text, and optional structured output
- */
-export async function agent(
-	prompt: string,
-	options?: {
-		label?: string;
-		schema?: unknown;
-		model?: string;
-		provider?: string;
-		thinking?: ThinkingLevel;
-		tools?: string[];
-		guard?: string;
-		cwd?: string;
-		timeoutMs?: number;
-	},
-	signal?: AbortSignal,
-): Promise<WorkerResult> {
-	const workerId = options?.label || `agent-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-
-	// Assemble system prompt: guard first (if provided), then schema instruction
-	let systemPrompt: string | undefined;
-	if (options?.guard) {
-		const parts = [options.guard.trim()];
-		if (options.schema) {
-			parts.push(
-				`Return your final answer as JSON matching this schema:\n${JSON.stringify(options.schema, null, 2)}`,
-			);
-		}
-		systemPrompt = parts.join("\n\n");
-	} else if (options?.schema) {
-		systemPrompt = `Return your final answer as JSON matching this schema:\n${JSON.stringify(options.schema, null, 2)}`;
-	}
-
-	return spawnWorker(
-		{
-			workerId,
-			prompt,
-			systemPrompt,
-			model: options?.model,
-			provider: options?.provider,
-			thinking: options?.thinking,
-			tools: options?.tools,
-			schema: options?.schema,
-			cwd: options?.cwd,
-			timeoutMs: options?.timeoutMs,
-		},
-		signal,
-	);
-}
 
 /**
  * Run a batch of agent tasks in parallel (对标 Claude Code 的 parallel()).
@@ -527,24 +474,4 @@ export async function pipeline<T, R>(
 	const lanes = Array.from({ length: Math.min(limit, items.length) }, () => runLane());
 	await Promise.all(lanes);
 	return results;
-}
-
-/**
- * Mark a named phase (for logging/observability, 对标 Claude Code 的 phase()).
- *
- * @param name - Phase name
- */
-export function phase(name: string): void {
-	console.log(`\n======== ${name} ========\n`);
-	// TODO: Write to workflow's iterations.log when workflow-ID context is available
-}
-
-/**
- * Write a log message (对标 Claude Code 的 log()).
- *
- * @param message - Message to log
- */
-export function log(message: string): void {
-	console.log(`[workflow] ${message}`);
-	// TODO: Append to workflow's log.jsonl when workflow-ID context is available
 }

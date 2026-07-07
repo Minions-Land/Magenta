@@ -119,7 +119,7 @@ Magenta3 only registers currently assembled implementations under
 - **context** — Context management
 - **hooks** — Lifecycle hooks
 - **memory** — Memory storage (standalone workspace package at `@magenta/memory`)
-- **multiagent** — Deterministic multi-agent orchestration skeletons (consumed directly by the `sub_agent` tool via import)
+- **multiagent** — Workflow orchestration engine: load a workflow module, inject primitives, run it. Six presets + user scripts, single execution path (consumed directly by the `sub_agent` tool via import)
 - **policy** — Execution policies
 - **prompt-templates** — Reusable prompt templates with parameter substitution
 - **runtime** — Runtime configuration

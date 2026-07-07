@@ -4,16 +4,23 @@ import type { HcpServer } from "../../hcp-contract/hcp-server.ts";
 /**
  * Multi-agent orchestration contract.
  *
- * This module is NOT a sub-agent and NOT an agent team. It is a deterministic
- * WORKFLOW engine: each pattern is a fixed JavaScript control-flow skeleton that
- * spawns headless `pi` workers, routes their results, and terminates on explicit
+ * This module is NOT a sub-agent and NOT an agent team. It is a WORKFLOW
+ * engine with a single execution path: every pattern is a workflow module
+ * (`(args, ctx) => {...}`) that composes the injected primitives (agent,
+ * parallelAgents, pipeline, guards), routes results, and terminates on explicit
  * conditions. The LLM never controls the flow — it only fills task-specific
- * content into the slots each pattern exposes.
+ * content into the slots each preset exposes.
+ *
+ * The six named patterns are PRESET workflow scripts shipped in-tree; the
+ * `script` pattern loads a user-authored module. Both run through the exact
+ * same path (resolve module path → runWorkflowModule → assembleResult), so
+ * choosing a preset and writing your own workflow are the same action — load a
+ * module and run it — differing only in where the module comes from.
  *
  * Design axiom: a pattern's value is not its shape, it is the step it forces the
  * LLM not to skip (classify-first, cover-every, independent re-check,
- * criteria-based scoring, pairwise judging, stop-on-no-new-findings). The
- * skeleton hard-codes that soul step via a guard prompt prepended to the
+ * criteria-based scoring, pairwise judging, stop-on-no-new-findings). Each preset
+ * enforces that soul step via a guard prompt (see `guards`) prepended to the
  * relevant worker; the LLM cannot dilute it.
  */
 

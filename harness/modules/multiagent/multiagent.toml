@@ -1,6 +1,6 @@
 kind = "multiagent"
 name = "multiagent"
-description = "Deterministic multi-agent orchestration workflows. Provides fixed control-flow patterns (skeletons) that spawn headless pi workers; the LLM fills task content into slots but never controls the flow."
+description = "Workflow orchestration engine with a single execution path: load a workflow module, inject primitives (agent/parallelAgents/guards), run it. Six named patterns are preset scripts shipped in-tree; the 'script' pattern loads user-authored modules. Both run through the same path, so choosing a preset and writing your own workflow differ only in where the module comes from."
 source = "magenta"
 origin = "magenta1-general-harness"
 origin_rel = "ported/adapted"
@@ -8,8 +8,8 @@ impl = ["multiagent/workflow/magenta/orchestrator.ts", "multiagent/workflow/mage
 targets = ["multiagent://local"]
 
 [assumption]
-compensates = "The model tends to skip the disciplined 'soul step' of a procedure (classify-first, cover-every, independent re-check) and cannot reliably control its own flow or termination, so patterns hard-code the control flow and guard prompts in code."
-rationale = "stated"  # orchestrator.ts:2-8 states it verbatim: "The LLM ... never decides the order, the concurrency, or when to stop"
+compensates = "The model tends to skip the disciplined 'soul step' of a procedure (classify-first, cover-every, independent re-check) and cannot reliably control its own flow or termination, so presets enforce control flow and inject guard prompts in code."
+rationale = "stated"  # orchestrator.ts comment: "The LLM ... never decides the order, the concurrency, or when to stop"
 calibrated_for = ["claude-sonnet-4-5", "claude-opus-4-5"]
 review_trigger = "model-change"
 load_bearing = "unmeasured"
@@ -41,4 +41,4 @@ description = "Iterate a refine worker, excluding prior findings each round; sto
 
 [[patterns]]
 name = "script"
-description = "Run a workflow authored as an executable TS/JS module (write the loop, not the prompt). The script drives its own control flow (if/while/await) using injected primitives (agent, parallelAgents, pipeline, phase, log, guards); the runtime enforces the safety boundary (depth guard, tool denial, timeout, guard injection) and persists state to .magenta/tmp/<id>/. The flexible counterpart to the six fixed skeletons."
+description = "Run a workflow authored as an executable TS/JS module (write the loop, not the prompt). The script drives its own control flow (if/while/await) using injected primitives (agent, parallelAgents, pipeline, phase, log, guards); the runtime enforces the safety boundary (depth guard, tool denial, timeout, guard injection) and persists state to .magenta/tmp/<id>/. The six presets are just official scripts of this same kind, shipped in-tree."

@@ -22,7 +22,7 @@ import type {
 	WorkflowContext,
 	WorkflowModule,
 } from "../../contract.ts";
-import { parallel, type SpawnWorkerOptions, spawnWorker } from "./worker.ts";
+import { parallel, parallelAgents, pipeline, type SpawnWorkerOptions, spawnWorker } from "./worker.ts";
 
 /**
  * The two primitives every pattern needs to run workers. Abstracted so the
@@ -178,40 +178,10 @@ function buildWorkflowContext(
 		return result;
 	};
 
-	const parallelAgents: WorkflowContext["parallelAgents"] = async (tasks, maxConcurrent = DEFAULT_MAX_CONCURRENT) => {
-		const limit = Math.max(1, maxConcurrent);
-		const results = new Array(tasks.length);
-		let next = 0;
-		async function lane(): Promise<void> {
-			while (true) {
-				const i = next++;
-				if (i >= tasks.length) return;
-				results[i] = await tasks[i]();
-			}
-		}
-		await Promise.all(Array.from({ length: Math.min(limit, tasks.length) }, () => lane()));
-		return results;
-	};
-
-	const pipeline: WorkflowContext["pipeline"] = async (items, fn, maxConcurrent = DEFAULT_MAX_CONCURRENT) => {
-		const results: unknown[] = [];
-		const limit = Math.max(1, maxConcurrent);
-		let next = 0;
-		async function lane(): Promise<void> {
-			while (true) {
-				const i = next++;
-				if (i >= items.length) return;
-				results.push(await fn(items[i], i));
-			}
-		}
-		await Promise.all(Array.from({ length: Math.min(limit, items.length) }, () => lane()));
-		return results as never;
-	};
-
 	return {
 		agent,
-		parallelAgents,
-		pipeline,
+		parallelAgents: (tasks, maxConcurrent = DEFAULT_MAX_CONCURRENT) => parallelAgents(tasks, maxConcurrent, signal),
+		pipeline: (items, fn, maxConcurrent = DEFAULT_MAX_CONCURRENT) => pipeline(items, fn, maxConcurrent, signal),
 		phase: (name: string) => {
 			console.log(`\n======== [${workflowId}] ${name} ========\n`);
 			event("phase", { name });
