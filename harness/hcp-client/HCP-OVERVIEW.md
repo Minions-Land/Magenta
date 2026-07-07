@@ -48,7 +48,7 @@ Think of it like a **power supply system**:
 **Startup flow**:
 ```
 1. Read harness/harness.toml (index file)
-2. Find 18 component declarations
+2. Find the component declarations (35 at the time of writing)
 3. Load each component's TOML file (bash.toml, read.toml, ...)
 4. Return ComponentDescriptor array
 ```

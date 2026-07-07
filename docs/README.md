@@ -2,7 +2,10 @@
 
 ## Overview
 
-Magenta3 is an AI coding assistant forked from Pi, with enhanced modular architecture, a harness execution layer, and a brand system.
+Magenta3 is a terminal-native AI coding environment built on a Harness
+execution layer, HCP assembly, domain packages, and a brand system. Its agent
+loop, TUI, session system, and model providers are vendored from the upstream
+Pi project.
 
 ## Documentation Structure
 
@@ -13,6 +16,9 @@ Magenta3 is an AI coding assistant forked from Pi, with enhanced modular archite
 
 ### Setup
 - **[AUTHENTICATION.md](./AUTHENTICATION.md)** - External auth (Claude Code / Codex credential auto-detect)
+
+### Packages
+- **[../packages/README.md](../packages/README.md)** - Domain packages (AutOmicScience, Biomni, ClaudeScience, PantheonOS) and how they load
 
 ### Project Information
 - **[../README.md](../README.md)** - Project overview and quick start

@@ -17,10 +17,10 @@ packages/
     package.toml
     skills/
       omics-shared/
-      multi-omics/
-      scatac-seq/
-      rna/
+      single-cell/
       spatial/
+      bulk/
+      bioml/
     tools/
       omics-environment/
         omics-environment.toml

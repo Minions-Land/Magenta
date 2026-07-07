@@ -26,13 +26,13 @@ ClaudeScience is organized into **domain-specific profiles** for selective loadi
 
 ```bash
 # Load only structure prediction skills
-magenta --package ClaudeScience:structure
+magenta --harness-package ClaudeScience:structure
 
 # Load multiple profiles
-magenta --package ClaudeScience:structure,design,research
+magenta --harness-package ClaudeScience:structure,design,research
 
 # Load all skills
-magenta --package ClaudeScience:all
+magenta --harness-package ClaudeScience:all
 ```
 
 ### Profile Inheritance
@@ -48,10 +48,17 @@ extends = ["structure", "design", "genomics", "singlecell", "research", "visuali
 
 ### Default Behavior
 
-By default, **no skills are auto-loaded** (`default_profiles = []`). This is intentional because:
-- ClaudeScience has 32 skills across diverse domains
-- Loading all skills would add unnecessary context
-- Users should explicitly select needed profiles
+By default, **all skills load** (`default_profiles = ["all"]`), so
+`--harness-package ClaudeScience` with no selector pulls in the full set. When
+you only need a slice, name the profiles explicitly to keep context focused:
+
+```bash
+# Full set (default)
+magenta --harness-package ClaudeScience
+
+# Focused slice
+magenta --harness-package ClaudeScience:structure,design
+```
 
 ### Component Naming Convention
 
@@ -75,7 +82,7 @@ ClaudeScience supports **multi-layer selective loading** through profiles:
 
 ```bash
 # Load only research and visualization skills
-magenta --package ClaudeScience:research,visualization
+magenta --harness-package ClaudeScience:research,visualization
 
 # This loads:
 # - research-literature-review
@@ -92,7 +99,7 @@ magenta --package ClaudeScience:research,visualization
 
 ```bash
 # Load structure prediction and design skills
-magenta --package ClaudeScience:structure,design
+magenta --harness-package ClaudeScience:structure,design
 
 # This loads:
 # - structure-alphafold2
@@ -109,10 +116,10 @@ magenta --package ClaudeScience:structure,design
 
 ```bash
 # Load comprehensive set
-magenta --package ClaudeScience:structure,design,genomics,singlecell,compute
+magenta --harness-package ClaudeScience:structure,design,genomics,singlecell,compute
 
 # Or simply use the 'all' profile
-magenta --package ClaudeScience:all
+magenta --harness-package ClaudeScience:all
 ```
 
 ## Extending ClaudeScience
@@ -215,3 +222,10 @@ discoverHarnessPackages().then(r => {
 ## License
 
 See individual skill licenses in their respective SKILL.md files.
+
+## See Also
+
+- [Packages overview](../README.md) — how packages load and how to combine them
+- [`AutOmicScience`](../AutOmicScience/) — grounded, tool-backed omics analysis (the reference package)
+- [`PantheonOS`](../PantheonOS/) — bioinformatics workflow best practices
+- [`Biomni`](../Biomni/) — biomedical AI toolkit with executable tools

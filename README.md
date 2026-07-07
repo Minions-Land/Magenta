@@ -17,12 +17,12 @@
   <a href="#development">Development</a>
 </p>
 
-Magenta3 is a terminal-native AI coding environment. It keeps the practical
-parts of Pi: the agent loop, terminal UI, session system, model providers, and
-tool calling. On top of that foundation, Magenta adds a Harness layer for
-source-separated tools and capabilities, HCP for assembly, packages for
-domain-specific work, remote SSH execution, sub-agents, peer messaging, and a
-Magenta-branded CLI that stores its state under `~/.magenta/`.
+Magenta3 is a terminal-native AI coding environment. It centers on a Harness
+layer for source-separated tools and capabilities, HCP for assembly, domain
+packages, remote SSH execution, headless sub-agents, peer messaging between
+sessions, and a Magenta-branded CLI that stores its state under `~/.magenta/`.
+The agent loop, terminal UI, session system, model providers, and tool-calling
+core are vendored from the upstream Pi project as a stable foundation.
 
 The working command is:
 
@@ -37,9 +37,10 @@ In this repository, use:
 ```
 
 > [!NOTE]
-> Pi is the foundation. Magenta is the product layer: Harness components,
-> package overlays, Magenta storage, peer messaging, remote execution, branding,
-> update flow, and the `magenta` command. The upstream Pi README is preserved at
+> The distinctive Magenta layers — Harness components and HCP assembly, package
+> overlays, Magenta storage, peer messaging, remote execution, branding, update
+> flow, and the `magenta` command — sit on top of a vendored Pi foundation. The
+> upstream Pi README is preserved at
 > [`pi/README-upstream.md`](./pi/README-upstream.md).
 
 ---
@@ -56,7 +57,7 @@ flowchart TD
     CLI --> SESSION["Agent session<br/>context, tools, events, model state"]
 
     SESSION --> MODEL["LLM providers<br/>Anthropic · OpenAI · Gemini · OpenRouter<br/>Copilot · Bedrock · local/proxy providers"]
-    SESSION --> TOOLS["Built-in tools<br/>read · write · edit · bash · grep · find · ls · lsp · web"]
+    SESSION --> TOOLS["Built-in tools<br/>read · write · edit · bash · grep · find · ls · lsp · web-search · web-fetch"]
     SESSION --> EVENTS["Background events<br/>long shell runs · sub-agents · progress"]
     SESSION --> STORE["~/.magenta<br/>sessions · settings · packages · peer messages"]
 
@@ -80,7 +81,8 @@ than a chat window:
   work in parallel while the main session keeps context.
 - Peer-to-peer agent messages, so independent sessions can coordinate through a
   local mailbox.
-- Package overlays for specialized domains such as AutOmicScience.
+- Package overlays for specialized domains: AutOmicScience, Biomni,
+  ClaudeScience, and PantheonOS ship in-repo under `packages/`.
 - A single Magenta storage root: `~/.magenta/`, replacing legacy `~/.pi/`
   behavior for Magenta state.
 
@@ -135,7 +137,7 @@ order.
 | Remote workspace | `--ssh user@host:/path`, remote shell/file tools, headless PTY support through `node-pty` |
 | Model control | Provider/model selection, `--models` cycling patterns, thinking levels, scoped models, provider auth detection |
 | Sub-agents | `sub_agent` tool, parallel tasks, read-only defaults, parent-model inheritance, explicit provider/model override |
-| Peer messaging | `send_message` tool, shared local SQLite mailbox, active/idle/offline presence, turn-boundary delivery |
+| Peer messaging | `send_message` tool, shared local SQLite mailbox, active/idle/offline presence via pid probe, SIGUSR1 idle wake, urgent/normal priority delivery |
 | Packages | Install/list/update/remove package resources, local/project settings, package trust decisions |
 | Domain overlays | Harness package manifests with tools, skills, system prompts, brand, runtime |
 | Skills/resources | Built-in and package skills, namespacing, hot reload, source attribution |
@@ -150,9 +152,10 @@ order.
 | `edit` | Exact-match edits | `bash` | Run shell commands |
 | `grep` | Search file contents | `find` | Find paths by glob/name |
 | `ls` | List directories | `show` | Render or inspect content |
-| `lsp` | Language server queries | `web-search` | Web lookup when enabled |
-| `todo` | Track task state | `ssh` | Operate on a remote checkout |
-| `sub_agent` | Delegate work to headless agents | `send_message` | Message another live session |
+| `lsp` | Language server queries | `web-search` | Web search when enabled |
+| `web-fetch` | Fetch a URL's contents | `todo` | Track task state |
+| `ssh` | Operate on a remote checkout | `sub_agent` | Delegate work to headless agents |
+| `send_message` | Message another live session | | |
 
 Packages can add tools. For example, AutOmicScience contributes
 `omics_compute`, `omics_environment`, and `omics_preflight`.
@@ -164,26 +167,35 @@ useful for review, research, independent verification, and fan-out work. By
 default they are read-only and inherit the parent provider/model, which avoids
 accidentally falling back to a different model gateway.
 
+Sessions coordinate through a shared SQLite mailbox (`~/.magenta/messages.db`)
+plus a presence table. Liveness is probed directly from each agent's recorded
+pid (`kill(pid, 0)`) rather than a heartbeat, so a crashed agent reads as
+`offline` the instant its process is gone. The pid also lets a sender wake an
+`idle` recipient by signalling it (`SIGUSR1`), guarded against PID reuse by a
+per-process boot id. Messages carry a priority: `urgent` messages steer the
+recipient before its next tool-calling turn, `normal` messages arrive at the end
+of the loop.
+
 ```mermaid
 sequenceDiagram
     participant Main as Main Magenta session
     participant SubA as Sub-agent A
-    participant SubB as Sub-agent B
     participant DB as ~/.magenta/messages.db
+    participant SubB as Idle sub-agent B
 
     Main->>SubA: sub_agent(start, task, inherited model)
-    Main->>SubB: sub_agent(start, task, inherited model)
-    SubA->>DB: send_message(result or question)
-    SubB->>DB: send_message(result or question)
-    Main->>DB: drain unread messages at turn boundary
-    DB-->>Main: messages + sender presence
+    SubA->>DB: send_message(result, priority)
+    Main->>DB: drain — urgent steers, normal follows up
+    DB-->>Main: messages + sender presence (pid-probed)
+    Main->>DB: send_message(to B)
+    DB->>SubB: SIGUSR1 wake (boot-id guarded)
 ```
 
 > [!NOTE]
 > Magenta does not depend on MinionsOS2 at runtime. The peer-message SQLite
 > delivery kernel in `@magenta/harness` is a TypeScript port of MinionsOS2's
-> message semantics; Magenta adds presence, turn-boundary injection, TUI
-> rendering, and the `send_message` tool integration.
+> message semantics; Magenta adds the presence table, pid-based liveness and
+> idle wake, priority injection, TUI rendering, and the `send_message` tool.
 
 ### Remote SSH Work
 
@@ -243,18 +255,30 @@ Type `/` in the TUI to open commands.
 
 | Command | What It Does |
 |---|---|
-| `/model` | Switch active model |
-| `/scoped-models` | Limit model choices for the session |
-| `/events` | Inspect background shell runs and sub-agents |
-| `/session`, `/resume`, `/fork`, `/new` | Manage sessions |
-| `/compact` | Compact conversation context |
-| `/harness` | Inspect assembled Harness components |
-| `/trust` | Save project trust decisions |
-| `/settings` | Open settings UI |
-| `/hotkeys` | View keybindings |
-| `/side`, `/btw` | Ask without giving tools |
-| `/export`, `/share`, `/copy` | Export/share/copy session output |
-| `/login`, `/logout` | Manage credentials |
+| `/model` | Select model (opens selector UI) |
+| `/scoped-models` | Enable/disable models for `Ctrl+P` cycling |
+| `/harness` | Switch and inspect Harness-backed runtime features |
+| `/mcp` | Manage MCP (Model Context Protocol) servers |
+| `/settings` | Open settings menu |
+| `/events` | Show background shell runs and sub-agents |
+| `/session` | Show session info and stats |
+| `/resume` | Resume a different session |
+| `/new` | Start a new session |
+| `/fork` | Create a new fork from a previous user message |
+| `/clone` | Duplicate the current session at the current position |
+| `/tree` | Navigate the session tree (switch branches) |
+| `/compact` | Manually compact the session context |
+| `/export` | Export session (HTML default, or `.html`/`.jsonl` path) |
+| `/import` | Import and resume a session from a JSONL file |
+| `/share` | Share session as a secret GitHub gist |
+| `/copy` | Copy the last agent message to the clipboard |
+| `/name` | Set session display name |
+| `/side`, `/btw`, `/s` | Open a temporary no-tools side chat |
+| `/trust` | Save project trust decision for future sessions |
+| `/reload` | Reload keybindings, extensions, skills, prompts, and themes |
+| `/hotkeys` | Show all keyboard shortcuts |
+| `/changelog` | Show changelog entries |
+| `/login`, `/logout` | Configure or remove provider authentication |
 | `/exit`, `/quit` | Leave the TUI |
 
 Useful keys:
@@ -294,11 +318,15 @@ flowchart LR
     SESSION --> TUI["Magenta TUI"]
 ```
 
-The included domain package:
+The included domain packages (see [`packages/README.md`](./packages/README.md)
+for how they load and combine):
 
 | Package | Domain | Contents |
 |---|---|---|
-| [`AutOmicScience`](./packages/AutOmicScience/) | Single-cell, spatial, scATAC-seq, multi-omics | Domain tools, skills, system prompt, brand, Python/Pixi runtime |
+| [`AutOmicScience`](./packages/AutOmicScience/) | Single-cell, spatial, bulk omics, cancer & clinical genomics | 11 skills, 5 tools, system prompt, brand, Python/Pixi runtime (the reference package) |
+| [`Biomni`](./packages/Biomni/) | Biomedical AI (Stanford SNAP Lab) | 3 skills bundling executable tools across 20+ biomedical modules |
+| [`ClaudeScience`](./packages/ClaudeScience/) | Computational biology research | 32 skills across 9 profiles (structure, design, genomics, single-cell, research, viz, compute, meta) |
+| [`PantheonOS`](./packages/PantheonOS/) | Bioinformatics workflow best practices | 16 skills across 5 profiles (omics, imaging, communication, infrastructure) |
 
 Package commands:
 
@@ -503,6 +531,7 @@ npm run build
 - [`docs/AUTHENTICATION.md`](./docs/AUTHENTICATION.md) — credential lookup and setup
 - [`docs/BRANDING.md`](./docs/BRANDING.md) — brand system
 - [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) — layered package architecture
+- [`packages/README.md`](./packages/README.md) — domain packages and how they load
 - [`harness/README.md`](./harness/README.md) — Harness overview
 - [`harness/hcp-client/HCP-OVERVIEW.md`](./harness/hcp-client/HCP-OVERVIEW.md) — HCP walkthrough
 - [`harness/docs/DEVELOPING.md`](./harness/docs/DEVELOPING.md) — add tools, capabilities, resources, packages

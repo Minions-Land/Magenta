@@ -45,6 +45,9 @@ test-external-auth.mjs
 *.swo
 *~
 
+# Scratch / working notes
+.tmp/
+
 # Package specific
 # Pixi materialized environments (multi-GB conda envs — never commit)
 .pixi/

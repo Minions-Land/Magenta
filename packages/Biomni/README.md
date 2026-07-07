@@ -1,6 +1,9 @@
 # Biomni Package for Magenta
 
-Biomni is a general-purpose biomedical AI toolkit from Stanford SNAP Lab, fully integrated into Magenta with all 23 Python tool modules (248 functions) copied locally, plus 3 comprehensive skills.
+Biomni is a general-purpose biomedical AI toolkit from Stanford SNAP Lab,
+integrated into Magenta as **3 skills** that bundle their executable Python
+tools in-tree (20+ modules, ~248 functions copied locally, no external Biomni
+install required).
 
 ## Package Overview
 
@@ -83,12 +86,14 @@ All Python code **copied locally** from Biomni source:
 magenta --harness-package Biomni
 ```
 
-Loads:
-- 3 skills (knowledge guides with executable tools)
-- 23 Python modules (248 functions)
-- 2 data components (schemas + descriptions)
+Loads all **3 skills**. Each skill bundles its executable tools and reference
+data inside its own directory, so loading the skills brings the full toolkit
+with them:
+- `sgrna-design` — 2 tools + validated sgRNA library
+- `single-cell-annotation` — 3 tools + reference docs
+- `biomedical-tools` — 20+ Python modules (~248 functions) + database schemas
 
-**Total**: 28 components
+**Package manifest**: 3 skill components (tools and data ship inside each skill).
 
 ### Integration with Other Packages
 
@@ -114,8 +119,8 @@ magenta --harness-package Biomni  # pharmacology module included
 | **Lab Automation** | ✅ 11 functions | ✗ | ✗ | ✗ |
 | **Drug Design** | ✅ 42 functions | ✗ | ✗ | ✗ |
 | **sgRNA Database** | ✅ 300+ sequences | ✗ | ✗ | ✗ |
-| **Python Functions** | ✅ 248 | ✗ | ✗ | ✗ |
-| **Skills (Docs)** | 2 | 11 | 32 | 16 |
+| **Python Functions** | ✅ ~248 | ✗ | ✗ | ✗ |
+| **Skills** | 3 | 11 | 32 | 16 |
 
 ### Biomni's Strengths
 
@@ -132,29 +137,32 @@ magenta --harness-package Biomni  # pharmacology module included
 
 ```
 Biomni/
-├── package.toml              # Manifest (27 components)
+├── package.toml              # Manifest (3 skill components)
 ├── README.md                 # This file
-├── skills/                   # Knowledge guides
-│   ├── sgrna-design/
-│   │   └── SKILL.md
-│   └── single-cell-annotation/
-│       └── SKILL.md
-└── tools/
-    └── python/              # 1.8 MB of Python code
-        ├── biochemistry.py
-        ├── database.py       # 45 functions
-        ├── pharmacology.py   # 42 functions
-        ├── genomics.py       # 20 functions
-        ├── ... (23 modules total)
-        ├── schema_db/        # Database schemas
-        └── tool_description/ # Tool metadata
+└── skills/                   # Each skill bundles its own tools + data
+    ├── sgrna-design/
+    │   ├── SKILL.md
+    │   └── tools/            # 2 executable tools + sgRNA library
+    ├── single-cell-annotation/
+    │   ├── SKILL.md
+    │   └── tools/            # 3 executable tools + references
+    └── biomedical-tools/
+        ├── SKILL.md
+        └── tools/            # ~1.8 MB Python: 20+ modules (~248 functions)
+            ├── database.py       # ~45 functions
+            ├── pharmacology.py   # ~42 functions
+            ├── genomics.py       # ~20 functions
+            ├── ... (20+ modules total)
+            ├── schema_db/        # Database schemas
+            └── tool_description/ # Tool metadata
 ```
 
 ### Component Types
 
-- **skill**: Knowledge guide documents (2)
-- **python-module**: Executable Python code (23)
-- **data**: Supporting data files (2)
+All three components are `kind = "skill"`. Executable Python tools and their
+supporting data live inside each skill's `tools/` directory rather than as
+separate manifest components, so selecting the skills is enough to load
+everything.
 
 ### No Profiles
 
@@ -250,7 +258,7 @@ This package contains:
 
 ### Code Attribution
 
-All Python code in `tools/python/` is copied from:
+All Python code under `skills/biomedical-tools/tools/` is copied from:
 - **Source**: Stanford SNAP Lab Biomni
 - **Commit**: Based on Biomni v1.0 release
 - **License**: MIT License
@@ -259,14 +267,19 @@ All Python code in `tools/python/` is copied from:
 ## Summary
 
 **Biomni package provides**:
-- ✅ 3 comprehensive skills with 5 executable tools
+- 3 skills bundling executable tools:
   - **sgrna-design**: 2 tools (design + simulation)
   - **single-cell-annotation**: 3 tools (LLM, Panhuman, popV)
-  - **biomedical-tools**: 200+ tools (all modules)
-- ✅ 248 Python functions across 23 modules
-- ✅ 25+ database schemas
-- ✅ 1.8 MB of copied code (self-contained)
-- ✅整包加载 (all-in-one loading)
-- ✅ No external dependencies on original Biomni
+  - **biomedical-tools**: 20+ Python modules (~248 functions)
+- 25+ database schemas
+- Self-contained: no dependency on an external Biomni install
 
-**Perfect for**: CRISPR experiments, single-cell analysis, drug discovery, database queries, lab automation, genomics analysis, and molecular biology workflows.
+**Good for**: CRISPR experiments, single-cell analysis, drug discovery,
+database queries, lab automation, genomics, and molecular biology workflows.
+
+## See Also
+
+- [Packages overview](../README.md) — how packages load and how to combine them
+- [`AutOmicScience`](../AutOmicScience/) — grounded, tool-backed omics analysis (the reference package)
+- [`ClaudeScience`](../ClaudeScience/) — computational biology research skills by profile
+- [`PantheonOS`](../PantheonOS/) — bioinformatics workflow best practices

@@ -36,3 +36,17 @@ Selection:
   `cancer-genomics`, `proteomics`, `cancer-dependency`, `metabolomics`,
   `clinical-survival`, and `microbiome`, each of which extends the shared
   `omics-shared` foundation.
+
+## Reference package
+
+AutOmicScience is the canonical example package for Magenta3: it is the only
+package that ships tools, a system prompt, a brand, and a pinned Python/Pixi
+runtime alongside skills. When you need a working template for a tool-backed
+domain package, copy this layout.
+
+## See Also
+
+- [Packages overview](../README.md) — how packages load and how to combine them
+- [`Biomni`](../Biomni/) — biomedical AI toolkit with executable tools
+- [`ClaudeScience`](../ClaudeScience/) — computational biology research skills by profile
+- [`PantheonOS`](../PantheonOS/) — bioinformatics workflow best practices

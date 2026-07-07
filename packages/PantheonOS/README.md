@@ -10,10 +10,10 @@ PantheonOS is organized into **4 domain profiles** for selective loading:
 
 | Profile | Description | Skills |
 |---------|-------------|--------|
-| `omics` | Single-cell & spatial omics analysis | 10 skills |
+| `omics` | Single-cell & spatial omics analysis | 9 skills |
 | `imaging` | Bio-image processing & segmentation | 2 skills |
 | `communication` | Paper writing, figures, presentations | 3 skills |
-| `infrastructure` | Data pipelines & HPC | 1 skill |
+| `infrastructure` | Data pipelines & HPC | 2 skills |
 | `all` | All skills (extends all profiles above) | 16 skills |
 
 ## Usage
@@ -38,7 +38,8 @@ magenta --harness-package PantheonOS:omics,communication
 magenta --harness-package PantheonOS:all
 ```
 
-**Note**: Currently all components are at root level, so any profile selection loads all 16 skills. This is intentional for simplicity.
+Each skill is tagged with the profile(s) it belongs to, so a profile selector
+loads exactly that subset; `all` extends every profile.
 
 ### Multi-Package Loading
 
@@ -48,12 +49,12 @@ magenta --harness-package AutOmicScience --harness-package PantheonOS
 
 # Full bioinformatics stack
 magenta --harness-package AutOmicScience --harness-package ClaudeScience --harness-package PantheonOS
-# → 59+ skills, tools, system prompts, and more!
+# → 59 skills (11 + 32 + 16) plus AutOmicScience tools and system prompt
 ```
 
 ## Skills Inventory
 
-### Omics Analysis (10 skills)
+### Omics Analysis (9 skills)
 
 | Skill | Description |
 |-------|-------------|
@@ -66,7 +67,6 @@ magenta --harness-package AutOmicScience --harness-package ClaudeScience --harne
 | **sc-best-practices** | Reference from sc-best-practices.org |
 | **upstream** | Raw data processing pipelines |
 | **openst** | Open-ST spatial transcriptomics |
-| **nfcore** | 143+ nf-core community pipelines |
 
 ### Bio-Imaging (2 skills)
 
@@ -83,10 +83,11 @@ magenta --harness-package AutOmicScience --harness-package ClaudeScience --harne
 | **figure-styling** | Aesthetic guidelines for scientific figures |
 | **presentation** | Marp slides and presentation templates |
 
-### Infrastructure (1 skill)
+### Infrastructure (2 skills)
 
 | Skill | Description |
 |-------|-------------|
+| **nfcore** | 143+ nf-core community pipelines |
 | **data-analysis** | Environment setup, parallel computing, HPC |
 
 ## Key Technologies Covered
@@ -114,13 +115,14 @@ magenta --harness-package AutOmicScience --harness-package ClaudeScience --harne
 | Package | Focus | Skills | Tools | System Prompt |
 |---------|-------|--------|-------|---------------|
 | **AutOmicScience** | Production-grade omics analysis | 11 | 5 | Yes |
+| **Biomni** | Biomedical AI toolkit | 3 | executable (20+ modules) | No |
 | **ClaudeScience** | Computational biology research | 32 | 0 | No |
 | **PantheonOS** | Workflow best practices | 16 | 0 | No |
 
 **Recommended combinations**:
 - **Research workflow**: `ClaudeScience + PantheonOS`
 - **Production analysis**: `AutOmicScience + PantheonOS`
-- **Full stack**: `AutOmicScience + ClaudeScience + PantheonOS`
+- **Wet-lab + analysis**: `Biomni + AutOmicScience`
 
 ## Self-Evo Compliance
 
@@ -164,6 +166,10 @@ All skills retain their original BSD-2-Clause license from PantheonOS.
 
 ## See Also
 
+- [Packages overview](../README.md) — how packages load and how to combine them
+- [`AutOmicScience`](../AutOmicScience/) — grounded, tool-backed omics analysis (the reference package)
+- [`ClaudeScience`](../ClaudeScience/) — computational biology research skills by profile
+- [`Biomni`](../Biomni/) — biomedical AI toolkit with executable tools
 - [PantheonOS Repository](https://github.com/standardgalactic/pantheon)
 - [Single-cell Best Practices](https://www.sc-best-practices.org)
 - [scverse Documentation](https://scverse.org)
