@@ -159,7 +159,7 @@ const TaskSchema = Type.Object({
  * task (a single sub-agent is a one-node workflow), so it shares task/role/
  * model/provider/tools/thinking, plus the orchestration-only `focus`. Structured
  * output `schema` for verifier/judge/evaluator slots is enforced by the harness
- * skeleton and is intentionally NOT exposed here — the LLM fills content, never
+ * preset and is intentionally NOT exposed here — the LLM fills content, never
  * the control-flow-critical output contract.
  */
 const WorkflowSlotSchema = Type.Object({
@@ -176,8 +176,8 @@ const WorkflowSlotSchema = Type.Object({
 });
 
 /**
- * A multi-agent workflow: a deterministic orchestration skeleton (harness owns
- * the control flow) that the LLM fills with task content. Which slot fields
+ * A multi-agent workflow: a preset orchestration the harness runs (the harness
+ * owns the control flow) that the LLM fills with task content. Which slot fields
  * apply depends on `pattern`; unused slots are ignored. Validated at runtime by
  * the harness orchestrator, so slots are all optional here.
  */
@@ -191,7 +191,7 @@ const WorkflowSchema = Type.Object({
 			"tournament",
 			"loop_until_done",
 		] as const,
-		{ description: "Which orchestration skeleton to run." },
+		{ description: "Which orchestration preset to run." },
 	),
 	name: Type.Optional(
 		Type.String({ description: "Human-readable name shown in /events. Defaults to the pattern name." }),
@@ -576,7 +576,7 @@ export class SubAgentController {
 		return {
 			name: "sub_agent",
 			label: "Sub Agent",
-			description: `Start, inspect, wait for, or cancel headless ${APP_NAME} sub-agents. action=start accepts either one task or a tasks array for parallel work, or a workflow object to run a deterministic multi-agent orchestration (classify_and_act, fan_out_synthesize, adversarial_verify, generate_and_filter, tournament, loop_until_done). Set returnToMain=true to automatically send completed results back to the main agent. Sub-agents are read-only by default, inherit the parent model unless a task specifies model/provider, run with --no-session --no-extensions, and receive parent progress.`,
+			description: `Start, inspect, wait for, or cancel headless ${APP_NAME} sub-agents. action=start accepts either one task or a tasks array for parallel work, or a workflow object to run a multi-agent orchestration preset (classify_and_act, fan_out_synthesize, adversarial_verify, generate_and_filter, tournament, loop_until_done). Set returnToMain=true to automatically send completed results back to the main agent. Sub-agents are read-only by default, inherit the parent model unless a task specifies model/provider, run with --no-session --no-extensions, and receive parent progress.`,
 			promptSnippet: `Run one or more headless ${APP_NAME} sub-agents for delegated analysis`,
 			promptGuidelines: [
 				"Use sub_agent action=start with tasks:[...] when a task can be decomposed into independent research, code review, test analysis, or planning subtasks that benefit from concurrent agents.",
