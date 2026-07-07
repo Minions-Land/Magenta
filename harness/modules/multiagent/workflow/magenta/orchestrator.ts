@@ -90,279 +90,6 @@ function nextWorkerId(prefix: string): string {
 	return `${prefix}_${String(workerCounter).padStart(3, "0")}`;
 }
 
-// --- Pattern 2: Fan Out and Synthesize ---------
-
-async function fanOutSynthesize(
-	req: FanOutSynthesizeRequest,
-	runner: WorkerRunner,
-	signal?: AbortSignal,
-): Promise<OrchestrationResult> {
-	const spawned: WorkerResult[] = [];
-	const ctx = buildWorkflowContext(runner, nextWorkflowId(), req.cwd ?? process.cwd(), spawned, signal);
-
-	const results = await ctx.parallelAgents(
-		req.workers.map((w, i) => () => ctx.agent(w.task, { label: `fanout-${i}` })),
-		req.maxConcurrent,
-	);
-
-	const merged = results
-		.map((r, i) => `--- Worker ${i + 1} (${r.success ? "ok" : "failed"}) ---\n${r.text || r.error || ""}`)
-		.join("\n\n");
-
-	const outcome = await ctx.agent(`${req.synthesizer.task}\n\n${merged}`, {
-		label: "synth",
-		guard: ctx.guards.synthesizer,
-	});
-
-	return { pattern: "fan_out_synthesize", workers: spawned, outcome, terminatedBy: "completed" };
-}
-
-// --- Shared helpers --------------------------------------------------------
-
-/** Read a boolean verdict from a verifier/done-checker worker's structured output. */
-function readBooleanField(result: WorkerResult, field: string): boolean | undefined {
-	const s = result.structured as Record<string, unknown> | undefined;
-	if (s && typeof s[field] === "boolean") return s[field] as boolean;
-	return undefined;
-}
-
-/** Read a numeric field (e.g. a score) from a worker's structured output. */
-function readNumberField(result: WorkerResult, field: string): number | undefined {
-	const s = result.structured as Record<string, unknown> | undefined;
-	if (s && typeof s[field] === "number" && Number.isFinite(s[field])) return s[field] as number;
-	return undefined;
-}
-
-/** Boolean verdict + strict schema for verifier/done-check workers. */
-const BOOLEAN_VERDICT_SCHEMA = {
-	type: "object",
-	properties: { verdict: { type: "boolean" }, reason: { type: "string" } },
-	required: ["verdict"],
-} as const;
-
-/** Numeric score schema for evaluator workers. */
-const SCORE_SCHEMA = {
-	type: "object",
-	properties: { score: { type: "number" }, reason: { type: "string" } },
-	required: ["score"],
-} as const;
-
-/** Winner index schema for pairwise judge workers. */
-const WINNER_SCHEMA = {
-	type: "object",
-	properties: { winner: { type: "number", enum: [0, 1] }, reason: { type: "string" } },
-	required: ["winner"],
-} as const;
-
-// --- Pattern 1: Classify and Act -------------------------------------------
-
-async function classifyAndAct(
-	req: ClassifyAndActRequest,
-	runner: WorkerRunner,
-	signal?: AbortSignal,
-): Promise<OrchestrationResult> {
-	const labels = Object.keys(req.handlers);
-	const spawned: WorkerResult[] = [];
-	const ctx = buildWorkflowContext(runner, nextWorkflowId(), req.cwd ?? process.cwd(), spawned, signal);
-
-	// Classify first (the soul step).
-	const classified = await ctx.agent(
-		`${req.classifier.task}\n\nAvailable labels: ${labels.join(", ")}\n\nInput:\n${req.input}`,
-		{
-			label: "classify",
-			guard: ctx.guards.classifier,
-			schema: { type: "object", properties: { label: { type: "string", enum: labels } }, required: ["label"] },
-		},
-	);
-
-	const rawLabel = (classified.structured as { label?: string } | undefined)?.label ?? classified.text.trim();
-	const label = labels.find((l) => rawLabel === l || rawLabel.includes(l));
-	const handlerSlot = label ? req.handlers[label] : req.fallback;
-	if (!handlerSlot) {
-		return { pattern: "classify_and_act", workers: spawned, outcome: classified, terminatedBy: "completed" };
-	}
-
-	const handler = await ctx.agent(`${handlerSlot.task}\n\nInput:\n${req.input}`, { label: "handle" });
-	return { pattern: "classify_and_act", workers: spawned, outcome: handler, terminatedBy: "completed" };
-}
-
-// --- Pattern 3: Adversarial Verification -----------------------------------
-
-async function adversarialVerify(
-	req: AdversarialVerifyRequest,
-	runner: WorkerRunner,
-	signal?: AbortSignal,
-): Promise<OrchestrationResult> {
-	const verifyCount = Math.max(1, req.verifyCount ?? 3);
-	const threshold = req.confidenceThreshold ?? 0.8;
-	const spawned: WorkerResult[] = [];
-	const ctx = buildWorkflowContext(runner, nextWorkflowId(), req.cwd ?? process.cwd(), spawned, signal);
-
-	// Generate candidates (wide net).
-	const generator = await ctx.agent(req.generator.task, { label: "generate" });
-
-	// Independently verify, N times in parallel. Each returns a boolean verdict.
-	const verifiers = await ctx.parallelAgents(
-		Array.from({ length: verifyCount }, (_, i) => () =>
-			ctx.agent(`${req.verifier.task}\n\nCandidate(s) to verify:\n${generator.text}`, {
-				label: `verify-${i}`,
-				guard: ctx.guards.verifier,
-				schema: BOOLEAN_VERDICT_SCHEMA,
-			}),
-		),
-		req.maxConcurrent,
-	);
-
-	// Confidence = passed / verifyCount. Deterministic, not a model's self-report.
-	const passed = verifiers.filter((v) => readBooleanField(v, "verdict") === true).length;
-	const confidence = passed / verifyCount;
-
-	return {
-		pattern: "adversarial_verify",
-		workers: spawned,
-		outcome: generator,
-		confidence,
-		terminatedBy: confidence >= threshold ? "completed" : "threshold",
-	};
-}
-
-// --- Pattern 4: Generate and Filter ----------------------------------------
-
-async function generateAndFilter(
-	req: GenerateAndFilterRequest,
-	runner: WorkerRunner,
-	signal?: AbortSignal,
-): Promise<OrchestrationResult> {
-	const count = Math.max(1, req.count);
-	const spawned: WorkerResult[] = [];
-	const ctx = buildWorkflowContext(runner, nextWorkflowId(), req.cwd ?? process.cwd(), spawned, signal);
-
-	// Generate `count` independent candidates in parallel.
-	const candidates = await ctx.parallelAgents(
-		Array.from({ length: count }, (_, i) => () => ctx.agent(req.generator.task, { label: `gen-${i}` })),
-		req.maxConcurrent,
-	);
-
-	// Score each candidate by explicit criteria (evaluator returns a number).
-	const evaluations = await ctx.parallelAgents(
-		candidates.map((c, i) => () =>
-			ctx.agent(`${req.evaluator.task}\n\nCandidate to score:\n${c.text}`, {
-				label: `eval-${i}`,
-				guard: ctx.guards.evaluator,
-				schema: SCORE_SCHEMA,
-			}),
-		),
-		req.maxConcurrent,
-	);
-
-	// Rank by score, keep top-K. Ranking is deterministic in the skeleton.
-	const ranked = candidates
-		.map((candidate, i) => ({ candidate, score: readNumberField(evaluations[i], "score") ?? -Infinity }))
-		.sort((a, b) => b.score - a.score);
-	const keepTop = Math.max(1, req.keepTop ?? 1);
-	const finalists = ranked.slice(0, keepTop).map((r) => r.candidate);
-	const winner = finalists[0];
-
-	return {
-		pattern: "generate_and_filter",
-		workers: spawned,
-		outcome: winner,
-		...(finalists.length > 1 ? { finalists } : {}),
-		terminatedBy: "completed",
-	};
-}
-
-// --- Pattern 5: Tournament (pairwise elimination bracket) -------------------
-
-async function tournament(
-	req: TournamentRequest,
-	runner: WorkerRunner,
-	signal?: AbortSignal,
-): Promise<OrchestrationResult> {
-	const spawned: WorkerResult[] = [];
-	const ctx = buildWorkflowContext(runner, nextWorkflowId(), req.cwd ?? process.cwd(), spawned, signal);
-
-	// Generate all approaches in parallel.
-	const approaches = await ctx.parallelAgents(
-		req.approaches.map((slot, i) => () => ctx.agent(slot.task, { label: `appr-${i}` })),
-		req.maxConcurrent,
-	);
-
-	// Elimination bracket: pairwise matches, winner advances, until one remains.
-	// N candidates -> exactly N-1 comparisons. Byes carry over on odd counts.
-	let matchNo = 0;
-	let round = approaches.slice();
-	while (round.length > 1) {
-		const nextRound: WorkerResult[] = [];
-		for (let i = 0; i < round.length; i += 2) {
-			const a = round[i];
-			const b = round[i + 1];
-			if (!b) {
-				nextRound.push(a); // bye
-				continue;
-			}
-			const verdict = await ctx.agent(`${req.judge.task}\n\nCandidate 0:\n${a.text}\n\nCandidate 1:\n${b.text}`, {
-				label: `judge-${matchNo++}`,
-				guard: ctx.guards.judge,
-				schema: WINNER_SCHEMA,
-			});
-			const winnerIdx = readNumberField(verdict, "winner");
-			nextRound.push(winnerIdx === 1 ? b : a);
-		}
-		round = nextRound;
-	}
-
-	return { pattern: "tournament", workers: spawned, outcome: round[0], terminatedBy: "completed" };
-}
-
-// --- Pattern 6: Loop Until Done --------------------------------------------
-
-async function loopUntilDone(
-	req: LoopUntilDoneRequest,
-	runner: WorkerRunner,
-	signal?: AbortSignal,
-): Promise<OrchestrationResult> {
-	const maxIterations = Math.max(1, req.maxIterations ?? 10);
-	const spawned: WorkerResult[] = [];
-	const ctx = buildWorkflowContext(runner, nextWorkflowId(), req.cwd ?? process.cwd(), spawned, signal);
-	const findings: string[] = [];
-	let iterations = 0;
-	let terminatedBy: OrchestrationResult["terminatedBy"] = "max_iterations";
-
-	// The skeleton owns termination: stop when a round yields no new findings,
-	// or when the hard iteration cap is hit. The LLM never decides "I'm done".
-	while (iterations < maxIterations) {
-		if (signal?.aborted) {
-			terminatedBy = "budget";
-			break;
-		}
-		iterations += 1;
-		const priorBlock = findings.length
-			? `\n\nAlready-found (exclude these):\n${findings.map((f, i) => `${i + 1}. ${f}`).join("\n")}`
-			: "";
-		const result = await ctx.agent(`${req.refine.task}\n\nStarting content:\n${req.initial}${priorBlock}`, {
-			label: `refine-${iterations}`,
-			guard: ctx.guards.refine,
-		});
-
-		const newFinding = result.text.trim();
-		// "No new findings" is the stop condition, observed by the skeleton.
-		if (!result.success || newFinding.length === 0) {
-			terminatedBy = "completed";
-			break;
-		}
-		findings.push(newFinding);
-	}
-
-	return {
-		pattern: "loop_until_done",
-		workers: spawned,
-		outcome: spawned[spawned.length - 1],
-		iterations,
-		terminatedBy,
-	};
-}
-
 // --- Pattern 7: Script Workflow (write the loop, not the prompt) -----------
 
 /** Generate a workflow run id, also used as the .magenta/tmp/<id> dir name. */
@@ -514,55 +241,134 @@ function buildWorkflowContext(
  * recorded so the OrchestrationResult still lists every worker that ran. The
  * final return value is persisted to `.magenta/tmp/<id>/result.json`.
  */
+/**
+ * Shared workflow module runner. Dynamically imports a .ts/.js module, injects
+ * WorkflowContext, executes its default export, and collects all spawned workers.
+ * Returns the raw script result + the spawned array. The caller (preset dispatcher
+ * or script runner) assembles the final OrchestrationResult.
+ */
+async function runWorkflowModule(
+	scriptPath: string,
+	args: unknown,
+	runner: WorkerRunner,
+	cwd: string,
+	signal?: AbortSignal,
+): Promise<{ workflowId: string; spawned: WorkerResult[]; returned: unknown; success: boolean; error?: string }> {
+	const workflowId = nextWorkflowId();
+	const spawned: WorkerResult[] = [];
+	const context = buildWorkflowContext(runner, workflowId, cwd, spawned, signal);
+	const stateDir = workflowStateDir(cwd, workflowId);
+
+	try {
+		const mod = (await import(scriptPath)) as WorkflowModule;
+		if (typeof mod.default !== "function") {
+			throw new Error(`workflow module ${scriptPath} has no default export function`);
+		}
+		const returned = await mod.default(args, context);
+		safeWrite(path.join(stateDir, "result.json"), JSON.stringify(returned, null, 2));
+		return { workflowId, spawned, returned, success: true };
+	} catch (err) {
+		const message = err instanceof Error ? err.message : String(err);
+		safeWrite(path.join(stateDir, "error.json"), JSON.stringify({ error: message }, null, 2));
+		return { workflowId, spawned, returned: null, success: false, error: message };
+	}
+}
+
 async function runScript(
 	req: ScriptWorkflowRequest,
 	runner: WorkerRunner,
 	defaultCwd: string,
 	signal?: AbortSignal,
 ): Promise<OrchestrationResult> {
-	const workflowId = nextWorkflowId();
-	const cwd = req.cwd ?? defaultCwd;
-	const spawned: WorkerResult[] = [];
-	const context = buildWorkflowContext(runner, workflowId, cwd, spawned, signal);
-	const stateDir = workflowStateDir(cwd, workflowId);
+	const result = await runWorkflowModule(req.scriptPath, req.args, runner, req.cwd ?? defaultCwd, signal);
 
-	let outcome: WorkerResult;
-	try {
-		const mod = (await import(req.scriptPath)) as WorkflowModule;
-		if (typeof mod.default !== "function") {
-			throw new Error(`workflow module ${req.scriptPath} has no default export function`);
-		}
-		const returned = await mod.default(req.args, context);
-		// The script's return value becomes the outcome's structured payload.
-		outcome = {
-			workerId: workflowId,
-			text: typeof returned === "string" ? returned : JSON.stringify(returned),
-			structured: typeof returned === "string" ? undefined : returned,
-			durationMs: 0,
-			success: true,
-		};
-		safeWrite(path.join(stateDir, "result.json"), JSON.stringify(returned, null, 2));
-	} catch (err) {
-		const message = err instanceof Error ? err.message : String(err);
-		outcome = {
-			workerId: workflowId,
-			text: "",
-			durationMs: 0,
-			success: false,
-			error: message,
-		};
-		safeWrite(path.join(stateDir, "error.json"), JSON.stringify({ error: message }, null, 2));
-	}
+	// For user scripts, the return value is opaque; wrap it as outcome.
+	const outcome: WorkerResult = result.success
+		? {
+				workerId: result.workflowId,
+				text: typeof result.returned === "string" ? result.returned : JSON.stringify(result.returned),
+				structured: typeof result.returned === "string" ? undefined : result.returned,
+				durationMs: 0,
+				success: true,
+		  }
+		: {
+				workerId: result.workflowId,
+				text: "",
+				durationMs: 0,
+				success: false,
+				error: result.error,
+		  };
 
 	return {
 		pattern: "script",
-		workers: [...spawned, outcome],
+		workers: [...result.spawned, outcome],
 		outcome,
 		terminatedBy: outcome.success ? "completed" : "budget",
 	};
 }
 
 /** The magenta multi-agent orchestration provider. */
+// --- Preset dispatch -------------------------------------------------------
+
+/**
+ * The six built-in patterns are just preset workflow scripts, authored with the
+ * exact same (args, ctx) => {} shape a user script uses and executed through the
+ * same runWorkflowModule path. The only difference: a preset returns a small
+ * structured envelope ({ outcome?, confidence?, finalists?, iterations?,
+ * terminatedBy? }) so the dispatcher can preserve each pattern's semantic fields
+ * in the OrchestrationResult. A user script's return value stays opaque.
+ */
+const PRESET_SCRIPTS: Record<Exclude<Pattern, "script">, string> = {
+	fan_out_synthesize: "./presets/fan-out-synthesize.js",
+	classify_and_act: "./presets/classify-and-act.js",
+	adversarial_verify: "./presets/adversarial-verify.js",
+	generate_and_filter: "./presets/generate-and-filter.js",
+	tournament: "./presets/tournament.js",
+	loop_until_done: "./presets/loop-until-done.js",
+};
+
+async function runPreset(
+	pattern: Exclude<Pattern, "script">,
+	req: OrchestrationRequest,
+	runner: WorkerRunner,
+	defaultCwd: string,
+	signal?: AbortSignal,
+): Promise<OrchestrationResult> {
+	const scriptPath = new URL(PRESET_SCRIPTS[pattern], import.meta.url).href;
+	const result = await runWorkflowModule(scriptPath, req, runner, (req as CommonOptions).cwd ?? defaultCwd, signal);
+
+	if (!result.success) {
+		const outcome: WorkerResult = {
+			workerId: result.workflowId,
+			text: "",
+			durationMs: 0,
+			success: false,
+			error: result.error,
+		};
+		return { pattern, workers: [...result.spawned, outcome], outcome, terminatedBy: "budget" };
+	}
+
+	// Preset envelope: pull semantic fields, default outcome to the last spawned worker.
+	const envelope = (result.returned ?? {}) as {
+		outcome?: WorkerResult;
+		confidence?: number;
+		finalists?: WorkerResult[];
+		iterations?: number;
+		terminatedBy?: OrchestrationResult["terminatedBy"];
+	};
+	const outcome = envelope.outcome ?? result.spawned[result.spawned.length - 1];
+
+	return {
+		pattern,
+		workers: result.spawned,
+		outcome,
+		...(envelope.confidence !== undefined ? { confidence: envelope.confidence } : {}),
+		...(envelope.finalists ? { finalists: envelope.finalists } : {}),
+		...(envelope.iterations !== undefined ? { iterations: envelope.iterations } : {}),
+		terminatedBy: envelope.terminatedBy ?? "completed",
+	};
+}
+
 export class MultiAgentOrchestrator implements MultiAgentProviderContract {
 	private readonly defaultCwd: string;
 	private readonly runner: WorkerRunner;
@@ -580,26 +386,10 @@ export class MultiAgentOrchestrator implements MultiAgentProviderContract {
 	async orchestrate(request: OrchestrationRequest, signal?: AbortSignal): Promise<OrchestrationResult> {
 		const req = { cwd: this.defaultCwd, ...request } as OrchestrationRequest;
 		const runner = this.runner;
-		switch (req.pattern) {
-			case "fan_out_synthesize":
-				return fanOutSynthesize(req as FanOutSynthesizeRequest, runner, signal);
-			case "classify_and_act":
-				return classifyAndAct(req as ClassifyAndActRequest, runner, signal);
-			case "adversarial_verify":
-				return adversarialVerify(req as AdversarialVerifyRequest, runner, signal);
-			case "generate_and_filter":
-				return generateAndFilter(req as GenerateAndFilterRequest, runner, signal);
-			case "tournament":
-				return tournament(req as TournamentRequest, runner, signal);
-			case "loop_until_done":
-				return loopUntilDone(req as LoopUntilDoneRequest, runner, signal);
-			case "script":
-				return runScript(req as ScriptWorkflowRequest, runner, this.defaultCwd, signal);
-			default: {
-				const exhaustive: never = req;
-				throw new Error(`Unknown pattern: ${JSON.stringify(exhaustive)}`);
-			}
+		if (req.pattern === "script") {
+			return runScript(req as ScriptWorkflowRequest, runner, this.defaultCwd, signal);
 		}
+		return runPreset(req.pattern, req, runner, this.defaultCwd, signal);
 	}
 
 	toHcpServer(): HcpServer {
