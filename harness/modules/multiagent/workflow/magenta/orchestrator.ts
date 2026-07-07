@@ -108,33 +108,31 @@ function slotToSpawn(workerId: string, slot: WorkerSlot, guard: string, common: 
 	};
 }
 
-// --- Pattern 2: Fan Out and Synthesize (first full implementation) ---------
+// --- Pattern 2: Fan Out and Synthesize ---------
 
 async function fanOutSynthesize(
 	req: FanOutSynthesizeRequest,
 	runner: WorkerRunner,
 	signal?: AbortSignal,
 ): Promise<OrchestrationResult> {
-	const maxConcurrent = req.maxConcurrent ?? DEFAULT_MAX_CONCURRENT;
+	const spawned: WorkerResult[] = [];
+	const ctx = buildWorkflowContext(runner, nextWorkflowId(), req.cwd ?? process.cwd(), spawned, signal);
 
-	// Fan out: run every worker in parallel over its object.
-	const specs = req.workers.map((slot) => slotToSpawn(nextWorkerId("fanout"), slot, "", req));
-	const workers = await runner.parallel(specs, maxConcurrent, signal);
+	const results = await ctx.parallelAgents(
+		req.workers.map((w, i) => () => ctx.agent(w.task, { label: `fanout-${i}` })),
+		req.maxConcurrent,
+	);
 
-	// Synthesize: the guard guarantees the synthesizer receives every result.
-	const merged = workers
+	const merged = results
 		.map((r, i) => `--- Worker ${i + 1} (${r.success ? "ok" : "failed"}) ---\n${r.text || r.error || ""}`)
 		.join("\n\n");
-	const synthSpec = slotToSpawn(nextWorkerId("synth"), req.synthesizer, GUARDS.synthesizer, req);
-	synthSpec.prompt = `${req.synthesizer.task}\n\n${merged}`;
-	const outcome = await runner.spawn(synthSpec, signal);
 
-	return {
-		pattern: "fan_out_synthesize",
-		workers: [...workers, outcome],
-		outcome,
-		terminatedBy: "completed",
-	};
+	const outcome = await ctx.agent(`${req.synthesizer.task}\n\n${merged}`, {
+		label: "synthesizer",
+		guard: ctx.guards.synthesizer,
+	});
+
+	return { pattern: "fan_out_synthesize", workers: spawned, outcome, terminatedBy: "completed" };
 }
 
 // --- Shared helpers --------------------------------------------------------
@@ -187,40 +185,28 @@ async function classifyAndAct(
 	signal?: AbortSignal,
 ): Promise<OrchestrationResult> {
 	const labels = Object.keys(req.handlers);
+	const spawned: WorkerResult[] = [];
+	const ctx = buildWorkflowContext(runner, nextWorkflowId(), req.cwd ?? process.cwd(), spawned, signal);
 
-	// Classify first (the soul step). Constrain output to the known label set.
-	const classifierSlot = withSchema(req.classifier, {
-		type: "object",
-		properties: { label: { type: "string", enum: labels } },
-		required: ["label"],
-	});
-	const classSpec = slotToSpawn(nextWorkerId("classify"), classifierSlot, GUARDS.classifier, req);
-	classSpec.prompt = `${req.classifier.task}\n\nAvailable labels: ${labels.join(", ")}\n\nInput:\n${req.input}`;
-	const classifier = await runner.spawn(classSpec, signal);
+	// Classify first (the soul step).
+	const classified = await ctx.agent(
+		`${req.classifier.task}\n\nAvailable labels: ${labels.join(", ")}\n\nInput:\n${req.input}`,
+		{
+			label: "classifier",
+			guard: ctx.guards.classifier,
+			schema: { type: "object", properties: { label: { type: "string", enum: labels } }, required: ["label"] },
+		},
+	);
 
-	const rawLabel = (classifier.structured as { label?: string } | undefined)?.label ?? classifier.text.trim();
+	const rawLabel = (classified.structured as { label?: string } | undefined)?.label ?? classified.text.trim();
 	const label = labels.find((l) => rawLabel === l || rawLabel.includes(l));
-
-	// Route to exactly one handler (or fallback). This is deterministic.
 	const handlerSlot = label ? req.handlers[label] : req.fallback;
 	if (!handlerSlot) {
-		return {
-			pattern: "classify_and_act",
-			workers: [classifier],
-			outcome: classifier,
-			terminatedBy: "completed",
-		};
+		return { pattern: "classify_and_act", workers: spawned, outcome: classified, terminatedBy: "completed" };
 	}
-	const handlerSpec = slotToSpawn(nextWorkerId("handle"), handlerSlot, "", req);
-	handlerSpec.prompt = `${handlerSlot.task}\n\nInput:\n${req.input}`;
-	const handler = await runner.spawn(handlerSpec, signal);
 
-	return {
-		pattern: "classify_and_act",
-		workers: [classifier, handler],
-		outcome: handler,
-		terminatedBy: "completed",
-	};
+	const handler = await ctx.agent(`${handlerSlot.task}\n\nInput:\n${req.input}`, { label: "handler" });
+	return { pattern: "classify_and_act", workers: spawned, outcome: handler, terminatedBy: "completed" };
 }
 
 // --- Pattern 3: Adversarial Verification -----------------------------------

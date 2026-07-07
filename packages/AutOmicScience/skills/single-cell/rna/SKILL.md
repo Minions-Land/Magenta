@@ -1,17 +1,13 @@
 ---
-name: rna
-description: Single-cell RNA-seq — QC & preprocessing, batch integration, clustering, marker genes, cell-type annotation (marker+LLM / reference), DE, functional, trajectory, cell-cell communication.
-requiredTools: [run_python, create_notebook, add_cell, observe_figure, omics_preflight, omics_compute]
-evidencePolicy: required
-outputSchema: grounded_response
-minConfidence: medium
-tags: [omics, scrna, single-cell, scanpy, scverse, annotation, integration]
-extends: omics-shared
+name: single-cell-rna
+disable-model-invocation: true
 ---
 
 # scRNA-seq Analysis
 
-Builds on `omics-shared` (loaded automatically — its rules apply here). Run compute through the **`omics_compute`** tool with `modality="scrna"`; it dispatches into the pinned `task1` env and records evidence automatically.
+> Subskill of `single-cell`. Enter here from the parent skill when the data is single-cell RNA-seq. Read `../SKILL.md` (parent) and `../../omics-shared/SKILL.md` first — their shared workflow, `omics_compute` conventions, and evidence rules apply here.
+
+Run compute through the **`omics_compute`** tool with `modality="scrna"`; it dispatches into the pinned `task1` env and records evidence automatically.
 
 ## Prerequisites
 
@@ -24,7 +20,7 @@ Builds on `omics-shared` (loaded automatically — its rules apply here). Run co
 | Capability | Maturity | How | Method doc |
 |------------|----------|-----|------------|
 | QC → norm → HVG → PCA → neighbors → UMAP → Leiden | **READY** | `omics_compute preprocess` | `assets/references/qc.md` |
-| Dataset summary for context | **READY** | `omics_compute summarize` | `../omics-shared/assets/references/data_context.md` |
+| Dataset summary for context | **READY** | `omics_compute summarize` | `../../omics-shared/assets/references/data_context.md` |
 | Batch integration (Harmony) | **READY** | `omics_compute integrate` | `assets/references/integration.md` |
 | Batch integration (scVI / scANVI) | **PARTIAL** | needs GPU; verify preflight | `assets/references/integration.md` |
 | Per-cluster marker genes | **READY** | `omics_compute marker_table` | `assets/references/markers_de.md` |

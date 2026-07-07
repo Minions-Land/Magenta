@@ -1,17 +1,13 @@
 ---
-name: scatac-seq
-description: Single-cell ATAC-seq — fragment import, ATAC QC (TSS / fragment-size / FRiP / doublets), feature matrix (tiles / MACS3 peaks), spectral (LSI) clustering, motif activity (chromVAR), gene activity, peak–gene linkage, scRNA label transfer.
-requiredTools: [run_python, create_notebook, add_cell, observe_figure, omics_preflight, omics_compute]
-evidencePolicy: required
-outputSchema: grounded_response
-minConfidence: medium
-tags: [omics, scatac, single-cell, chromatin, accessibility, snapatac2, chromvar, muon]
-extends: omics-shared
+name: single-cell-atac
+disable-model-invocation: true
 ---
 
 # scATAC-seq Analysis
 
-Builds on `omics-shared` (loaded automatically — its rules apply here). Run compute through the **`omics_compute`** tool with `modality="scatac"`; it dispatches into the pinned `task4` env and records evidence automatically. Steps without a subcommand are hand-rolled in `run_python` with **snapATAC2** (and **pychromVAR** for motifs) — read the method doc first.
+> Subskill of `single-cell`. Enter here from the parent skill when the data is single-cell ATAC-seq (chromatin accessibility). Read `../SKILL.md` (parent) and `../../omics-shared/SKILL.md` first — their shared workflow, `omics_compute` conventions, and evidence rules apply here.
+
+Run compute through the **`omics_compute`** tool with `modality="scatac"`; it dispatches into the pinned `task4` env and records evidence automatically. Steps without a subcommand are hand-rolled in `run_python` with **snapATAC2** (and **pychromVAR** for motifs) — read the method doc first.
 
 ## Prerequisites
 

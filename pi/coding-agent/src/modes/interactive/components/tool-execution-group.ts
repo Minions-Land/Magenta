@@ -111,7 +111,7 @@ export class ToolExecutionGroupComponent extends Container {
 		if (tiles.length === 0) return [];
 		if (!this.expanded) {
 			if (tiles.length === 1) return this.singleComponent()?.render(width) ?? [];
-			return ["", ...renderToolCallActivity(tiles, width, { maxRows: 8, hint: "Ctrl+O gallery" })];
+			return ["", ...renderToolCallActivity(tiles, width, { maxRows: 8, hint: "Ctrl+o gallery" })];
 		}
 		const lines = ["", ...renderToolCallGallery(tiles, width, { maxHeight: 16 })];
 		for (const entry of [...this.entries.values()].sort((a, b) => a.sortIndex - b.sortIndex)) {

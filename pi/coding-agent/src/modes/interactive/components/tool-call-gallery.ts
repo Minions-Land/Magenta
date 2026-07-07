@@ -271,7 +271,7 @@ export function renderToolCallActivity(
 	for (const tile of ordered.slice(-maxRows)) {
 		rows.push(activityRow(tile, Math.max(1, width - 4)));
 	}
-	return frameActivityBlock(rows, width, options.hint ?? "Ctrl+O gallery");
+	return frameActivityBlock(rows, width, options.hint ?? "Ctrl+o gallery");
 }
 
 export function renderToolCallGallery(
