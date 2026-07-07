@@ -1,44 +1,43 @@
 ---
 name: single-cell-annotation
 description: >
-  Best practices for annotating cell types in single-cell RNA-seq data using
-  marker-based, automated, and reference-based approaches. Distilled from
-  "Single-cell best practices" by Luecken, M.D. et al. covering manual
-  marker gene analysis, automated classifiers, and reference label transfer.
+  scRNA-seq cell type annotation using three complementary approaches: marker-based
+  (expert curation), automated (LLM-assisted), and reference-based (label transfer).
+  Use this skill for annotating single-cell RNA-seq datasets, validating cell type
+  assignments, or comparing annotation strategies.
 tags:
 - single-cell
 - scRNA-seq
-- annotation
-- cell-types
+- cell-type-annotation
 - scanpy
-source: Biomni
+source: Biomni, sc-best-practices.org
 license: CC-BY-4.0
-metadata:
-  display-name: Single-Cell Annotation
-  authors: Distilled from Luecken, M.D., Theis, F.J. et al.
-  affiliations: Helmholtz Munich, Wellcome Sanger Institute, Harvard Medical School
-  version: "1.0"
-  last-updated: "2025-01"
-  commercial-use: allowed
-  original-source: https://www.sc-best-practices.org/cellular_structure/annotation.html
 ---
 
-# Single-Cell RNA-seq Cell Type Annotation
+# Single-Cell Annotation Skill
 
-Best practices for annotating cell types in single-cell RNA-seq data using marker-based, automated, and reference-based approaches.
+Comprehensive workflow for annotating cell types in single-cell RNA-seq data using marker-based, automated, and reference-based approaches.
 
-## Overview
+## When to Use This Skill
 
-Cell type annotation is the process of assigning cell type labels to clusters or individual cells in single-cell RNA-seq data. This guide covers three main approaches and their practical implementation.
+Use this skill when you need to:
+- Annotate cell types in scRNA-seq data
+- Validate existing cell type assignments
+- Compare different annotation strategies
+- Transfer labels from reference datasets
+- Perform unsupervised cell type discovery
 
 ## Three Annotation Approaches
 
-### 1. Manual Marker-Based Annotation
+### Approach 1: Marker-Based (Expert Curation)
 
-Identify cell types by examining expression of known marker genes in each cluster.
+**Description**: Use known marker genes to manually annotate clusters based on differential expression.
 
-**Tools**: Scanpy, Seurat  
-**Best for**: Small datasets, novel cell types, high confidence needs
+**When to use**:
+- You have domain expertise in the tissue/system
+- Well-established marker genes exist
+- Need interpretable, literature-backed annotations
+- High confidence and reproducibility required
 
 **Workflow**:
 ```python
@@ -73,11 +72,168 @@ adata.obs['cell_type'] = adata.obs['leiden'].map(cluster_annotations)
 - Validate with known biology
 - Consider tissue context
 
-### 2. Automated Annotation
+**Pros**:
+- Highest confidence
+- Literature-supported
+- Interpretable
+- Reproducible
 
-Use pre-trained classifiers to automatically assign cell type labels.
+**Cons**:
+- Time-consuming
+- Requires expertise
+- May miss rare/novel types
+- Subjective judgment
 
-**Tools**: CellTypist, scAnnotate  
+### Approach 2: Automated (LLM-Assisted)
+
+**Description**: Use LLM to automatically annotate clusters based on marker genes and metadata.
+
+**When to use**:
+- Need rapid annotation
+- Limited domain expertise
+- Exploratory analysis
+- Large datasets with many clusters
+
+**Method**: Biomni tool `annotate_celltype_scRNA`
+- Performs Leiden clustering
+- Finds marker genes per cluster
+- Uses LLM to predict cell types from markers + data context
+- Optionally incorporates transferred labels for validation
+
+**Reference**: [assets/references/annotate_celltype_scrna.md](assets/references/annotate_celltype_scrna.md)
+
+**Pros**:
+- Fast and scalable
+- Handles complex tissues
+- Incorporates literature knowledge
+- Good for initial exploration
+
+**Cons**:
+- Requires validation
+- Dependent on marker quality
+- May hallucinate rare types
+- Less reproducible than manual
+
+### Approach 3: Reference-Based (Label Transfer)
+
+**Description**: Transfer cell type labels from annotated reference datasets using various algorithms.
+
+**When to use**:
+- High-quality reference dataset available
+- Standardized annotation needed
+- Cross-study comparisons
+- Benchmarking multiple methods
+
+**Methods Available**:
+
+#### 3a. Single Reference Transfer (Panhuman)
+**Tool**: `annotate_celltype_with_panhumanpy`
+- Uses Panhuman Azimuth neural network
+- Hierarchical cell type labels
+- Optimized for human tissues
+- Fast, standardized annotations
+
+**Reference**: [assets/references/annotate_celltype_panhumanpy.md](assets/references/annotate_celltype_panhumanpy.md)
+
+#### 3b. Multi-Method Transfer (popV)
+**Tool**: `unsupervised_celltype_transfer_between_scRNA_datasets`
+- Benchmarks 10 transfer algorithms (CELLTYPIST, KNN variants, Random Forest, SCANVI, SVM, XGBoost)
+- Consensus prediction across methods
+- Batch correction integrated
+
+**Reference**: [assets/references/unsupervised_celltype_transfer.md](assets/references/unsupervised_celltype_transfer.md)
+
+**Pros**:
+- Objective and reproducible
+- Leverages validated references
+- Handles batch effects
+- Standardized labels
+
+**Cons**:
+- Requires suitable reference
+- May miss dataset-specific types
+- Reference bias
+- Computational cost
+
+## Available Tools
+
+This skill includes three executable Biomni tools:
+
+### Tool 1: annotate_celltype_scRNA
+LLM-assisted automated annotation from marker genes
+
+**Reference**: [assets/references/annotate_celltype_scrna.md](assets/references/annotate_celltype_scrna.md)
+
+### Tool 2: annotate_celltype_with_panhumanpy
+Panhuman Azimuth neural network annotation
+
+**Reference**: [assets/references/annotate_celltype_panhumanpy.md](assets/references/annotate_celltype_panhumanpy.md)
+
+### Tool 3: unsupervised_celltype_transfer_between_scRNA_datasets
+Multi-method consensus label transfer (popV)
+
+**Reference**: [assets/references/unsupervised_celltype_transfer.md](assets/references/unsupervised_celltype_transfer.md)
+
+## Decision Tree
+
+```
+Start: Do you have annotated reference data?
+│
+├─ YES: Is your query similar to reference?
+│   ├─ YES: Use Approach 3 (Reference Transfer)
+│   │   ├─ Human, standard tissue → panhumanpy (Tool 2)
+│   │   └─ Custom reference → popV multi-method (Tool 3)
+│   └─ NO: Use Approach 2 (Automated, Tool 1) + Manual validation
+│
+└─ NO: What is your expertise level?
+    ├─ Expert: Use Approach 1 (Marker-Based)
+    ├─ Intermediate: Use Approach 2 (Tool 1) + Manual review
+    └─ Beginner: Use Approach 2 (Tool 1) + Seek expert review
+```
+
+## Recommended Workflow
+
+### Standard Pipeline
+1. **QC and preprocessing**
+   - Filter low-quality cells
+   - Normalize counts
+   - Find variable genes
+   - Correct batch effects if needed
+
+2. **Initial annotation** (choose one):
+   - Automated (Tool 1) for speed
+   - Reference-based (Tool 2 or 3) if reference available
+
+3. **Validation** (always):
+   - Marker gene visualization
+   - Expression heatmaps
+   - UMAP colored by predicted types
+   - Cross-reference with literature
+
+4. **Refinement**:
+   - Manual curation for ambiguous clusters
+   - Subset and re-cluster if needed
+   - Merge over-split clusters
+   - Split under-clustered populations
+
+### Quality Control
+
+**Check for**:
+- Doublets (dual marker expression)
+- Low-quality clusters (high mitochondrial %, low genes)
+- Batch effects (technical artifacts)
+- Over-fitting to reference (missing dataset-specific types)
+
+**Validation markers** (example for immune cells):
+- T cells: CD3D, CD3E, CD3G
+- B cells: CD79A, MS4A1 (CD20)
+- Monocytes: CD14, FCGR3A (CD16)
+- NK cells: NCAM1 (CD56), NKG7
+- Dendritic cells: FCER1A, CD1C
+
+## Manual Marker-Based Annotation (Approach 1)
+
+**Tools**: Scanpy, Seurat  
 **Best for**: Standard tissues, quick preliminary annotation, large datasets
 
 **CellTypist Workflow**:

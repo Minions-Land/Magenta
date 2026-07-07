@@ -3,177 +3,30 @@ id = "Biomni"
 name = "Biomni"
 kind = "domain"
 domain = "biomedical-ai"
-description = "General-purpose biomedical AI toolkit from Stanford SNAP Lab with 248+ tool functions and knowledge guides covering database queries, genomics, pharmacology, and lab automation. All tools are Python modules copied from Biomni source."
+description = "Biomedical AI toolkit from Stanford SNAP Lab with knowledge guides and executable tools covering sgRNA design, single-cell annotation, and general biomedical research workflows."
 
-# Default: load all (整包加载，无 profiles)
+# Default: load all skills
 default_profiles = []
 
-# === Knowledge Guide Skills ===
+# === Knowledge Guide Skills with Tools ===
 
 [[components]]
 kind = "skill"
 name = "sgrna-design"
 path = "skills/sgrna-design"
-description = "CRISPR sgRNA design guide with 300+ validated sequences"
+description = "CRISPR sgRNA design guide with validated sequences and automated design tools"
 include_in_context = false
 
 [[components]]
 kind = "skill"
 name = "single-cell-annotation"
 path = "skills/single-cell-annotation"
-description = "scRNA-seq cell type annotation best practices"
+description = "Single-cell RNA-seq cell type annotation with automated tools"
 include_in_context = false
 
-# === Python Tool Modules (23 modules, 248 functions) ===
-
 [[components]]
-kind = "python-module"
-name = "biochemistry"
-path = "tools/python/biochemistry.py"
-description = "5 biochemistry functions (protein analysis, enzyme kinetics)"
-
-[[components]]
-kind = "python-module"
-name = "bioengineering"
-path = "tools/python/bioengineering.py"
-description = "6 bioengineering functions"
-
-[[components]]
-kind = "python-module"
-name = "bioimaging"
-path = "tools/python/bioimaging.py"
-description = "10 bio-imaging functions (cell segmentation, image quantification)"
-
-[[components]]
-kind = "python-module"
-name = "biophysics"
-path = "tools/python/biophysics.py"
-description = "2 biophysics functions"
-
-[[components]]
-kind = "python-module"
-name = "cancer_biology"
-path = "tools/python/cancer_biology.py"
-description = "5 cancer biology analysis functions"
-
-[[components]]
-kind = "python-module"
-name = "cell_biology"
-path = "tools/python/cell_biology.py"
-description = "4 cell biology functions"
-
-[[components]]
-kind = "python-module"
-name = "database"
-path = "tools/python/database.py"
-description = "45 database query functions (PubMed, UniProt, KEGG, STRING, cBioPortal, Ensembl, NCBI, PDB, etc.)"
-
-[[components]]
-kind = "python-module"
-name = "genetics"
-path = "tools/python/genetics.py"
-description = "8 genetics functions (GWAS, linkage analysis)"
-
-[[components]]
-kind = "python-module"
-name = "genomics"
-path = "tools/python/genomics.py"
-description = "20 genomics functions (NGS analysis, variant annotation, alignment)"
-
-[[components]]
-kind = "python-module"
-name = "glycoengineering"
-path = "tools/python/glycoengineering.py"
-description = "3 glycoengineering functions"
-
-[[components]]
-kind = "python-module"
-name = "immunology"
-path = "tools/python/immunology.py"
-description = "9 immunology functions (antibody design, immune repertoire analysis)"
-
-[[components]]
-kind = "python-module"
-name = "lab_automation"
-path = "tools/python/lab_automation.py"
-description = "11 lab automation functions (robot control, workflow automation)"
-
-[[components]]
-kind = "python-module"
-name = "literature"
-path = "tools/python/literature.py"
-description = "8 literature search and analysis functions"
-
-[[components]]
-kind = "python-module"
-name = "microbiology"
-path = "tools/python/microbiology.py"
-description = "11 microbiology functions (microbiome, metagenomics)"
-
-[[components]]
-kind = "python-module"
-name = "molecular_biology"
-path = "tools/python/molecular_biology.py"
-description = "18 molecular biology functions (PCR design, cloning, protein expression)"
-
-[[components]]
-kind = "python-module"
-name = "pathology"
-path = "tools/python/pathology.py"
-description = "6 pathology image analysis functions"
-
-[[components]]
-kind = "python-module"
-name = "pharmacology"
-path = "tools/python/pharmacology.py"
-description = "42 pharmacology functions (drug design, ADME prediction, toxicity)"
-
-[[components]]
-kind = "python-module"
-name = "physiology"
-path = "tools/python/physiology.py"
-description = "10 physiology functions"
-
-[[components]]
-kind = "python-module"
-name = "protocols"
-path = "tools/python/protocols.py"
-description = "5 protocol execution functions"
-
-[[components]]
-kind = "python-module"
-name = "support_tools"
-path = "tools/python/support_tools.py"
-description = "7 support utility functions"
-
-[[components]]
-kind = "python-module"
-name = "synthetic_biology"
-path = "tools/python/synthetic_biology.py"
-description = "7 synthetic biology design functions"
-
-[[components]]
-kind = "python-module"
-name = "systems_biology"
-path = "tools/python/systems_biology.py"
-description = "6 systems biology functions (network analysis, pathway simulation)"
-
-[[components]]
-kind = "python-module"
-name = "tool_registry"
-path = "tools/python/tool_registry.py"
-description = "Tool registration and discovery system"
-
-# === Supporting Data ===
-
-[[components]]
-kind = "data"
-name = "schema_db"
-path = "tools/python/schema_db"
-description = "25+ pre-integrated database schemas (cBioPortal, ClinVar, Ensembl, etc.)"
-
-[[components]]
-kind = "data"
-name = "tool_description"
-path = "tools/python/tool_description"
-description = "Tool metadata and JSON schemas"
+kind = "skill"
+name = "biomedical-tools"
+path = "skills/biomedical-tools"
+description = "General biomedical research tools covering database queries, drug discovery, genomics, imaging, and lab automation"
+include_in_context = false

@@ -1,10 +1,10 @@
 ---
 name: sgrna-design
 description: >
-  Comprehensive guide for CRISPR sgRNA design using a three-tiered approach:
-  validated sequences (300+ from Addgene), CRISPick computational designs, or
-  de novo design tools. Covers Cas9, Cas12a, and other CRISPR systems with
-  experimental validation data and citation guidelines.
+  CRISPR sgRNA design workflow using a three-tiered approach: validated sequences
+  from Addgene database (300+ sequences), CRISPick computational designs, or de novo
+  design tools. Use this skill when designing guide RNAs for CRISPR knockout experiments,
+  validating sgRNA sequences, or planning genome editing experiments.
 tags:
 - CRISPR
 - sgRNA
@@ -13,112 +13,95 @@ tags:
 - Cas12a
 source: Biomni
 license: CC-BY-4.0
-metadata:
-  display-name: sgRNA Design Guide
-  authors: Biomni Team (Stanford SNAP Lab)
-  version: "1.0"
-  last-updated: "2025-11"
-  commercial-use: allowed
 ---
 
-# sgRNA Design Guide: Three-Tiered Approach
+# sgRNA Design Skill
 
-A comprehensive guide for finding or designing sgRNAs using validated sequences, CRISPick datasets, or de novo design tools.
+Comprehensive workflow for CRISPR sgRNA design using validated databases and computational tools.
 
-## Overview
+## When to Use This Skill
 
-This guide provides a three-tiered approach to sgRNA design, prioritizing validated sequences before moving to computational predictions. Always start with Option 1 and proceed to subsequent options only if needed.
+Use this skill when you need to:
+- Design guide RNAs for CRISPR knockout experiments
+- Find experimentally validated sgRNA sequences
+- Compare different sgRNA design approaches
+- Plan CRISPR-Cas9 or Cas12a genome editing experiments
 
-## Three-Tier Strategy
+## Three-Tier Design Strategy
+
+Always start with Tier 1 and proceed to subsequent tiers only if needed.
 
 ### Tier 1: Validated sgRNA Sequences (Recommended First)
 
-**Database**: 300+ experimentally validated sgRNA sequences from Addgene
+**Approach**: Search experimentally validated sequences from published studies
 
 **When to use**:
-- Gene has been targeted before in published studies
-- You need high confidence in sgRNA efficacy
+- Gene has been targeted before
+- Need high confidence in efficacy
 - Experimental validation is available
 
-**Method**:
-1. Search Biomni's curated database: `biomni/know_how/resource/addgene_grna_sequences.csv`
-2. Search Addgene directly: https://www.addgene.org/crispr/reference/grna-sequence/
-3. Filter by:
-   - Target gene
-   - CRISPR system (SpCas9, SaCas9, Cas12a)
-   - Species
-   - Experimental evidence
+**Methods**:
+1. **Use Biomni tool** (fastest, 300+ sequences):
+   - See [tools/design_knockout_sgrna.md](assets/references/design_knockout_sgrna.md)
+   - Searches pre-computed library from Addgene
 
-**Citation**: Always cite the original publication (PubMed ID provided in database)
+2. **Manual Addgene search**:
+   - Visit: https://www.addgene.org/crispr/reference/grna-sequence/
+   - Filter by gene, CRISPR system, species
+
+**Citation**: Always cite the original publication (PubMed ID in database)
 
 ### Tier 2: CRISPick Computational Designs
 
-**Tool**: CRISPick from Broad Institute GPP
+**Approach**: Use Broad Institute's CRISPick predictions
 
 **When to use**:
-- No validated sgRNAs available for your gene
+- No validated sgRNAs available
 - Need multiple sgRNA options
 - Want predicted efficacy scores
 
 **Method**:
 1. Visit: https://portals.broadinstitute.org/gppx/crispick/public
-2. Enter:
-   - Gene symbol or Ensembl ID
-   - Species
-   - CRISPR system (SpCas9, SaCas9, AsCas12a, enAsCas12a)
+2. Enter gene symbol, species, CRISPR system
 3. Review predictions:
    - On-target score (efficacy)
    - Off-target score (specificity)
-   - Pick rank (combined score)
+   - Pick rank (combined)
 
 **Citations**:
-- **Cas9**: Sanson KR, et al. Nat Commun. 2018;9(1):5416. PMID: 30575746
-- **Cas12a**: DeWeirdt PC, et al. Nat Biotechnol. 2021;39(1):94-104. PMID: 32661438
-
-**Acknowledgment**: "Guide designs provided by the CRISPick web tool of the GPP at the Broad Institute"
+- Cas9: Sanson KR, et al. Nat Commun. 2018;9(1):5416. PMID: 30575746
+- Cas12a: DeWeirdt PC, et al. Nat Biotechnol. 2021;39(1):94-104. PMID: 32661438
 
 ### Tier 3: De Novo Design Tools
+
+**Approach**: Use alternative design algorithms
 
 **When to use**:
 - Gene not in CRISPick database
 - Need custom PAM sequences
-- Want alternative design algorithms
+- Want alternative predictions
 
 **Tools**:
-1. **CHOPCHOP** (https://chopchop.cbu.uib.no/)
-   - Multiple organisms
-   - Various CRISPR systems
-   - Off-target analysis
+- CHOPCHOP: https://chopchop.cbu.uib.no/
+- Benchling: https://www.benchling.com/crispr
+- CCTop: https://crispr.cos.uni-heidelberg.de/
 
-2. **Benchling CRISPR Tool** (https://www.benchling.com/crispr)
-   - Integrated with sequence design
-   - Collaborative features
-   - Free academic use
-
-3. **CCTop** (https://crispr.cos.uni-heidelberg.de/)
-   - Focus on off-target prediction
-   - Multiple genomes
-   - Batch design
-
-4. **sgRNA Scorer 2.0**
-   - Machine learning predictions
-   - Azimuth algorithm
-   - High accuracy
+See [tools/crispr_editing.md](assets/references/crispr_editing.md) for CRISPR editing simulation
 
 ## Key Design Principles
 
-### 1. Target Selection
+### Target Selection
 - **Location**: Exons near 5' end for knockout
 - **PAM sequence**: NGG for SpCas9, TTTV for Cas12a
 - **GC content**: 40-60% optimal
 - **Avoid**: Poly-T tracts (4+ Ts), repetitive sequences
 
-### 2. Specificity
+### Specificity
 - **Off-targets**: < 3 mismatches to other genomic sites
-- **Seed region**: Especially important (12 bp adjacent to PAM)
+- **Seed region**: Critical (12 bp adjacent to PAM)
 - **Check**: Whole genome alignment
 
-### 3. Efficiency
+### Efficiency
 - **Activity scores**: Use CRISPick or Azimuth predictions
 - **Validation**: Test 3-4 sgRNAs per target
 - **Controls**: Non-targeting sgRNA, validated positive control
@@ -127,84 +110,86 @@ This guide provides a three-tiered approach to sgRNA design, prioritizing valida
 
 ### Essential Tests
 1. **Editing efficiency**: T7E1 or Sanger sequencing
-2. **Off-target effects**: Targeted deep sequencing of predicted sites
-3. **Functional validation**: Protein knockout by Western blot
+2. **Off-target effects**: Deep sequencing of predicted sites
+3. **Functional validation**: Western blot for knockout
 
 ### Recommended Controls
-- Non-targeting sgRNA (scrambled sequence)
+- Non-targeting sgRNA (scrambled)
 - Positive control (known effective sgRNA)
-- Mock transfection (no sgRNA)
+- Mock transfection
 
 ## Common CRISPR Systems
 
-| System | PAM | Targeting Range | Notes |
-|--------|-----|-----------------|-------|
+| System | PAM | Length | Notes |
+|--------|-----|--------|-------|
 | SpCas9 | NGG | 20 bp | Most common, extensive data |
-| SaCas9 | NNGRRT | 21 bp | Smaller size, AAV compatible |
+| SaCas9 | NNGRRT | 21 bp | Smaller, AAV compatible |
 | AsCas12a | TTTV | 23 bp | T-rich PAM, 5' overhang |
-| enAsCas12a | TTTV | 23 bp | Enhanced activity vs AsCas12a |
+| enAsCas12a | TTTV | 23 bp | Enhanced vs AsCas12a |
 
-## Resources
+## Workflow Example
 
-### Databases
-- **Addgene**: https://www.addgene.org/crispr/
-- **CRISPick**: https://portals.broadinstitute.org/gppx/crispick/
-- **Biomni curated**: `biomni/know_how/resource/addgene_grna_sequences.csv`
+```
+1. Search Tier 1 (Validated)
+   ↓ (if not found)
+2. Try Tier 2 (CRISPick)
+   ↓ (if needed)
+3. Use Tier 3 (De novo)
+   ↓
+4. Select 3-4 top candidates
+   ↓
+5. Check off-targets
+   ↓
+6. Experimental validation
+```
 
-### Design Tools
-- **CHOPCHOP**: https://chopchop.cbu.uib.no/
-- **Benchling**: https://www.benchling.com/crispr
-- **CCTop**: https://crispr.cos.uni-heidelberg.de/
+## Available Tools
 
-### Guidelines
-- **Broad GPP**: https://portals.broadinstitute.org/gpp/public/
-- **Addgene protocols**: https://www.addgene.org/protocols/
+This skill includes executable tools for automated design:
 
-## Citation Guidelines
+### Tool 1: design_knockout_sgrna
+Search pre-computed sgRNA libraries (300+ validated sequences)
 
-### Using Validated sgRNAs
-- Cite original publication (check PubMed ID in database)
-- Acknowledge: "Validated sgRNA sequences obtained from Addgene"
+**Reference**: [assets/references/design_knockout_sgrna.md](assets/references/design_knockout_sgrna.md)
 
-### Using CRISPick
-- Cite appropriate paper (see Tier 2 above)
-- Acknowledge: "Guide designs provided by CRISPick"
+### Tool 2: perform_crispr_editing
+Simulate CRISPR-Cas9 genome editing process
 
-### Using Biomni
-- Cite: Biomni paper (bioRxiv 2025.05.30.656746v1)
-- License: CC BY 4.0
-
-## Tips for Success
-
-1. **Start with validated**: Always check Tier 1 first
-2. **Design multiple**: Test 3-4 sgRNAs per target
-3. **Check off-targets**: Use genome-wide analysis
-4. **Validate experimentally**: Don't rely solely on predictions
-5. **Document thoroughly**: Record all design choices
-6. **Share results**: Contribute validated sgRNAs to community
+**Reference**: [assets/references/crispr_editing.md](assets/references/crispr_editing.md)
 
 ## Troubleshooting
 
 **Low editing efficiency**:
-- Try different sgRNAs (target different sites)
-- Optimize transfection/transduction
+- Try different sgRNAs
+- Optimize transfection
 - Check Cas protein expression
 - Verify PAM sequence
 
-**High off-target effects**:
-- Use higher specificity sgRNAs (better scores)
-- Consider paired nickases or dCas9-FokI
-- Reduce Cas9 expression time
-- Use truncated sgRNAs (17-18 bp)
+**High off-targets**:
+- Use higher specificity sgRNAs
+- Try Cas9 variants (HiFi, eSpCas9)
+- Reduce Cas9 concentration
+- Shorten exposure time
 
-**No suitable sgRNAs**:
-- Try different CRISPR systems (different PAMs)
-- Consider base editors or prime editors
-- Target alternative exons
-- Use homology-directed repair for precision
+## Resources
 
-## See Also
+**Databases**:
+- Addgene: https://www.addgene.org/crispr/
+- CRISPick: https://portals.broadinstitute.org/gppx/crispick/
+- Biomni curated: 300+ validated sequences
 
-- [Biomni single-cell-annotation](../single-cell-annotation/SKILL.md) - For post-editing analysis
-- [Biomni molecular biology tools](../../tools/molecular-biology/) - For cloning sgRNA vectors
-- Addgene CRISPR guide: https://www.addgene.org/crispr/guide/
+**Design Tools**:
+- CHOPCHOP: https://chopchop.cbu.uib.no/
+- Benchling: https://www.benchling.com/crispr
+- CCTop: https://crispr.cos.uni-heidelberg.de/
+
+**Guidelines**:
+- Broad GPP: https://portals.broadinstitute.org/gpp/public/
+- Addgene protocols: https://www.addgene.org/protocols/
+
+## Citation
+
+If using Biomni tools:
+- Cite: Biomni bioRxiv 2025.05.30.656746v1
+- Acknowledge Addgene for validated sequences
+- License: CC BY 4.0
