@@ -48,9 +48,10 @@ extends = ["structure", "design", "genomics", "singlecell", "research", "visuali
 
 ### Default Behavior
 
-By default, **all skills load** (`default_profiles = ["all"]`), so
-`--harness-package ClaudeScience` with no selector pulls in the full set. When
-you only need a slice, name the profiles explicitly to keep context focused:
+By default, **all skills load** (`default_profiles = []` — an empty default means
+"no narrowing"), so `--harness-package ClaudeScience` with no selector pulls in the
+full set. When you only need a slice, name the profiles explicitly to keep context
+focused (profile tags now functionally narrow the loaded set):
 
 ```bash
 # Full set (default)

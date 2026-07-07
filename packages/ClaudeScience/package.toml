@@ -5,6 +5,10 @@ kind = "domain"
 domain = "computational-biology"
 description = "Computational biology and bioinformatics harness package covering protein structure prediction, genomics, single-cell analysis, literature review, and scientific workflows."
 
+# Empty = no default narrowing: `--harness-package ClaudeScience` loads every skill.
+# Narrow with a selector, e.g. `--harness-package ClaudeScience:structure,design`.
+default_profiles = []
+
 # === Profiles for selective loading ===
 
 [[profiles]]
@@ -51,9 +55,6 @@ extends = []
 name = "all"
 description = "All ClaudeScience skills"
 extends = ["structure", "design", "genomics", "singlecell", "research", "visualization", "compute", "meta"]
-
-# Set default profiles - load all skills by default
-default_profiles = ["all"]
 
 # === Structure Prediction Skills ===
 

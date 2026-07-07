@@ -234,6 +234,75 @@ harness = "missing/harness.toml"
 		});
 	});
 
+	it("filters root components by profile tag while always loading untagged ones", async () => {
+		await withTempRepo(async ({ repoRoot, packagesRoot }) => {
+			await writeText(
+				join(packagesRoot, "TagPkg", "package.toml"),
+				`schema_version = "magenta.package.v1"
+id = "TagPkg"
+name = "TagPkg"
+kind = "domain"
+default_profiles = []
+
+[[profiles]]
+name = "alpha"
+
+[[profiles]]
+name = "beta"
+
+[[profiles]]
+name = "all"
+extends = ["alpha", "beta"]
+
+[[components]]
+kind = "skill"
+name = "shared"
+path = "skills/shared"
+
+[[components]]
+kind = "skill"
+name = "a1"
+path = "skills/a1"
+profiles = ["alpha"]
+
+[[components]]
+kind = "skill"
+name = "a2"
+path = "skills/a2"
+profiles = ["alpha"]
+
+[[components]]
+kind = "skill"
+name = "b1"
+path = "skills/b1"
+profiles = ["beta"]
+`,
+			);
+			for (const name of ["shared", "a1", "a2", "b1"]) {
+				await writeText(
+					join(packagesRoot, "TagPkg", "skills", name, "SKILL.md"),
+					`---\nname: ${name}\ndescription: ${name} skill.\n---\n${name}\n`,
+				);
+			}
+
+			const skillNames = async (selector: string): Promise<string[]> => {
+				const overlay = await loadPackageOverlay({ repoRoot, selections: [selector] });
+				expect(overlay.diagnostics).toEqual([]);
+				return overlay.resources.skillPaths.map((resource) => resource.name).sort();
+			};
+
+			// No selector + empty default_profiles = no narrowing → whole package.
+			expect(await skillNames("TagPkg")).toEqual(["a1", "a2", "b1", "shared"]);
+			// A profile narrows to its tagged components; untagged `shared` still loads.
+			expect(await skillNames("TagPkg:alpha")).toEqual(["a1", "a2", "shared"]);
+			expect(await skillNames("TagPkg:beta")).toEqual(["b1", "shared"]);
+			// Multiple profiles union their tags.
+			expect(await skillNames("TagPkg:alpha,beta")).toEqual(["a1", "a2", "b1", "shared"]);
+			// `all` extends both topic profiles, so its closure matches every tag.
+			expect(await skillNames("TagPkg:all")).toEqual(["a1", "a2", "b1", "shared"]);
+		});
+	});
+
 	it("loads the migrated AutOmicScience flat package components", async () => {
 		const overlay = await loadPackageOverlay({
 			repoRoot,

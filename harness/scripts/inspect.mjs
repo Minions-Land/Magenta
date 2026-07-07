@@ -202,10 +202,16 @@ function loadPackagesInspect() {
 		const rootComponents = parseComponents(manifest).map((component) =>
 			resolvePackageComponent(component, packageDir, packageDir, manifestPath, diagnostics),
 		);
-		const profiles = asArray(manifest.profiles).map((profile) =>
-			loadPackageProfile({ packageDir, packageId: manifest.id ?? entry.name, profile, diagnostics }),
+		const allProfiles = asArray(manifest.profiles);
+		const profiles = allProfiles.map((profile) =>
+			loadPackageProfile({ packageDir, packageId: manifest.id ?? entry.name, profile, diagnostics, allProfiles, rootComponents }),
 		);
-		const allComponents = [...rootComponents, ...profiles.flatMap((profile) => profile.components)].filter(Boolean);
+		// Only additive (harness sub-manifest) profiles contribute NEW components; tag-based
+		// profiles are views into rootComponents and would double-count if re-added.
+		const allComponents = [
+			...rootComponents,
+			...profiles.filter((profile) => profile.additive).flatMap((profile) => profile.components),
+		].filter(Boolean);
 		const runtimeKeys = new Set(allComponents.map((component) => `${component.kind}:${component.name}`));
 		const tools = allComponents
 			.filter((component) => component.kind === "tool")
@@ -235,12 +241,31 @@ function loadPackagesInspect() {
 	return { root: pathLabel(packagesRoot), packages, diagnostics };
 }
 
-function loadPackageProfile({ packageDir, packageId, profile, diagnostics }) {
+function loadPackageProfile({ packageDir, packageId, profile, diagnostics, allProfiles = [], rootComponents = [] }) {
 	const profileName = profile.name ?? "<unnamed>";
+	if (!profile.harness) {
+		// Tag-based profile: its members are the root components whose `profiles` tag falls in
+		// this profile's extends-closure (mirrors componentMatchesProfiles in package-overlay.ts).
+		// These are a VIEW into rootComponents (additive:false) — not extra components — so they
+		// must not be re-added to the package's allComponents total.
+		const closure = profileClosure(profileName, allProfiles);
+		const components = rootComponents
+			.filter(Boolean)
+			.filter((component) => asArray(component.profiles).some((tag) => closure.has(tag)));
+		if (components.length === 0) {
+			diagnostics.push({
+				type: "warning",
+				packageId,
+				profile: profileName,
+				message: "profile gates no components (no harness sub-manifest and no tagged root components)",
+			});
+		}
+		return { name: profileName, description: profile.description, path: undefined, components, additive: false };
+	}
 	const harnessPath = resolvePath(packageDir, profile.harness);
 	if (!harnessPath) {
 		diagnostics.push({ type: "warning", packageId, profile: profileName, message: "profile has no harness path" });
-		return { name: profileName, description: profile.description, path: undefined, components: [] };
+		return { name: profileName, description: profile.description, path: undefined, components: [], additive: true };
 	}
 	if (!isInside(packageDir, harnessPath)) {
 		diagnostics.push({ type: "error", packageId, profile: profileName, message: `profile harness escapes package: ${profile.harness}` });
@@ -259,6 +284,7 @@ function loadPackageProfile({ packageDir, packageId, profile, diagnostics }) {
 		description: profile.description,
 		path: pathLabel(harnessPath),
 		components,
+		additive: true,
 	};
 }
 
@@ -286,10 +312,24 @@ function resolvePackageComponent(component, packageDir, baseDir, sourcePath, dia
 		name: component.name,
 		description: component.description,
 		profile,
+		profiles: asArray(component.profiles),
 		path: resolvedPath ? pathLabel(resolvedPath) : undefined,
 		absPath: resolvedPath,
 		sourcePath: pathLabel(sourcePath),
 	};
+}
+
+/** Transitive `extends` closure of a profile — mirrors expandProfileClosure in package-overlay.ts. */
+function profileClosure(profileName, allProfiles) {
+	const closure = new Set();
+	const visit = (name) => {
+		if (closure.has(name)) return;
+		closure.add(name);
+		const parent = allProfiles.find((candidate) => (candidate.name ?? "") === name);
+		for (const grandparent of asArray(parent?.extends)) visit(grandparent);
+	};
+	visit(profileName);
+	return closure;
 }
 
 function classifyPackageTool(component, runtimeKeys, diagnostics) {

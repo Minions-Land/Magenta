@@ -84,6 +84,13 @@ export interface PackageComponentRef {
 	path?: string;
 	includeInContext?: boolean;
 	source?: string;
+	/**
+	 * Profile tags gating this root component. Empty/absent = untagged = a
+	 * package-wide essential that always loads. When non-empty, the component
+	 * loads only if a tag intersects the selected profile closure (see
+	 * {@link componentMatchesProfiles}).
+	 */
+	profiles?: string[];
 	bundles: PackageComponentBundle[];
 	raw: TomlTable;
 }
@@ -356,7 +363,8 @@ export async function loadPackageOverlay(options: LoadPackageOverlayOptions): Pr
 
 		selectedPackages.push(pkg);
 		const profileNames = resolveSelectedProfileNames(pkg, selection.profiles, includeDefaultProfiles);
-		components.push(...resolvePackageRootComponents(pkg, diagnostics));
+		const selectedProfileClosure = expandProfileClosure(pkg, profileNames);
+		components.push(...resolvePackageRootComponents(pkg, selectedProfileClosure, diagnostics));
 		const loadedProfiles = new Set<string>();
 
 		for (const profileName of profileNames) {
@@ -563,11 +571,42 @@ function resolveSelectedProfileNames(
 	return unique([...(includeDefaultProfiles ? pkg.manifest.defaultProfiles : []), ...profiles]);
 }
 
+/**
+ * Transitive `extends` closure of the selected profile names. Selecting a
+ * profile pulls in every profile it extends (e.g. `all` extends the topic
+ * profiles), so a component tagged with any profile in the closure matches.
+ */
+function expandProfileClosure(pkg: HarnessPackage, names: string[]): Set<string> {
+	const closure = new Set<string>();
+	const visit = (name: string): void => {
+		if (closure.has(name)) return;
+		closure.add(name);
+		const profile = pkg.manifest.profiles.find((candidate) => candidate.name === name);
+		for (const parent of profile?.extends ?? []) visit(parent);
+	};
+	for (const name of names) visit(name);
+	return closure;
+}
+
+/**
+ * A root component loads when it is untagged (a package-wide essential), or when
+ * no profile narrowing is in effect (empty closure = load everything, the
+ * backward-compatible default), or when one of its `profiles` tags is in the
+ * selected profile closure.
+ */
+function componentMatchesProfiles(component: PackageComponentRef, closure: Set<string>): boolean {
+	if (!component.profiles || component.profiles.length === 0) return true;
+	if (closure.size === 0) return true;
+	return component.profiles.some((tag) => closure.has(tag));
+}
+
 function resolvePackageRootComponents(
 	pkg: HarnessPackage,
+	selectedProfileClosure: Set<string>,
 	diagnostics: PackageDiagnostic[],
 ): PackageResolvedComponent[] {
 	return pkg.manifest.components
+		.filter((component) => componentMatchesProfiles(component, selectedProfileClosure))
 		.map((component) => resolveComponent(component, pkg, undefined, pkg.dir, pkg.manifestPath, diagnostics))
 		.filter((component): component is PackageResolvedComponent => Boolean(component));
 }
@@ -763,6 +802,7 @@ function parseComponentEntry(
 		path: asString(entry.path),
 		includeInContext: asBoolean(entry.include_in_context),
 		source: asString(entry.source),
+		profiles: asStringArray(entry.profiles),
 		bundles: parseBundleRefs(entry.bundles, packageId, profile, sourcePath, diagnostics),
 		raw: entry,
 	};

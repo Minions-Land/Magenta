@@ -5,8 +5,9 @@ kind = "domain"
 domain = "bioinformatics"
 description = "Bioinformatics and scientific workflow skills from PantheonOS covering single-cell/spatial omics, foundation models, bio-imaging, and scientific communication."
 
-# Default: load all skills
-default_profiles = ["all"]
+# Empty = no default narrowing: `--harness-package PantheonOS` loads every skill.
+# Narrow with a selector, e.g. `--harness-package PantheonOS:omics,communication`.
+default_profiles = []
 
 # === Profiles for selective loading ===
 

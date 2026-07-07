@@ -79,3 +79,4 @@ collect.sh
 .notes/
 .magenta/
 .magenta-*.md
+.ipynb_checkpoints/
