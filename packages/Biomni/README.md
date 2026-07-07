@@ -1,6 +1,6 @@
 # Biomni Package for Magenta
 
-Biomni is a general-purpose biomedical AI toolkit from Stanford SNAP Lab, fully integrated into Magenta with all 23 Python tool modules (248 functions) copied locally, plus 2 knowledge guide skills.
+Biomni is a general-purpose biomedical AI toolkit from Stanford SNAP Lab, fully integrated into Magenta with all 23 Python tool modules (248 functions) copied locally, plus 3 comprehensive skills.
 
 ## Package Overview
 
@@ -12,17 +12,31 @@ Biomni is a general-purpose biomedical AI toolkit from Stanford SNAP Lab, fully 
 
 ## Contents
 
-### Skills (2 Knowledge Guides)
+### Skills (3 Knowledge Guides + 5 Tools)
 
-1. **sgrna-design** - CRISPR sgRNA design guide
-   - 300+ validated sgRNA sequences from Addgene
-   - Three-tier design strategy (validated → CRISPick → de novo)
-   - Citation guidelines and experimental validation
+**1. sgrna-design** - CRISPR sgRNA design workflow
+- Location: `skills/sgrna-design/`
+- Tools: 2 executable tools
+  - `design_knockout_sgrna`: Search validated sgRNA libraries (300+ sequences from Addgene)
+  - `perform_crispr_cas9_genome_editing`: Simulate CRISPR editing process
+- Knowledge: Three-tier design strategy, experimental validation guidelines
+- References: `assets/references/design_knockout_sgrna.md`, `assets/references/crispr_editing.md`
 
-2. **single-cell-annotation** - scRNA-seq cell type annotation
-   - Marker-based, automated, reference-based methods
-   - Distilled from sc-best-practices.org
-   - Practical workflows with Python code examples
+**2. single-cell-annotation** - scRNA-seq cell type annotation
+- Location: `skills/single-cell-annotation/`
+- Tools: 3 executable tools
+  - `annotate_celltype_scRNA`: LLM-assisted automated annotation from marker genes
+  - `annotate_celltype_with_panhumanpy`: Panhuman Azimuth neural network annotation
+  - `unsupervised_celltype_transfer_between_scRNA_datasets`: Multi-method consensus (popV)
+- Knowledge: Three approaches (marker-based, automated, reference-based), decision tree
+- References: `assets/references/` (3 tool reference files)
+- Source: Biomni + sc-best-practices.org
+
+**3. biomedical-tools** - General biomedical toolkit
+- Location: `skills/biomedical-tools/`
+- Tools: 200+ functions across 20 modules
+- Coverage: Database queries, drug discovery, genomics, imaging, lab automation
+- Quick reference guide with module descriptions and usage examples
 
 ### Python Tool Modules (23 Modules, 248 Functions)
 
@@ -70,11 +84,11 @@ magenta --harness-package Biomni
 ```
 
 Loads:
-- 2 skills (knowledge guides)
+- 3 skills (knowledge guides with executable tools)
 - 23 Python modules (248 functions)
 - 2 data components (schemas + descriptions)
 
-**Total**: 27 components
+**Total**: 28 components
 
 ### Integration with Other Packages
 
@@ -245,11 +259,14 @@ All Python code in `tools/python/` is copied from:
 ## Summary
 
 **Biomni package provides**:
-- ✅ 2 knowledge guide skills
-- ✅ 248 executable Python functions across 23 modules
+- ✅ 3 comprehensive skills with 5 executable tools
+  - **sgrna-design**: 2 tools (design + simulation)
+  - **single-cell-annotation**: 3 tools (LLM, Panhuman, popV)
+  - **biomedical-tools**: 200+ tools (all modules)
+- ✅ 248 Python functions across 23 modules
 - ✅ 25+ database schemas
 - ✅ 1.8 MB of copied code (self-contained)
 - ✅整包加载 (all-in-one loading)
 - ✅ No external dependencies on original Biomni
 
-**Perfect for**: Drug discovery, database queries, lab automation, genomics analysis, and molecular biology workflows.
+**Perfect for**: CRISPR experiments, single-cell analysis, drug discovery, database queries, lab automation, genomics analysis, and molecular biology workflows.
