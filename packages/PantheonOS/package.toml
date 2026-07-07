@@ -1,0 +1,172 @@
+schema_version = "magenta.package.v1"
+id = "PantheonOS"
+name = "PantheonOS"
+kind = "domain"
+domain = "bioinformatics"
+description = "Bioinformatics and scientific workflow skills from PantheonOS covering single-cell/spatial omics, foundation models, bio-imaging, and scientific communication."
+
+# Default: load all skills
+default_profiles = ["all"]
+
+# === Profiles for selective loading ===
+
+[[profiles]]
+name = "omics"
+description = "Single-cell and spatial omics analysis skills"
+extends = []
+
+[[profiles]]
+name = "imaging"
+description = "Bio-image processing and cell segmentation"
+extends = []
+
+[[profiles]]
+name = "communication"
+description = "Scientific paper writing, figures, and presentations"
+extends = []
+
+[[profiles]]
+name = "infrastructure"
+description = "Data analysis infrastructure and pipelines"
+extends = []
+
+[[profiles]]
+name = "all"
+description = "All PantheonOS skills"
+extends = ["omics", "imaging", "communication", "infrastructure"]
+
+# === Omics Analysis Skills ===
+
+[[components]]
+kind = "skill"
+name = "omics"
+path = "skills/omics"
+description = "Index skill for all omics workflows"
+include_in_context = false
+profiles = ["omics"]
+
+[[components]]
+kind = "skill"
+name = "single-cell"
+path = "skills/single-cell"
+description = "Core scRNA-seq analysis: QC, annotation, trajectory"
+include_in_context = false
+profiles = ["omics"]
+
+[[components]]
+kind = "skill"
+name = "spatial"
+path = "skills/spatial"
+description = "Spatial transcriptomics analysis and visualization"
+include_in_context = false
+profiles = ["omics"]
+
+[[components]]
+kind = "skill"
+name = "scfm"
+path = "skills/scfm"
+description = "Single-cell foundation models (scGPT, Geneformer, UCE)"
+include_in_context = false
+profiles = ["omics"]
+
+[[components]]
+kind = "skill"
+name = "database-access"
+path = "skills/database-access"
+description = "Query genomic databases (gget, CELLxGENE Census)"
+include_in_context = false
+profiles = ["omics"]
+
+[[components]]
+kind = "skill"
+name = "gene-panel"
+path = "skills/gene-panel"
+description = "Gene panel design for spatial transcriptomics"
+include_in_context = false
+profiles = ["omics"]
+
+[[components]]
+kind = "skill"
+name = "sc-best-practices"
+path = "skills/sc-best-practices"
+description = "Reference from sc-best-practices.org book"
+include_in_context = false
+profiles = ["omics"]
+
+[[components]]
+kind = "skill"
+name = "upstream"
+path = "skills/upstream"
+description = "Raw data processing pipelines"
+include_in_context = false
+profiles = ["omics"]
+
+[[components]]
+kind = "skill"
+name = "nfcore"
+path = "skills/nfcore"
+description = "nf-core community pipelines (143+ workflows)"
+include_in_context = false
+profiles = ["infrastructure"]
+
+[[components]]
+kind = "skill"
+name = "openst"
+path = "skills/openst"
+description = "Open-ST spatial transcriptomics processing"
+include_in_context = false
+profiles = ["omics"]
+
+# === Bio-Imaging Skills ===
+
+[[components]]
+kind = "skill"
+name = "bio-imaging"
+path = "skills/bio-imaging"
+description = "Bio-image processing index"
+include_in_context = false
+profiles = ["imaging"]
+
+[[components]]
+kind = "skill"
+name = "cell-segmentation"
+path = "skills/cell-segmentation"
+description = "Cell/nucleus segmentation (Cellpose, SAM, StarDist)"
+include_in_context = false
+profiles = ["imaging"]
+
+# === Scientific Communication Skills ===
+
+[[components]]
+kind = "skill"
+name = "paper-writing"
+path = "skills/paper-writing"
+description = "Academic and report templates (HTML/LaTeX)"
+include_in_context = false
+profiles = ["communication"]
+
+[[components]]
+kind = "skill"
+name = "figure-styling"
+path = "skills/figure-styling"
+description = "Aesthetic guidelines for scientific figures"
+include_in_context = false
+profiles = ["communication"]
+
+[[components]]
+kind = "skill"
+name = "presentation"
+path = "skills/presentation"
+description = "Marp slides and presentation templates"
+include_in_context = false
+profiles = ["communication"]
+
+# === Infrastructure Skills ===
+
+[[components]]
+kind = "skill"
+name = "data-analysis"
+path = "skills/data-analysis"
+description = "Environment setup, parallel computing, HPC"
+include_in_context = false
+profiles = ["infrastructure"]
