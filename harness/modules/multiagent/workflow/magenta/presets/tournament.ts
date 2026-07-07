@@ -4,6 +4,11 @@
  * Candidates compete in pairwise matches judged by a subagent. N candidates →
  * N-1 comparisons; byes carry over on odd counts. Returns the surviving
  * candidate.
+ *
+ * Principle demonstrated: score the subjective. When "best" is hard to quantify
+ * absolutely, a judge comparing two candidates head-to-head is far more
+ * reliable than asking for an absolute score — the bracket turns fuzzy taste
+ * into a series of concrete either/or decisions.
  */
 
 const WINNER_SCHEMA = {

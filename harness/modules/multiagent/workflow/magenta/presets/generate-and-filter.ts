@@ -3,6 +3,10 @@
  *
  * Generate `count` independent candidates in parallel, score each by explicit
  * criteria (evaluator returns a number), rank, keep top-K.
+ *
+ * Principle demonstrated: separate the roles. The generator never scores its
+ * own work — an independent evaluator assigns each candidate a number against
+ * fixed criteria, so the ranking is earned, not self-declared.
  */
 
 const SCORE_SCHEMA = {

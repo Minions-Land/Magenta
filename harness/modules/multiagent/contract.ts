@@ -215,9 +215,23 @@ export interface ScriptAgentOptions {
 }
 
 /**
- * The runtime context injected into a workflow script's default export. The
- * script uses these primitives to spawn work; it never imports the worker
- * module directly, so the runtime stays in control of routing and safety.
+ * The runtime context injected into a workflow module's default export. Presets
+ * and user scripts alike compose these primitives to spawn work; a module never
+ * imports the worker layer directly, so the runtime stays in control of routing
+ * and safety.
+ *
+ * Best practices for composing these (the difference between a loop that
+ * converges and one that spins):
+ * - Separate the roles. Do not have one agent both produce and grade the same
+ *   work; a generator asked "is this good?" says yes. Spawn an independent
+ *   evaluator (see adversarial-verify.ts / tournament.ts for the pattern).
+ * - Compute verdicts, never self-report them. Confidence, scores, and pass/fail
+ *   should be derived from independent checks (e.g. passed/N verifiers), not
+ *   asked of the worker that did the work.
+ * - Own termination in code. The workflow decides when to stop (a cap, a
+ *   no-new-findings round); never let a worker's "I'm done" end the loop.
+ * - Use `guards` to force the soul step. A guard is a system-prompt prefix the
+ *   worker cannot dilute — that is where a pattern's discipline lives.
  */
 export interface WorkflowContext {
 	/** Spawn one agent. Routes through the runtime's worker runner. */
@@ -226,11 +240,15 @@ export interface WorkflowContext {
 	parallelAgents<T>(tasks: Array<() => Promise<T>>, maxConcurrent?: number): Promise<T[]>;
 	/** Stream-process items (results in completion order). */
 	pipeline<T, R>(items: T[], fn: (item: T, index: number) => Promise<R>, maxConcurrent?: number): Promise<R[]>;
-	/** Mark a named phase (observability). */
+	/** Mark a named phase (observability; also written to the state dir). */
 	phase(name: string): void;
-	/** Write a log line (observability). */
+	/** Write a log line (observability; appended to the run's log.jsonl). */
 	log(message: string): void;
-	/** Reusable guard atoms (the hard-coded soul steps). */
+	/**
+	 * Reusable guard atoms (the soul steps). Prepend one to a worker's system
+	 * prompt via ScriptAgentOptions.guard to force the disciplined step the LLM
+	 * would otherwise skip (classify-first, independent re-check, etc.).
+	 */
 	guards: Record<string, string>;
 	/** This workflow run's id — also the ~/.magenta/tmp/<id> directory name. */
 	workflowId: string;

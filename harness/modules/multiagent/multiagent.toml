@@ -41,4 +41,4 @@ description = "Iterate a refine worker, excluding prior findings each round; sto
 
 [[patterns]]
 name = "script"
-description = "Run a workflow authored as an executable TS/JS module (write the loop, not the prompt). The script drives its own control flow (if/while/await) using injected primitives (agent, parallelAgents, pipeline, phase, log, guards); the runtime enforces the safety boundary (depth guard, tool denial, timeout, guard injection) and persists state to .magenta/tmp/<id>/. The six presets are just official scripts of this same kind, shipped in-tree."
+description = "Run a workflow authored as an executable TS/JS module (write the loop, not the prompt). The script drives its own control flow (if/while/await) using injected primitives (agent, parallelAgents, pipeline, phase, log, guards); the runtime enforces the safety boundary (depth guard, tool denial, timeout, guard injection) and persists state to .magenta/tmp/<id>/. The six presets are just official scripts of this same kind, shipped in-tree. Reusable building blocks (contract negotiation, four-axis scoring) live in workflow/magenta/presets/snippets/."

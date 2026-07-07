@@ -54,6 +54,10 @@ const PATTERNS: Pattern[] = [
  * relevant worker's system prompt so the LLM cannot skip or dilute the step.
  */
 const GUARDS = {
+	generator:
+		"You are the Generator. Produce the work; do not grade or approve your own " +
+		"output. Casting a wide net is better than prematurely narrowing. Grading is " +
+		"an independent step performed by someone else.",
 	classifier:
 		"First determine the type of the input, then handle it according to its type. " +
 		"Do not process the input generically without classifying it first. " +
