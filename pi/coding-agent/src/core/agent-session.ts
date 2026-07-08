@@ -40,6 +40,7 @@ import {
 	type SshToolOperations,
 } from "@magenta/harness";
 import { getPeerMessageDbPath } from "../config.ts";
+import { createBuiltInMessageRenderersExtension } from "../modes/interactive/builtin-message-renderers.ts";
 import { getThemeByName, theme } from "../modes/interactive/theme/theme.ts";
 import { resolvePath } from "../utils/paths.ts";
 import { sleep } from "../utils/sleep.ts";
@@ -2712,9 +2713,6 @@ export class AgentSession {
 		// Add built-in message renderers extension (for bg-shell-return, etc.)
 		// Only in non-print modes where custom messages are displayed
 		if (this._extensionMode !== "print") {
-			const {
-				createBuiltInMessageRenderersExtension,
-			} = require("../modes/interactive/builtin-message-renderers.ts");
 			extensionsResult.extensions.push(createBuiltInMessageRenderersExtension());
 		}
 
