@@ -3,6 +3,7 @@ import { MultiAgentOrchestrator } from "./orchestrator.ts";
 
 /** The magenta source's binding for the `multiagent` capability (spec §8). */
 export const multiagentMagentaMagnet: CapabilitySourceMagnet = {
+	module: "multiagent",
 	kind: "multiagent",
 	source: "magenta",
 	isDefault: true,

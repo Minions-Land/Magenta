@@ -4725,6 +4725,40 @@ export class InteractiveMode {
 		);
 	}
 
+	/**
+	 * C6.1/C6.2: Inspect the LIVE session HcpClient via describeAll(). Unlike the
+	 * registry.json-backed inspect rows (which show a static on-disk inventory),
+	 * this reflects what is actually wired into the running session's ONE HCP:
+	 * every `tool:*` and `capability:*` target that pi resolves at runtime
+	 * (compaction, hooks, policy, sandbox, runtime, etc.). Inspect-only — no toggles.
+	 */
+	private showHarnessLiveHcpSummary(): void {
+		const hcp = this.session.resourceLoader.getSessionHcp?.();
+		if (!hcp) {
+			this.showStatus(["Live HCP", "No session HcpClient is available (null loader / test double)."].join("\n"));
+			return;
+		}
+		const descriptions = hcp.describeAll();
+		const tools = descriptions.filter((d) => d.kind === "tool" || d.target.startsWith("tool:"));
+		const capabilities = descriptions.filter((d) => d.target.startsWith("capability:"));
+		const others = descriptions.filter(
+			(d) => !d.target.startsWith("tool:") && !d.target.startsWith("capability:") && d.kind !== "tool",
+		);
+		const fmt = (d: { target: string; ops: string[]; description?: string }) =>
+			`  ${d.target}${d.ops.length ? ` [${d.ops.join(",")}]` : ""}${d.description ? ` — ${d.description}` : ""}`;
+		const section = (title: string, items: typeof descriptions) =>
+			items.length > 0 ? `${title} (${items.length}):\n${items.map(fmt).join("\n")}` : `${title}: none`;
+		this.showStatus(
+			[
+				"Live session HCP (describeAll)",
+				`Total targets: ${descriptions.length}`,
+				section("Tools", tools),
+				section("Capabilities", capabilities),
+				...(others.length > 0 ? [section("Other", others)] : []),
+			].join("\n"),
+		);
+	}
+
 	private parseHarnessToggle(value: string | undefined): boolean | undefined {
 		switch (value?.toLowerCase()) {
 			case "on":
@@ -5291,6 +5325,18 @@ export class InteractiveMode {
 						: `${snapshot.registry.registry?.components.length ?? 0} components`,
 					children: [{ value: "harness:registry:inspect", label: "Inspect registry" }],
 				},
+				{
+					value: "harness:livehcp",
+					label: "Live HCP",
+					description: "Inspect the running session's resolved HCP targets",
+					children: [
+						{
+							value: "harness:livehcp:inspect",
+							label: "Inspect live HCP (describeAll)",
+							description: "List tool:* and capability:* targets wired into the active session",
+						},
+					],
+				},
 				...moduleItems,
 				...packageItems,
 				...catalogItems,
@@ -5576,6 +5622,10 @@ export class InteractiveMode {
 			void this.loadHarnessRegistryView().then((registry) =>
 				this.showStatus(formatHarnessRegistrySummary(registry)),
 			);
+			return true;
+		}
+		if (item.value === "harness:livehcp:inspect") {
+			this.showHarnessLiveHcpSummary();
 			return true;
 		}
 		if (parts[1] === "module" && parts[2]) {

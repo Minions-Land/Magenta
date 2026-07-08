@@ -105,6 +105,14 @@ export interface HcpMagnet {
  * descriptors with NO selection logic of its own.
  */
 export interface CapabilitySourceMagnet<T = unknown> {
+	/**
+	 * Module folder this capability belongs to (e.g. "compaction", "hooks",
+	 * "runtime"). This is the module-realignment Model B orthogonal axis: module
+	 * folder is distinct from capability `kind`, though they often match. The
+	 * discrepancies (kind="hook" → module="hooks", kind="prompt-template" →
+	 * module="prompt-templates") make this field necessary.
+	 */
+	module: string;
 	/** Capability kind, e.g. `"compaction"`, `"runtime"`. */
 	kind: string;
 	/**

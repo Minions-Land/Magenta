@@ -891,4 +891,109 @@ describe("ExtensionRunner", () => {
 			expect(runner.hasHandlers("agent_end")).toBe(false);
 		});
 	});
+
+	describe("Phase 4: lifecycle hook delegation (C4.2 golden hook-order test)", () => {
+		it("invokes pre-tool before extension handlers and post-tool after, preserving byte-identity", async () => {
+			const callOrder: string[] = [];
+
+			// Mock HookProvider that records invocations
+			const mockHookProvider = {
+				discover: () => ({ provider: "mock", targets: [], lifecycle_targets: [], hooks: [] }),
+				run: (name: string, input: unknown) => {
+					callOrder.push(`hook:${name}`);
+					return { hook: name, status: "ok", actions: [], data: { input } };
+				},
+				describeHook: (name: string) => ({ name, target: `hook://${name}`, kind: "lifecycle" }),
+			};
+
+			// Mock HCP that resolves the hook provider
+			const mockHcp = {
+				resolve: () => undefined,
+				resolveCapability: (name: string) => (name === "hook" ? mockHookProvider : undefined),
+				describeAll: () => [],
+			};
+
+			// Extension that records tool_call/tool_result handler invocations
+			const extCode = `
+				export default function(pi) {
+					pi.on("tool_call", async (event) => {
+						globalThis.__testCallOrder.push("extension:tool_call");
+						return undefined;
+					});
+					pi.on("tool_result", async (event) => {
+						globalThis.__testCallOrder.push("extension:tool_result");
+						return undefined;
+					});
+				}
+			`;
+			fs.writeFileSync(path.join(extensionsDir, "hook-order.ts"), extCode);
+			(globalThis as any).__testCallOrder = callOrder;
+
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			runner.setHcp(mockHcp as any);
+
+			// Emit tool_call
+			const toolCallResult = await runner.emitToolCall({
+				type: "tool_call",
+				toolName: "read",
+				toolCallId: "tc1",
+				input: { path: "test.txt" },
+			});
+
+			// Emit tool_result
+			const toolResultResult = await runner.emitToolResult({
+				type: "tool_result",
+				toolName: "read",
+				toolCallId: "tc1",
+				input: { path: "test.txt" },
+				content: [{ type: "text", text: "file content" }],
+				isError: false,
+				details: undefined,
+			});
+
+			// Assert hook order: pre-tool → extension:tool_call, extension:tool_result → post-tool
+			expect(callOrder).toEqual([
+				"hook:pre-tool",
+				"extension:tool_call",
+				"extension:tool_result",
+				"hook:post-tool",
+			]);
+
+			// Assert byte-identity: hook results don't modify extension outputs (Phase 4)
+			expect(toolCallResult).toBeUndefined();
+			expect(toolResultResult).toBeUndefined();
+
+			delete (globalThis as any).__testCallOrder;
+		});
+
+		it("operates without HCP (fallback to extension-only dispatch)", async () => {
+			const callOrder: string[] = [];
+			const extCode = `
+				export default function(pi) {
+					pi.on("tool_call", async () => {
+						globalThis.__testCallOrder.push("extension:tool_call");
+					});
+				}
+			`;
+			fs.writeFileSync(path.join(extensionsDir, "fallback.ts"), extCode);
+			(globalThis as any).__testCallOrder = callOrder;
+
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			// Don't call setHcp — runner has no HCP
+
+			await runner.emitToolCall({
+				type: "tool_call",
+				toolName: "read",
+				toolCallId: "tc1",
+				input: { path: "test.txt" },
+			});
+
+			// Assert only extension handler fires (no hook:pre-tool)
+			expect(callOrder).toEqual(["extension:tool_call"]);
+
+			delete (globalThis as any).__testCallOrder;
+		});
+	});
 });

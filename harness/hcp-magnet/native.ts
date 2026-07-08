@@ -21,6 +21,13 @@ export interface NativeToolSpec<TParameters extends TSchema = TSchema, TDetails 
 	parameters: TParameters;
 	/** Build the pure execute function bound to a working directory. */
 	createExecute: (cwd: string) => AgentTool<TParameters, TDetails>["execute"];
+	/**
+	 * Optional renderKind hint for client-side render dispatch. When present,
+	 * the client (pi) can match a renderer by kind instead of tool name, enabling
+	 * 1:N renderer reuse across structurally similar tools. Example: "file-content",
+	 * "command-output", "search-results".
+	 */
+	renderKind?: string;
 }
 
 /**
@@ -46,13 +53,14 @@ export class NativeToolMagnet<TParameters extends TSchema = TSchema, TDetails = 
 		if (!this.enabled) {
 			throw new Error(`native tool magnet "${this.spec.name}" is disabled`);
 		}
-		const { name, label, description, parameters, createExecute } = this.spec;
+		const { name, label, description, parameters, createExecute, renderKind } = this.spec;
 		return {
 			name,
 			label: label ?? name,
 			description,
 			parameters,
 			execute: createExecute(this.cwd),
+			renderKind,
 		};
 	}
 
@@ -111,6 +119,15 @@ export class NativeToolMagnet<TParameters extends TSchema = TSchema, TDetails = 
 					default:
 						throw new Error(`native tool magnet "${spec.name}": unsupported op "${call.op}"`);
 				}
+			},
+			// Assembly-time handoff mirroring capability targets: resolving a tool
+			// target yields its loop-ready AgentTool, so a single HcpClient extraction
+			// path (`resolveInstance(addr)`) works uniformly for tools AND capabilities.
+			// This is what assemblePackageToolMagnets already assumes when it derives
+			// `tools` from registered targets. This server is single-product, so it
+			// ignores the selector; the tools ModuleHcpServer supplies routing.
+			instance<T = unknown>(_selector?: string): T | undefined {
+				return buildTool() as T;
 			},
 		};
 	}

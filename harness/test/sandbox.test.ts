@@ -58,7 +58,7 @@ describe("sandbox provider", () => {
 		);
 		const hcp = new HcpClient()
 			.register("sandbox", provider.toSandboxHcpServer())
-			.registerExact("hook://sandbox-select", provider.toSandboxSelectHcpServer());
+			.registerServer("hook://sandbox-select", provider.toSandboxSelectHcpServer());
 
 		await expect(hcp.dispatch({ target: "sandbox://readonly-fs", op: "describe" })).resolves.toMatchObject({
 			name: "readonly-fs",

@@ -3,6 +3,7 @@
  */
 
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import type { HcpClient, HookProviderContract } from "@magenta/harness";
 import type { ImageContent, Model } from "@earendil-works/pi-ai";
 import type { KeyId } from "@earendil-works/pi-tui";
 import { type Theme, theme } from "../../modes/interactive/theme/theme.ts";
@@ -288,6 +289,11 @@ export class ExtensionRunner {
 	private shortcutDiagnostics: ResourceDiagnostic[] = [];
 	private commandDiagnostics: ResourceDiagnostic[] = [];
 	private staleMessage: string | undefined;
+	/** Phase 4: HCP for lifecycle hook delegation. Cached at setup (INV-3). */
+	private hcp?: HcpClient;
+	/** Phase 4: resolved HookProvider, cached at setHcp time so runtime hook
+	 * invocations are direct method calls, not per-turn HCP resolution (INV-3). */
+	private hookProvider?: HookProviderContract;
 
 	constructor(
 		extensions: Extension[],
@@ -302,6 +308,42 @@ export class ExtensionRunner {
 		this.cwd = cwd;
 		this.sessionManager = sessionManager;
 		this.modelRegistry = modelRegistry;
+	}
+
+	/**
+	 * Phase 4: Set the session HCP for lifecycle hook delegation. Called once at
+	 * setup (after ExtensionRunner construction) and after reload. The HookProvider
+	 * is resolved eagerly and cached here so runtime hook invocations are direct
+	 * method calls, not per-turn HCP resolution (INV-3: hot path stays off HCP).
+	 */
+	setHcp(hcp?: HcpClient): void {
+		this.hcp = hcp;
+		if (!hcp) {
+			this.hookProvider = undefined;
+			return;
+		}
+		try {
+			this.hookProvider = hcp.resolveCapability<HookProviderContract>("hook");
+		} catch {
+			this.hookProvider = undefined;
+		}
+	}
+
+	/**
+	 * Phase 4: Invoke a lifecycle hook via the cached HookProvider. Returns the
+	 * hook result (declarative actions) or undefined if no provider or error.
+	 * Phase 4 discards results (byte-identity); Phase 5 will consume pre-tool actions.
+	 */
+	private async _invokeLifecycleHook(name: string, input: unknown): Promise<unknown> {
+		const provider = this.hookProvider;
+		if (!provider?.run) return undefined;
+		try {
+			return provider.run(name, input);
+		} catch {
+			// Silently ignore hook errors to preserve byte-identity (INV-5.2). Phase 5
+			// may surface errors when hooks become actionable.
+			return undefined;
+		}
 	}
 
 	bindCore(
@@ -806,6 +848,9 @@ export class ExtensionRunner {
 			}
 		}
 
+		// Phase 4: post-llm lifecycle hook fires after extension handlers (one path).
+		await this._invokeLifecycleHook("post-llm", { message: currentMessage });
+
 		return modified ? currentMessage : undefined;
 	}
 
@@ -849,8 +894,21 @@ export class ExtensionRunner {
 		}
 
 		if (!modified) {
+			// Phase 4: post-tool lifecycle hook fires after extension handlers, even when
+			// no handler modified the result (one path). Result discarded in Phase 4.
+			await this._invokeLifecycleHook("post-tool", {
+				tool: { name: currentEvent.toolName },
+				result: currentEvent.content,
+				isError: currentEvent.isError,
+			});
 			return undefined;
 		}
+
+		await this._invokeLifecycleHook("post-tool", {
+			tool: { name: currentEvent.toolName },
+			result: currentEvent.content,
+			isError: currentEvent.isError,
+		});
 
 		return {
 			content: currentEvent.content,
@@ -862,6 +920,10 @@ export class ExtensionRunner {
 	async emitToolCall(event: ToolCallEvent): Promise<ToolCallEventResult | undefined> {
 		const ctx = this.createContext();
 		let result: ToolCallEventResult | undefined;
+
+		// Phase 4: pre-tool lifecycle hook fires before extension handlers (one path).
+		// Result discarded in Phase 4; Phase 5 will consume sandbox/approval/shell-policy.
+		await this._invokeLifecycleHook("pre-tool", { tool: { name: event.toolName }, input: event.input });
 
 		for (const ext of this.extensions) {
 			const handlers = ext.handlers.get("tool_call");
@@ -946,6 +1008,9 @@ export class ExtensionRunner {
 	async emitBeforeProviderRequest(payload: unknown): Promise<unknown> {
 		const ctx = this.createContext();
 		let currentPayload = payload;
+
+		// Phase 4: pre-llm lifecycle hook fires before extension handlers (one path).
+		await this._invokeLifecycleHook("pre-llm", { payload });
 
 		for (const ext of this.extensions) {
 			const handlers = ext.handlers.get("before_provider_request");

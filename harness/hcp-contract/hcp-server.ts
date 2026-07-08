@@ -73,8 +73,14 @@ export interface HcpServer {
 	 * target returns its `AgentTool`; a compaction target returns its provider;
 	 * an inspect-only target returns nothing). Once resolved, the instance is
 	 * called directly on the hot path — HCP does not sit in that call.
+	 *
+	 * The optional `selector` disambiguates WHICH product to hand back when a
+	 * single server owns several addressable slots (a `ModuleHcpServer` for the
+	 * `tools` module routes `selector="read"` vs `"bash"`; a `runtime` module
+	 * routes `"process"` vs `"script-runtimes"`). Single-product servers ignore
+	 * it, so widening is purely additive — no existing zero-arg caller changes.
 	 */
-	instance?<T = unknown>(): T | undefined;
+	instance?<T = unknown>(selector?: string): T | undefined;
 }
 
 /** Self-description returned by {@link HcpServer.describe}. */

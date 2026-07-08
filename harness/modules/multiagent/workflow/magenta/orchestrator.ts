@@ -391,7 +391,7 @@ export class MultiAgentOrchestrator implements MultiAgentProviderContract {
 						throw new Error(`Unsupported op: ${request.op}`);
 				}
 			},
-			instance<T>(): T {
+			instance<T>(_selector?: string): T {
 				return provider as unknown as T;
 			},
 		};

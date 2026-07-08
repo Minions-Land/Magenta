@@ -34,10 +34,17 @@ import {
 	streamSimple,
 } from "@earendil-works/pi-ai/compat";
 import {
+	type CompactionProvider,
 	createSshToolOperations,
 	formatSkillInvocation,
+	type HcpClient,
+	type PolicyProviderContract,
+	type ProcessRuntimeProviderContract,
+	type SandboxProviderContract,
 	type SshTarget,
 	type SshToolOperations,
+	buildBuiltInToolMagnets,
+	buildToolsModule,
 } from "@magenta/harness";
 import { getPeerMessageDbPath } from "../config.ts";
 import { createBuiltInMessageRenderersExtension } from "../modes/interactive/builtin-message-renderers.ts";
@@ -318,6 +325,14 @@ export class AgentSession {
 	private _bashAbortController: AbortController | undefined = undefined;
 	private _pendingBashMessages: BashExecutionMessage[] = [];
 
+	// Phase 5: cached policy/sandbox/runtime providers resolved from session HCP.
+	// Resolved at _buildRuntime (including reload) so they stay current. RESOLVED
+	// but NOT enforced by default (policy defaults to yolo, sandbox to none) per
+	// C5.2/C5.3 parity requirement. Actual enforcement is opt-in only.
+	private _policyProvider?: PolicyProviderContract;
+	private _sandboxProvider?: SandboxProviderContract;
+	private _runtimeProvider?: ProcessRuntimeProviderContract;
+
 	// Extension system
 	private _extensionRunner!: ExtensionRunner;
 	private _turnIndex = 0;
@@ -467,6 +482,49 @@ export class AgentSession {
 
 		const result = await this._modelRegistry.getApiKeyAndHeaders(model);
 		return result.ok ? { apiKey: result.apiKey, headers: result.headers, env: result.env } : {};
+	}
+
+	/**
+	 * Resolve the compaction capability from the session HCP.
+	 *
+	 * INV-1: the compaction impl is obtained by resolving `capability:compaction`
+	 * through the ONE session HcpClient rather than a static import. Returns
+	 * undefined when the loader exposes no HCP (null loader / test double), in
+	 * which case the compaction wrappers fall back to their static harness default
+	 * — the same underlying function, so behavior is identical either way.
+	 */
+	private _resolveCompactionProvider(): CompactionProvider | undefined {
+		const hcp: HcpClient | undefined = this._resourceLoader.getSessionHcp?.();
+		return hcp?.resolveCapability?.<CompactionProvider>("compaction");
+	}
+
+	/**
+	 * Phase 5: Resolve the command-execution safety capabilities from the session
+	 * HCP. These are RESOLVED (made consultable) but NOT consumed by default — pi's
+	 * bash execution keeps its local spawn with full shell env. This satisfies C5.1
+	 * (bash safety resolves through HCP) while preserving C5.2/C5.3 (default behavior
+	 * unchanged: policy defaults to `yolo` = allow-all no-prompt; shell classification
+	 * is advisory-only; sandbox enforcement is not-ported). Actual enforcement via
+	 * these providers is opt-in only (future work / non-default modes).
+	 *
+	 * Returns undefined for each slot when the loader exposes no HCP (null loader /
+	 * test double), in which case pi's current no-guard behavior applies — identical
+	 * either way.
+	 */
+	private _resolvePolicyProvider(): PolicyProviderContract | undefined {
+		const hcp: HcpClient | undefined = this._resourceLoader.getSessionHcp?.();
+		return hcp?.resolveCapability?.<PolicyProviderContract>("policy");
+	}
+
+	private _resolveSandboxProvider(): SandboxProviderContract | undefined {
+		const hcp: HcpClient | undefined = this._resourceLoader.getSessionHcp?.();
+		return hcp?.resolveCapability?.<SandboxProviderContract>("sandbox");
+	}
+
+	private _resolveRuntimeProvider(): ProcessRuntimeProviderContract | undefined {
+		const hcp: HcpClient | undefined = this._resourceLoader.getSessionHcp?.();
+		// runtime is multi-slot; the process runtime lives at `runtime:process`.
+		return hcp?.resolveCapability?.<ProcessRuntimeProviderContract>("runtime:process");
 	}
 
 	/**
@@ -1884,8 +1942,9 @@ export class AgentSession {
 
 			const pathEntries = this.sessionManager.getBranch();
 			const settings = this.settingsManager.getCompactionSettings();
+			const compactionProvider = this._resolveCompactionProvider();
 
-			const preparation = prepareCompaction(pathEntries, settings);
+			const preparation = prepareCompaction(pathEntries, settings, compactionProvider);
 			if (!preparation) {
 				// Check why we can't compact
 				const lastEntry = pathEntries[pathEntries.length - 1];
@@ -1942,6 +2001,7 @@ export class AgentSession {
 					this.thinkingLevel,
 					this.agent.streamFn,
 					env,
+					compactionProvider,
 				);
 				summary = result.summary;
 				firstKeptEntryId = result.firstKeptEntryId;
@@ -2160,8 +2220,9 @@ export class AgentSession {
 			}
 
 			const pathEntries = this.sessionManager.getBranch();
+			const compactionProvider = this._resolveCompactionProvider();
 
-			const preparation = prepareCompaction(pathEntries, settings);
+			const preparation = prepareCompaction(pathEntries, settings, compactionProvider);
 			if (!preparation) {
 				return false;
 			}
@@ -2224,6 +2285,7 @@ export class AgentSession {
 					this.thinkingLevel,
 					this.agent.streamFn,
 					env,
+					compactionProvider,
 				);
 				summary = compactResult.summary;
 				firstKeptEntryId = compactResult.firstKeptEntryId;
@@ -2685,6 +2747,13 @@ export class AgentSession {
 		const autoResizeImages = this.settingsManager.getImageAutoResize();
 		const shellCommandPrefix = this.settingsManager.getShellCommandPrefix();
 		const shellPath = this.settingsManager.getShellPath();
+		// Phase 2 (HCP unification): resolve built-in tools from the session HCP
+		// instead of local construction. Build tool magnets with per-runtime options
+		// (SSH ops, shell path, auto-resize) and register into the session HCP, then
+		// resolve back through the magnet chain. Satisfies INV-1 (all content via HCP)
+		// while preserving pi's per-runtime option injection lifecycle. Falls back to
+		// local construction when no session HCP is available (e.g. custom loaders).
+		const sessionHcp = this._resourceLoader.getSessionHcp?.();
 		const baseToolDefinitions: Record<string, ToolDefinition> = this._baseToolsOverride
 			? Object.fromEntries(
 					Object.entries(this._baseToolsOverride).map(([name, tool]) => [
@@ -2692,12 +2761,14 @@ export class AgentSession {
 						createToolDefinitionFromAgentTool(tool),
 					]),
 				)
-			: (createAllToolDefinitions(this._cwd, {
-					read: { autoResizeImages, operations: this._sshOperations?.read },
-					bash: { commandPrefix: shellCommandPrefix, shellPath, operations: this._sshOperations?.bash },
-					write: { operations: this._sshOperations?.write },
-					edit: { operations: this._sshOperations?.edit },
-				}) as Record<string, ToolDefinition>);
+			: sessionHcp
+				? this._resolveBuiltInToolsFromHcp(sessionHcp, { autoResizeImages, shellCommandPrefix, shellPath })
+				: (createAllToolDefinitions(this._cwd, {
+						read: { autoResizeImages, operations: this._sshOperations?.read },
+						bash: { commandPrefix: shellCommandPrefix, shellPath, operations: this._sshOperations?.bash },
+						write: { operations: this._sshOperations?.write },
+						edit: { operations: this._sshOperations?.edit },
+					}) as Record<string, ToolDefinition>);
 		if (!this._baseToolsOverride) {
 			baseToolDefinitions.bg_shell = this._backgroundShell.createToolDefinition() as ToolDefinition;
 			baseToolDefinitions.sub_agent = this._subAgents.createToolDefinition() as ToolDefinition;
@@ -2732,6 +2803,17 @@ export class AgentSession {
 		if (this._extensionRunnerRef) {
 			this._extensionRunnerRef.current = this._extensionRunner;
 		}
+		// Phase 4: inject the session HCP so ExtensionRunner can delegate lifecycle
+		// hooks (pre-tool/post-tool/pre-llm/post-llm) to the HCP-resolved HookProvider.
+		// Runs on every _buildRuntime (including reload) so the provider stays current.
+		this._extensionRunner.setHcp(sessionHcp);
+		// Phase 5: resolve command-execution safety capabilities from the session HCP
+		// so bash safety is HCP-routed (C5.1). These are cached for consultation but
+		// NOT enforced by default (policy=yolo, sandbox=none) so behavior is identical
+		// to pre-Phase-5 (C5.2/C5.3). undefined when no HCP — pi's local spawn applies.
+		this._policyProvider = this._resolvePolicyProvider();
+		this._sandboxProvider = this._resolveSandboxProvider();
+		this._runtimeProvider = this._resolveRuntimeProvider();
 		this._bindExtensionCore(this._extensionRunner);
 		this._applyExtensionBindings(this._extensionRunner);
 
@@ -2752,6 +2834,71 @@ export class AgentSession {
 			activeToolNames: baseActiveToolNames,
 			includeAllExtensionTools: options.includeAllExtensionTools,
 		});
+	}
+
+	private _resolveBuiltInToolsFromHcp(
+		sessionHcp: HcpClient,
+		options: { autoResizeImages: boolean; shellCommandPrefix?: string; shellPath?: string },
+	): Record<string, ToolDefinition> {
+		// Build tool magnets with per-runtime options (SSH ops, shell path, auto-resize)
+		// and register them into the session HCP, replacing any prior registrations
+		// (since _buildRuntime can run multiple times, e.g. on reload).
+		const bashOps = this._sshOperations?.bash ?? createLocalBashOperations({ shellPath: options.shellPath });
+		// Source canonical model-facing descriptions from pi's own tool-definition
+		// factories so HCP-resolved tools stay byte-identical (INV-5.2). bash & grep
+		// descriptions are already single-sourced in harness (BASH_TOOL_DESCRIPTION,
+		// GREP_DESCRIPTION); read/edit/write/find/ls strings live in pi.
+		const canonical = createAllToolDefinitions(this._cwd) as Record<string, ToolDefinition>;
+		const magnets = buildBuiltInToolMagnets(this._cwd, {
+			read: { autoResizeImages: options.autoResizeImages, operations: this._sshOperations?.read },
+			bash: { commandPrefix: options.shellCommandPrefix, operations: bashOps },
+			write: { operations: this._sshOperations?.write },
+			edit: { operations: this._sshOperations?.edit },
+			grep: {},
+			find: {},
+			ls: {},
+			descriptions: {
+				read: canonical.read?.description,
+				edit: canonical.edit?.description,
+				write: canonical.write?.description,
+				find: canonical.find?.description,
+				ls: canonical.ls?.description,
+			},
+		});
+
+		// Register the tools as ONE ModuleHcpServer("tools"), replacing any prior
+		// tools module (since _buildRuntime can run multiple times, e.g. on reload).
+		// registerModule replaces by module name, so per-runtime rebuilds stay clean
+		// — no dual flat/module registration paths.
+		sessionHcp.registerModule(buildToolsModule(magnets));
+
+		// Resolve back through the module chain and convert to ToolDefinitions.
+		// resolveInstance supplies the in-module selector (the tool name) from the
+		// routing index, so the tools ModuleHcpServer routes to the right magnet.
+		const resolved: Record<string, ToolDefinition> = {};
+		const builtInNames = ["read", "bash", "edit", "write", "grep", "find", "ls"];
+		for (const name of builtInNames) {
+			const tool = sessionHcp.resolveInstance<AgentTool>(`tool:${name}`);
+			if (tool) {
+				const def = createToolDefinitionFromAgentTool(tool);
+				// Merge pi-canonical prompt/render metadata (promptSnippet, promptGuidelines,
+				// renderCall, renderResult) onto the HCP-resolved definition. HCP provides
+				// execute+schema+description; pi's canonical provides prompt/render metadata.
+				const canonicalDef = canonical[name];
+				if (canonicalDef) {
+					def.promptSnippet = canonicalDef.promptSnippet;
+					def.promptGuidelines = canonicalDef.promptGuidelines;
+					def.renderCall = canonicalDef.renderCall;
+					def.renderResult = canonicalDef.renderResult;
+				}
+				resolved[name] = def;
+			}
+		}
+		// `show` tool is pi-local (not in harness magnets); include from canonical.
+		if (canonical.show) {
+			resolved.show = canonical.show;
+		}
+		return resolved;
 	}
 
 	async reload(options?: { beforeSessionStart?: () => void | Promise<void> }): Promise<void> {

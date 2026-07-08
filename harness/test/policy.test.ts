@@ -53,8 +53,8 @@ describe("policy providers", () => {
 
 	it("dispatches approval and shell policy through HCP", async () => {
 		const hcp = new HcpClient()
-			.registerExact("approval://policy", new ApprovalPolicyProvider().toHcpServer())
-			.registerExact("shell://policy", new ShellPolicyProvider().toHcpServer());
+			.registerServer("approval://policy", new ApprovalPolicyProvider().toHcpServer())
+			.registerServer("shell://policy", new ShellPolicyProvider().toHcpServer());
 
 		await expect(
 			hcp.dispatch({

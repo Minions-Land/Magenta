@@ -906,8 +906,8 @@ source = "pi"
 			// The tool in assembly.tools was derived by resolving THROUGH the
 			// registry at its address — re-resolving yields an equivalent AgentTool
 			// (toTool builds fresh each call, so compare by value, not identity).
-			const toolTarget = assembly.hcp.resolve("tool://echo_process");
-			expect((toolTarget?.instance?.() as { name: string }).name).toBe("echo_process");
+			const tool = assembly.hcp.resolveInstance<{ name: string }>("tool://echo_process");
+			expect(tool?.name).toBe("echo_process");
 			expect(assembly.tools[0]?.name).toBe("echo_process");
 
 			// The capability is resolvable by slot name and IS the injected binding's

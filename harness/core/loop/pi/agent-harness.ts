@@ -11,6 +11,7 @@ import type {
 import { runAgentLoop } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, ImageContent, Model, Models, UserMessage } from "@earendil-works/pi-ai";
 import { buildDefaultCapabilityHcp } from "../../../hcp-client/assembly/capability.ts";
+import { getHarnessPackagesRoot } from "../../../hcp-client/overlay/package-overlay.ts";
 import type { HcpClient } from "../../../hcp-client/hcp-client.ts";
 import { formatPromptTemplateInvocation } from "../../../modules/prompt-templates/pi/prompt-templates.ts";
 import { formatSkillInvocation } from "../../../modules/skills/pi/skills.ts";
@@ -155,6 +156,20 @@ interface AgentHarnessTurnState<
 	activeTools: TTool[];
 }
 
+/**
+ * AgentHarness — standalone agent-loop runtime (SDK example / legacy API).
+ *
+ * NOTE: This is Runtime A. The pi coding-agent uses Runtime B (AgentSession).
+ * AgentHarness is a public SDK export for standalone embedding use-cases. It is
+ * NOT instantiated anywhere in this monorepo; only 4 test files exercise it.
+ * Pi's production runtime, AgentSession, uses the unified HCP assembly (buildSessionHcp)
+ * and has routing for all capabilities. AgentHarness remains as a minimal SDK
+ * example of `runAgentLoop` integration, but its assembly logic (line ~195) was
+ * diverged (packagesRoot bug) until Phase 6 C6.3 fixed it.
+ *
+ * If you are building a new agent harness, prefer AgentSession or build your own
+ * HCP assembly using buildSessionHcp/buildDefaultCapabilityHcp.
+ */
 export class AgentHarness<
 	TSkill extends Skill = Skill,
 	TPromptTemplate extends PromptTemplate = PromptTemplate,
@@ -192,9 +207,13 @@ export class AgentHarness<
 		if (injected) return injected;
 		if (!this.defaultCapabilityHcpPromise) {
 			const cwd = this.env.cwd;
-			this.defaultCapabilityHcpPromise = buildDefaultCapabilityHcp({ repoRoot: cwd, packagesRoot: cwd }).then(
-				(built) => built.hcp,
-			);
+			// C6.3: derive packagesRoot with the canonical helper (resolve(cwd,"packages"))
+			// instead of the historical `packagesRoot: cwd` divergence, so Runtime A's
+			// package resolution matches the unified session HCP assembly.
+			this.defaultCapabilityHcpPromise = buildDefaultCapabilityHcp({
+				repoRoot: cwd,
+				packagesRoot: getHarnessPackagesRoot(cwd),
+			}).then((built) => built.hcp);
 		}
 		const hcp = await this.defaultCapabilityHcpPromise;
 		const provider = hcp.resolveCapability<CompactionProvider>("compaction");

@@ -3,6 +3,7 @@ import { SessionGroundingMemoryProvider } from "./session-grounding.ts";
 
 /** The magenta source's binding for the `memory` capability (spec §8). */
 export const memoryMagentaMagnet: CapabilitySourceMagnet = {
+	module: "memory",
 	kind: "memory",
 	source: "magenta",
 	isDefault: true,

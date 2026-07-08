@@ -10,6 +10,7 @@ import { SystemPromptProvider } from "./provider.ts";
  * flows through this builder. See system-prompt-resource-regression.test.ts.
  */
 export const systemPromptPiMagnet: CapabilitySourceMagnet = {
+	module: "system-prompt",
 	kind: "system-prompt",
 	source: "pi",
 	isDefault: true,

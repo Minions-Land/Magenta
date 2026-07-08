@@ -88,7 +88,7 @@ describe("capability magnet infrastructure", () => {
 
 		// A capability registers under the `capability:<kind>` address convention,
 		// so HcpClient.resolveCapability(kind) finds it by slot name alone.
-		const hcp = new HcpClient().registerExact("capability:fixture-hcp", magnet.toHcpServer!());
+		const hcp = new HcpClient().registerServer("capability:fixture-hcp", magnet.toHcpServer!());
 		const description = await hcp.dispatch({ target: "capability:fixture-hcp", op: "describe" });
 		expect(description).toMatchObject({
 			target: "capability:fixture-hcp",
@@ -131,14 +131,14 @@ describe("HcpClient.resolveCapability", () => {
 
 	it("resolves a slot name to the registered instance under capability:<name>", () => {
 		const impl = { compact: () => "done" };
-		const hcp = new HcpClient().registerExact("capability:compaction", capabilityTarget("compaction", impl));
+		const hcp = new HcpClient().registerServer("capability:compaction", capabilityTarget("compaction", impl));
 		// The consumer passes only the slot name — no address prefix, no source.
 		expect(hcp.resolveCapability<typeof impl>("compaction")).toBe(impl);
 	});
 
 	it("resolves a named slot under capability:<kind>:<name>", () => {
 		const impl = { runtime: "process" };
-		const hcp = new HcpClient().registerExact(
+		const hcp = new HcpClient().registerServer(
 			"capability:runtime:process",
 			capabilityTarget("runtime:process", impl),
 		);
@@ -147,7 +147,7 @@ describe("HcpClient.resolveCapability", () => {
 
 	it("accepts a bare-name registration as a fallback address", () => {
 		const impl = { note: "bare" };
-		const hcp = new HcpClient().registerExact("memory", capabilityTarget("memory", impl));
+		const hcp = new HcpClient().registerServer("memory", capabilityTarget("memory", impl));
 		expect(hcp.resolveCapability<typeof impl>("memory")).toBe(impl);
 	});
 
@@ -162,7 +162,7 @@ describe("HcpClient.resolveCapability", () => {
 			describe: () => ({ target: "capability:context", kind: "context", ops: ["describe"] }),
 			call: () => undefined,
 		};
-		const hcp = new HcpClient().registerExact("capability:context", inspectOnly);
+		const hcp = new HcpClient().registerServer("capability:context", inspectOnly);
 		expect(hcp.resolveCapability("context")).toBeUndefined();
 	});
 

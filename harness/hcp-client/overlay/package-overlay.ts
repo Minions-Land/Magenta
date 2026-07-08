@@ -471,8 +471,7 @@ export async function assemblePackageToolMagnets(
 	const tools: AgentTool[] = [];
 	const capabilities = new Map<string, CapabilityBinding>();
 	for (const entry of registration.registrations) {
-		const target = hcp.resolve(entry.target);
-		const instance = target?.instance?.();
+		const instance = hcp.resolveInstance(entry.target);
 		if (instance === undefined) continue;
 		if (entry.kind === "tool") {
 			// Resolved through HCP, but still a plain AgentTool invoked directly on

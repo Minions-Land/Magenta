@@ -2,8 +2,8 @@ import type { HcpMagnet } from "../../hcp-contract/hcp-magnet.ts";
 import type { CapabilityFactoryContext } from "../../hcp-contract/hcp-server.ts";
 import { capabilityPrefix } from "../../hcp-contract/hcp-server.ts";
 import { CapabilityMagnet } from "../../hcp-magnet/universal.ts";
+import { ModuleHcpServer } from "../../hcp-magnet/module-server.ts";
 import { HcpClient } from "../hcp-client.ts";
-import { registerMagnetHcpServers } from "./register-servers.ts";
 import { CAPABILITY_SOURCE_MAGNETS } from "./sources.ts";
 
 // CapabilityFactoryContext is defined in hcp-contract/hcp-server.ts (the shared
@@ -70,6 +70,26 @@ function defaultsFromSourceMagnets(): Record<string, string> {
 		}
 	}
 	return defaults;
+}
+
+/**
+ * Map each capability `kind` to its module folder, DERIVED from the source
+ * magnets' declared `module` field (Model B). Handles the kind≠module cases
+ * (hook→hooks, prompt-template→prompt-templates) without hardcoding.
+ */
+function modulesByKind(): Record<string, string> {
+	const map: Record<string, string> = {};
+	for (const magnet of CAPABILITY_SOURCE_MAGNETS) {
+		map[magnet.kind] = magnet.module;
+	}
+	return map;
+}
+
+const MODULE_BY_KIND: Record<string, string> = modulesByKind();
+
+/** The module folder that owns a capability kind (falls back to the kind). */
+export function moduleForKind(kind: string): string {
+	return MODULE_BY_KIND[kind] ?? kind;
 }
 
 /**
@@ -278,7 +298,14 @@ export async function buildDefaultCapabilityHcp(
 	const hotSwappable = options?.hotSwappable ?? HOTSWAPPABLE_CAPABILITY_SOURCES;
 	const hcp = new HcpClient();
 	const diagnostics: CapabilityMagnetDiagnostic[] = [];
-	const magnets: HcpMagnet[] = [];
+
+	// Model B: group magnets by MODULE folder so each folder becomes one
+	// ModuleHcpServer owning its source magnets. A single-slot module (compaction)
+	// owns one magnet; a multi-slot family (runtime: process + script-runtimes)
+	// owns several, each addressable by its selector. The selector within a
+	// module is the capability slot suffix ("compaction", "runtime:process") —
+	// unique per module and stable across the refactor.
+	const slotsByModule = new Map<string, Map<string, HcpMagnet>>();
 
 	for (const [slot, source] of Object.entries(defaults)) {
 		const { kind, name } = parseCapabilitySlot(slot);
@@ -288,9 +315,19 @@ export async function buildDefaultCapabilityHcp(
 			builders,
 		});
 		diagnostics.push(...result.diagnostics);
-		if (result.magnet) magnets.push(result.magnet);
+		if (!result.magnet) continue;
+		const module = moduleForKind(kind);
+		const selector = capabilitySlotName(kind, name);
+		let slots = slotsByModule.get(module);
+		if (!slots) {
+			slots = new Map<string, HcpMagnet>();
+			slotsByModule.set(module, slots);
+		}
+		slots.set(selector, result.magnet);
 	}
 
-	registerMagnetHcpServers(hcp, magnets);
+	for (const [module, slots] of slotsByModule) {
+		hcp.registerModule(new ModuleHcpServer(module, slots));
+	}
 	return { hcp, diagnostics };
 }

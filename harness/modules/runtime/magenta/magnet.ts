@@ -10,6 +10,7 @@ import { ScriptRuntimeProvider } from "./script-runtime.ts";
  * the extra slot it is the default for, so the derived default map covers both.
  */
 export const runtimeMagentaMagnet: CapabilitySourceMagnet = {
+	module: "runtime",
 	kind: "runtime",
 	name: "process",
 	source: "magenta",

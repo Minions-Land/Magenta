@@ -27,11 +27,15 @@ export interface RegisterMagnetHcpServersResult {
 }
 
 /**
- * Register the management side of a HcpMagnet collection into an HCP registry.
+ * Register the management side of a HcpMagnet collection into an HCP client as
+ * STANDALONE leaf servers (not harness modules). This is for package tools and
+ * process/JSONL magnets — magnets that are not part of the harness 13-module
+ * folder structure. Each magnet's own `toHcpServer()` is stored directly at its
+ * exact address; there is no facade wrapper.
  *
  * The agent loop still receives `magnet.toTool()` directly. This helper only
  * wires the assembly/control surface, using exact target addresses so multiple
- * tool magnets cannot accidentally shadow each other under the same prefix.
+ * magnets cannot accidentally shadow each other.
  */
 export function registerMagnetHcpServers(
 	registry: HcpClient,
@@ -65,7 +69,7 @@ export function registerMagnetHcpServers(
 			}
 		}
 
-		registry.registerExact(description.target, target);
+		registry.registerServer(description.target, target);
 		registeredTargets.add(description.target);
 		registrations.push({
 			target: description.target,

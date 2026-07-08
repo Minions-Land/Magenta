@@ -122,7 +122,7 @@ export abstract class UniversalMagnet implements HcpMagnet {
 		// the product THROUGH HCP rather than off the raw magnet. Management-only
 		// magnets return undefined here, which resolveCapability / the assembly
 		// loop treat as "no instance".
-		base.instance = <U>(): U => this.hcpInstance() as U;
+		base.instance = <U>(selector?: string): U => this.hcpInstance(selector) as U;
 		return base;
 	}
 
@@ -133,7 +133,7 @@ export abstract class UniversalMagnet implements HcpMagnet {
 	 * undefined for pure management targets (no tool, no capability), which get
 	 * no instance() accessor.
 	 */
-	protected hcpInstance(): unknown {
+	protected hcpInstance(_selector?: string): unknown {
 		return this.toTool ? this.toTool() : undefined;
 	}
 
@@ -196,7 +196,7 @@ export class CapabilityMagnet<T = unknown> extends UniversalMagnet {
 	 * consumer asking HCP to resolve this capability by name gets exactly what the
 	 * binding holds.
 	 */
-	protected override hcpInstance(): unknown {
+	protected override hcpInstance(_selector?: string): unknown {
 		return this.instance;
 	}
 }
@@ -256,7 +256,7 @@ export class ResourceMagnet extends UniversalMagnet {
 	 * resource binding itself, so HCP can surface the content through the same
 	 * single-resolver path without inventing a code provider.
 	 */
-	protected override hcpInstance(): unknown {
+	protected override hcpInstance(_selector?: string): unknown {
 		return this.toResource();
 	}
 }

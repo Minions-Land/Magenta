@@ -10,7 +10,7 @@
 
 import type { AgentMessage, StreamFn, ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { Model } from "@earendil-works/pi-ai/compat";
-import type { Result, SessionTreeEntry } from "@magenta/harness";
+import type { CompactionProvider, Result, SessionTreeEntry } from "@magenta/harness";
 import {
 	CompactionError,
 	compact as harnessCompact,
@@ -115,16 +115,25 @@ export async function generateSummary(
 /**
  * Prepare session entries for compaction, or return undefined when compaction
  * is not applicable. Synchronous in both pi and harness.
+ *
+ * The compaction IMPL is injected via `provider` (resolved from the session HCP
+ * as `resolveCapability("compaction")`); when omitted it falls back to the
+ * statically imported harness function. Both paths are the SAME underlying
+ * function (`piCompactionProvider.prepareCompaction === harnessPrepareCompaction`),
+ * so behavior is identical — injection routes it through the HCP chain instead
+ * of a direct import.
  */
 export function prepareCompaction(
 	pathEntries: SessionEntry[],
 	settings: CompactionSettings,
+	provider?: CompactionProvider,
 ): CompactionPreparation | undefined {
 	// Single (non-`unknown`) cast: pi's SessionEntry union is a structural subset
 	// of harness's SessionTreeEntry, so this is assignable directly. Keeping it a
 	// single cast (not `as unknown as`) means TS will error here if the two type
 	// definitions ever drift apart, rather than silently masking the mismatch.
-	const result = harnessPrepareCompaction(pathEntries as SessionTreeEntry[], settings);
+	const prepare = provider?.prepareCompaction ?? harnessPrepareCompaction;
+	const result = prepare(pathEntries as SessionTreeEntry[], settings);
 	return unwrap(result);
 }
 
@@ -132,8 +141,11 @@ export function prepareCompaction(
  * Run compaction for a prepared session.
  *
  * pi signature (unchanged): compact(preparation, model, apiKey, ...). Delegates
- * to harness `compact`, injecting auth via the Models adapter, and unwraps
- * harness's `Result` (throws on error).
+ * to the injected `provider` (HCP-resolved compaction capability) or, when
+ * omitted, the statically imported harness `compact`. Both are the same
+ * function, so injection is behavior-identical and simply routes the call
+ * through the HCP chain. Auth is injected via the Models adapter; harness's
+ * `Result` is unwrapped (throws on error).
  */
 export async function compact(
 	preparation: CompactionPreparation,
@@ -145,8 +157,10 @@ export async function compact(
 	thinkingLevel?: ThinkingLevel,
 	streamFn?: StreamFn,
 	env?: Record<string, string>,
+	provider?: CompactionProvider,
 ): Promise<CompactionResult> {
 	const models = createCompactionModels({ apiKey, headers, env, streamFn });
-	const result = await harnessCompact(preparation, models, model, customInstructions, signal, thinkingLevel);
+	const runCompact = provider?.compact ?? harnessCompact;
+	const result = await runCompact(preparation, models, model, customInstructions, signal, thinkingLevel);
 	return unwrap(result);
 }

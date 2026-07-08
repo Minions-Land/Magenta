@@ -323,6 +323,39 @@ describe("DefaultResourceLoader", () => {
 			expect(loader.getSkills().skills.some((skill) => skill.name === "test-domain")).toBe(false);
 		});
 
+		it("exposes a session HCP that resolves the compaction capability with and without a package", async () => {
+			writeHarnessPackageFixture(cwd);
+
+			// No package selected: default capability sources still apply, so the
+			// session HCP must resolve `capability:compaction` (INV-1: the loop
+			// consumer resolves the impl through ONE HcpClient, not a static import).
+			const loader = createLoader();
+			await loader.reload();
+
+			const hcpNoPkg = loader.getSessionHcp();
+			expect(hcpNoPkg, "session HCP should exist even with no package").toBeDefined();
+			const providerNoPkg = hcpNoPkg?.resolveCapability<{
+				compact: unknown;
+				prepareCompaction: unknown;
+			}>("compaction");
+			expect(typeof providerNoPkg?.compact, "compaction.compact should be a function").toBe("function");
+			expect(typeof providerNoPkg?.prepareCompaction).toBe("function");
+
+			// With a package selected: the session HCP is rebuilt layering defaults on
+			// the assembled overlay HCP; compaction (a default source, not overridden
+			// by the fixture) must still resolve, and package tools coexist.
+			loader.setHarnessPackageSelectors(["TestDomain"]);
+			await loader.reload();
+
+			const hcpPkg = loader.getSessionHcp();
+			expect(hcpPkg, "session HCP should exist with a package selected").toBeDefined();
+			const providerPkg = hcpPkg?.resolveCapability<{ compact: unknown }>("compaction");
+			expect(typeof providerPkg?.compact, "compaction resolves alongside a selected package").toBe("function");
+			// The package overlay assembled cleanly into the same session (Phase 1
+			// layers defaults on the overlay HCP without a second assembly pass).
+			expect(loader.getPackageTools().tools.map((tool) => tool.name)).toEqual(["test_package_tool"]);
+		});
+
 		it("loads multiple per-profile selectors for one package additively", async () => {
 			writeMultiProfilePackageFixture(cwd);
 

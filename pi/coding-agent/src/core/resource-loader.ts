@@ -13,7 +13,9 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import {
 	assemblePackageToolMagnets,
 	assembleTrunkTools,
+	buildSessionHcp,
 	getHarnessSkillsDir,
+	type HcpClient,
 	type Skill as HarnessSkill,
 	loadPackageOverlay,
 	loadSystemPromptDescriptor,
@@ -60,6 +62,14 @@ export interface ResourceLoaderReloadOptions {
 export interface ResourceLoader {
 	getExtensions(): LoadExtensionsResult;
 	getSkills(): { skills: Skill[]; diagnostics: ResourceDiagnostic[] };
+	/**
+	 * The session HcpClient: one registry holding built-in tool magnets + default
+	 * capability sources (compaction, context, ...) + package overlay tools +
+	 * capability overrides. Phase 1+: consumers resolve capabilities from this
+	 * HCP instead of statically importing impls. Returns undefined for loaders
+	 * that do not assemble an HCP (null loader, test doubles).
+	 */
+	getSessionHcp?(): HcpClient | undefined;
 	/**
 	 * Resolve a skill by a `/skill:` handle: bare `name`, or `<source>:<name>` qualified name (which
 	 * also reaches collision-shadowed skills excluded from {@link getSkills}). Optional so alternative
@@ -352,6 +362,13 @@ export class DefaultResourceLoader implements ResourceLoader {
 	 * package overlay is assembled.
 	 */
 	private packageHcp?: PackageToolAssembly["hcp"];
+	/**
+	 * The session HCP: the package overlay HCP with default capability sources
+	 * (compaction, context, ...) layered on. This is what {@link getSessionHcp}
+	 * returns so a loop consumer resolves capabilities by name through ONE
+	 * registry instead of importing a source. Rebuilt whenever packages reload.
+	 */
+	private sessionHcp?: HcpClient;
 	private packageDiagnostics: ResourceDiagnostic[];
 	/**
 	 * Harness trunk tools (web-search, web-fetch) assembled from harness.toml.
@@ -490,6 +507,17 @@ export class DefaultResourceLoader implements ResourceLoader {
 	 */
 	getPackageHcp(): PackageToolAssembly["hcp"] | undefined {
 		return this.packageHcp;
+	}
+
+	/**
+	 * The session HCP: the package overlay HCP with default capability sources
+	 * (compaction, ...) layered on. A loop consumer resolves capabilities by name
+	 * through this ONE registry instead of importing a source. Built lazily so it
+	 * is available even when no package was selected (default capabilities still
+	 * apply).
+	 */
+	getSessionHcp(): HcpClient | undefined {
+		return this.sessionHcp;
 	}
 
 	getHarnessPackageSelectors(): string[] {
@@ -914,9 +942,29 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.packageOverlay = undefined;
 		this.packageTools = [];
 		this.packageHcp = undefined;
+		this.sessionHcp = undefined;
 		this.packageDiagnostics = [];
 
 		if (this.harnessPackages.length === 0) {
+			// No package selected, but default capability sources (compaction, ...)
+			// still apply. Build a session HCP with only those so consumers resolve
+			// capabilities by name uniformly whether or not a package is present.
+			try {
+				const sessionAssembly = await buildSessionHcp({
+					repoRoot: this.cwd,
+					includeBuiltInTools: false,
+					includeBuiltInCapabilities: true,
+				});
+				this.sessionHcp = sessionAssembly.hcp;
+				this.packageDiagnostics.push(
+					...sessionAssembly.diagnostics.map(packageDiagnosticToResourceDiagnostic),
+				);
+			} catch (error) {
+				this.packageDiagnostics.push({
+					type: "error",
+					message: error instanceof Error ? error.message : String(error),
+				});
+			}
 			return { skillPaths: [], promptPaths: [], themePaths: [], systemPromptPaths: [], appendSystemPromptPaths: [] };
 		}
 
@@ -934,6 +982,21 @@ export class DefaultResourceLoader implements ResourceLoader {
 			this.packageDiagnostics.push(...assembly.diagnostics.map(packageDiagnosticToResourceDiagnostic));
 			this.packageTools = assembly.tools;
 			this.packageHcp = assembly.hcp;
+
+			// Layer default capability sources (compaction, ...) onto the already
+			// assembled package HCP. `packageHcp` is passed (not `overlay`) so the
+			// MCP-spawning assembly above is NOT repeated; an overlay capability
+			// override wins over the default source for the same slot.
+			const sessionAssembly = await buildSessionHcp({
+				repoRoot: this.cwd,
+				packageHcp: assembly.hcp,
+				includeBuiltInTools: false,
+				includeBuiltInCapabilities: true,
+			});
+			this.sessionHcp = sessionAssembly.hcp;
+			this.packageDiagnostics.push(
+				...sessionAssembly.diagnostics.map(packageDiagnosticToResourceDiagnostic),
+			);
 
 			return {
 				skillPaths: overlay.resources.skillPaths,

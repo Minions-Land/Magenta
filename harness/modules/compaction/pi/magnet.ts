@@ -9,6 +9,7 @@ import { piCompactionProvider } from "./provider.ts";
  * centrally only through the dumb `sources.ts` barrel.
  */
 export const compactionPiMagnet: CapabilitySourceMagnet = {
+	module: "compaction",
 	kind: "compaction",
 	source: "pi",
 	isDefault: true,

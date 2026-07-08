@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { buildDefaultCapabilityHcp, createCapabilityMagnet } from "../hcp-client/assembly/capability.ts";
+import {
+	buildDefaultCapabilityHcp,
+	createCapabilityMagnet,
+	moduleForKind,
+} from "../hcp-client/assembly/capability.ts";
 import { CAPABILITY_SOURCE_MAGNETS } from "../hcp-client/assembly/sources.ts";
 
 /**
@@ -60,6 +64,68 @@ describe("§8 capability source-magnet relocation", () => {
 		for (const slot of expectedSlots) {
 			expect(hcp.resolveCapability(slot), `slot ${slot}`).toBeDefined();
 		}
+	});
+});
+
+/**
+ * Locks in the module-realignment (Model B): `buildDefaultCapabilityHcp` groups
+ * capability source magnets into ONE `ModuleHcpServer` per module FOLDER, not
+ * one flat server per address. The runtime family's two slots collapse into a
+ * single `runtime` module, while the flat `capability:*` addresses every
+ * consumer hardcodes stay individually resolvable through per-slot facades.
+ */
+describe("module-realignment: capability module grouping", () => {
+	const CONTEXT = { repoRoot: process.cwd(), packagesRoot: process.cwd() };
+
+	it("maps each capability kind to its module folder (incl. kind≠folder cases)", () => {
+		expect(moduleForKind("hook")).toBe("hooks");
+		expect(moduleForKind("prompt-template")).toBe("prompt-templates");
+		// The straightforward 1:1 cases still map to themselves.
+		expect(moduleForKind("compaction")).toBe("compaction");
+		expect(moduleForKind("runtime")).toBe("runtime");
+		// Every source magnet declares a module.
+		for (const magnet of CAPABILITY_SOURCE_MAGNETS) {
+			expect(typeof magnet.module, `${magnet.kind} module`).toBe("string");
+			expect(magnet.module.length, `${magnet.kind} module non-empty`).toBeGreaterThan(0);
+		}
+	});
+
+	it("registers ONE module per folder, collapsing the runtime family's two slots", async () => {
+		const { hcp, diagnostics } = await buildDefaultCapabilityHcp(CONTEXT);
+		expect(diagnostics).toEqual([]);
+
+		// 10 source magnets → 10 module folders (runtime's 2 slots are ONE module).
+		expect([...hcp.modules()].sort()).toEqual(
+			[
+				"compaction",
+				"context",
+				"hooks",
+				"memory",
+				"multiagent",
+				"policy",
+				"prompt-templates",
+				"runtime",
+				"sandbox",
+				"system-prompt",
+			].sort(),
+		);
+
+		// The runtime module owns BOTH slots; describeModules() surfaces them.
+		const runtime = hcp.describeModules().find((d) => d.metadata?.moduleName === "runtime");
+		expect(runtime?.metadata?.slotCount).toBe(2);
+		expect([...(runtime?.metadata?.slots as string[])].sort()).toEqual(
+			["runtime:process", "runtime:script-runtimes"].sort(),
+		);
+	});
+
+	it("keeps every flat capability address resolvable through its module", async () => {
+		const { hcp } = await buildDefaultCapabilityHcp(CONTEXT);
+		// Both runtime slots resolve to distinct instances despite sharing a module.
+		const proc = hcp.resolveCapability("runtime:process");
+		const scripts = hcp.resolveCapability("runtime:script-runtimes");
+		expect(proc).toBeDefined();
+		expect(scripts).toBeDefined();
+		expect(proc).not.toBe(scripts);
 	});
 });
 
