@@ -2,7 +2,6 @@
 
 export * from "./catalog/pi/catalog.ts";
 export * from "./core/env/pi/nodejs.ts";
-export * from "./core/loop/pi/agent-harness.ts";
 export * from "./core/messages/messages.ts";
 export * from "./core/session/pi/jsonl-repo.ts";
 export * from "./core/session/pi/memory-repo.ts";

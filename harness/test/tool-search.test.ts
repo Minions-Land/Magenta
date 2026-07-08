@@ -1,16 +1,4 @@
-import type { AgentTool } from "@earendil-works/pi-agent-core";
-import {
-	createModels,
-	type FauxProviderHandle,
-	fauxAssistantMessage,
-	fauxProvider,
-	fauxToolCall,
-} from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
-import { NodeExecutionEnv } from "../core/env/pi/nodejs.ts";
-import { AgentHarness } from "../core/loop/pi/agent-harness.ts";
-import { InMemorySessionStorage } from "../core/session/pi/memory-storage.ts";
-import { Session } from "../core/session/pi/session.ts";
 import type { HcpMagnet } from "../hcp-contract/hcp-magnet.ts";
 import { createReadMagnet } from "../hcp-magnet/native.ts";
 import {
@@ -168,70 +156,11 @@ describe("Tool Search — meta-tool shape", () => {
 	});
 });
 
-describe("Tool Search — end-to-end deferral through AgentHarness", () => {
-	const models = createModels();
-	let fauxCount = 0;
-	function newFaux(): FauxProviderHandle {
-		const faux = fauxProvider({ provider: `faux-ts-${++fauxCount}` });
-		models.setProvider(faux.provider);
-		return faux;
-	}
+// NOTE: The former "end-to-end deferral through AgentHarness" block was removed
+// with the AgentHarness wrapper (Route B). It exercised a multi-turn model loop
+// to prove an activated tool becomes visible on the next turn. That multi-turn
+// activation path is covered by pi's own tool-search integration tests, which
+// run against the real agent loop in `pi/agent`. The harness-level unit tests
+// above still pin the pieces the harness owns: manifest extraction, ranking,
+// and the `onActivate` activation contract.
 
-	it("activates a deferred tool via tool_search and the next model turn sees it", async () => {
-		// A deferred tool the model does NOT start with.
-		const deferred: AgentTool = {
-			name: "calculate",
-			label: "Calculate",
-			description: "Evaluate an arithmetic expression.",
-			parameters: { type: "object", properties: {} } as never,
-			execute: async () => ({ content: [{ type: "text", text: "42" }], details: undefined }),
-		};
-
-		const registration = newFaux();
-		const toolsPerTurn: string[][] = [];
-		registration.setResponses([
-			// Turn 1: only tool_search is active; the model searches + activates "calculate".
-			(context) => {
-				toolsPerTurn.push((context.tools ?? []).map((t) => t.name).sort());
-				return fauxAssistantMessage(fauxToolCall("tool_search", { query: "arithmetic" }, { id: "call-1" }), {
-					stopReason: "toolUse",
-				});
-			},
-			// Turn 2: the activated tool must now be visible to the model.
-			(context) => {
-				toolsPerTurn.push((context.tools ?? []).map((t) => t.name).sort());
-				return fauxAssistantMessage("done");
-			},
-		]);
-
-		const session = new Session(new InMemorySessionStorage());
-		const harness = new AgentHarness({
-			models,
-			env: new NodeExecutionEnv({ cwd: process.cwd() }),
-			session,
-			model: registration.getModel(),
-			// Seed the reduced initial active set: only the meta-tool.
-			tools: [deferred],
-			activeToolNames: [],
-		});
-
-		const manifest = buildToolSearchManifest([]).concat([
-			{ name: "calculate", description: "Evaluate an arithmetic expression." },
-		]);
-		const searchTool = createToolSearchTool({
-			manifest,
-			alwaysActive: ["tool_search"],
-			onActivate: async (names) => {
-				await harness.setActiveTools([...names]);
-				return harness.getActiveTools().map((t) => t.name);
-			},
-		});
-		await harness.setTools([deferred, searchTool], ["tool_search"]);
-
-		await harness.prompt("compute something");
-
-		// Turn 1 saw only tool_search; turn 2 saw calculate activated alongside it.
-		expect(toolsPerTurn[0]).toEqual(["tool_search"]);
-		expect(toolsPerTurn[1]).toEqual(["calculate", "tool_search"]);
-	});
-});
