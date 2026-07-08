@@ -269,6 +269,20 @@ describe("built-in bg_shell tool", () => {
 		expect(returned[0]?.message.content).toContain("returned-bg");
 		expect(returned[0]?.message.details).toMatchObject({ id: eventId, status: "exited", exitCode: 0 });
 		expect(returned[0]?.options).toMatchObject({ deliverAs: "nextTurn", triggerTurn: false });
+
+		// The delivered payload must be structured-cloneable — it is posted to the
+		// main agent, and a live event (ChildProcess/WriteStream/Timer/waiter
+		// callbacks) would throw "could not be cloned".
+		expect(() => structuredClone(returned[0]?.message.details)).not.toThrow();
+
+		// eventData is a plain-data snapshot: it carries the renderer fields but
+		// none of the non-cloneable live-event handles.
+		const eventData = returned[0]?.message.details?.eventData as Record<string, unknown>;
+		expect(eventData).toMatchObject({ id: eventId, status: "exited", exitCode: 0, command: "printf returned-bg" });
+		expect(eventData).not.toHaveProperty("child");
+		expect(eventData).not.toHaveProperty("log");
+		expect(eventData).not.toHaveProperty("timeout");
+		expect(eventData).not.toHaveProperty("waiters");
 	});
 
 	it("updates session defaults with config action", async () => {

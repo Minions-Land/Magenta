@@ -270,6 +270,49 @@ export function summarizeEventExpanded(event: BackgroundShellEvent): string {
 	return summarizeEvent(event, true, false);
 }
 
+/**
+ * Plain-data view of an event, safe to pass through structuredClone/postMessage.
+ * The live event holds a ChildProcess, a WriteStream, a Timer, and waiter
+ * callbacks — none of which are cloneable — so message payloads must only carry
+ * this snapshot, never the event itself.
+ */
+export type BackgroundShellEventSnapshot = Pick<
+	BackgroundShellEvent,
+	| "id"
+	| "command"
+	| "cwd"
+	| "label"
+	| "logPath"
+	| "startedAt"
+	| "endedAt"
+	| "status"
+	| "exitCode"
+	| "signal"
+	| "error"
+	| "tail"
+	| "progress"
+	| "expectedSeconds"
+>;
+
+export function serializableEventSnapshot(event: BackgroundShellEvent): BackgroundShellEventSnapshot {
+	return {
+		id: event.id,
+		command: event.command,
+		cwd: event.cwd,
+		label: event.label,
+		logPath: event.logPath,
+		startedAt: event.startedAt,
+		endedAt: event.endedAt,
+		status: event.status,
+		exitCode: event.exitCode,
+		signal: event.signal,
+		error: event.error,
+		tail: event.tail,
+		progress: event.progress,
+		expectedSeconds: event.expectedSeconds,
+	};
+}
+
 function waitForEvent(
 	event: BackgroundShellEvent,
 	timeoutSeconds: number | undefined,
@@ -403,7 +446,10 @@ export class BackgroundShellController {
 					status: event.status,
 					exitCode: event.exitCode,
 					logPath: event.logPath,
-					eventData: event, // Pass full event data for custom renderer
+					// A plain-data snapshot only — the live event holds a ChildProcess,
+					// WriteStream, Timer, and waiter callbacks that cannot be structured-cloned
+					// when this message is delivered to the main agent.
+					eventData: serializableEventSnapshot(event),
 				},
 			},
 			{ deliverAs: delivery, triggerTurn: delivery !== "nextTurn" },
