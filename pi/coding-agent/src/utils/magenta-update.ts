@@ -1,5 +1,5 @@
 import { type SpawnSyncOptions, spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { getPackageDir } from "../config.ts";
 
@@ -138,29 +138,103 @@ export async function runMagentaUpdate(status: MagentaUpdateStatus): Promise<Mag
 
 		// Relinks local Pi workspaces and fetches third-party deps for the new
 		// commit. Does not fetch Pi from the registry (see file header).
-		const install = spawnSync("npm", ["install", "--no-audit", "--no-fund"], {
-			cwd: repoRoot,
-			encoding: "utf8",
-			timeout: BUILD_TIMEOUT_MS,
-			stdio: "ignore",
-		});
-		if (install.status !== 0) {
-			return { ok: false, reason: "npm install failed" };
-		}
+		const installReason = runInstall(repoRoot);
+		if (installReason) return { ok: false, reason: installReason };
 
-		const build = spawnSync("npm", ["run", "build"], {
-			cwd: repoRoot,
-			encoding: "utf8",
-			timeout: BUILD_TIMEOUT_MS,
-			stdio: "ignore",
-		});
-		if (build.status !== 0) {
-			return { ok: false, reason: "npm run build failed" };
-		}
+		const buildReason = runBuild(repoRoot);
+		if (buildReason) return { ok: false, reason: buildReason };
 
 		const newSha = git(repoRoot, ["rev-parse", "--short", "HEAD"]).stdout;
 		return { ok: true, newSha: newSha || status.remoteSha };
 	} catch (error: unknown) {
 		return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+	}
+}
+
+/**
+ * Run `npm install` in repoRoot. Relinks local Pi workspaces and fetches
+ * third-party deps; does not fetch Pi from the registry (see file header).
+ * Returns undefined on success, or a human-readable failure reason.
+ */
+function runInstall(repoRoot: string): string | undefined {
+	const install = spawnSync("npm", ["install", "--no-audit", "--no-fund"], {
+		cwd: repoRoot,
+		encoding: "utf8",
+		timeout: BUILD_TIMEOUT_MS,
+		stdio: "ignore",
+	});
+	return install.status === 0 ? undefined : "npm install failed";
+}
+
+/**
+ * Run `npm run build` in repoRoot (compiles every workspace's src → dist).
+ * Returns undefined on success, or a human-readable failure reason.
+ */
+function runBuild(repoRoot: string): string | undefined {
+	const build = spawnSync("npm", ["run", "build"], {
+		cwd: repoRoot,
+		encoding: "utf8",
+		timeout: BUILD_TIMEOUT_MS,
+		stdio: "ignore",
+	});
+	return build.status === 0 ? undefined : "npm run build failed";
+}
+
+/** File mtime in ms, or 0 when the file is missing/unreadable. */
+function mtimeMs(path: string): number {
+	try {
+		return statSync(path).mtimeMs;
+	} catch {
+		return 0;
+	}
+}
+
+/**
+ * Decide whether dependencies need reinstalling before a recompile. There is no
+ * persisted "last install" marker, so we compare package-lock.json against the
+ * built CLI: if the lockfile was touched more recently than the last build
+ * output, dependencies likely changed and a plain `npm run build` would compile
+ * against a stale node_modules. Missing build output (never built) also forces
+ * an install so the first build has its deps linked.
+ */
+function dependenciesLikelyChanged(repoRoot: string): boolean {
+	const builtCli = join(repoRoot, "pi", "coding-agent", "dist", "cli.js");
+	const builtAt = mtimeMs(builtCli);
+	if (builtAt === 0) return true;
+	const lockAt = mtimeMs(join(repoRoot, "package-lock.json"));
+	const rootPkgAt = mtimeMs(join(repoRoot, "package.json"));
+	return lockAt > builtAt || rootPkgAt > builtAt;
+}
+
+export interface MagentaRecompileResult {
+	ok: boolean;
+	/** True when `npm install` was run (dependencies looked stale). */
+	installed: boolean;
+	/** Human-readable reason when the recompile did not run or failed. */
+	reason?: string;
+}
+
+/**
+ * Recompile the local checkout WITHOUT pulling from git. Used by `/reload` to
+ * rebuild the running code after local edits. Smart about installs: only runs
+ * `npm install` when dependencies look stale (see dependenciesLikelyChanged),
+ * otherwise just `npm run build`. Never throws — failures are returned.
+ */
+export async function recompileMagenta(): Promise<MagentaRecompileResult> {
+	const repoRoot = findMagentaRepoRoot();
+	if (!repoRoot) {
+		return { ok: false, installed: false, reason: "not running from a Magenta git checkout" };
+	}
+	try {
+		const needsInstall = dependenciesLikelyChanged(repoRoot);
+		if (needsInstall) {
+			const installReason = runInstall(repoRoot);
+			if (installReason) return { ok: false, installed: true, reason: installReason };
+		}
+		const buildReason = runBuild(repoRoot);
+		if (buildReason) return { ok: false, installed: needsInstall, reason: buildReason };
+		return { ok: true, installed: needsInstall };
+	} catch (error: unknown) {
+		return { ok: false, installed: false, reason: error instanceof Error ? error.message : String(error) };
 	}
 }

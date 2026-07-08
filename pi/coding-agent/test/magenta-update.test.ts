@@ -3,7 +3,12 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { checkForMagentaUpdate, findMagentaRepoRoot, runMagentaUpdate } from "../src/utils/magenta-update.ts";
+import {
+	checkForMagentaUpdate,
+	findMagentaRepoRoot,
+	recompileMagenta,
+	runMagentaUpdate,
+} from "../src/utils/magenta-update.ts";
 
 function git(args: string[], cwd: string): string {
 	const result = spawnSync("git", args, { cwd, encoding: "utf-8" });
@@ -144,5 +149,15 @@ describe("runMagentaUpdate guards", () => {
 		});
 		expect(result.ok).toBe(false);
 		expect(result.reason).toMatch(/diverged/);
+	});
+});
+
+describe("recompileMagenta", () => {
+	it("fails cleanly when not running from a Magenta git checkout", async () => {
+		process.env.MAGENTA_REPO_ROOT = join(workspace, "nonexistent");
+		const result = await recompileMagenta();
+		expect(result.ok).toBe(false);
+		expect(result.installed).toBe(false);
+		expect(result.reason).toMatch(/checkout/);
 	});
 });

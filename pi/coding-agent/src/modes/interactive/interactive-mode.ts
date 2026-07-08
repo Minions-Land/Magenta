@@ -115,7 +115,7 @@ import { getChangelogPath, getNewEntries, normalizeChangelogLinks, parseChangelo
 import { copyToClipboard } from "../../utils/clipboard.ts";
 import { extensionForImageMimeType, readClipboardImage } from "../../utils/clipboard-image.ts";
 import { parseGitUrl } from "../../utils/git.ts";
-import { checkForMagentaUpdate, runMagentaUpdate } from "../../utils/magenta-update.ts";
+import { checkForMagentaUpdate, recompileMagenta, runMagentaUpdate } from "../../utils/magenta-update.ts";
 import { getCwdRelativePath } from "../../utils/paths.ts";
 import { getPiUserAgent } from "../../utils/pi-user-agent.ts";
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
@@ -2870,9 +2870,14 @@ export class InteractiveMode {
 				await this.handleCompactCommand(customInstructions);
 				return;
 			}
-			if (text === "/reload") {
+			if (text === "/refresh") {
 				this.editor.setText("");
 				await this.handleReloadCommand();
+				return;
+			}
+			if (text === "/reload") {
+				this.editor.setText("");
+				await this.handleRecompileRestartCommand();
 				return;
 			}
 			if (text === "/debug") {
@@ -3658,6 +3663,34 @@ export class InteractiveMode {
 	}
 
 	private async restartProcess(): Promise<void> {
+		// Same arguments and environment (skip the node executable path).
+		await this.respawnAndExit(process.argv.slice(1));
+	}
+
+	/**
+	 * Restart the process reconnecting to the current session. `/reload` uses this
+	 * so the rebuilt code picks up exactly where the user left off. When the
+	 * session is persisted we pass an explicit `--session <id>` (and matching
+	 * `--session-dir` for a non-default dir); if `--session` is already present in
+	 * argv we reuse the original args unchanged.
+	 */
+	private async restartProcessWithSession(): Promise<void> {
+		const args = process.argv.slice(1);
+		const alreadyHasSession = args.includes("--session") || args.includes("--session-id");
+		if (!alreadyHasSession && this.sessionManager.isPersisted()) {
+			if (!this.sessionManager.usesDefaultSessionDir()) {
+				args.push("--session-dir", this.sessionManager.getSessionDir());
+			}
+			args.push("--session", this.sessionManager.getSessionId());
+		}
+		await this.respawnAndExit(args);
+	}
+
+	/**
+	 * Tear down the TUI cleanly, spawn a replacement process attached to the same
+	 * terminal, and exit. Never returns.
+	 */
+	private async respawnAndExit(args: string[]): Promise<void> {
 		if (this.isShuttingDown) return;
 		this.isShuttingDown = true;
 
@@ -3667,10 +3700,7 @@ export class InteractiveMode {
 		this.stop();
 		await this.runtimeHost.dispose();
 
-		// Spawn a new process with the same arguments and environment.
 		const { spawn } = await import("child_process");
-		const args = process.argv.slice(1); // Skip node executable path
-
 		const child = spawn(process.argv[0], args, {
 			detached: false,
 			stdio: "inherit",
@@ -4931,6 +4961,7 @@ export class InteractiveMode {
 				description: "/scoped-models",
 			},
 			{ value: "slash:compact", label: "Compact", aliases: ["compact"], description: "/compact" },
+			{ value: "slash:refresh", label: "Refresh", aliases: ["refresh"], description: "/refresh" },
 			{ value: "slash:reload", label: "Reload", aliases: ["reload"], description: "/reload" },
 			{ value: "slash:tree", label: "Tree", aliases: ["tree"], description: "/tree" },
 			{ value: "slash:resume", label: "Resume", aliases: ["resume"], description: "/resume" },
@@ -5062,8 +5093,11 @@ export class InteractiveMode {
 			case "hotkeys":
 				this.handleHotkeysCommand();
 				return;
-			case "reload":
+			case "refresh":
 				await this.handleReloadCommand();
+				return;
+			case "reload":
+				await this.handleRecompileRestartCommand();
 				return;
 			case "quit":
 				await this.shutdown();
@@ -6953,6 +6987,37 @@ export class InteractiveMode {
 			this.showError(`Reload failed: ${error instanceof Error ? error.message : String(error)}`);
 			return false;
 		}
+	}
+
+	/**
+	 * `/reload`: recompile the local checkout and restart the TUI so the new code
+	 * runs. Unlike `/refresh` (hot resync of resources in-process), this rebuilds
+	 * dist and re-execs the process, reconnecting to the current session. Only
+	 * available when running from a Magenta git checkout.
+	 */
+	private async handleRecompileRestartCommand(): Promise<void> {
+		if (!this.canReloadRuntime()) return;
+
+		this.showStatus("Recompiling Magenta… this may take a minute.");
+		this.setExtensionStatus("magenta-reload", "Reload: recompiling");
+		this.ui.requestRender();
+
+		const result = await recompileMagenta();
+		if (!result.ok) {
+			this.setExtensionStatus("magenta-reload", "Reload: failed");
+			this.showError(
+				`Reload failed: ${result.reason ?? "unknown error"}. ` +
+					"Fix the build, then try /reload again (or /refresh to hot-reload resources only).",
+			);
+			return;
+		}
+
+		this.setExtensionStatus("magenta-reload", "Reload: restarting");
+		this.showStatus(result.installed ? "Recompiled (with npm install). Restarting…" : "Recompiled. Restarting…");
+		this.ui.requestRender();
+		// Give the status line a tick to paint before we tear the TUI down.
+		await new Promise((resolve) => process.nextTick(resolve));
+		await this.restartProcessWithSession();
 	}
 
 	private async handleExportCommand(text: string): Promise<void> {
