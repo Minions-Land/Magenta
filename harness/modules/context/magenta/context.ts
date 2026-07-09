@@ -1,6 +1,5 @@
 import { readFile, realpath, stat } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
-import type { HcpRequest, HcpServer, HcpServerDescription } from "../../../hcp-client/contract/hcp-server.ts";
 import type { ContextProvider as IContextProvider } from "../contract.ts";
 
 const CONTEXT_TARGETS = ["context://workspace", "context://project"] as const;
@@ -16,12 +15,6 @@ export interface ContextFile {
 
 export interface ContextProviderOptions {
 	workspaceRoot?: string;
-}
-
-function targetName(target: string): string {
-	if (target.startsWith("context://")) return target.slice("context://".length);
-	const index = target.indexOf(":");
-	return index === -1 ? target : target.slice(index + 1).replace(/^\/\//, "");
 }
 
 async function fileExists(path: string): Promise<boolean> {
@@ -208,20 +201,6 @@ export class ContextProvider implements IContextProvider {
 		return discoverContextFiles(workspaceRoot);
 	}
 
-	describe(): HcpServerDescription {
-		return {
-			target: "context://{workspace,project}",
-			kind: "context",
-			ops: ["discover", "describe", "read", "call", "status"],
-			description: "Discover project instruction files and return model-safe context content.",
-			metadata: {
-				implementation: "native-ts",
-				source: "magenta",
-				origin: "magenta1-general-harness",
-			},
-		};
-	}
-
 	async discover(): Promise<Record<string, unknown>> {
 		return {
 			provider: "context-files",
@@ -259,38 +238,6 @@ export class ContextProvider implements IContextProvider {
 				audience: "operator",
 				execution: "read-only context discovery",
 				model_surface: false,
-			},
-		};
-	}
-
-	toHcpServer(): HcpServer {
-		return {
-			describe: () => this.describe(),
-			call: async (call: HcpRequest): Promise<unknown> => {
-				const name = targetName(call.target);
-				if (name !== "workspace" && name !== "project") {
-					throw new Error(`unknown context target: ${call.target}`);
-				}
-				switch (call.op || "read") {
-					case "discover":
-					case "list":
-						return this.discover();
-					case "describe":
-						return {
-							name: "project-context",
-							target: "context://project",
-							aliases: ["context://workspace"],
-							description: this.describe().description,
-							operations: ["read", "status"],
-						};
-					case "read":
-					case "call":
-						return this.read();
-					case "status":
-						return this.status();
-					default:
-						throw new Error(`unsupported context operation ${call.op}`);
-				}
 			},
 		};
 	}

@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { HcpClient } from "../hcp-client/hcp-client.ts";
+import { createCapabilityServer } from "../hcp-client/server/capability-server.ts";
 import { getHarnessRegistryPath, loadRegistry } from "../hcp-client/registry/registry.ts";
 import { ContextProvider, discoverContextFiles } from "../modules/context/magenta/context.ts";
 
@@ -37,7 +38,33 @@ describe("context provider", () => {
 	it("serves context through context://workspace and context://project", async () => {
 		const dir = await mkdtemp(join(tmpdir(), "magenta-context-hcp-"));
 		await writeFile(join(dir, "AGENTS.md"), "Use HCP target runtime words.");
-		const hcp = new HcpClient().register("context", new ContextProvider({ workspaceRoot: dir }).toHcpServer());
+		const provider = new ContextProvider({ workspaceRoot: dir });
+		const server = createCapabilityServer({
+			kind: "context",
+			target: "context://{workspace,project}",
+			description: "Discover project instruction files and return model-safe context content.",
+			provider,
+			operations: {
+				discover: (p) => p.discover(),
+				list: (p) => p.discover(),
+				describe: () => ({
+					name: "project-context",
+					target: "context://project",
+					aliases: ["context://workspace"],
+					description: "Discover project instruction files and return model-safe context content.",
+					operations: ["read", "status"],
+				}),
+				read: (p) => p.read(),
+				call: (p) => p.read(),
+				status: (p) => p.status(),
+			},
+			metadata: {
+				implementation: "native-ts",
+				source: "magenta",
+				origin: "magenta1-general-harness",
+			},
+		});
+		const hcp = new HcpClient().register("context", server);
 
 		await expect(hcp.dispatch({ target: "context://workspace", op: "status" })).resolves.toMatchObject({
 			target: "context://project",

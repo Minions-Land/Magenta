@@ -191,9 +191,8 @@ describe("context capability", () => {
 		const contextProvider = hcp.resolveCapability("context");
 		expect(contextProvider).toBeDefined();
 		expect(typeof contextProvider).toBe("object");
-		// The magenta ContextProvider has discoverContextFiles and toHcpServer methods.
+		// The magenta ContextProvider has discoverContextFiles method.
 		expect(typeof (contextProvider as any).discoverContextFiles).toBe("function");
-		expect(typeof (contextProvider as any).toHcpServer).toBe("function");
 	});
 
 	it("assembles context from the magenta source and contributes no tools", async () => {

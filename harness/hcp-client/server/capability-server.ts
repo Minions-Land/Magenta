@@ -80,7 +80,7 @@ export function createCapabilityServer<TProvider = any>(
 			}
 			return handler(provider, request);
 		},
-		instance: <T = unknown>(_selector?: string): T | undefined => provider as T,
+		instance: <T = unknown>(_selector?: string): T | undefined => provider as unknown as T,
 	};
 }
 
