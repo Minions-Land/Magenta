@@ -1,4 +1,4 @@
-import type { SandboxProfile } from "../sandbox/contract.ts";
+import type { SandboxProfile } from "../sandbox/HcpServer.ts";
 
 export interface ProcessRuntimeToolMetadata {
 	name?: string;

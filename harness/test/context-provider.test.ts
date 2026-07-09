@@ -2,9 +2,9 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { HcpClient } from "../hcp-client/HcpClient.ts";
-import { getHarnessRegistryPath, loadRegistry } from "../hcp-client/registry/registry.ts";
-import { createCapabilityServer } from "../hcp-client/server/capability-server.ts";
+import { HcpClient } from "../harness-component-protocol/HcpClient.ts";
+import { getHarnessRegistryPath, loadRegistry } from "../harness-component-protocol/registry/registry.ts";
+import { createCapabilityServer } from "../harness-component-protocol/server/capability-server.ts";
 import { ContextProvider, discoverContextFiles } from "../modules/context/magenta/context.ts";
 
 describe("context provider", () => {

@@ -2,8 +2,8 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { HcpClient } from "../hcp-client/HcpClient.ts";
-import { runtimeMagentaMagnet } from "../modules/runtime/magenta/HcpMagnet.ts";
+import { HcpClient } from "../harness-component-protocol/HcpClient.ts";
+import { HcpMagnet as RuntimeMagentaMagnet } from "../modules/runtime/magenta/HcpMagnet.ts";
 import { execProcess, ProcessRuntimeProvider } from "../modules/runtime/magenta/process-runtime.ts";
 import { loadSandboxProviderFromPack } from "../modules/sandbox/magenta/sandbox.ts";
 
@@ -135,12 +135,12 @@ process.stdin.on("end", () => {
 
 	it("dispatches through HCP", async () => {
 		const dir = await mkdtemp(join(tmpdir(), "magenta-runtime-hcp-"));
-		const server = runtimeMagentaMagnet.build({
+		const magnet = new RuntimeMagentaMagnet({
 			name: "process",
 			repoRoot: process.cwd(),
 			packagesRoot: process.cwd(),
 		});
-		const hcp = new HcpClient().register("runtime", server);
+		const hcp = new HcpClient().register("runtime", magnet.toHcpServer());
 
 		await expect(hcp.dispatch({ target: "runtime://process", op: "policy" })).resolves.toMatchObject({
 			production_audit: { os_egress_allowlist: false },

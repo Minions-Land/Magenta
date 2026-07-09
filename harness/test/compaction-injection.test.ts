@@ -3,7 +3,7 @@ import {
 	buildDefaultCapabilityHcp,
 	type CapabilityBuilderTable,
 	createCapabilityMagnet,
-} from "../hcp-client/assembly/capability.ts";
+} from "../harness-component-protocol/assembly/capability.ts";
 import { piCompactionProvider } from "../modules/compaction/pi/provider.ts";
 
 const CONTEXT = { repoRoot: process.cwd(), packagesRoot: process.cwd() };

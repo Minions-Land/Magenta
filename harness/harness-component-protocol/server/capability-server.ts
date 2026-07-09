@@ -1,4 +1,4 @@
-import type { HcpServerRequest, HcpServer, HcpServerDescription } from "../HcpServerTypes.ts";
+import type { HcpServer, HcpServerDescription, HcpServerRequest } from "../HcpServerTypes.ts";
 
 /**
  * A capability operation handler that processes an HCP request using a provider instance.

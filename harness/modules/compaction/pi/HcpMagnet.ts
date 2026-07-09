@@ -1,4 +1,5 @@
-import type { CapabilitySourceMagnet } from "../../../hcp-client/HcpMagnetTypes.ts";
+import type { HcpMagnetBuildContext } from "../../../harness-component-protocol/HcpServerTypes.ts";
+import { CapabilityMagnet } from "../../../hcp-magnet/universal.ts";
 import { piCompactionProvider } from "./provider.ts";
 
 /**
@@ -8,10 +9,32 @@ import { piCompactionProvider } from "./provider.ts";
  * literal sibling import, so it survives the build extension rewrite. Registered
  * centrally only through the dumb `sources.ts` barrel.
  */
-export const compactionPiMagnet: CapabilitySourceMagnet = {
-	module: "compaction",
-	kind: "compaction",
-	source: "pi",
-	isDefault: true,
-	build: () => piCompactionProvider,
-};
+export class HcpMagnet extends CapabilityMagnet {
+	static readonly module = "compaction";
+	static readonly kind = "compaction";
+	static readonly source = "pi";
+	static readonly isDefault = true;
+
+	constructor(context: HcpMagnetBuildContext) {
+		const kind = context.kind ?? "compaction";
+		const name = context.name ?? "compaction";
+		const source = context.source ?? "pi";
+
+		const instance = piCompactionProvider;
+
+		super({
+			descriptor: {
+				target: `capability:${kind}`,
+				kind: kind,
+				name: name,
+				implementation: `capability:${kind}`,
+				description: "Compaction capability from pi source",
+				metadata: {
+					hotSwappable: context.hotSwappable ?? false,
+				},
+			},
+			source: source,
+			instance,
+		});
+	}
+}

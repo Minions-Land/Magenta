@@ -11,7 +11,7 @@ import {
 	discoverHarnessPackages,
 	loadPackageOverlay,
 	parsePackageSelector,
-} from "../hcp-client/overlay/package-overlay.ts";
+} from "../harness-component-protocol/overlay/package-overlay.ts";
 import type { ProcessToolMagnet } from "../hcp-magnet/process.ts";
 import { loadSkills } from "../modules/skills/pi/skills.ts";
 

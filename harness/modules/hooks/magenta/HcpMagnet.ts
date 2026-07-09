@@ -1,5 +1,6 @@
-import type { CapabilitySourceMagnet } from "../../../hcp-client/HcpMagnetTypes.ts";
-import { createCapabilityServer, targetName } from "../../../hcp-client/server/capability-server.ts";
+import type { HcpMagnetBuildContext } from "../../../harness-component-protocol/HcpServerTypes.ts";
+import { createCapabilityServer, targetName } from "../../../harness-component-protocol/server/capability-server.ts";
+import { CapabilityMagnet } from "../../../hcp-magnet/universal.ts";
 import { HookProvider } from "./hooks.ts";
 
 /**
@@ -8,14 +9,19 @@ import { HookProvider } from "./hooks.ts";
  * Wraps HookProvider (pure business logic) in a unified HcpServer adapter,
  * making HcpServer an explicit layer rather than hand-written in each provider.
  */
-export const hookMagentaMagnet: CapabilitySourceMagnet = {
-	module: "hooks",
-	kind: "hook",
-	source: "magenta",
-	isDefault: true,
-	build: () => {
+export class HcpMagnet extends CapabilityMagnet {
+	static readonly module = "hooks";
+	static readonly kind = "hook";
+	static readonly source = "magenta";
+	static readonly isDefault = true;
+
+	constructor(context: HcpMagnetBuildContext) {
+		const kind = context.kind ?? "hook";
+		const name = context.name ?? "hook";
+		const source = context.source ?? "magenta";
+
 		const provider = new HookProvider();
-		return createCapabilityServer({
+		const instance = createCapabilityServer({
 			kind: "hook",
 			target: "hook://*",
 			description: "Lifecycle hook provider migrated from Magenta1 general-harness.",
@@ -33,5 +39,20 @@ export const hookMagentaMagnet: CapabilitySourceMagnet = {
 				origin: "magenta1-general-harness",
 			},
 		});
-	},
-};
+
+		super({
+			descriptor: {
+				target: `capability:${kind}`,
+				kind: kind,
+				name: name,
+				implementation: "capability:magenta",
+				description: "Lifecycle hook provider migrated from Magenta1 general-harness.",
+				metadata: {
+					hotSwappable: context.hotSwappable ?? false,
+				},
+			},
+			source: source,
+			instance,
+		});
+	}
+}

@@ -1,6 +1,7 @@
-import type { CapabilitySourceMagnet } from "../../../hcp-client/HcpMagnetTypes.ts";
-import { createCapabilityServer } from "../../../hcp-client/server/capability-server.ts";
-import { APPROVAL_POLICY_TARGET, SHELL_POLICY_TARGET } from "../contract.ts";
+import type { HcpMagnetBuildContext } from "../../../harness-component-protocol/HcpServerTypes.ts";
+import { createCapabilityServer } from "../../../harness-component-protocol/server/capability-server.ts";
+import { CapabilityMagnet } from "../../../hcp-magnet/universal.ts";
+import { APPROVAL_POLICY_TARGET, SHELL_POLICY_TARGET } from "../HcpServer.ts";
 import { PolicyProvider } from "./policy.ts";
 
 /**
@@ -10,12 +11,17 @@ import { PolicyProvider } from "./policy.ts";
  * We wrap the main PolicyProvider and expose approval/shell as operations that
  * delegate to the sub-providers.
  */
-export const policyMagentaMagnet: CapabilitySourceMagnet = {
-	module: "policy",
-	kind: "policy",
-	source: "magenta",
-	isDefault: true,
-	build: () => {
+export class HcpMagnet extends CapabilityMagnet {
+	static readonly module = "policy";
+	static readonly kind = "policy";
+	static readonly source = "magenta";
+	static readonly isDefault = true;
+
+	constructor(context: HcpMagnetBuildContext) {
+		const kind = context.kind ?? "policy";
+		const name = context.name ?? "policy";
+		const source = context.source ?? "magenta";
+
 		const provider = new PolicyProvider();
 
 		// Create HcpServers for the two sub-providers
@@ -54,7 +60,7 @@ export const policyMagentaMagnet: CapabilitySourceMagnet = {
 		});
 
 		// Return the main provider wrapped in an HcpServer
-		return createCapabilityServer({
+		const instance = createCapabilityServer({
 			kind: "policy",
 			target: "policy://bundle",
 			description: "Policy bundle containing approval and shell sub-providers.",
@@ -72,5 +78,20 @@ export const policyMagentaMagnet: CapabilitySourceMagnet = {
 				},
 			},
 		});
-	},
-};
+
+		super({
+			descriptor: {
+				target: `capability:${kind}`,
+				kind: kind,
+				name: name,
+				implementation: "capability:policy",
+				description: "Policy bundle containing approval and shell sub-providers.",
+				metadata: {
+					hotSwappable: context.hotSwappable ?? false,
+				},
+			},
+			source: source,
+			instance,
+		});
+	}
+}

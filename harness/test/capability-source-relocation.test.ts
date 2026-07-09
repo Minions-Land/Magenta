@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { buildDefaultCapabilityHcp, createCapabilityMagnet, moduleForKind } from "../hcp-client/assembly/capability.ts";
-import { CAPABILITY_SOURCE_MAGNETS } from "../hcp-client/assembly/sources.ts";
+import { buildDefaultCapabilityHcp, createCapabilityMagnet, moduleForKind } from "../harness-component-protocol/assembly/capability.ts";
+import { CAPABILITY_SOURCE_MAGNETS } from "../harness-component-protocol/assembly/sources.ts";
 
 /**
  * Locks in the spec §8 Magnet relocation: the central `BUILTIN_CAPABILITY_BUILDERS`
@@ -34,8 +34,13 @@ describe("§8 capability source-magnet relocation", () => {
 
 	it("every barrel magnet declares a default and a build function", () => {
 		for (const magnet of CAPABILITY_SOURCE_MAGNETS) {
-			expect(magnet.isDefault, `${magnet.kind}:${magnet.source} isDefault`).toBe(true);
-			expect(typeof magnet.build, `${magnet.kind}:${magnet.source} build`).toBe("function");
+			const isDefault = typeof magnet === "function" ? magnet.isDefault : magnet.isDefault;
+			const kind = typeof magnet === "function" ? magnet.kind : magnet.kind;
+			const source = typeof magnet === "function" ? magnet.source : magnet.source;
+			expect(isDefault, `${kind}:${source} isDefault`).toBe(true);
+			// For class-based magnets, check if it's a constructor function; for object-based, check build method
+			const hasBuilder = typeof magnet === "function" || typeof magnet.build === "function";
+			expect(hasBuilder, `${kind}:${source} build/constructor`).toBe(true);
 		}
 	});
 
@@ -81,8 +86,10 @@ describe("module-realignment: capability module grouping", () => {
 		expect(moduleForKind("runtime")).toBe("runtime");
 		// Every source magnet declares a module.
 		for (const magnet of CAPABILITY_SOURCE_MAGNETS) {
-			expect(typeof magnet.module, `${magnet.kind} module`).toBe("string");
-			expect(magnet.module.length, `${magnet.kind} module non-empty`).toBeGreaterThan(0);
+			const kind = typeof magnet === "function" ? magnet.kind : magnet.kind;
+			const module = typeof magnet === "function" ? magnet.module : magnet.module;
+			expect(typeof module, `${kind} module`).toBe("string");
+			expect(module.length, `${kind} module non-empty`).toBeGreaterThan(0);
 		}
 	});
 
@@ -136,7 +143,10 @@ describe("§9 hotSwappable node attribute", () => {
 
 	it("every built-in capability source is frozen (stateful) by default", () => {
 		for (const magnet of CAPABILITY_SOURCE_MAGNETS) {
-			expect(magnet.hotSwappable ?? false, `${magnet.kind}:${magnet.source} hotSwappable`).toBe(false);
+			const kind = typeof magnet === "function" ? magnet.kind : magnet.kind;
+			const source = typeof magnet === "function" ? magnet.source : magnet.source;
+			const hotSwappable = typeof magnet === "function" ? magnet.hotSwappable : magnet.hotSwappable;
+			expect(hotSwappable ?? false, `${kind}:${source} hotSwappable`).toBe(false);
 		}
 	});
 

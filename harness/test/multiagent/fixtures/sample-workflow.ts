@@ -1,4 +1,4 @@
-import type { WorkflowContext } from "../../../modules/multiagent/contract.ts";
+import type { WorkflowContext } from "../../../modules/multiagent/HcpServer.ts";
 
 /**
  * A sample workflow script fixture for the script-pattern test. Exercises the

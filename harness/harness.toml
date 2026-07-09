@@ -77,7 +77,7 @@ path = "modules/tools/web-fetch/web-fetch.toml"
 kind = "hcp-process"
 name = "hcp-process"
 description = "HCP JSONL process manifests migrated from Magenta1 general-harness."
-path = "hcp-client/hcp-process/hcp-process.toml"
+path = "harness-component-protocol/hcp-process/hcp-process.toml"
 
 [[components]]
 kind = "sandbox"
@@ -180,14 +180,14 @@ path = "modules/memory/memory.toml"
 kind = "assembly"
 name = "package-overlay"
 description = "Harness package overlay discovery and profile selection. Actual package contents live in the repository-level packages/ root."
-path = "hcp-client/overlay/package-overlay.toml"
+path = "harness-component-protocol/overlay/package-overlay.toml"
 
 # Assembly layer
 [[components]]
 kind = "assembly"
 name = "hcp"
 description = "Harness Component Protocol - management and discovery layer."
-path = "hcp-client/hcp-client.toml"
+path = "harness-component-protocol/harness-component-protocol.toml"
 
 [[components]]
 kind = "assembly"
@@ -199,5 +199,5 @@ path = "hcp-magnet/magnet.toml"
 kind = "assembly"
 name = "registry"
 description = "TOML registry loader and component discovery."
-path = "hcp-client/registry/registry.toml"
+path = "harness-component-protocol/registry/registry.toml"
 

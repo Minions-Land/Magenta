@@ -1,13 +1,13 @@
 import { readFile } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
-import { parseToml, type TomlTable, type TomlValue } from "../../../hcp-client/registry/registry.ts";
-import type { SystemPromptDescriptor, SystemPromptDescriptorDiagnostic } from "../contract.ts";
+import { parseToml, type TomlTable, type TomlValue } from "../../../harness-component-protocol/registry/registry.ts";
+import type { SystemPromptDescriptor, SystemPromptDescriptorDiagnostic } from "../HcpServer.ts";
 
 export type {
 	SystemPromptDescriptor,
 	SystemPromptDescriptorDiagnostic,
 	SystemPromptDescriptorDiagnosticCode,
-} from "../contract.ts";
+} from "../HcpServer.ts";
 
 export async function loadSystemPromptDescriptor(
 	descriptorPath: string,

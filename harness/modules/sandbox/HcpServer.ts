@@ -1,4 +1,4 @@
-import type { HcpServer } from "../../hcp-client/HcpServerTypes.ts";
+import type { HcpServer } from "../../harness-component-protocol/HcpServerTypes.ts";
 
 export type SandboxNetworkPolicy = "deny" | "allowlist" | "allow" | string;
 

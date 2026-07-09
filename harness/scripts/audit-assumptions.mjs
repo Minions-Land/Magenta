@@ -33,7 +33,7 @@ const checkRule = args.has("--check");
 // Capability kinds carry [assumption]; everything else must not.
 //
 // Single source of truth: CAPABILITY_KINDS in
-// hcp-client/overlay/package-overlay.ts, parsed from source at runtime so this
+// harness-component-protocol/overlay/package-overlay.ts, parsed from source at runtime so this
 // script cannot drift from it (no build dependency). We then union the
 // intentional extras: `multiagent` is a capability magnet wired via the trunk
 // barrel (assembly/sources.ts) that is deliberately NOT in the package-overlay
@@ -42,7 +42,7 @@ const checkRule = args.has("--check");
 const CAPABILITY_KIND_EXTRAS = ["multiagent"];
 
 function loadCapabilityKinds() {
-	const overlayPath = resolve(harnessRoot, "hcp-client/overlay/package-overlay.ts");
+	const overlayPath = resolve(harnessRoot, "harness-component-protocol/overlay/package-overlay.ts");
 	let src;
 	try {
 		src = readFileSync(overlayPath, "utf-8");

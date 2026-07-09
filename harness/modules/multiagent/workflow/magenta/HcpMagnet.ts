@@ -1,6 +1,7 @@
-import type { CapabilitySourceMagnet } from "../../../../hcp-client/HcpMagnetTypes.ts";
-import { createCapabilityServer } from "../../../../hcp-client/server/capability-server.ts";
-import type { OrchestrationRequest } from "../../contract.ts";
+import type { HcpMagnetBuildContext } from "../../../../harness-component-protocol/HcpServerTypes.ts";
+import { createCapabilityServer } from "../../../../harness-component-protocol/server/capability-server.ts";
+import { CapabilityMagnet } from "../../../../hcp-magnet/universal.ts";
+import type { OrchestrationRequest } from "../../HcpServer.ts";
 import { MultiAgentOrchestrator, PATTERNS, TARGET } from "./orchestrator.ts";
 
 /**
@@ -9,14 +10,19 @@ import { MultiAgentOrchestrator, PATTERNS, TARGET } from "./orchestrator.ts";
  * Wraps MultiAgentOrchestrator (pure business logic) in a unified HcpServer adapter,
  * making HcpServer an explicit layer rather than hand-written in each provider.
  */
-export const multiagentMagentaMagnet: CapabilitySourceMagnet = {
-	module: "multiagent",
-	kind: "multiagent",
-	source: "magenta",
-	isDefault: true,
-	build: (context) => {
+export class HcpMagnet extends CapabilityMagnet {
+	static readonly module = "multiagent";
+	static readonly kind = "multiagent";
+	static readonly source = "magenta";
+	static readonly isDefault = true;
+
+	constructor(context: HcpMagnetBuildContext) {
+		const kind = context.kind ?? "multiagent";
+		const name = context.name ?? "multiagent";
+		const source = context.source ?? "magenta";
+
 		const provider = new MultiAgentOrchestrator({ cwd: context.repoRoot });
-		return createCapabilityServer({
+		const instance = createCapabilityServer({
 			kind: "multiagent",
 			target: TARGET,
 			description: "Deterministic multi-agent orchestration workflows.",
@@ -31,5 +37,23 @@ export const multiagentMagentaMagnet: CapabilitySourceMagnet = {
 				patterns: PATTERNS,
 			},
 		});
-	},
-};
+
+		super({
+			descriptor: {
+				target: `capability:${kind}`,
+				kind: kind,
+				name: name,
+				implementation: `capability:${source}`,
+				description: "Deterministic multi-agent orchestration workflows.",
+				metadata: {
+					implementation: "native-ts",
+					source: "magenta",
+					patterns: PATTERNS,
+					hotSwappable: context.hotSwappable ?? false,
+				},
+			},
+			source: "magenta",
+			instance,
+		});
+	}
+}

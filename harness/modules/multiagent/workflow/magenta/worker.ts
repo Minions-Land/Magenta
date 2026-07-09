@@ -14,7 +14,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { Isolation, WorkerResult, WorkerSlot, WorkerUsage } from "../../contract.ts";
+import type { Isolation, WorkerResult, WorkerSlot, WorkerUsage } from "../../HcpServer.ts";
 
 /** Default tools handed to a worker when none are specified: read-only. */
 const DEFAULT_TOOLS = ["read", "grep", "find", "ls"];

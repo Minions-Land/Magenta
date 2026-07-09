@@ -1,7 +1,7 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { TSchema } from "typebox";
-import type { HcpMagnet } from "../hcp-client/HcpMagnetTypes.ts";
-import type { HcpServerRequest, HcpServer, HcpServerDescription } from "../hcp-client/HcpServerTypes.ts";
+import type { HcpMagnet } from "../harness-component-protocol/HcpMagnetTypes.ts";
+import type { HcpServer, HcpServerDescription, HcpServerRequest } from "../harness-component-protocol/HcpServerTypes.ts";
 import { createReadExecute, type ReadToolOptions, readSchema } from "../modules/tools/index.ts";
 import type { UniversalMagnetState } from "./universal.ts";
 

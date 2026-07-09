@@ -3,7 +3,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { WorkerResult } from "../../modules/multiagent/contract.ts";
+import type { WorkerResult } from "../../modules/multiagent/HcpServer.ts";
 import { MultiAgentOrchestrator, type WorkerRunner } from "../../modules/multiagent/workflow/magenta/orchestrator.ts";
 import type { SpawnWorkerOptions } from "../../modules/multiagent/workflow/magenta/worker.ts";
 

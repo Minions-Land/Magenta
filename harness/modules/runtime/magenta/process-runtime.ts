@@ -8,7 +8,7 @@ import type {
 	ProcessRuntimeToolMetadata,
 	RuntimePolicyReport,
 	RuntimePolicyStatus,
-} from "../contract.ts";
+} from "../HcpServer.ts";
 
 export type {
 	ProcessExecInput,
@@ -16,7 +16,7 @@ export type {
 	ProcessRuntimeToolMetadata,
 	RuntimePolicyReport,
 	RuntimePolicyStatus,
-} from "../contract.ts";
+} from "../HcpServer.ts";
 
 interface RuntimePolicy {
 	workspaceRoot: string;

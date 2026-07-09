@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { aggregateWorkerUsage, type WorkerResult, type WorkerUsage } from "../../modules/multiagent/contract.ts";
+import { aggregateWorkerUsage, type WorkerResult, type WorkerUsage } from "../../modules/multiagent/HcpServer.ts";
 
 /**
  * Unit coverage for aggregateWorkerUsage: the helper that rolls per-worker

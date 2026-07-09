@@ -9,7 +9,7 @@
  *
  * This module holds the pure server-side contracts shared by all three HCP
  * roles (HcpClient resolves them, modules implement them, HcpMagnet produces
- * them). The HcpClient implementation lives in `hcp-client/hcp-client.ts`; the
+ * them). The HcpClient implementation lives in `harness-component-protocol/harness-component-protocol.ts`; the
  * HcpMagnet contracts live in `hcp-HcpMagnetTypes.ts`.
  */
 
@@ -120,4 +120,6 @@ export interface HcpMagnetBuildContext {
 	descriptorPath?: string;
 	/** The selected source for this component (e.g. "pi", "magenta"). */
 	source: string;
+	/** Whether this capability can be hot-swapped mid-session (spec §9). */
+	hotSwappable?: boolean;
 }

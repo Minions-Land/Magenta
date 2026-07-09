@@ -1,5 +1,5 @@
 import type { HcpMagnet } from "../HcpMagnetTypes.ts";
-import type { HcpServerRequest, HcpServer, HcpServerDescription } from "../HcpServerTypes.ts";
+import type { HcpServer, HcpServerDescription, HcpServerRequest } from "../HcpServerTypes.ts";
 
 /**
  * A ModuleHcpServer is the runtime embodiment of one harness module folder

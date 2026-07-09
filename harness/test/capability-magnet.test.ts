@@ -4,8 +4,8 @@ import {
 	type CapabilityBuilderTable,
 	capabilityBindingKey,
 	createCapabilityMagnet,
-} from "../hcp-client/assembly/capability.ts";
-import { HcpClient } from "../hcp-client/HcpClient.ts";
+} from "../harness-component-protocol/assembly/capability.ts";
+import { HcpClient } from "../harness-component-protocol/HcpClient.ts";
 import { CapabilityMagnet } from "../hcp-magnet/universal.ts";
 
 const CONTEXT = { repoRoot: "/repo", packagesRoot: "/repo/packages" };
@@ -15,8 +15,28 @@ describe("capability magnet infrastructure", () => {
 		// A single selection table offering two sources for the same kind. Injected
 		// per-call — no global registry to populate or reset.
 		const builders: CapabilityBuilderTable = {
-			"fixture-cap:pi": () => ({ label: "pi-impl" }),
-			"fixture-cap:magenta": () => ({ label: "magenta-impl" }),
+			"fixture-cap:pi": () =>
+				new CapabilityMagnet({
+					descriptor: {
+						target: "capability:fixture-cap",
+						kind: "fixture-cap",
+						name: "fixture-cap",
+						implementation: "capability:pi",
+					},
+					source: "pi",
+					instance: { label: "pi-impl" },
+				}),
+			"fixture-cap:magenta": () =>
+				new CapabilityMagnet({
+					descriptor: {
+						target: "capability:fixture-cap",
+						kind: "fixture-cap",
+						name: "fixture-cap",
+						implementation: "capability:magenta",
+					},
+					source: "magenta",
+					instance: { label: "magenta-impl" },
+				}),
 		};
 
 		const pi = await createCapabilityMagnet({
@@ -54,7 +74,19 @@ describe("capability magnet infrastructure", () => {
 		const result = await createCapabilityMagnet({
 			component: { kind: "fixture-cap", name: "fixture-cap", source: "" },
 			context: CONTEXT,
-			builders: { "fixture-cap:pi": () => ({}) },
+			builders: {
+				"fixture-cap:pi": () =>
+					new CapabilityMagnet({
+						descriptor: {
+							target: "capability:fixture-cap",
+							kind: "fixture-cap",
+							name: "fixture-cap",
+							implementation: "capability:pi",
+						},
+						source: "pi",
+						instance: {},
+					}),
+			},
 		});
 		expect(result.diagnostics[0]?.code).toBe("capability_source_missing");
 	});
@@ -78,7 +110,20 @@ describe("capability magnet infrastructure", () => {
 		const { magnet } = await createCapabilityMagnet({
 			component: { kind: "fixture-hcp", name: "fixture-hcp", source: "pi", description: "demo" },
 			context: CONTEXT,
-			builders: { "fixture-hcp:pi": () => ({ ping: () => "pong" }) },
+			builders: {
+				"fixture-hcp:pi": () =>
+					new CapabilityMagnet({
+						descriptor: {
+							target: "capability:fixture-hcp",
+							kind: "fixture-hcp",
+							name: "fixture-hcp",
+							implementation: "capability:pi",
+							metadata: { source: "pi" },
+						},
+						source: "pi",
+						instance: { ping: () => "pong" },
+					}),
+			},
 		});
 		if (!magnet) throw new Error("expected magnet");
 

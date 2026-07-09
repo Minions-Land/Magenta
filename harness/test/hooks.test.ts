@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { HcpClient } from "../hcp-client/HcpClient.ts";
-import { getHarnessRegistryPath, loadRegistry } from "../hcp-client/registry/registry.ts";
+import { HcpClient } from "../harness-component-protocol/HcpClient.ts";
+import { getHarnessRegistryPath, loadRegistry } from "../harness-component-protocol/registry/registry.ts";
+import { HcpMagnet as HookMagentaMagnet } from "../modules/hooks/magenta/HcpMagnet.ts";
 import { HookProvider } from "../modules/hooks/magenta/hooks.ts";
-import { hookMagentaMagnet } from "../modules/hooks/magenta/HcpMagnet.ts";
 
 describe("hook provider", () => {
 	it("discovers and describes migrated lifecycle hooks", async () => {
@@ -25,7 +25,8 @@ describe("hook provider", () => {
 	});
 
 	it("runs pre-tool hook as declarative sandbox/approval/shell-policy actions", async () => {
-		const hcp = new HcpClient().register("hook", hookMagentaMagnet.build());
+		const magnet = new HookMagentaMagnet({ repoRoot: process.cwd(), packagesRoot: process.cwd(), kind: "hook", name: "hook", descriptorPath: "", source: "magenta" });
+		const hcp = new HcpClient().register("hook", magnet.toHcpServer());
 
 		await expect(
 			hcp.dispatch({
@@ -54,7 +55,8 @@ describe("hook provider", () => {
 	});
 
 	it("runs init and workflow hooks as action envelopes", async () => {
-		const hcp = new HcpClient().register("hook", hookMagentaMagnet.build());
+		const magnet = new HookMagentaMagnet({ repoRoot: process.cwd(), packagesRoot: process.cwd(), kind: "hook", name: "hook", descriptorPath: "", source: "magenta" });
+		const hcp = new HcpClient().register("hook", magnet.toHcpServer());
 
 		await expect(
 			hcp.dispatch({

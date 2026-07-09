@@ -1,5 +1,6 @@
-import type { CapabilitySourceMagnet } from "../../../hcp-client/HcpMagnetTypes.ts";
-import { createCapabilityServer } from "../../../hcp-client/server/capability-server.ts";
+import type { HcpMagnetBuildContext } from "../../../harness-component-protocol/HcpServerTypes.ts";
+import { createCapabilityServer } from "../../../harness-component-protocol/server/capability-server.ts";
+import { CapabilityMagnet } from "../../../hcp-magnet/universal.ts";
 import { SessionGroundingMemoryProvider } from "./session-grounding.ts";
 
 /**
@@ -8,14 +9,19 @@ import { SessionGroundingMemoryProvider } from "./session-grounding.ts";
  * Wraps the session-grounding memory provider (pure business logic) in a
  * unified HcpServer adapter, making HcpServer an explicit layer.
  */
-export const memoryMagentaMagnet: CapabilitySourceMagnet = {
-	module: "memory",
-	kind: "memory",
-	source: "magenta",
-	isDefault: true,
-	build: (context) => {
+export class HcpMagnet extends CapabilityMagnet {
+	static readonly module = "memory";
+	static readonly kind = "memory";
+	static readonly source = "magenta";
+	static readonly isDefault = true;
+
+	constructor(context: HcpMagnetBuildContext) {
+		const kind = context.kind ?? "memory";
+		const name = context.name ?? "memory";
+		const source = context.source ?? "magenta";
+
 		const provider = new SessionGroundingMemoryProvider({ workspaceRoot: context.repoRoot });
-		return createCapabilityServer({
+		const instance = createCapabilityServer({
 			kind: "memory",
 			target: "memory://session-grounding",
 			description: "Session-scoped memory with JSON-lines persistence for lightweight grounding facts.",
@@ -38,5 +44,20 @@ export const memoryMagentaMagnet: CapabilitySourceMagnet = {
 				storePath: context.repoRoot,
 			},
 		});
-	},
-};
+
+		super({
+			descriptor: {
+				target: `capability:${kind}`,
+				kind: kind,
+				name: name,
+				implementation: "capability:magenta",
+				description: "Session-scoped memory with JSON-lines persistence for lightweight grounding facts.",
+				metadata: {
+					hotSwappable: context.hotSwappable ?? false,
+				},
+			},
+			source: source,
+			instance,
+		});
+	}
+}

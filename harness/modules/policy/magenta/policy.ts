@@ -4,7 +4,7 @@ import {
 	type PolicyProviderContract,
 	SHELL_POLICY_TARGET,
 	type ShellPolicyClassification,
-} from "../contract.ts";
+} from "../HcpServer.ts";
 import { ApprovalPolicyProvider, decideApproval } from "./approval.ts";
 import { classifyShellCommand, ShellPolicyProvider } from "./shell-policy.ts";
 

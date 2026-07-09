@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CAPABILITY_KINDS } from "../hcp-client/overlay/package-overlay.ts";
+import { CAPABILITY_KINDS } from "../harness-component-protocol/overlay/package-overlay.ts";
 
 /**
  * Regression lock for spec §5.1.

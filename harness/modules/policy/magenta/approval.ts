@@ -6,7 +6,7 @@ import {
 	type ApprovalPolicyProviderContract,
 	type ApprovalStatus,
 	type ApprovalTier,
-} from "../contract.ts";
+} from "../HcpServer.ts";
 
 type UserDecision = ApprovalDecisionKind;
 

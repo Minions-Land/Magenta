@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import type { HcpMagnet } from "../hcp-client/HcpMagnetTypes.ts";
-import type { HcpServer, HcpServerRequest } from "../hcp-client/HcpServerTypes.ts";
-import { ModuleHcpServer } from "../hcp-client/server/module-server.ts";
+import type { HcpMagnet } from "../harness-component-protocol/HcpMagnetTypes.ts";
+import type { HcpServer, HcpServerRequest } from "../harness-component-protocol/HcpServerTypes.ts";
+import { ModuleHcpServer } from "../harness-component-protocol/server/module-server.ts";
 
 /** Minimal fake magnet for testing ModuleHcpServer routing. */
 function createFakeMagnet(target: string, kind: string, product: unknown): HcpMagnet {

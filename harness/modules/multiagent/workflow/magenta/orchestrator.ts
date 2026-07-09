@@ -20,8 +20,8 @@ import type {
 	WorkerResult,
 	WorkflowContext,
 	WorkflowModule,
-} from "../../contract.ts";
-import { aggregateWorkerUsage } from "../../contract.ts";
+} from "../../HcpServer.ts";
+import { aggregateWorkerUsage } from "../../HcpServer.ts";
 import { parallel, parallelAgents, pipeline, type SpawnWorkerOptions, spawnWorker } from "./worker.ts";
 
 /**

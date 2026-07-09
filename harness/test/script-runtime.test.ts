@@ -2,9 +2,9 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { HcpClient } from "../hcp-client/HcpClient.ts";
-import { getHarnessRegistryPath, loadRegistry } from "../hcp-client/registry/registry.ts";
-import { runtimeMagentaMagnet } from "../modules/runtime/magenta/HcpMagnet.ts";
+import { HcpClient } from "../harness-component-protocol/HcpClient.ts";
+import { getHarnessRegistryPath, loadRegistry } from "../harness-component-protocol/registry/registry.ts";
+import { HcpMagnet as RuntimeMagentaMagnet } from "../modules/runtime/magenta/HcpMagnet.ts";
 import { ScriptRuntimeProvider } from "../modules/runtime/magenta/script-runtime.ts";
 import { loadSandboxProviderFromPack } from "../modules/sandbox/magenta/sandbox.ts";
 
@@ -30,12 +30,12 @@ describe("script runtime provider", () => {
 		const sandbox = await loadSandboxProviderFromPack(
 			new URL("../modules/sandbox/sandbox.toml", import.meta.url).pathname,
 		);
-		const server = runtimeMagentaMagnet.build({
+		const magnet = new RuntimeMagentaMagnet({
 			name: "script-runtimes",
 			repoRoot: process.cwd(),
 			packagesRoot: process.cwd(),
 		});
-		const hcp = new HcpClient().register("runtime", server);
+		const hcp = new HcpClient().register("runtime", magnet.toHcpServer());
 
 		await expect(
 			hcp.dispatch({
@@ -78,12 +78,12 @@ describe("script runtime provider", () => {
 	});
 
 	it("rejects empty script runtime input", async () => {
-		const server = runtimeMagentaMagnet.build({
+		const magnet = new RuntimeMagentaMagnet({
 			name: "script-runtimes",
 			repoRoot: process.cwd(),
 			packagesRoot: process.cwd(),
 		});
-		const hcp = new HcpClient().register("runtime", server);
+		const hcp = new HcpClient().register("runtime", magnet.toHcpServer());
 
 		await expect(
 			hcp.dispatch({
@@ -96,12 +96,12 @@ describe("script runtime provider", () => {
 
 	it("passes timeout overrides through to runtime://process", async () => {
 		const dir = await mkdtemp(join(tmpdir(), "magenta-script-runtime-timeout-"));
-		const server = runtimeMagentaMagnet.build({
+		const magnet = new RuntimeMagentaMagnet({
 			name: "script-runtimes",
 			repoRoot: process.cwd(),
 			packagesRoot: process.cwd(),
 		});
-		const hcp = new HcpClient().register("runtime", server);
+		const hcp = new HcpClient().register("runtime", magnet.toHcpServer());
 
 		await expect(
 			hcp.dispatch({

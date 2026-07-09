@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { HcpMagnet } from "../hcp-client/HcpMagnetTypes.ts";
+import type { HcpMagnet } from "../harness-component-protocol/HcpMagnetTypes.ts";
 import { createReadMagnet } from "../hcp-magnet/native.ts";
 import {
 	buildToolSearchManifest,

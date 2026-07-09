@@ -1,4 +1,4 @@
-import type { HcpMagnet } from "../../hcp-client/HcpMagnetTypes.ts";
+import type { HcpMagnet } from "../../harness-component-protocol/HcpMagnetTypes.ts";
 import { NativeToolMagnet } from "../../hcp-magnet/native.ts";
 import {
 	BASH_TOOL_DESCRIPTION,

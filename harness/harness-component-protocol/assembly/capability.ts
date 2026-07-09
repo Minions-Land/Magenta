@@ -1,6 +1,6 @@
-import type { HcpMagnet } from "../../hcp-client/HcpMagnetTypes.ts";
-import type { HcpMagnetBuildContext } from "../../hcp-client/HcpServerTypes.ts";
-import { HcpClientcapabilityprefix } from "../../hcp-client/HcpServerTypes.ts";
+import type { HcpMagnet } from "../../harness-component-protocol/HcpMagnetTypes.ts";
+import type { HcpMagnetBuildContext } from "../../harness-component-protocol/HcpServerTypes.ts";
+import { HcpClientcapabilityprefix } from "../../harness-component-protocol/HcpServerTypes.ts";
 import { CapabilityMagnet } from "../../hcp-magnet/universal.ts";
 import { HcpClient } from "../HcpClient.ts";
 import { ModuleHcpServer } from "../server/module-server.ts";
@@ -54,7 +54,8 @@ function parseCapabilitySlot(slot: string): { kind: string; name: string } {
 function buildersFromSourceMagnets(): CapabilityBuilderTable {
 	const table: CapabilityBuilderTable = {};
 	for (const magnet of CAPABILITY_SOURCE_MAGNETS) {
-		table[builderKey(magnet.kind, magnet.source)] = (context) => magnet.build(context);
+		// Class-based magnet: instantiate with context
+		table[builderKey(magnet.kind, magnet.source)] = (context) => new magnet(context);
 	}
 	return table;
 }
@@ -64,7 +65,8 @@ function defaultsFromSourceMagnets(): Record<string, string> {
 	const defaults: Record<string, string> = {};
 	for (const magnet of CAPABILITY_SOURCE_MAGNETS) {
 		if (!magnet.isDefault) continue;
-		const slotNames = [magnet.name ?? magnet.kind, ...(magnet.defaultSlotNames ?? [])];
+		const name = magnet.slotName ?? magnet.kind;
+		const slotNames = [name, ...(magnet.defaultSlotNames ?? [])];
 		for (const slotName of slotNames) {
 			defaults[capabilitySlotName(magnet.kind, slotName)] = magnet.source;
 		}
@@ -101,7 +103,9 @@ export function moduleForKind(kind: string): string {
 function hotSwappableFromSourceMagnets(): Record<string, boolean> {
 	const map: Record<string, boolean> = {};
 	for (const magnet of CAPABILITY_SOURCE_MAGNETS) {
-		if (magnet.hotSwappable) map[builderKey(magnet.kind, magnet.source)] = true;
+		if (magnet.hotSwappable) {
+			map[builderKey(magnet.kind, magnet.source)] = true;
+		}
 	}
 	return map;
 }
@@ -226,16 +230,38 @@ export async function createCapabilityMagnet(
 		return { diagnostics };
 	}
 
-	let instance: unknown;
+	let magnet: HcpMagnet;
 	try {
-		instance = await builder({
+		const result = await builder({
 			repoRoot: context.repoRoot,
 			packagesRoot: context.packagesRoot,
 			kind: component.kind,
 			name: component.name,
 			descriptorPath: component.path,
 			source: component.source,
+			hotSwappable: component.hotSwappable,
 		});
+
+		// If the builder returns a CapabilityMagnet instance (class-based), use it directly
+		if (result && typeof result === "object" && "toHcpServer" in result) {
+			magnet = result as HcpMagnet;
+		} else {
+			// Old-style builder that returns a plain HcpServer instance - wrap it
+			magnet = new CapabilityMagnet({
+				descriptor: {
+					target: `capability:${component.kind}`,
+					kind: component.kind,
+					name: component.name,
+					implementation: `capability:${component.source}`,
+					description: `Capability ${component.kind} from ${component.source}`,
+					metadata: {
+						hotSwappable: component.hotSwappable ?? false,
+					},
+				},
+				source: component.source,
+				instance: result,
+			});
+		}
 	} catch (error) {
 		diagnostics.push({
 			type: "error",
@@ -249,26 +275,6 @@ export async function createCapabilityMagnet(
 		});
 		return { diagnostics };
 	}
-
-	// Register under the capability address convention. Single-slot capabilities
-	// use `capability:<kind>`; multi-instance capability families use
-	// `capability:<kind>:<name>` so entries like runtime:process and
-	// runtime:script-runtimes do not collide. The bare kind/name is deliberately
-	// NOT the address — that namespace is for management targets; capabilities
-	// live under the `capability:` prefix.
-	const target = `${HcpClientcapabilityprefix}:${capabilitySlotName(component.kind, component.name)}`;
-	const magnet = new CapabilityMagnet({
-		descriptor: {
-			target,
-			kind: component.kind,
-			name: component.name,
-			implementation: `capability:${component.source}`,
-			description: component.description,
-			metadata: { source: component.source, hotSwappable: component.hotSwappable === true },
-		},
-		source: component.source,
-		instance,
-	});
 
 	return { magnet, diagnostics };
 }

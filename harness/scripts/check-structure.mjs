@@ -8,7 +8,7 @@ const notes = [];
 
 const allowedTopLevel = new Set([
 	"README.md",
-	"hcp-client",
+	"harness-component-protocol",
 	"hcp-contract",
 	"hcp-magnet",
 	"catalog",
@@ -41,7 +41,7 @@ const foldedToolModuleNames = new Set([
 	"read-url",
 ]);
 const sourceModuleDirs = [
-	"hcp-client",
+	"harness-component-protocol",
 	"hcp-contract",
 	"hcp-magnet",
 	"catalog",
@@ -314,7 +314,7 @@ function checkToolLayout() {
 
 function checkCapabilitySourceMagnets() {
 	// Every `<module>/<source>/magnet.ts` that declares a CapabilitySourceMagnet
-	// must be listed in the static aggregation barrel hcp-client/assembly/sources.ts.
+	// must be listed in the static aggregation barrel harness-component-protocol/assembly/sources.ts.
 	// A static import list is required (computed dynamic imports break the bun
 	// single-file binary), so this check guards against silently forgetting to
 	// register a new capability source there.
@@ -337,9 +337,9 @@ function checkCapabilitySourceMagnets() {
 
 	scan(harnessRoot);
 
-	const sourcesPath = join(harnessRoot, "hcp-client", "assembly", "sources.ts");
+	const sourcesPath = join(harnessRoot, "harness-component-protocol", "assembly", "sources.ts");
 	if (!existsSync(sourcesPath)) {
-		fail("missing capability source barrel: harness/hcp-client/assembly/sources.ts");
+		fail("missing capability source barrel: harness/harness-component-protocol/assembly/sources.ts");
 		return;
 	}
 	const sourcesText = readFileSync(sourcesPath, "utf8");
@@ -352,7 +352,7 @@ function checkCapabilitySourceMagnets() {
 		if (!importPattern.test(sourcesText) || !inArray) {
 			fail(
 				`capability source ${name} (${pathLabel(path)}) is not registered in ` +
-					`hcp-client/assembly/sources.ts (CAPABILITY_SOURCE_MAGNETS)`,
+					`harness-component-protocol/assembly/sources.ts (CAPABILITY_SOURCE_MAGNETS)`,
 			);
 		}
 	}
@@ -381,7 +381,7 @@ function checkGeneratedNoise() {
 
 function checkHcpNaming() {
 	// Check that capability sources registered in sources.ts have HcpMagnet.ts
-	const sourcesPath = join(harnessRoot, "hcp-client", "assembly", "sources.ts");
+	const sourcesPath = join(harnessRoot, "harness-component-protocol", "assembly", "sources.ts");
 	if (!existsSync(sourcesPath)) return;
 
 	const sourcesText = readFileSync(sourcesPath, "utf-8");
@@ -398,11 +398,11 @@ function checkHcpNaming() {
 		}
 	}
 
-	// Check hcp-client files follow naming convention
+	// Check harness-component-protocol files follow naming convention
 	const hcpClientFiles = [
-		join(harnessRoot, "hcp-client", "HcpClient.ts"),
-		join(harnessRoot, "hcp-client", "HcpServerTypes.ts"),
-		join(harnessRoot, "hcp-client", "HcpMagnetTypes.ts"),
+		join(harnessRoot, "harness-component-protocol", "HcpClient.ts"),
+		join(harnessRoot, "harness-component-protocol", "HcpServerTypes.ts"),
+		join(harnessRoot, "harness-component-protocol", "HcpMagnetTypes.ts"),
 	];
 
 	for (const filePath of hcpClientFiles) {

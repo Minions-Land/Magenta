@@ -4,7 +4,7 @@ import type {
 	ScriptRuntimeInput,
 	ScriptRuntimeOutput,
 	ScriptRuntimeProviderContract,
-} from "../contract.ts";
+} from "../HcpServer.ts";
 import { execProcess } from "./process-runtime.ts";
 
 export type {
@@ -13,7 +13,7 @@ export type {
 	ScriptRuntimeInput,
 	ScriptRuntimeOutput,
 	ScriptRuntimeProviderContract,
-} from "../contract.ts";
+} from "../HcpServer.ts";
 
 export const SCRIPT_RUNTIME_SPECS: readonly RuntimeSpec[] = [
 	{

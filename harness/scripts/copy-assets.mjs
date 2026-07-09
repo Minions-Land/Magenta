@@ -6,7 +6,7 @@ const harnessRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const distRoot = join(harnessRoot, "dist");
 
 const selectedTrees = [
-	"hcp-client",
+	"harness-component-protocol",
 	"hcp-magnet",
 	"hcp-contract",
 	"catalog",

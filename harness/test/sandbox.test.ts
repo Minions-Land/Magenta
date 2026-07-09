@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { HcpClient } from "../hcp-client/HcpClient.ts";
-import { getHarnessRegistryPath, loadRegistry } from "../hcp-client/registry/registry.ts";
+import { HcpClient } from "../harness-component-protocol/HcpClient.ts";
+import { getHarnessRegistryPath, loadRegistry } from "../harness-component-protocol/registry/registry.ts";
 import { loadSandboxProviderFromPack, selectSandboxProfile } from "../modules/sandbox/magenta/sandbox.ts";
 
 describe("sandbox provider", () => {

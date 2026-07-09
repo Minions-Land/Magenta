@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import ignore from "ignore";
 import { parse } from "yaml";
 import { type ExecutionEnv, type FileInfo, type Result, type Skill, toError } from "../../../core/types/types.ts";
-import { parseCommandArgs, substituteArgs } from "../../prompt-templates/contract.ts";
+import { parseCommandArgs, substituteArgs } from "../../prompt-templates/HcpServer.ts";
 
 const MAX_NAME_LENGTH = 64;
 const MAX_DESCRIPTION_LENGTH = 1024;

@@ -1,6 +1,6 @@
 import type { Skill } from "../../../core/types/types.ts";
-import type { FormatSkillsOptions, SystemPromptProviderContract } from "../contract.ts";
-import { formatSkillsForSystemPrompt } from "../contract.ts";
+import type { FormatSkillsOptions, SystemPromptProviderContract } from "../HcpServer.ts";
+import { formatSkillsForSystemPrompt } from "../HcpServer.ts";
 import { loadSystemPromptDescriptor } from "./descriptor.ts";
 
 export class SystemPromptProvider implements SystemPromptProviderContract {

@@ -1,7 +1,8 @@
+import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
-import type { HcpServerRequest, HcpServer, HcpServerDescription } from "../../../hcp-client/HcpServerTypes.ts";
-import { parseToml, type TomlTable } from "../../../hcp-client/registry/registry.ts";
+import type { HcpServer, HcpServerDescription, HcpServerRequest } from "../../../harness-component-protocol/HcpServerTypes.ts";
+import { parseToml, type TomlTable } from "../../../harness-component-protocol/registry/registry.ts";
 import type {
 	SandboxDiscoverResult,
 	SandboxProfile,
@@ -9,7 +10,7 @@ import type {
 	SandboxProviderOptions,
 	SandboxSelection,
 	SandboxSelectionTool,
-} from "../contract.ts";
+} from "../HcpServer.ts";
 
 function asString(value: unknown): string | undefined {
 	return typeof value === "string" ? value : undefined;
@@ -110,13 +111,35 @@ export function selectSandboxProfile(input: unknown): SandboxSelection {
 	};
 }
 
+export function loadSandboxProfileSync(path: string): SandboxProfile {
+	const abs = isAbsolute(path) ? path : resolve(path);
+	return profileFromToml(parseToml(readFileSync(abs, "utf-8")), abs);
+}
+
 export async function loadSandboxProfile(path: string): Promise<SandboxProfile> {
 	const abs = isAbsolute(path) ? path : resolve(path);
 	return profileFromToml(parseToml(await readFile(abs, "utf-8")), abs);
 }
 
+export function loadSandboxProfilesSync(paths: readonly string[], root = process.cwd()): SandboxProfile[] {
+	return paths.map((path) => loadSandboxProfileSync(isAbsolute(path) ? path : resolve(root, path)));
+}
+
 export async function loadSandboxProfiles(paths: readonly string[], root = process.cwd()): Promise<SandboxProfile[]> {
 	return Promise.all(paths.map((path) => loadSandboxProfile(isAbsolute(path) ? path : resolve(root, path))));
+}
+
+export function loadSandboxProviderFromPackSync(path: string): SandboxProvider {
+	const abs = isAbsolute(path) ? path : resolve(path);
+	const root = dirname(abs);
+	const pack = parseToml(readFileSync(abs, "utf-8"));
+	const profiles = asStringArray(pack.profiles);
+	if (profiles.length === 0) {
+		throw new Error(`sandbox pack ${abs} declares no profiles`);
+	}
+	return new SandboxProvider({
+		profiles: loadSandboxProfilesSync(profiles, root),
+	});
 }
 
 export async function loadSandboxProviderFromPack(path: string): Promise<SandboxProvider> {

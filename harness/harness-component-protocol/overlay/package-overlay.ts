@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import type { HcpMagnetBinding, HcpMagnet } from "../../hcp-client/HcpMagnetTypes.ts";
+import type { HcpMagnet, HcpMagnetBinding } from "../../harness-component-protocol/HcpMagnetTypes.ts";
 import {
 	createPackageToolMagnet as createPackageToolMagnetFromDescriptor,
 	type PackageToolMagnetDiagnosticCode,

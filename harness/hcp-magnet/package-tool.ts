@@ -2,14 +2,14 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { HcpMagnet } from "../hcp-client/HcpMagnetTypes.ts";
-import { parseToml, type TomlTable } from "../hcp-client/registry/registry.ts";
+import type { HcpMagnet } from "../harness-component-protocol/HcpMagnetTypes.ts";
+import { parseToml, type TomlTable } from "../harness-component-protocol/registry/registry.ts";
 import {
 	execScriptRuntime,
 	type RuntimeSpec,
 	SCRIPT_RUNTIME_SPECS,
 } from "../modules/runtime/magenta/script-runtime.ts";
-import type { SandboxProfile, SandboxSelection } from "../modules/sandbox/contract.ts";
+import type { SandboxProfile, SandboxSelection } from "../modules/sandbox/HcpServer.ts";
 import { loadSandboxProviderFromPack, selectSandboxProfile } from "../modules/sandbox/magenta/sandbox.ts";
 import { createMcpToolMagnets } from "./mcp.ts";
 import { ProcessToolMagnet } from "./process.ts";

@@ -2,8 +2,8 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { registerMagnetHcpServers } from "../hcp-client/assembly/register-servers.ts";
-import { HcpClient } from "../hcp-client/HcpClient.ts";
+import { registerMagnetHcpServers } from "../harness-component-protocol/assembly/register-servers.ts";
+import { HcpClient } from "../harness-component-protocol/HcpClient.ts";
 import { HcpMagnetProcess } from "../hcp-magnet/hcp-process.ts";
 import { ProcessToolMagnet, processToolManifestFromToml } from "../hcp-magnet/process.ts";
 

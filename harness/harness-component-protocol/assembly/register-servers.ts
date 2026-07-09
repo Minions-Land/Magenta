@@ -1,5 +1,5 @@
-import type { HcpMagnet } from "../../hcp-client/HcpMagnetTypes.ts";
-import type { HcpServerDescription } from "../../hcp-client/HcpServerTypes.ts";
+import type { HcpMagnet } from "../../harness-component-protocol/HcpMagnetTypes.ts";
+import type { HcpServerDescription } from "../../harness-component-protocol/HcpServerTypes.ts";
 import type { HcpClient } from "../HcpClient.ts";
 
 export type DuplicateMagnetHcpServerPolicy = "error" | "replace" | "skip";

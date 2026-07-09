@@ -12,7 +12,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { loadProcessToolManifest, ProcessToolMagnet, type ProcessToolManifest } from "../../hcp-magnet/process.ts";
-import type { SandboxProfile } from "../../modules/sandbox/contract.ts";
+import type { SandboxProfile } from "../../modules/sandbox/HcpServer.ts";
 import { loadSandboxProviderFromPack, selectSandboxProfile } from "../../modules/sandbox/magenta/sandbox.ts";
 import { parseToml, type TomlTable } from "../registry/registry.ts";
 
@@ -121,8 +121,8 @@ function asString(value: unknown): string | undefined {
 /**
  * Derive the harness package root from this module's own location by walking up
  * until harness.toml is found. Robust across layouts: source
- * (hcp-client/assembly/trunk-tools.ts, 2 levels below root) and compiled
- * (dist/hcp-client/assembly/trunk-tools.js, 3 levels below root).
+ * (harness-component-protocol/assembly/trunk-tools.ts, 2 levels below root) and compiled
+ * (dist/harness-component-protocol/assembly/trunk-tools.js, 3 levels below root).
  */
 function deriveHarnessRoot(): string {
 	let dir = dirname(fileURLToPath(import.meta.url));

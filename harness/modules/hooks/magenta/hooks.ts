@@ -1,8 +1,8 @@
-import type { ShellPolicyClassification } from "../../policy/contract.ts";
+import type { ShellPolicyClassification } from "../../policy/HcpServer.ts";
 import { decideApproval } from "../../policy/magenta/approval.ts";
 import { classifyShellCommand } from "../../policy/magenta/shell-policy.ts";
 import { selectSandboxProfile } from "../../sandbox/magenta/sandbox.ts";
-import type { HookDescriptor, HookDiscoverResult, HookResult, HookProvider as IHookProvider } from "../contract.ts";
+import type { HookDescriptor, HookDiscoverResult, HookResult, HookProvider as IHookProvider } from "../HcpServer.ts";
 
 const LIFECYCLE_HOOKS = ["init", "pre-turn", "pre-llm", "post-llm", "pre-tool", "post-tool", "compact", "workflow"];
 

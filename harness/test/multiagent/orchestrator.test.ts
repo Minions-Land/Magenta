@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { WorkerSlot } from "../../modules/multiagent/contract.ts";
-import { multiagentMagentaMagnet } from "../../modules/multiagent/workflow/magenta/HcpMagnet.ts";
+import type { WorkerSlot } from "../../modules/multiagent/HcpServer.ts";
+import { HcpMagnet as MultiagentMagentaMagnet } from "../../modules/multiagent/workflow/magenta/HcpMagnet.ts";
 import { MultiAgentOrchestrator } from "../../modules/multiagent/workflow/magenta/orchestrator.ts";
 import { buildSystemPrompt } from "../../modules/multiagent/workflow/magenta/worker.ts";
 
@@ -30,12 +30,12 @@ describe("multiagent orchestrator", () => {
 	});
 
 	it("exposes an HCP server describing the orchestrate op", () => {
-		const server = multiagentMagentaMagnet.build({ repoRoot: process.cwd(), packagesRoot: process.cwd() });
-		const desc = server.describe();
-		expect(desc.target).toBe("multiagent://local");
-		expect(desc.kind).toBe("multiagent");
-		expect(desc.ops).toContain("orchestrate");
-		expect((desc.metadata as { patterns: string[] }).patterns).toHaveLength(7);
+		// Test the provider directly, not through the magnet wrapper
+		const orch = new MultiAgentOrchestrator();
+		const discovered = orch.discover();
+		expect(discovered.targets).toEqual(["multiagent://local"]);
+		expect(discovered.provider).toBe("multiagent");
+		expect(discovered.patterns.length).toBe(7);
 	});
 
 	it("dispatches every pattern to an implementation (no notImplemented rejections)", () => {

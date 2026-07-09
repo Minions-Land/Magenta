@@ -13,7 +13,7 @@ import {
 	type PromptTemplateProviderContract,
 	parseCommandArgs,
 	substituteArgs,
-} from "../contract.ts";
+} from "../HcpServer.ts";
 
 export {
 	expandPromptTemplate,
@@ -23,7 +23,7 @@ export {
 	type PromptTemplateProviderContract,
 	parseCommandArgs,
 	substituteArgs,
-} from "../contract.ts";
+} from "../HcpServer.ts";
 
 interface PromptTemplateFrontmatter {
 	description?: string;

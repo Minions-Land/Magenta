@@ -1,11 +1,11 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type {
-	HcpMagnetBinding,
 	HcpMagnet,
+	HcpMagnetBinding,
 	HcpMagnetResource,
 	HcpMagnetResourceMergeMode,
-} from "../hcp-client/HcpMagnetTypes.ts";
-import type { HcpServerRequest, HcpServer, HcpServerDescription } from "../hcp-client/HcpServerTypes.ts";
+} from "../harness-component-protocol/HcpMagnetTypes.ts";
+import type { HcpServer, HcpServerDescription, HcpServerRequest } from "../harness-component-protocol/HcpServerTypes.ts";
 
 export interface UniversalMagnetState {
 	enabled: boolean;
@@ -184,6 +184,17 @@ export class CapabilityMagnet<T = unknown> extends UniversalMagnet {
 		this.instance = options.instance;
 	}
 
+	override describe(): HcpServerDescription {
+		const base = super.describe();
+		return {
+			...base,
+			metadata: {
+				...base.metadata,
+				source: this.source,
+			},
+		};
+	}
+
 	toCapability(): HcpMagnetBinding<T> {
 		this.assertEnabled();
 		return {
@@ -218,6 +229,24 @@ export class CapabilityMagnet<T = unknown> extends UniversalMagnet {
 			return (this.instance as any).instance();
 		}
 		return this.instance;
+	}
+
+	/**
+	 * Delegate unrecognized operations to the wrapped HcpServer if the instance
+	 * is an HcpServer (e.g., created via createCapabilityServer).
+	 */
+	protected override handleHcpRequest(call: HcpServerRequest): Promise<unknown> | unknown {
+		// Check if instance is an HcpServer
+		if (
+			this.instance &&
+			typeof this.instance === "object" &&
+			"call" in this.instance &&
+			typeof (this.instance as any).call === "function"
+		) {
+			// Delegate to the wrapped server
+			return (this.instance as any).call(call);
+		}
+		return super.handleHcpRequest(call);
 	}
 }
 

@@ -6,7 +6,7 @@ import type {
 	MemoryRecallResult,
 	MemoryReflectResult,
 	MemoryRetainResult,
-} from "../contract.ts";
+} from "../HcpServer.ts";
 
 export interface SessionGroundingMemoryEntry {
 	id: string;

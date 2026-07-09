@@ -3,7 +3,7 @@ import {
 	type HcpServer,
 	type HcpServerDescription,
 	type HcpServerRequest,
-} from "../hcp-client/HcpServerTypes.ts";
+} from "../harness-component-protocol/HcpServerTypes.ts";
 import type { ModuleHcpServer } from "./server/module-server.ts";
 
 /**

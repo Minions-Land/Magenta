@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { HcpClient } from "../hcp-client/HcpClient.ts";
-import { getHarnessRegistryPath, loadRegistry } from "../hcp-client/registry/registry.ts";
-import { createCapabilityServer } from "../hcp-client/server/capability-server.ts";
-import { APPROVAL_POLICY_TARGET, SHELL_POLICY_TARGET } from "../modules/policy/contract.ts";
+import { HcpClient } from "../harness-component-protocol/HcpClient.ts";
+import { getHarnessRegistryPath, loadRegistry } from "../harness-component-protocol/registry/registry.ts";
+import { createCapabilityServer } from "../harness-component-protocol/server/capability-server.ts";
+import { APPROVAL_POLICY_TARGET, SHELL_POLICY_TARGET } from "../modules/policy/HcpServer.ts";
 import { ApprovalPolicyProvider, decideApproval } from "../modules/policy/magenta/approval.ts";
 import { classifyShellCommand, ShellPolicyProvider } from "../modules/policy/magenta/shell-policy.ts";
 

@@ -1,6 +1,6 @@
 import { readFile, realpath, stat } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
-import type { ContextProvider as IContextProvider } from "../contract.ts";
+import type { ContextProvider as IContextProvider } from "../HcpServer.ts";
 
 const CONTEXT_TARGETS = ["context://workspace", "context://project"] as const;
 const MAX_IMPORT_DEPTH = 5;

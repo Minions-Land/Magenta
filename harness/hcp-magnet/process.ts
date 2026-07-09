@@ -5,8 +5,8 @@ import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import type { AgentTool, AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
 import { type TSchema, Type } from "typebox";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, type TruncationResult } from "../core/utils/pi/truncate.ts";
-import type { HcpServerRequest } from "../hcp-client/HcpServerTypes.ts";
-import { parseToml, type TomlTable } from "../hcp-client/registry/registry.ts";
+import type { HcpServerRequest } from "../harness-component-protocol/HcpServerTypes.ts";
+import { parseToml, type TomlTable } from "../harness-component-protocol/registry/registry.ts";
 import {
 	execProcess,
 	type ProcessExecInput,
@@ -14,7 +14,7 @@ import {
 	type ProcessRuntimeToolMetadata,
 	type RuntimePolicyReport,
 } from "../modules/runtime/magenta/process-runtime.ts";
-import type { SandboxProfile, SandboxSelection } from "../modules/sandbox/contract.ts";
+import type { SandboxProfile, SandboxSelection } from "../modules/sandbox/HcpServer.ts";
 import { loadSandboxProviderFromPack, selectSandboxProfile } from "../modules/sandbox/magenta/sandbox.ts";
 import { UniversalMagnet } from "./universal.ts";
 

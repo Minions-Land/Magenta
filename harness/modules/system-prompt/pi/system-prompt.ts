@@ -1,1 +1,1 @@
-export { type FormatSkillsOptions, formatSkillsForSystemPrompt } from "../contract.ts";
+export { type FormatSkillsOptions, formatSkillsForSystemPrompt } from "../HcpServer.ts";
