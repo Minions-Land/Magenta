@@ -7,7 +7,7 @@ import { type TSchema, Type } from "typebox";
 import type { HarnessCatalogEntry, HarnessComponentCatalog } from "../catalog/pi/catalog.ts";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, type TruncationResult } from "../core/utils/pi/truncate.ts";
 import { parseToml, type TomlTable } from "../hcp-client/registry/registry.ts";
-import type { HcpRequest } from "../hcp-contract/hcp-server.ts";
+import type { HcpRequest } from "../hcp-client/contract/hcp-server.ts";
 import {
 	execProcess,
 	type ProcessExecInput,

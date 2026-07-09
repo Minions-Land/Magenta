@@ -9,7 +9,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { HcpServer } from "../../../../hcp-contract/hcp-server.ts";
+import type { HcpServer } from "../../../../hcp-client/contract/hcp-server.ts";
 import type {
 	CommonOptions,
 	MultiAgentDiscoverResult,
@@ -381,7 +381,7 @@ export class MultiAgentOrchestrator implements MultiAgentProviderContract {
 					metadata: { patterns: PATTERNS },
 				};
 			},
-			async call(request: import("../../../../hcp-contract/hcp-server.ts").HcpRequest) {
+			async call(request: import("../../../../hcp-client/contract/hcp-server.ts").HcpRequest) {
 				switch (request.op) {
 					case "discover":
 						return provider.discover();

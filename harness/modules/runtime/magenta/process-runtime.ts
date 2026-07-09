@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { access, realpath } from "node:fs/promises";
 import { delimiter, isAbsolute, join, normalize, resolve } from "node:path";
-import type { HcpRequest, HcpServer, HcpServerDescription } from "../../../hcp-contract/hcp-server.ts";
+import type { HcpRequest, HcpServer, HcpServerDescription } from "../../../hcp-client/contract/hcp-server.ts";
 import type {
 	ProcessExecInput,
 	ProcessExecOutput,

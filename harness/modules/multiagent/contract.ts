@@ -1,5 +1,5 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { HcpServer } from "../../hcp-contract/hcp-server.ts";
+import type { HcpServer } from "../../hcp-client/contract/hcp-server.ts";
 
 /**
  * Multi-agent orchestration contract.

@@ -1,6 +1,6 @@
-import type { HcpMagnet } from "../../hcp-contract/hcp-magnet.ts";
-import type { CapabilityFactoryContext } from "../../hcp-contract/hcp-server.ts";
-import { capabilityPrefix } from "../../hcp-contract/hcp-server.ts";
+import type { HcpMagnet } from "../../hcp-client/contract/hcp-magnet.ts";
+import type { CapabilityFactoryContext } from "../../hcp-client/contract/hcp-server.ts";
+import { capabilityPrefix } from "../../hcp-client/contract/hcp-server.ts";
 import { CapabilityMagnet } from "../../hcp-magnet/universal.ts";
 import { ModuleHcpServer } from "../../hcp-magnet/module-server.ts";
 import { HcpClient } from "../hcp-client.ts";

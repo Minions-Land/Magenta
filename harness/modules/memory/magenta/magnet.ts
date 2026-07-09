@@ -1,4 +1,4 @@
-import type { CapabilitySourceMagnet } from "../../../hcp-contract/hcp-magnet.ts";
+import type { CapabilitySourceMagnet } from "../../../hcp-client/contract/hcp-magnet.ts";
 import { SessionGroundingMemoryProvider } from "./session-grounding.ts";
 
 /** The magenta source's binding for the `memory` capability (spec §8). */

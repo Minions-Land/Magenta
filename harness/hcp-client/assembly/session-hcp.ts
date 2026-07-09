@@ -6,7 +6,7 @@ import {
 	type PackageDiagnostic,
 	type PackageOverlay,
 } from "../overlay/package-overlay.ts";
-import type { HcpMagnet } from "../../hcp-contract/hcp-magnet.ts";
+import type { HcpMagnet } from "../../hcp-client/contract/hcp-magnet.ts";
 import { NativeToolMagnet } from "../../hcp-magnet/native.ts";
 import { ModuleHcpServer } from "../../hcp-magnet/module-server.ts";
 import {

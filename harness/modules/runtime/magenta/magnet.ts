@@ -1,4 +1,4 @@
-import type { CapabilitySourceMagnet } from "../../../hcp-contract/hcp-magnet.ts";
+import type { CapabilitySourceMagnet } from "../../../hcp-client/contract/hcp-magnet.ts";
 import { ProcessRuntimeProvider } from "./process-runtime.ts";
 import { ScriptRuntimeProvider } from "./script-runtime.ts";
 

@@ -3,7 +3,7 @@ import {
 	type HcpRequest,
 	type HcpServer,
 	type HcpServerDescription,
-} from "../hcp-contract/hcp-server.ts";
+} from "../hcp-client/contract/hcp-server.ts";
 import type { ModuleHcpServer } from "../hcp-magnet/module-server.ts";
 
 /**

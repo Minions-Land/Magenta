@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseToml, type TomlTable } from "../hcp-client/registry/registry.ts";
-import type { HcpMagnet } from "../hcp-contract/hcp-magnet.ts";
+import type { HcpMagnet } from "../hcp-client/contract/hcp-magnet.ts";
 import {
 	execScriptRuntime,
 	type RuntimeSpec,

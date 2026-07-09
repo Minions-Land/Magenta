@@ -1,4 +1,4 @@
-import type { CapabilitySourceMagnet } from "../../hcp-contract/hcp-magnet.ts";
+import type { CapabilitySourceMagnet } from "../../hcp-client/contract/hcp-magnet.ts";
 import { compactionPiMagnet } from "../../modules/compaction/pi/magnet.ts";
 import { contextMagentaMagnet } from "../../modules/context/magenta/magnet.ts";
 import { hookMagentaMagnet } from "../../modules/hooks/magenta/magnet.ts";

@@ -18,12 +18,12 @@ export * from "./hcp-client/assembly/trunk-tools.ts";
 export * from "./hcp-client/hcp-client.ts";
 export * from "./hcp-client/overlay/package-overlay.ts";
 export * from "./hcp-client/registry/registry.ts";
-export * from "./hcp-contract/hcp-magnet.ts";
 // HCP layer (management + assembly, not the loop hot path):
-//   hcp-contract/  — the three-role contracts (HcpServer, HcpMagnet, ...)
-//   hcp-client/    — HcpClient router + assembly (sources/capability/factory), registry, overlay
-//   hcp-magnet/    — the HcpMagnet transport framework (native/process/python/...)
-export * from "./hcp-contract/hcp-server.ts";
+//   hcp-client/contract/  — the three-role contracts (HcpServer, HcpMagnet, ...)
+//   hcp-client/           — HcpClient router + assembly (sources/capability/factory), registry, overlay
+//   hcp-magnet/           — the HcpMagnet transport framework (native/process/python/...)
+export * from "./hcp-client/contract/hcp-magnet.ts";
+export * from "./hcp-client/contract/hcp-server.ts";
 export * from "./hcp-magnet/hcp-process.ts";
 export * from "./hcp-magnet/mcp.ts";
 export * from "./hcp-magnet/mcp-client.ts";

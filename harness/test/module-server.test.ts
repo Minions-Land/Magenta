@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { HcpMagnet } from "../hcp-contract/hcp-magnet.ts";
-import type { HcpRequest, HcpServer } from "../hcp-contract/hcp-server.ts";
+import type { HcpMagnet } from "../hcp-client/contract/hcp-magnet.ts";
+import type { HcpRequest, HcpServer } from "../hcp-client/contract/hcp-server.ts";
 import { ModuleHcpServer } from "../hcp-magnet/module-server.ts";
 
 /** Minimal fake magnet for testing ModuleHcpServer routing. */

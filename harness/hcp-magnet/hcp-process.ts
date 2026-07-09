@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import type { HarnessCatalogEntry, HarnessComponentCatalog } from "../catalog/pi/catalog.ts";
 import { parseToml, type TomlTable } from "../hcp-client/registry/registry.ts";
-import type { HcpRequest } from "../hcp-contract/hcp-server.ts";
+import type { HcpRequest } from "../hcp-client/contract/hcp-server.ts";
 import {
 	execProcess,
 	type ProcessExecOutput,

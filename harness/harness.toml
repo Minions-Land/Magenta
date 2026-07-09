@@ -141,12 +141,6 @@ description = "System prompt construction and templating for agent context."
 path = "modules/system-prompt/system-prompt.toml"
 
 [[components]]
-kind = "loop"
-name = "loop"
-description = "Agent harness - main loop orchestration."
-path = "core/loop/loop.toml"
-
-[[components]]
 kind = "session"
 name = "session"
 description = "Session management with jsonl and memory storage backends."

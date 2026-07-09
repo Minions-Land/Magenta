@@ -1,4 +1,4 @@
-import type { HcpServer } from "../../hcp-contract/hcp-server.ts";
+import type { HcpServer } from "../../hcp-client/contract/hcp-server.ts";
 
 export type SandboxNetworkPolicy = "deny" | "allowlist" | "allow" | string;
 
