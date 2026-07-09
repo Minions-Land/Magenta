@@ -136,6 +136,15 @@ export async function runMagentaUpdate(status: MagentaUpdateStatus): Promise<Mag
 			return { ok: false, reason: "git fast-forward failed" };
 		}
 
+		// packages/ is a git submodule (MagentaPackages). A fast-forward moves the
+		// gitlink but does not touch the submodule working tree, so sync it
+		// explicitly; otherwise the domain packages silently disappear after an
+		// update until the user runs `git submodule update` by hand.
+		const submodule = git(repoRoot, ["submodule", "update", "--init", "--recursive"]);
+		if (submodule.code !== 0) {
+			return { ok: false, reason: "git submodule update failed (packages not synced)" };
+		}
+
 		// Relinks local Pi workspaces and fetches third-party deps for the new
 		// commit. Does not fetch Pi from the registry (see file header).
 		const installReason = runInstall(repoRoot);

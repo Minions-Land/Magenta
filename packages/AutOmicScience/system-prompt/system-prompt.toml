@@ -1,5 +1,0 @@
-kind = "append-system-prompt"
-name = "system-prompt"
-description = "AutOmicScience domain system prompt."
-source = "AutOmicScience"
-content_path = "SYSTEM.md"
