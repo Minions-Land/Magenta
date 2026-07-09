@@ -1,5 +1,5 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import type { CapabilityFactoryContext, HcpServer } from "./hcp-server.ts";
+import type { HcpMagnetBuildContext, HcpServer } from "./HcpServerTypes.ts";
 
 /**
  * HCP magnet contracts — the HcpMagnet role's shapes (spec §2, §8).
@@ -19,7 +19,7 @@ import type { CapabilityFactoryContext, HcpServer } from "./hcp-server.ts";
  * The `instance` is the source-selected implementation object; the assembly
  * layer resolves *which* source to load, so the LLM never perceives the source.
  */
-export interface CapabilityBinding<T = unknown> {
+export interface HcpMagnetBinding<T = unknown> {
 	/** Capability kind, e.g. `"compaction"`, `"memory"`. */
 	kind: string;
 	/** Component name within the kind, e.g. `"compaction"`, `"session-grounding"`. */
@@ -31,18 +31,18 @@ export interface CapabilityBinding<T = unknown> {
 }
 
 /**
- * How a {@link HcpResource}'s content combines with other resources of the same
+ * How a {@link HcpMagnetResource}'s content combines with other resources of the same
  * slot. Mirrors the two semantics already present in code for system-prompt
  * (spec §5): `replace` overrides the base (last-writer-wins, as consumed via
  * `.at(-1)` in the pi resource-loader) and `append` layers on top.
  */
-export type ResourceMergeMode = "replace" | "append";
+export type HcpMagnetResourceMergeMode = "replace" | "append";
 
 /**
  * A resolved Resource binding produced by a magnet (spec §5, the primitive HCP
  * adds to the Tool/Capability pair). A Resource is context **data** injected
  * into the model's context and *referenced* rather than *called* — e.g. a
- * package's `SYSTEM.md` system-prompt content. Unlike a {@link CapabilityBinding}
+ * package's `SYSTEM.md` system-prompt content. Unlike a {@link HcpMagnetBinding}
  * (a live in-process code provider) a Resource carries inert content plus the
  * location it was loaded from, so the resource layer can inject or override it.
  *
@@ -50,7 +50,7 @@ export type ResourceMergeMode = "replace" | "append";
  * content-only `system-prompt` is a Resource, not a Capability, and must never
  * be routed through code-builder resolution.
  */
-export interface HcpResource {
+export interface HcpMagnetResource {
 	/** Resource kind, e.g. `"system-prompt"`, `"prompt-template"`. */
 	kind: string;
 	/** Component name within the kind. */
@@ -58,7 +58,7 @@ export interface HcpResource {
 	/** The selected source that supplied this content, e.g. `"pi"`, `"AutOmicScience"`. */
 	source: string;
 	/** How this resource combines with others in the same slot. */
-	mergeMode: ResourceMergeMode;
+	mergeMode: HcpMagnetResourceMergeMode;
 	/** Absolute path the content was (or will be) loaded from, when file-backed. */
 	contentPath?: string;
 	/** Inline content, when the resource carries data directly rather than a path. */
@@ -69,8 +69,8 @@ export interface HcpResource {
  * A HcpMagnet is a connector that adapts one kind of implementation (native TS
  * today; MCP / API / process later) into the shapes the harness assembly layer
  * consumes: a loop-ready {@link AgentTool} (LLM hot path), a non-tool
- * {@link CapabilityBinding} (in-process capability the loop/session injects),
- * a {@link HcpResource} (injected context data), and/or an {@link HcpServer}
+ * {@link HcpMagnetBinding} (in-process capability the loop/session injects),
+ * a {@link HcpMagnetResource} (injected context data), and/or an {@link HcpServer}
  * for management. Magnets run at assembly time only — they are how concrete
  * implementations get "attracted" into the harness regardless of source.
  *
@@ -85,9 +85,9 @@ export interface HcpMagnet {
 	/** Produce a loop-ready tool, if this magnet yields one. */
 	toTool?(): AgentTool;
 	/** Produce a source-selected non-tool capability binding, if this magnet yields one. */
-	toCapability?(): CapabilityBinding;
+	toCapability?(): HcpMagnetBinding;
 	/** Produce a source-selected injected-context resource, if this magnet yields one. */
-	toResource?(): HcpResource;
+	toResource?(): HcpMagnetResource;
 	/** Produce a management endpoint, if this magnet exposes one over HCP. */
 	toHcpServer?(): HcpServer;
 }
@@ -149,5 +149,5 @@ export interface CapabilitySourceMagnet<T = unknown> {
 	 */
 	hotSwappable?: boolean;
 	/** Build the source-selected, in-process implementation instance. */
-	build(context: CapabilityFactoryContext): T | Promise<T>;
+	build(context: HcpMagnetBuildContext): T | Promise<T>;
 }

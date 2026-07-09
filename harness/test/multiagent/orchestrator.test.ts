@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { WorkerSlot } from "../../modules/multiagent/contract.ts";
+import { multiagentMagentaMagnet } from "../../modules/multiagent/workflow/magenta/HcpMagnet.ts";
 import { MultiAgentOrchestrator } from "../../modules/multiagent/workflow/magenta/orchestrator.ts";
-import { multiagentMagentaMagnet } from "../../modules/multiagent/workflow/magenta/magnet.ts";
 import { buildSystemPrompt } from "../../modules/multiagent/workflow/magenta/worker.ts";
 
 /**

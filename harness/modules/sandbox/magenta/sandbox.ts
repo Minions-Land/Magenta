@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
+import type { HcpServerRequest, HcpServer, HcpServerDescription } from "../../../hcp-client/HcpServerTypes.ts";
 import { parseToml, type TomlTable } from "../../../hcp-client/registry/registry.ts";
-import type { HcpRequest, HcpServer, HcpServerDescription } from "../../../hcp-client/contract/hcp-server.ts";
 import type {
 	SandboxDiscoverResult,
 	SandboxProfile,
@@ -189,7 +189,7 @@ export class SandboxProvider implements SandboxProviderContract {
 					enforcement: "not-ported",
 				},
 			}),
-			call: (call: HcpRequest): unknown => {
+			call: (call: HcpServerRequest): unknown => {
 				const name = targetName(call.target);
 				switch (call.op || "describe") {
 					case "discover":
@@ -221,7 +221,7 @@ export class SandboxProvider implements SandboxProviderContract {
 					output: "{ profile, reason }",
 				},
 			}),
-			call: (call: HcpRequest): unknown => {
+			call: (call: HcpServerRequest): unknown => {
 				switch (call.op || "run") {
 					case "describe":
 						return this.toSandboxSelectHcpServer().describe();

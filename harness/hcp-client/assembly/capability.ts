@@ -1,22 +1,22 @@
-import type { HcpMagnet } from "../../hcp-client/contract/hcp-magnet.ts";
-import type { CapabilityFactoryContext } from "../../hcp-client/contract/hcp-server.ts";
-import { capabilityPrefix } from "../../hcp-client/contract/hcp-server.ts";
+import type { HcpMagnet } from "../../hcp-client/HcpMagnetTypes.ts";
+import type { HcpMagnetBuildContext } from "../../hcp-client/HcpServerTypes.ts";
+import { HcpClientcapabilityprefix } from "../../hcp-client/HcpServerTypes.ts";
 import { CapabilityMagnet } from "../../hcp-magnet/universal.ts";
+import { HcpClient } from "../HcpClient.ts";
 import { ModuleHcpServer } from "../server/module-server.ts";
-import { HcpClient } from "../hcp-client.ts";
 import { CAPABILITY_SOURCE_MAGNETS } from "./sources.ts";
 
-// CapabilityFactoryContext is defined in hcp-contract/hcp-server.ts (the shared
+// HcpMagnetBuildContext is defined in hcp-HcpServerTypes.ts (the shared
 // contract, because CapabilitySourceMagnet.build depends on it). Re-exported
 // here so existing `assembly/capability.ts` consumers keep working.
-export type { CapabilityFactoryContext };
+export type { HcpMagnetBuildContext };
 
 /**
  * Builds the source-selected, in-process implementation object for a capability.
  * The assembly layer picks one builder per capability by the component's
  * declared `source`; the builder returns the concrete implementation.
  */
-export type CapabilityBuilder<T = unknown> = (context: CapabilityFactoryContext) => T | Promise<T>;
+export type CapabilityBuilder<T = unknown> = (context: HcpMagnetBuildContext) => T | Promise<T>;
 
 /** A `${kind}:${source}` → builder selection table. */
 export type CapabilityBuilderTable = Record<string, CapabilityBuilder>;
@@ -189,7 +189,7 @@ export interface CreateCapabilityMagnetResult {
  * Resolve a non-tool component into a {@link CapabilityMagnet} by selecting the
  * factory for its declared `source`, building the implementation instance, and
  * wrapping it with the shared HCP management surface. The HCP target is
- * `${capabilityPrefix}:${kind}` (e.g. `capability:compaction`), so the
+ * `${HcpClientcapabilityprefix}:${kind}` (e.g. `capability:compaction`), so the
  * capability resolves by slot name via {@link HcpClient.resolveCapability}
  * without ever appearing on the LLM tool hot path.
  */
@@ -256,7 +256,7 @@ export async function createCapabilityMagnet(
 	// runtime:script-runtimes do not collide. The bare kind/name is deliberately
 	// NOT the address — that namespace is for management targets; capabilities
 	// live under the `capability:` prefix.
-	const target = `${capabilityPrefix}:${capabilitySlotName(component.kind, component.name)}`;
+	const target = `${HcpClientcapabilityprefix}:${capabilitySlotName(component.kind, component.name)}`;
 	const magnet = new CapabilityMagnet({
 		descriptor: {
 			target,

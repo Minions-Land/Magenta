@@ -10,7 +10,7 @@
  * This module holds the pure server-side contracts shared by all three HCP
  * roles (HcpClient resolves them, modules implement them, HcpMagnet produces
  * them). The HcpClient implementation lives in `hcp-client/hcp-client.ts`; the
- * HcpMagnet contracts live in `hcp-contract/hcp-magnet.ts`.
+ * HcpMagnet contracts live in `hcp-HcpMagnetTypes.ts`.
  */
 
 /**
@@ -19,14 +19,17 @@
  * `runtime:process` is reachable at `capability:runtime:process`. The
  * `HcpClient.resolveCapability` method builds this address from the slot name so
  * consumers never spell out the convention (or a source).
+ *
+ * Naming: HcpClientcapabilityprefix follows the entity tree rule — no
+ * HcpClientCapability entity exists, so 'capability' and 'prefix' stay lowercase.
  */
-export const capabilityPrefix = "capability";
+export const HcpClientcapabilityprefix = "capability";
 
 /**
  * Ambient context threaded through an HCP call (assembly-time concerns such as
  * the working directory or a correlation id). Intentionally open-ended.
  */
-export interface HcpContext {
+export interface HcpServerContext {
 	/** Working directory the call should be resolved against, if relevant. */
 	cwd?: string;
 	/** Optional correlation id for tracing an assembly operation. */
@@ -39,7 +42,7 @@ export interface HcpContext {
  * `"tool:read"` or `"native:tool/read"`); the `HcpClient` resolves it by
  * prefix to a registered {@link HcpServer}.
  */
-export interface HcpRequest {
+export interface HcpServerRequest {
 	/** URI-like target address. The portion before the first `:` is the prefix. */
 	target: string;
 	/** Operation to invoke on the target (for example `"describe"` or `"call"`). */
@@ -47,24 +50,24 @@ export interface HcpRequest {
 	/** Operation input payload. */
 	input?: unknown;
 	/** Ambient assembly context. */
-	context?: HcpContext;
+	context?: HcpServerContext;
 }
 
 /**
- * The result of handling an {@link HcpRequest}. Today HCP dispatch is in-process
+ * The result of handling an {@link HcpServerRequest}. Today HCP dispatch is in-process
  * with no serialization boundary (spec §1/§5), so a response is simply the
  * operation's return value. This alias names the request/response pair now so
  * the vocabulary is stable; when §3's protocol envelope lands, this becomes a
  * structured result type without renaming call sites.
  */
-export type HcpResponse<T = unknown> = T;
+export type HcpServerResponse<T = unknown> = T;
 
 /** A component endpoint reachable over HCP. */
 export interface HcpServer {
 	/** Stable, machine-readable description of this target. */
 	describe(): HcpServerDescription;
 	/** Handle a management call dispatched to this target. */
-	call(call: HcpRequest): Promise<unknown> | unknown;
+	call(call: HcpServerRequest): Promise<unknown> | unknown;
 	/**
 	 * Assembly-time typed handoff: the selected source's in-process implementation
 	 * for this capability slot. HCP is the resolver — a consumer asks for a
@@ -106,7 +109,7 @@ export interface HcpServerDescription {
  * (`CapabilitySourceMagnet.build`) depends on it; keeping it here avoids a
  * contract → assembly back-dependency.
  */
-export interface CapabilityFactoryContext {
+export interface HcpMagnetBuildContext {
 	repoRoot: string;
 	packagesRoot: string;
 	/** Component kind being built (e.g. "runtime"). */

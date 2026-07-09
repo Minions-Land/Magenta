@@ -5,7 +5,7 @@ import {
 	capabilityBindingKey,
 	createCapabilityMagnet,
 } from "../hcp-client/assembly/capability.ts";
-import { HcpClient } from "../hcp-client/hcp-client.ts";
+import { HcpClient } from "../hcp-client/HcpClient.ts";
 import { CapabilityMagnet } from "../hcp-magnet/universal.ts";
 
 const CONTEXT = { repoRoot: "/repo", packagesRoot: "/repo/packages" };

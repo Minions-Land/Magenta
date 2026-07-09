@@ -953,12 +953,7 @@ describe("ExtensionRunner", () => {
 			});
 
 			// Assert hook order: pre-tool → extension:tool_call, extension:tool_result → post-tool
-			expect(callOrder).toEqual([
-				"hook:pre-tool",
-				"extension:tool_call",
-				"extension:tool_result",
-				"hook:post-tool",
-			]);
+			expect(callOrder).toEqual(["hook:pre-tool", "extension:tool_call", "extension:tool_result", "hook:post-tool"]);
 
 			// Assert byte-identity: hook results don't modify extension outputs (Phase 4)
 			expect(toolCallResult).toBeUndefined();

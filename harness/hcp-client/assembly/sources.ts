@@ -1,14 +1,14 @@
-import type { CapabilitySourceMagnet } from "../../hcp-client/contract/hcp-magnet.ts";
-import { compactionPiMagnet } from "../../modules/compaction/pi/magnet.ts";
-import { contextMagentaMagnet } from "../../modules/context/magenta/magnet.ts";
-import { hookMagentaMagnet } from "../../modules/hooks/magenta/magnet.ts";
-import { memoryMagentaMagnet } from "../../modules/memory/magenta/magnet.ts";
-import { multiagentMagentaMagnet } from "../../modules/multiagent/workflow/magenta/magnet.ts";
-import { policyMagentaMagnet } from "../../modules/policy/magenta/magnet.ts";
-import { promptTemplatePiMagnet } from "../../modules/prompt-templates/pi/magnet.ts";
-import { runtimeMagentaMagnet } from "../../modules/runtime/magenta/magnet.ts";
-import { sandboxMagentaMagnet } from "../../modules/sandbox/magenta/magnet.ts";
-import { systemPromptPiMagnet } from "../../modules/system-prompt/pi/magnet.ts";
+import type { CapabilitySourceMagnet } from "../../hcp-client/HcpMagnetTypes.ts";
+import { compactionPiMagnet } from "../../modules/compaction/pi/HcpMagnet.ts";
+import { contextMagentaMagnet } from "../../modules/context/magenta/HcpMagnet.ts";
+import { hookMagentaMagnet } from "../../modules/hooks/magenta/HcpMagnet.ts";
+import { memoryMagentaMagnet } from "../../modules/memory/magenta/HcpMagnet.ts";
+import { multiagentMagentaMagnet } from "../../modules/multiagent/workflow/magenta/HcpMagnet.ts";
+import { policyMagentaMagnet } from "../../modules/policy/magenta/HcpMagnet.ts";
+import { promptTemplatePiMagnet } from "../../modules/prompt-templates/pi/HcpMagnet.ts";
+import { runtimeMagentaMagnet } from "../../modules/runtime/magenta/HcpMagnet.ts";
+import { sandboxMagentaMagnet } from "../../modules/sandbox/magenta/HcpMagnet.ts";
+import { systemPromptPiMagnet } from "../../modules/system-prompt/pi/HcpMagnet.ts";
 
 /**
  * The dumb aggregation barrel of capability source magnets (spec §8).

@@ -15,8 +15,8 @@ import {
 	assembleTrunkTools,
 	buildSessionHcp,
 	getHarnessSkillsDir,
-	type HcpClient,
 	type Skill as HarnessSkill,
+	type HcpClient,
 	loadPackageOverlay,
 	loadSystemPromptDescriptor,
 	type PackageAssemblyProgress,
@@ -956,9 +956,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 					includeBuiltInCapabilities: true,
 				});
 				this.sessionHcp = sessionAssembly.hcp;
-				this.packageDiagnostics.push(
-					...sessionAssembly.diagnostics.map(packageDiagnosticToResourceDiagnostic),
-				);
+				this.packageDiagnostics.push(...sessionAssembly.diagnostics.map(packageDiagnosticToResourceDiagnostic));
 			} catch (error) {
 				this.packageDiagnostics.push({
 					type: "error",
@@ -994,9 +992,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 				includeBuiltInCapabilities: true,
 			});
 			this.sessionHcp = sessionAssembly.hcp;
-			this.packageDiagnostics.push(
-				...sessionAssembly.diagnostics.map(packageDiagnosticToResourceDiagnostic),
-			);
+			this.packageDiagnostics.push(...sessionAssembly.diagnostics.map(packageDiagnosticToResourceDiagnostic));
 
 			return {
 				skillPaths: overlay.resources.skillPaths,

@@ -1,7 +1,7 @@
+import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { describe, expect, it } from "vitest";
 import { buildSessionHcp } from "../hcp-client/assembly/session-hcp.ts";
 import type { BashOperations } from "../modules/tools/bash/pi/bash.ts";
-import type { AgentTool } from "@earendil-works/pi-agent-core";
 
 const REPO_ROOT = "/test-repo";
 

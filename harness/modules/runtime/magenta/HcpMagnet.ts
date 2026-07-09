@@ -1,8 +1,8 @@
-import type { CapabilitySourceMagnet } from "../../../hcp-client/contract/hcp-magnet.ts";
+import type { CapabilitySourceMagnet } from "../../../hcp-client/HcpMagnetTypes.ts";
 import { createCapabilityServer } from "../../../hcp-client/server/capability-server.ts";
 import type { ProcessExecInput, ScriptRuntimeInput } from "../contract.ts";
 import { ProcessRuntimeProvider } from "./process-runtime.ts";
-import { ScriptRuntimeProvider, SCRIPT_RUNTIME_SPECS } from "./script-runtime.ts";
+import { SCRIPT_RUNTIME_SPECS, ScriptRuntimeProvider } from "./script-runtime.ts";
 
 /**
  * The magenta source's binding for the `runtime` capability family (spec §8).

@@ -1,9 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-	buildDefaultCapabilityHcp,
-	createCapabilityMagnet,
-	moduleForKind,
-} from "../hcp-client/assembly/capability.ts";
+import { buildDefaultCapabilityHcp, createCapabilityMagnet, moduleForKind } from "../hcp-client/assembly/capability.ts";
 import { CAPABILITY_SOURCE_MAGNETS } from "../hcp-client/assembly/sources.ts";
 
 /**

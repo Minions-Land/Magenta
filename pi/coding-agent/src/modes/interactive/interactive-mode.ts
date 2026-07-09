@@ -46,12 +46,7 @@ import {
 	visibleWidth,
 } from "@earendil-works/pi-tui";
 import type { HarnessPackage, PackageDiagnostic, PackageOverlay } from "@magenta/harness";
-import {
-	discoverHarnessPackages,
-	getHarnessRegistryPath,
-	loadRegistry,
-	parsePackageSelector,
-} from "@magenta/harness";
+import { discoverHarnessPackages, getHarnessRegistryPath, loadRegistry, parsePackageSelector } from "@magenta/harness";
 import chalk from "chalk";
 import { spawn, spawnSync } from "child_process";
 import {
@@ -5486,7 +5481,6 @@ export class InteractiveMode {
 			},
 		];
 	}
-
 
 	private async openHarnessMenu(): Promise<void> {
 		const root = await this.harnessMenuItems();

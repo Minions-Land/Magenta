@@ -34,6 +34,8 @@ import {
 	streamSimple,
 } from "@earendil-works/pi-ai/compat";
 import {
+	buildBuiltInToolMagnets,
+	buildToolsModule,
 	type CompactionProvider,
 	createSshToolOperations,
 	formatSkillInvocation,
@@ -43,8 +45,6 @@ import {
 	type SandboxProviderContract,
 	type SshTarget,
 	type SshToolOperations,
-	buildBuiltInToolMagnets,
-	buildToolsModule,
 } from "@magenta/harness";
 import { getPeerMessageDbPath } from "../config.ts";
 import { createBuiltInMessageRenderersExtension } from "../modes/interactive/builtin-message-renderers.ts";

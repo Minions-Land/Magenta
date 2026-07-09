@@ -1,4 +1,4 @@
-import type { CapabilitySourceMagnet } from "../../../hcp-client/contract/hcp-magnet.ts";
+import type { CapabilitySourceMagnet } from "../../../hcp-client/HcpMagnetTypes.ts";
 import { createCapabilityServer, targetName } from "../../../hcp-client/server/capability-server.ts";
 import { ContextProvider } from "./context.ts";
 

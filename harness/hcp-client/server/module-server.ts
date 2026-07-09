@@ -1,5 +1,5 @@
-import type { HcpMagnet } from "../contract/hcp-magnet.ts";
-import type { HcpRequest, HcpServer, HcpServerDescription } from "../contract/hcp-server.ts";
+import type { HcpMagnet } from "../HcpMagnetTypes.ts";
+import type { HcpServerRequest, HcpServer, HcpServerDescription } from "../HcpServerTypes.ts";
 
 /**
  * A ModuleHcpServer is the runtime embodiment of one harness module folder
@@ -97,7 +97,7 @@ export class ModuleHcpServer implements HcpServer {
 	 * magnet server. The slot is taken from `call.input.selector` when present,
 	 * otherwise the single-slot default applies.
 	 */
-	call(call: HcpRequest): Promise<unknown> | unknown {
+	call(call: HcpServerRequest): Promise<unknown> | unknown {
 		if (call.op === "describe" && !this.hasSelectorInput(call)) {
 			return this.describe();
 		}
@@ -116,11 +116,11 @@ export class ModuleHcpServer implements HcpServer {
 		return server.call(call);
 	}
 
-	private hasSelectorInput(call: HcpRequest): boolean {
+	private hasSelectorInput(call: HcpServerRequest): boolean {
 		return this.selectorFromCall(call) !== undefined;
 	}
 
-	private selectorFromCall(call: HcpRequest): string | undefined {
+	private selectorFromCall(call: HcpServerRequest): string | undefined {
 		const input = call.input;
 		if (input && typeof input === "object" && !Array.isArray(input)) {
 			const sel = (input as Record<string, unknown>).selector;
@@ -135,7 +135,9 @@ export class ModuleHcpServer implements HcpServer {
 	 */
 	describe(): HcpServerDescription {
 		const firstSelector = this.slots.keys().next().value as string | undefined;
-		const componentKind = firstSelector ? (this.magnetServer(firstSelector)?.describe().kind ?? "unknown") : "unknown";
+		const componentKind = firstSelector
+			? (this.magnetServer(firstSelector)?.describe().kind ?? "unknown")
+			: "unknown";
 		return {
 			target: `module:${this.moduleName}`,
 			kind: "module",

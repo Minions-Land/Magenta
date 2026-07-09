@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { HcpClient } from "../hcp-client/hcp-client.ts";
+import { HcpClient } from "../hcp-client/HcpClient.ts";
 import { getHarnessRegistryPath, loadRegistry } from "../hcp-client/registry/registry.ts";
 import { HookProvider } from "../modules/hooks/magenta/hooks.ts";
-import { hookMagentaMagnet } from "../modules/hooks/magenta/magnet.ts";
+import { hookMagentaMagnet } from "../modules/hooks/magenta/HcpMagnet.ts";
 
 describe("hook provider", () => {
 	it("discovers and describes migrated lifecycle hooks", async () => {

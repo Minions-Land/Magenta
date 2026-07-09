@@ -2,7 +2,7 @@ import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { HcpClient } from "../hcp-client/hcp-client.ts";
+import { HcpClient } from "../hcp-client/HcpClient.ts";
 import { createCapabilityServer } from "../hcp-client/server/capability-server.ts";
 import { SessionGroundingMemoryProvider } from "../modules/memory/magenta/session-grounding.ts";
 

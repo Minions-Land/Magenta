@@ -1,26 +1,31 @@
-import { buildDefaultCapabilityHcp } from "./capability.ts";
-import { HcpClient } from "../hcp-client.ts";
-import {
-	assemblePackageToolMagnets,
-	getHarnessPackagesRoot,
-	type PackageDiagnostic,
-	type PackageOverlay,
-} from "../overlay/package-overlay.ts";
-import type { HcpMagnet } from "../../hcp-client/contract/hcp-magnet.ts";
+import type { HcpMagnet } from "../../hcp-client/HcpMagnetTypes.ts";
 import { NativeToolMagnet } from "../../hcp-magnet/native.ts";
-import { ModuleHcpServer } from "../server/module-server.ts";
 import {
 	BASH_TOOL_DESCRIPTION,
 	type BashExecuteOptions,
 	bashSchema,
 	createBashExecute,
 } from "../../modules/tools/bash/pi/bash.ts";
-import { createReadExecute, type ReadToolOptions, readSchema } from "../../modules/tools/read/pi/read.ts";
 import { createEditExecute, type EditToolOptions, editSchema } from "../../modules/tools/edit/pi/edit.ts";
-import { createWriteExecute, type WriteToolOptions, writeSchema } from "../../modules/tools/write/pi/write.ts";
-import { createGrepExecute, GREP_DESCRIPTION, type GrepToolOptions, grepSchema } from "../../modules/tools/grep/pi/grep.ts";
 import { createFindExecute, type FindToolOptions, findSchema } from "../../modules/tools/find/pi/find.ts";
+import {
+	createGrepExecute,
+	GREP_DESCRIPTION,
+	type GrepToolOptions,
+	grepSchema,
+} from "../../modules/tools/grep/pi/grep.ts";
 import { createLsExecute, type LsToolOptions, lsSchema } from "../../modules/tools/ls/pi/ls.ts";
+import { createReadExecute, type ReadToolOptions, readSchema } from "../../modules/tools/read/pi/read.ts";
+import { createWriteExecute, type WriteToolOptions, writeSchema } from "../../modules/tools/write/pi/write.ts";
+import { HcpClient } from "../HcpClient.ts";
+import {
+	assemblePackageToolMagnets,
+	getHarnessPackagesRoot,
+	type PackageDiagnostic,
+	type PackageOverlay,
+} from "../overlay/package-overlay.ts";
+import { ModuleHcpServer } from "../server/module-server.ts";
+import { buildDefaultCapabilityHcp } from "./capability.ts";
 
 /**
  * Per-tool option passthrough for built-in tool magnets. pi supplies the

@@ -1,4 +1,4 @@
-import type { CapabilitySourceMagnet } from "../../../hcp-client/contract/hcp-magnet.ts";
+import type { CapabilitySourceMagnet } from "../../../hcp-client/HcpMagnetTypes.ts";
 import { createCapabilityServer } from "../../../hcp-client/server/capability-server.ts";
 import { APPROVAL_POLICY_TARGET, SHELL_POLICY_TARGET } from "../contract.ts";
 import { PolicyProvider } from "./policy.ts";

@@ -2,10 +2,10 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { HcpClient } from "../hcp-client/hcp-client.ts";
+import { HcpClient } from "../hcp-client/HcpClient.ts";
 import { getHarnessRegistryPath, loadRegistry } from "../hcp-client/registry/registry.ts";
+import { runtimeMagentaMagnet } from "../modules/runtime/magenta/HcpMagnet.ts";
 import { ScriptRuntimeProvider } from "../modules/runtime/magenta/script-runtime.ts";
-import { runtimeMagentaMagnet } from "../modules/runtime/magenta/magnet.ts";
 import { loadSandboxProviderFromPack } from "../modules/sandbox/magenta/sandbox.ts";
 
 describe("script runtime provider", () => {

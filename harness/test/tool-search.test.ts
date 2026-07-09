@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { HcpMagnet } from "../hcp-client/contract/hcp-magnet.ts";
+import type { HcpMagnet } from "../hcp-client/HcpMagnetTypes.ts";
 import { createReadMagnet } from "../hcp-magnet/native.ts";
 import {
 	buildToolSearchManifest,
@@ -163,4 +163,3 @@ describe("Tool Search — meta-tool shape", () => {
 // run against the real agent loop in `pi/agent`. The harness-level unit tests
 // above still pin the pieces the harness owns: manifest extraction, ranking,
 // and the `onActivate` activation contract.
-

@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import type { CapabilityBinding, HcpMagnet } from "../../hcp-client/contract/hcp-magnet.ts";
+import type { HcpMagnetBinding, HcpMagnet } from "../../hcp-client/HcpMagnetTypes.ts";
 import {
 	createPackageToolMagnet as createPackageToolMagnetFromDescriptor,
 	type PackageToolMagnetDiagnosticCode,
@@ -13,7 +13,7 @@ import {
 	createCapabilityMagnet,
 } from "../assembly/capability.ts";
 import { registerMagnetHcpServers } from "../assembly/register-servers.ts";
-import { HcpClient } from "../hcp-client.ts";
+import { HcpClient } from "../HcpClient.ts";
 import { parseToml, type TomlTable, type TomlValue } from "../registry/registry.ts";
 
 export const PACKAGE_MANIFEST_FILE = "package.toml";
@@ -162,7 +162,7 @@ export interface PackageToolAssembly {
 	 * importing an impl, so the assembly layer — not an import path — decides
 	 * which source is used.
 	 */
-	capabilities: Map<string, CapabilityBinding>;
+	capabilities: Map<string, HcpMagnetBinding>;
 	/**
 	 * The one HCP registry every magnet's management + resolution surface was
 	 * registered into. `tools` and `capabilities` above are DERIVED from it (each
@@ -392,7 +392,7 @@ export async function loadPackageOverlay(options: LoadPackageOverlayOptions): Pr
 
 /**
  * Non-tool component kinds that the assembly layer resolves into
- * {@link CapabilityBinding}s via a {@link CapabilityMagnet}. Empty until a
+ * {@link HcpMagnetBinding}s via a {@link CapabilityMagnet}. Empty until a
  * module is migrated off static-import consumption onto assembly injection;
  * each migration adds its kind here. While empty, {@link assemblePackageToolMagnets}
  * behaves exactly as the tool-only assembly did.
@@ -469,7 +469,7 @@ export async function assemblePackageToolMagnets(
 	const registration = registerMagnetHcpServers(hcp, magnets);
 
 	const tools: AgentTool[] = [];
-	const capabilities = new Map<string, CapabilityBinding>();
+	const capabilities = new Map<string, HcpMagnetBinding>();
 	for (const entry of registration.registrations) {
 		const instance = hcp.resolveInstance(entry.target);
 		if (instance === undefined) continue;

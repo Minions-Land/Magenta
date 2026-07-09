@@ -1,6 +1,11 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import type { CapabilityBinding, HcpMagnet, HcpResource, ResourceMergeMode } from "../hcp-client/contract/hcp-magnet.ts";
-import type { HcpRequest, HcpServer, HcpServerDescription } from "../hcp-client/contract/hcp-server.ts";
+import type {
+	HcpMagnetBinding,
+	HcpMagnet,
+	HcpMagnetResource,
+	HcpMagnetResourceMergeMode,
+} from "../hcp-client/HcpMagnetTypes.ts";
+import type { HcpServerRequest, HcpServer, HcpServerDescription } from "../hcp-client/HcpServerTypes.ts";
 
 export interface UniversalMagnetState {
 	enabled: boolean;
@@ -93,7 +98,7 @@ export abstract class UniversalMagnet implements HcpMagnet {
 	toHcpServer(): HcpServer {
 		const base: HcpServer = {
 			describe: () => this.describe(),
-			call: async (call: HcpRequest): Promise<unknown> => {
+			call: async (call: HcpServerRequest): Promise<unknown> => {
 				switch (call.op) {
 					case "describe":
 						return this.describe();
@@ -143,7 +148,7 @@ export abstract class UniversalMagnet implements HcpMagnet {
 		}
 	}
 
-	protected handleHcpRequest(call: HcpRequest): Promise<unknown> | unknown {
+	protected handleHcpRequest(call: HcpServerRequest): Promise<unknown> | unknown {
 		throw new Error(`${this.descriptor.name}: unsupported op "${call.op}"`);
 	}
 
@@ -160,7 +165,7 @@ export interface CapabilityMagnetOptions<T> extends UniversalMagnetOptions {
 /**
  * A {@link UniversalMagnet} for non-tool capabilities (compaction, memory,
  * context, ...). It carries a source-selected, in-process implementation and
- * exposes it as a {@link CapabilityBinding} for consumers to inject — instead
+ * exposes it as a {@link HcpMagnetBinding} for consumers to inject — instead
  * of an {@link AgentTool}. The full HCP management surface (describe/configure/
  * enable/disable/health/state) is inherited unchanged, so `describe()` sees the
  * capability under its own kind (`compaction://compaction`) and the LLM tool
@@ -179,7 +184,7 @@ export class CapabilityMagnet<T = unknown> extends UniversalMagnet {
 		this.instance = options.instance;
 	}
 
-	toCapability(): CapabilityBinding<T> {
+	toCapability(): HcpMagnetBinding<T> {
 		this.assertEnabled();
 		return {
 			kind: this.descriptor.kind,
@@ -220,7 +225,7 @@ export interface ResourceMagnetOptions extends UniversalMagnetOptions {
 	/** Selected source that supplied the content, e.g. `"pi"`, `"AutOmicScience"`. */
 	source: string;
 	/** How this resource combines with others in the same slot. Defaults to `replace`. */
-	mergeMode?: ResourceMergeMode;
+	mergeMode?: HcpMagnetResourceMergeMode;
 	/** Absolute path the content was loaded from, when file-backed. */
 	contentPath?: string;
 	/** Inline content, when the resource carries data directly rather than a path. */
@@ -231,7 +236,7 @@ export interface ResourceMagnetOptions extends UniversalMagnetOptions {
  * A {@link UniversalMagnet} for the Resource primitive (spec §5): injected
  * context **data** such as a package's `SYSTEM.md` system-prompt content. It
  * carries inert, source-selected content (path or inline) and exposes it as a
- * {@link HcpResource} for the resource layer to inject or override — it is NOT
+ * {@link HcpMagnetResource} for the resource layer to inject or override — it is NOT
  * a code provider and never lands on the LLM tool hot path.
  *
  * Invariant (magnet one-of): this class deliberately implements neither
@@ -241,7 +246,7 @@ export interface ResourceMagnetOptions extends UniversalMagnetOptions {
  */
 export class ResourceMagnet extends UniversalMagnet {
 	private readonly source: string;
-	private readonly mergeMode: ResourceMergeMode;
+	private readonly mergeMode: HcpMagnetResourceMergeMode;
 	private readonly contentPath?: string;
 	private readonly content?: string;
 
@@ -253,7 +258,7 @@ export class ResourceMagnet extends UniversalMagnet {
 		this.content = options.content;
 	}
 
-	toResource(): HcpResource {
+	toResource(): HcpMagnetResource {
 		this.assertEnabled();
 		return {
 			kind: this.descriptor.kind,

@@ -24,6 +24,7 @@ const allowedTopLevel = new Set([
 	"tsconfig.build.json",
 	"tsconfig.json",
 	"vitest.config.ts",
+	".eslintrc.json",
 ]);
 
 const ignoredOutputDirs = new Set(["dist", "node_modules"]);
@@ -378,6 +379,39 @@ function checkGeneratedNoise() {
 	}
 }
 
+function checkHcpNaming() {
+	// Check that capability sources registered in sources.ts have HcpMagnet.ts
+	const sourcesPath = join(harnessRoot, "hcp-client", "assembly", "sources.ts");
+	if (!existsSync(sourcesPath)) return;
+
+	const sourcesText = readFileSync(sourcesPath, "utf-8");
+	const importMatches = sourcesText.matchAll(/from "\.\.\/\.\.\/modules\/([^/]+)\/([^/]+)\/HcpMagnet\.ts"/g);
+
+	for (const match of importMatches) {
+		const [, moduleName, sourceName] = match;
+		const magnetPath = join(harnessRoot, "modules", moduleName, sourceName, "HcpMagnet.ts");
+		if (!existsSync(magnetPath)) {
+			fail(
+				`module ${moduleName} source ${sourceName} registered in sources.ts but missing HcpMagnet.ts ` +
+				`(expected at ${pathLabel(magnetPath)})`
+			);
+		}
+	}
+
+	// Check hcp-client files follow naming convention
+	const hcpClientFiles = [
+		join(harnessRoot, "hcp-client", "HcpClient.ts"),
+		join(harnessRoot, "hcp-client", "HcpServerTypes.ts"),
+		join(harnessRoot, "hcp-client", "HcpMagnetTypes.ts"),
+	];
+
+	for (const filePath of hcpClientFiles) {
+		if (!existsSync(filePath)) {
+			fail(`expected HCP core file missing: ${pathLabel(filePath)}`);
+		}
+	}
+}
+
 checkTopLevel();
 checkReadmes();
 checkRegistry();
@@ -385,6 +419,7 @@ checkRepoPackages();
 checkSupportLayout();
 checkToolLayout();
 checkCapabilitySourceMagnets();
+checkHcpNaming();
 checkGeneratedNoise();
 
 for (const message of notes) console.log(`note: ${message}`);

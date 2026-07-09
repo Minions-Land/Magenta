@@ -1,7 +1,7 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { TSchema } from "typebox";
-import type { HcpMagnet } from "../hcp-client/contract/hcp-magnet.ts";
-import type { HcpRequest, HcpServer, HcpServerDescription } from "../hcp-client/contract/hcp-server.ts";
+import type { HcpMagnet } from "../hcp-client/HcpMagnetTypes.ts";
+import type { HcpServerRequest, HcpServer, HcpServerDescription } from "../hcp-client/HcpServerTypes.ts";
 import { createReadExecute, type ReadToolOptions, readSchema } from "../modules/tools/index.ts";
 import type { UniversalMagnetState } from "./universal.ts";
 
@@ -90,7 +90,7 @@ export class NativeToolMagnet<TParameters extends TSchema = TSchema, TDetails = 
 					},
 				};
 			},
-			call(call: HcpRequest): unknown {
+			call(call: HcpServerRequest): unknown {
 				switch (call.op) {
 					case "describe":
 						return this.describe();

@@ -47,6 +47,30 @@ directly, off the HCP path.
 
 ## Rules (the short list)
 
+### HCP Naming Quick Reference
+
+**All HCP-related names follow the entity-tree iron law** (complete rules: `docs/governance/hcp-naming.md`):
+
+1. **Naming hierarchy = entity tree.** Every capital letter starts a new level and must have a real parent entity in code.
+2. **Level 2 is always a role:** `Client` / `Server` / `Magnet` (the only three). No fourth role.
+3. **Everything Hcp-related has the `Hcp` prefix.** No exceptions.
+
+**Quick checks when naming**:
+- Protocol data (requests/responses) → hang under `Server`: `HcpServerRequest`, `HcpServerResponse`
+- Magnet artifacts (resources/bindings) → hang under `Magnet`: `HcpMagnetResource`, `HcpMagnetBinding`
+- Each capital = must have parent entity. Writing `HcpServerRequestValidator`? Then `HcpServerRequest` must exist as an entity.
+- If intermediate entity doesn't exist, keep modifiers lowercase: `HcpClientcapabilityprefix` (no `Capability` entity).
+
+**Examples**:
+- ✅ `HcpMagnetProcess` — Magnet (role) + Process (identity)
+- ✅ `HcpServerRequest` — Server (role) + Request (protocol data entity)
+- ❌ `HcpProcessMagnet` — wrong order (level 3 before level 2)
+- ❌ `HcpRequest` — missing role at level 2
+
+See `docs/governance/hcp-naming.md` for complete specification.
+
+### General Rules
+
 1. **Source = origin agent, not tech.** Directories are `pi/`, `magenta/`,
    `codex/`, `claude-code/`. Put Rust/Python/process/MCP details *inside* the
    owning source.

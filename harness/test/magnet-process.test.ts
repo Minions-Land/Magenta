@@ -3,8 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { registerMagnetHcpServers } from "../hcp-client/assembly/register-servers.ts";
-import { HcpClient } from "../hcp-client/hcp-client.ts";
-import { HcpProcessMagnet } from "../hcp-magnet/hcp-process.ts";
+import { HcpClient } from "../hcp-client/HcpClient.ts";
+import { HcpMagnetProcess } from "../hcp-magnet/hcp-process.ts";
 import { ProcessToolMagnet, processToolManifestFromToml } from "../hcp-magnet/process.ts";
 
 async function writeExecutableScript(dir: string, name: string, source: string): Promise<string> {
@@ -149,7 +149,7 @@ process.stdin.on("end", () => {
 				args: ["--version"],
 			},
 		});
-		const second = new HcpProcessMagnet({
+		const second = new HcpMagnetProcess({
 			cwd: dir,
 			manifest: {
 				kind: "hcp-process",
@@ -197,7 +197,7 @@ rl.on("line", line => {
 });
 `,
 		);
-		const magnet = new HcpProcessMagnet({
+		const magnet = new HcpMagnetProcess({
 			cwd: dir,
 			manifest: {
 				kind: "hcp-process",
@@ -247,7 +247,7 @@ rl.on("line", line => {
 });
 `,
 		);
-		const magnet = new HcpProcessMagnet({
+		const magnet = new HcpMagnetProcess({
 			cwd: dir,
 			env: {
 				MAGENTA_HCP_ALLOWED: "yes",
@@ -283,5 +283,4 @@ rl.on("line", line => {
 			blocked: null,
 		});
 	});
-
 });

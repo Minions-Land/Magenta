@@ -8,6 +8,8 @@
 		"build": "shx rm -rf dist && tsc -p tsconfig.build.json && node scripts/copy-assets.mjs",
 		"check:structure": "node scripts/check-structure.mjs",
 		"check:assumptions": "node scripts/audit-assumptions.mjs --check",
+		"lint": "eslint . --ext .ts",
+		"lint:fix": "eslint . --ext .ts --fix",
 		"inspect": "node scripts/inspect.mjs",
 		"test": "vitest --run"
 	},
@@ -19,8 +21,12 @@
 		"node-pty": "1.0.0"
 	},
 	"devDependencies": {
-		"shx": "0.4.0",
 		"@types/node": "24.12.4",
+		"@typescript-eslint/eslint-plugin": "8.63.0",
+		"@typescript-eslint/parser": "8.63.0",
+		"eslint": "10.6.0",
+		"eslint-plugin-unicorn": "71.1.0",
+		"shx": "0.4.0",
 		"typescript": "5.9.3",
 		"vitest": "4.1.9"
 	},

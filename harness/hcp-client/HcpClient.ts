@@ -1,9 +1,9 @@
 import {
-	capabilityPrefix,
-	type HcpRequest,
+	HcpClientcapabilityprefix,
 	type HcpServer,
 	type HcpServerDescription,
-} from "../hcp-client/contract/hcp-server.ts";
+	type HcpServerRequest,
+} from "../hcp-client/HcpServerTypes.ts";
 import type { ModuleHcpServer } from "./server/module-server.ts";
 
 /**
@@ -128,7 +128,7 @@ export class HcpClient {
 	 * inspect-only.
 	 */
 	resolveCapability<T>(name: string): T | undefined {
-		return this.resolveInstance<T>(`${capabilityPrefix}:${name}`) ?? this.resolveInstance<T>(name);
+		return this.resolveInstance<T>(`${HcpClientcapabilityprefix}:${name}`) ?? this.resolveInstance<T>(name);
 	}
 
 	/** Resolve a module server by its folder name (Model B direct access). */
@@ -194,7 +194,7 @@ export class HcpClient {
 	 * Dispatch a management call to its resolved target. The `hcp:registry` target
 	 * is introspection; every other target resolves to a module/leaf/prefix server.
 	 */
-	async dispatch(call: HcpRequest): Promise<unknown> {
+	async dispatch(call: HcpServerRequest): Promise<unknown> {
 		if (call.target === "hcp:registry") {
 			switch (call.op) {
 				case "list":

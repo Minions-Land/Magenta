@@ -1,11 +1,11 @@
-import type { HcpRequest, HcpServer, HcpServerDescription } from "../contract/hcp-server.ts";
+import type { HcpServerRequest, HcpServer, HcpServerDescription } from "../HcpServerTypes.ts";
 
 /**
  * A capability operation handler that processes an HCP request using a provider instance.
  */
 export type CapabilityOperationHandler<TProvider = any> = (
 	provider: TProvider,
-	request: HcpRequest,
+	request: HcpServerRequest,
 ) => unknown | Promise<unknown>;
 
 /**
@@ -55,9 +55,7 @@ export interface CapabilityServerOptions<TProvider = any> {
  * });
  * ```
  */
-export function createCapabilityServer<TProvider = any>(
-	options: CapabilityServerOptions<TProvider>,
-): HcpServer {
+export function createCapabilityServer<TProvider = any>(options: CapabilityServerOptions<TProvider>): HcpServer {
 	const { kind, target, description, provider, operations, metadata } = options;
 
 	const describe: () => HcpServerDescription = options.describe
@@ -68,11 +66,11 @@ export function createCapabilityServer<TProvider = any>(
 				ops: Object.keys(operations),
 				description,
 				metadata,
-		  });
+			});
 
 	return {
 		describe,
-		call: async (request: HcpRequest): Promise<unknown> => {
+		call: async (request: HcpServerRequest): Promise<unknown> => {
 			const op = request.op || "default";
 			const handler = operations[op];
 			if (!handler) {

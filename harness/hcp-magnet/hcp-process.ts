@@ -1,8 +1,8 @@
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
+import type { HcpServerRequest } from "../hcp-client/HcpServerTypes.ts";
 import { parseToml, type TomlTable } from "../hcp-client/registry/registry.ts";
-import type { HcpRequest } from "../hcp-client/contract/hcp-server.ts";
 import {
 	execProcess,
 	type ProcessExecOutput,
@@ -11,7 +11,7 @@ import {
 import type { SandboxProfile } from "../modules/sandbox/contract.ts";
 import { UniversalMagnet } from "./universal.ts";
 
-export interface HcpProcessManifest {
+export interface HcpMagnetProcessManifest {
 	kind: "hcp-process" | string;
 	name: string;
 	description: string;
@@ -24,7 +24,7 @@ export interface HcpProcessManifest {
 	capabilities?: string[];
 }
 
-export interface HcpJsonlRequest {
+export interface HcpMagnetJsonlRequest {
 	id: string;
 	method: "discover" | "describe" | "call" | "open" | "close" | "cancel" | "subscribe" | "resume";
 	target?: string;
@@ -33,15 +33,15 @@ export interface HcpJsonlRequest {
 	context?: Record<string, unknown>;
 }
 
-export interface HcpJsonlResponse {
+export interface HcpMagnetJsonlResponse {
 	id: string;
 	ok: boolean;
 	result?: unknown;
 	error?: unknown;
 }
 
-export interface HcpProcessMagnetOptions {
-	manifest: HcpProcessManifest;
+export interface HcpMagnetProcessOptions {
+	manifest: HcpMagnetProcessManifest;
 	cwd: string;
 	env?: NodeJS.ProcessEnv;
 	maxOutputBytes?: number;
@@ -60,7 +60,7 @@ function asStringArray(value: unknown): string[] {
 	return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
 
-export function hcpProcessManifestFromToml(table: TomlTable): HcpProcessManifest {
+export function hcpProcessManifestFromToml(table: TomlTable): HcpMagnetProcessManifest {
 	const name = asString(table.name);
 	const description = asString(table.description);
 	const command = asString(table.command);
@@ -81,7 +81,7 @@ export function hcpProcessManifestFromToml(table: TomlTable): HcpProcessManifest
 	};
 }
 
-export async function loadHcpProcessManifest(path: string): Promise<HcpProcessManifest> {
+export async function loadHcpProcessManifest(path: string): Promise<HcpMagnetProcessManifest> {
 	return hcpProcessManifestFromToml(parseToml(await readFile(path, "utf-8")));
 }
 
@@ -89,7 +89,7 @@ function requestId(): string {
 	return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 }
 
-function methodForOp(op: string): HcpJsonlRequest["method"] {
+function methodForOp(op: string): HcpMagnetJsonlRequest["method"] {
 	switch (op) {
 		case "discover":
 			return "discover";
@@ -121,7 +121,7 @@ function resolveProcessCwd(workspaceRoot: string, cwd: string | undefined): stri
 	return isAbsolute(cwd) ? cwd : resolve(workspaceRoot, cwd);
 }
 
-function envAllowlist(manifest: HcpProcessManifest): string[] {
+function envAllowlist(manifest: HcpMagnetProcessManifest): string[] {
 	return manifest.env_allowlist?.length ? manifest.env_allowlist : defaultEnvAllowlist();
 }
 
@@ -140,7 +140,7 @@ function envOverrides(
 	return Object.keys(result).length > 0 ? result : undefined;
 }
 
-function runtimeSandboxProfile(manifest: HcpProcessManifest): SandboxProfile {
+function runtimeSandboxProfile(manifest: HcpMagnetProcessManifest): SandboxProfile {
 	const allowlist = envAllowlist(manifest);
 	return {
 		kind: "sandbox",
@@ -157,7 +157,7 @@ function runtimeSandboxProfile(manifest: HcpProcessManifest): SandboxProfile {
 	};
 }
 
-function runtimeToolMetadata(manifest: HcpProcessManifest): ProcessRuntimeToolMetadata {
+function runtimeToolMetadata(manifest: HcpMagnetProcessManifest): ProcessRuntimeToolMetadata {
 	return {
 		name: manifest.name,
 		operation: "execute",
@@ -168,8 +168,8 @@ function runtimeToolMetadata(manifest: HcpProcessManifest): ProcessRuntimeToolMe
 }
 
 function parseJsonlResponse(
-	manifest: HcpProcessManifest,
-	request: HcpJsonlRequest,
+	manifest: HcpMagnetProcessManifest,
+	request: HcpMagnetJsonlRequest,
 	output: ProcessExecOutput,
 ): unknown {
 	if (output.status !== 0 && output.status !== null) {
@@ -179,9 +179,9 @@ function parseJsonlResponse(
 	if (!line) {
 		throw new Error(`HCP process ${manifest.name} exited without a response\n${output.stderr}`);
 	}
-	let response: HcpJsonlResponse;
+	let response: HcpMagnetJsonlResponse;
 	try {
-		response = JSON.parse(line) as HcpJsonlResponse;
+		response = JSON.parse(line) as HcpMagnetJsonlResponse;
 	} catch (error) {
 		throw new Error(`HCP process ${manifest.name} returned invalid JSONL: ${errorMessage(error)}`);
 	}
@@ -202,8 +202,8 @@ function parseJsonlResponse(
  * launch is still routed through runtime://process so external Harness modules
  * share cwd, env allowlist, timeout, and direct-exec guardrails.
  */
-export class HcpProcessMagnet extends UniversalMagnet {
-	private readonly manifest: HcpProcessManifest;
+export class HcpMagnetProcess extends UniversalMagnet {
+	private readonly manifest: HcpMagnetProcessManifest;
 	private readonly workspaceRoot: string;
 	private readonly cwd: string;
 	private readonly env?: NodeJS.ProcessEnv;
@@ -213,7 +213,7 @@ export class HcpProcessMagnet extends UniversalMagnet {
 		signal?: AbortSignal,
 	) => Promise<ProcessExecOutput>;
 
-	constructor(options: HcpProcessMagnetOptions) {
+	constructor(options: HcpMagnetProcessOptions) {
 		super({
 			descriptor: {
 				target: `hcp-process://${options.manifest.name}`,
@@ -251,11 +251,11 @@ export class HcpProcessMagnet extends UniversalMagnet {
 		};
 	}
 
-	protected override async handleHcpRequest(call: HcpRequest): Promise<unknown> {
+	protected override async handleHcpRequest(call: HcpServerRequest): Promise<unknown> {
 		switch (call.op) {
 			case "proxy":
 				return this.send(
-					(call.input as { request?: HcpJsonlRequest } | undefined)?.request ?? {
+					(call.input as { request?: HcpMagnetJsonlRequest } | undefined)?.request ?? {
 						id: requestId(),
 						method: "discover",
 						input: {},
@@ -283,7 +283,7 @@ export class HcpProcessMagnet extends UniversalMagnet {
 		}
 	}
 
-	async send(request: HcpJsonlRequest): Promise<unknown> {
+	async send(request: HcpMagnetJsonlRequest): Promise<unknown> {
 		this.assertEnabled();
 		const allowlist = envAllowlist(this.manifest);
 		const output = await this.runtimeExec({
