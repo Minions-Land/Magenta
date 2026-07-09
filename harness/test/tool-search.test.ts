@@ -5,7 +5,7 @@ import {
 	buildToolSearchManifest,
 	createToolSearchTool,
 	type ToolSearchEntry,
-} from "../modules/tools-search/tool-search.ts";
+} from "../modules/tools/tool-search/tool-search.ts";
 
 /**
  * Tool Search (spec §6) — MCP-style deferral of tool schemas. These tests pin
