@@ -1,6 +1,5 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
-import type { HcpRequest, HcpServer, HcpServerDescription } from "../../../hcp-client/contract/hcp-server.ts";
 import type {
 	MemoryProvider,
 	MemoryReadResult,
@@ -201,45 +200,6 @@ export class SessionGroundingMemoryProvider implements MemoryProvider {
 							.map((match, index) => (isRecord(match) ? `${index + 1}. ${String(match.text ?? "")}` : undefined))
 							.filter(Boolean)
 							.join("\n"),
-		};
-	}
-
-	async call(call: HcpRequest): Promise<unknown> {
-		switch (call.op) {
-			case "discover":
-			case "list":
-				return this.discover();
-			case "describe":
-				return this.describe();
-			case "read":
-			case "get":
-			case "inject":
-				return this.read();
-			case "retain":
-				return this.retain(call.input);
-			case "recall":
-				return this.recall(call.input);
-			case "reflect":
-				return this.reflect(call.input);
-			default:
-				throw new Error(`memory://session-grounding unsupported op "${call.op}"`);
-		}
-	}
-
-	toHcpServer(): HcpServer {
-		return {
-			describe: (): HcpServerDescription => ({
-				target: "memory://session-grounding",
-				kind: "memory",
-				ops: ["read", "retain", "recall", "reflect", "describe"],
-				description: this.description,
-				metadata: {
-					source: "magenta1-general-harness",
-					origin: "magenta",
-					storePath: this.storePath,
-				},
-			}),
-			call: (call) => this.call(call),
 		};
 	}
 

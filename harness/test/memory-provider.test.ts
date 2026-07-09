@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { HcpClient } from "../hcp-client/hcp-client.ts";
+import { createCapabilityServer } from "../hcp-client/server/capability-server.ts";
 import { SessionGroundingMemoryProvider } from "../modules/memory/magenta/session-grounding.ts";
 
 describe("session grounding memory provider", () => {
@@ -14,7 +15,28 @@ describe("session grounding memory provider", () => {
 			storePath,
 			now: () => 42,
 		});
-		const hcp = new HcpClient().register("memory", provider.toHcpServer());
+		const server = createCapabilityServer({
+			kind: "memory",
+			target: "memory://session-grounding",
+			description: "Session-scoped memory with JSON-lines persistence for lightweight grounding facts.",
+			provider,
+			operations: {
+				discover: (p) => p.discover(),
+				list: (p) => p.discover(),
+				describe: (p) => p.describe(),
+				read: (p) => p.read(),
+				get: (p) => p.read(),
+				inject: (p) => p.read(),
+				retain: (p, req) => p.retain(req.input),
+				recall: (p, req) => p.recall(req.input),
+				reflect: (p, req) => p.reflect(req.input),
+			},
+			metadata: {
+				implementation: "native-ts",
+				source: "magenta",
+			},
+		});
+		const hcp = new HcpClient().register("memory", server);
 
 		await expect(hcp.dispatch({ target: "memory://session-grounding", op: "read" })).resolves.toMatchObject({
 			name: "session-grounding",

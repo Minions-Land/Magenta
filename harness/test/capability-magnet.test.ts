@@ -255,12 +255,11 @@ describe("memory capability", () => {
 		const memoryProvider = hcp.resolveCapability("memory");
 		expect(memoryProvider).toBeDefined();
 		expect(typeof memoryProvider).toBe("object");
-		// The magenta SessionGroundingMemoryProvider has read/retain/recall/reflect and toHcpServer methods.
+		// The magenta SessionGroundingMemoryProvider has read/retain/recall/reflect methods.
 		expect(typeof (memoryProvider as any).read).toBe("function");
 		expect(typeof (memoryProvider as any).retain).toBe("function");
 		expect(typeof (memoryProvider as any).recall).toBe("function");
 		expect(typeof (memoryProvider as any).reflect).toBe("function");
-		expect(typeof (memoryProvider as any).toHcpServer).toBe("function");
 	});
 
 	it("assembles memory from the magenta source and contributes no tools", async () => {
