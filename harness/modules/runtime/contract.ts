@@ -1,4 +1,3 @@
-import type { HcpServer } from "../../hcp-client/contract/hcp-server.ts";
 import type { SandboxProfile } from "../sandbox/contract.ts";
 
 export interface ProcessRuntimeToolMetadata {
@@ -66,12 +65,15 @@ export interface RuntimePolicyStatus {
 	};
 }
 
+/**
+ * Process runtime provider contract. Business logic only - HcpServer conversion
+ * is handled by the unified capability-server adapter.
+ */
 export interface ProcessRuntimeProviderContract {
 	discover(): Record<string, unknown>;
 	exec(input: ProcessExecInput, signal?: AbortSignal): Promise<ProcessExecOutput>;
 	policyStatus(): RuntimePolicyStatus;
 	health(): Promise<Record<string, unknown>>;
-	toHcpServer(): HcpServer;
 }
 
 export interface ScriptRuntimeInput {
@@ -109,9 +111,12 @@ export interface ScriptRuntimeDescription {
 	command: string;
 }
 
+/**
+ * Script runtime provider contract. Business logic only - HcpServer conversion
+ * is handled by the unified capability-server adapter.
+ */
 export interface ScriptRuntimeProviderContract {
 	discover(): Record<string, unknown>;
 	describeRuntime(name: string): ScriptRuntimeDescription;
 	execRuntime(name: string, input: ScriptRuntimeInput, signal?: AbortSignal): Promise<ScriptRuntimeOutput>;
-	toHcpServer(): HcpServer;
 }

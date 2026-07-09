@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { HcpClient } from "../hcp-client/hcp-client.ts";
 import { execProcess, ProcessRuntimeProvider } from "../modules/runtime/magenta/process-runtime.ts";
+import { runtimeMagentaMagnet } from "../modules/runtime/magenta/magnet.ts";
 import { loadSandboxProviderFromPack } from "../modules/sandbox/magenta/sandbox.ts";
 
 async function writeExecutableScript(dir: string, name: string, source: string): Promise<string> {
@@ -134,7 +135,12 @@ process.stdin.on("end", () => {
 
 	it("dispatches through HCP", async () => {
 		const dir = await mkdtemp(join(tmpdir(), "magenta-runtime-hcp-"));
-		const hcp = new HcpClient().register("runtime", new ProcessRuntimeProvider().toHcpServer());
+		const server = runtimeMagentaMagnet.build({
+			name: "process",
+			repoRoot: process.cwd(),
+			packagesRoot: process.cwd(),
+		});
+		const hcp = new HcpClient().register("runtime", server);
 
 		await expect(hcp.dispatch({ target: "runtime://process", op: "policy" })).resolves.toMatchObject({
 			production_audit: { os_egress_allowlist: false },

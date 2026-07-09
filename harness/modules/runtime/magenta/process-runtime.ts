@@ -1,7 +1,6 @@
 import { spawn } from "node:child_process";
 import { access, realpath } from "node:fs/promises";
 import { delimiter, isAbsolute, join, normalize, resolve } from "node:path";
-import type { HcpRequest, HcpServer, HcpServerDescription } from "../../../hcp-client/contract/hcp-server.ts";
 import type {
 	ProcessExecInput,
 	ProcessExecOutput,
@@ -412,21 +411,6 @@ async function commandExists(command: string): Promise<boolean> {
 }
 
 export class ProcessRuntimeProvider implements ProcessRuntimeProviderContract {
-	describe(): HcpServerDescription {
-		return {
-			target: "runtime://process",
-			kind: "runtime",
-			ops: ["discover", "describe", "exec", "call", "policy", "status"],
-			description: "Spawn a local process with Magenta portable sandbox guardrails.",
-			metadata: {
-				implementation: "native-ts",
-				source: "magenta",
-				origin: "magenta1-general-harness",
-				osEnforcement: false,
-			},
-		};
-	}
-
 	discover(): Record<string, unknown> {
 		return {
 			provider: "process-runtime",
@@ -450,30 +434,6 @@ export class ProcessRuntimeProvider implements ProcessRuntimeProviderContract {
 			implementation: "native-ts",
 			policy: this.policyStatus(),
 			node: await commandExists(process.execPath),
-		};
-	}
-
-	toHcpServer(): HcpServer {
-		return {
-			describe: () => this.describe(),
-			call: async (call: HcpRequest): Promise<unknown> => {
-				switch (call.op || "exec") {
-					case "discover":
-						return this.discover();
-					case "describe":
-						return this.describe();
-					case "policy":
-					case "status":
-						return this.policyStatus();
-					case "health":
-						return this.health();
-					case "exec":
-					case "call":
-						return this.exec(call.input as ProcessExecInput);
-					default:
-						throw new Error(`unsupported runtime operation ${call.op}`);
-				}
-			},
 		};
 	}
 }

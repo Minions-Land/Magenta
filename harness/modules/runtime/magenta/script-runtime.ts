@@ -1,4 +1,3 @@
-import type { HcpRequest, HcpServer, HcpServerDescription } from "../../../hcp-client/contract/hcp-server.ts";
 import type {
 	RuntimeSpec,
 	ScriptRuntimeDescription,
@@ -104,21 +103,6 @@ export async function execScriptRuntime(
 }
 
 export class ScriptRuntimeProvider implements ScriptRuntimeProviderContract {
-	describe(): HcpServerDescription {
-		return {
-			target: "runtime://{shell,python,node,r,julia}",
-			kind: "runtime",
-			ops: ["discover", "describe", "exec", "call", "run"],
-			description: "Script runtime wrappers compiled to runtime://process.",
-			metadata: {
-				implementation: "native-ts",
-				source: "magenta",
-				origin: "magenta1-general-harness",
-				compiledTo: "runtime://process",
-			},
-		};
-	}
-
 	discover(): Record<string, unknown> {
 		return {
 			provider: "script-runtime",
@@ -147,27 +131,5 @@ export class ScriptRuntimeProvider implements ScriptRuntimeProviderContract {
 			throw new Error(`unknown runtime target: runtime://${name}`);
 		}
 		return execScriptRuntime(spec, input, signal);
-	}
-
-	toHcpServer(): HcpServer {
-		return {
-			describe: () => this.describe(),
-			call: async (call: HcpRequest): Promise<unknown> => {
-				const name = runtimeNameFromTarget(call.target);
-				switch (call.op || "exec") {
-					case "discover":
-					case "list":
-						return this.discover();
-					case "describe":
-						return this.describeRuntime(name);
-					case "exec":
-					case "call":
-					case "run":
-						return this.execRuntime(name, normalizeInput(call.input));
-					default:
-						throw new Error(`unsupported script runtime operation ${call.op}`);
-				}
-			},
-		};
 	}
 }

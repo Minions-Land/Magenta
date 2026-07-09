@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { HcpClient } from "../hcp-client/hcp-client.ts";
 import { getHarnessRegistryPath, loadRegistry } from "../hcp-client/registry/registry.ts";
 import { ScriptRuntimeProvider } from "../modules/runtime/magenta/script-runtime.ts";
+import { runtimeMagentaMagnet } from "../modules/runtime/magenta/magnet.ts";
 import { loadSandboxProviderFromPack } from "../modules/sandbox/magenta/sandbox.ts";
 
 describe("script runtime provider", () => {
@@ -29,7 +30,12 @@ describe("script runtime provider", () => {
 		const sandbox = await loadSandboxProviderFromPack(
 			new URL("../modules/sandbox/sandbox.toml", import.meta.url).pathname,
 		);
-		const hcp = new HcpClient().register("runtime", new ScriptRuntimeProvider().toHcpServer());
+		const server = runtimeMagentaMagnet.build({
+			name: "script-runtimes",
+			repoRoot: process.cwd(),
+			packagesRoot: process.cwd(),
+		});
+		const hcp = new HcpClient().register("runtime", server);
 
 		await expect(
 			hcp.dispatch({
@@ -72,7 +78,12 @@ describe("script runtime provider", () => {
 	});
 
 	it("rejects empty script runtime input", async () => {
-		const hcp = new HcpClient().register("runtime", new ScriptRuntimeProvider().toHcpServer());
+		const server = runtimeMagentaMagnet.build({
+			name: "script-runtimes",
+			repoRoot: process.cwd(),
+			packagesRoot: process.cwd(),
+		});
+		const hcp = new HcpClient().register("runtime", server);
 
 		await expect(
 			hcp.dispatch({
@@ -85,7 +96,12 @@ describe("script runtime provider", () => {
 
 	it("passes timeout overrides through to runtime://process", async () => {
 		const dir = await mkdtemp(join(tmpdir(), "magenta-script-runtime-timeout-"));
-		const hcp = new HcpClient().register("runtime", new ScriptRuntimeProvider().toHcpServer());
+		const server = runtimeMagentaMagnet.build({
+			name: "script-runtimes",
+			repoRoot: process.cwd(),
+			packagesRoot: process.cwd(),
+		});
+		const hcp = new HcpClient().register("runtime", server);
 
 		await expect(
 			hcp.dispatch({
