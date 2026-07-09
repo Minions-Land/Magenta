@@ -291,7 +291,6 @@ describe("policy capability", () => {
 		expect(typeof policyProvider).toBe("object");
 		expect(typeof (policyProvider as any).decideApproval).toBe("function");
 		expect(typeof (policyProvider as any).classifyShellCommand).toBe("function");
-		expect(typeof (policyProvider as any).toHcpServers).toBe("function");
 		expect((policyProvider as any).decideApproval({ tool: { name: "Read", read_only: true } })).toMatchObject({
 			decision: "allow",
 			target: "approval://policy",

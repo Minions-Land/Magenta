@@ -1,4 +1,3 @@
-import type { HcpRequest, HcpServer, HcpServerDescription } from "../../../hcp-client/contract/hcp-server.ts";
 import {
 	SHELL_POLICY_TARGET,
 	type ShellPolicyClassification,
@@ -144,54 +143,5 @@ export class ShellPolicyProvider implements ShellPolicyProviderContract {
 
 	status(): ShellPolicyStatus {
 		return shellPolicyStatus();
-	}
-
-	describe(): HcpServerDescription {
-		return {
-			target: SHELL_POLICY_TARGET,
-			kind: "shell",
-			ops: ["discover", "describe", "classify", "call", "status"],
-			description: "Classify shell command intent and suggest native Harness tools before execution.",
-			metadata: {
-				implementation: "native-ts",
-				source: "magenta",
-				origin: "magenta1-general-harness",
-			},
-		};
-	}
-
-	discover(): Record<string, unknown> {
-		return {
-			provider: "shell-policy",
-			targets: [SHELL_POLICY_TARGET],
-			operations: ["classify", "status"],
-		};
-	}
-
-	toHcpServer(): HcpServer {
-		return {
-			describe: () => this.describe(),
-			call: (call: HcpRequest): unknown => {
-				switch (call.op || "classify") {
-					case "discover":
-					case "list":
-						return this.discover();
-					case "describe":
-						return {
-							name: "shell-policy",
-							target: SHELL_POLICY_TARGET,
-							description: this.describe().description,
-							operations: ["classify", "status"],
-						};
-					case "classify":
-					case "call":
-						return this.classify(call.input);
-					case "status":
-						return this.status();
-					default:
-						throw new Error(`unsupported shell policy operation ${call.op}`);
-				}
-			},
-		};
 	}
 }

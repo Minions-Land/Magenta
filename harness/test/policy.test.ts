@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { HcpClient } from "../hcp-client/hcp-client.ts";
+import { createCapabilityServer } from "../hcp-client/server/capability-server.ts";
 import { getHarnessRegistryPath, loadRegistry } from "../hcp-client/registry/registry.ts";
+import { APPROVAL_POLICY_TARGET, SHELL_POLICY_TARGET } from "../modules/policy/contract.ts";
 import { ApprovalPolicyProvider, decideApproval } from "../modules/policy/magenta/approval.ts";
 import { classifyShellCommand, ShellPolicyProvider } from "../modules/policy/magenta/shell-policy.ts";
 
@@ -52,9 +54,43 @@ describe("policy providers", () => {
 	});
 
 	it("dispatches approval and shell policy through HCP", async () => {
+		const approvalProvider = new ApprovalPolicyProvider();
+		const approvalServer = createCapabilityServer({
+			kind: "approval",
+			target: APPROVAL_POLICY_TARGET,
+			description: "Resolve tool approval decisions from tool tier, session mode, user policy, and safety override.",
+			provider: approvalProvider,
+			operations: {
+				decide: (p, req) => p.decide(req.input),
+				call: (p, req) => p.decide(req.input),
+				status: (p) => p.status(),
+			},
+			metadata: {
+				implementation: "native-ts",
+				source: "magenta",
+			},
+		});
+
+		const shellProvider = new ShellPolicyProvider();
+		const shellServer = createCapabilityServer({
+			kind: "shell",
+			target: SHELL_POLICY_TARGET,
+			description: "Classify shell command intent and suggest native Harness tools before execution.",
+			provider: shellProvider,
+			operations: {
+				classify: (p, req) => p.classify(req.input),
+				call: (p, req) => p.classify(req.input),
+				status: (p) => p.status(),
+			},
+			metadata: {
+				implementation: "native-ts",
+				source: "magenta",
+			},
+		});
+
 		const hcp = new HcpClient()
-			.registerServer("approval://policy", new ApprovalPolicyProvider().toHcpServer())
-			.registerServer("shell://policy", new ShellPolicyProvider().toHcpServer());
+			.registerServer("approval://policy", approvalServer)
+			.registerServer("shell://policy", shellServer);
 
 		await expect(
 			hcp.dispatch({

@@ -1,4 +1,3 @@
-import type { HcpRequest, HcpServer, HcpServerDescription } from "../../../hcp-client/contract/hcp-server.ts";
 import {
 	APPROVAL_POLICY_TARGET,
 	type ApprovalDecision,
@@ -193,57 +192,5 @@ export class ApprovalPolicyProvider implements ApprovalPolicyProviderContract {
 
 	status(): ApprovalStatus {
 		return approvalStatus();
-	}
-
-	describe(): HcpServerDescription {
-		return {
-			target: APPROVAL_POLICY_TARGET,
-			kind: "approval",
-			ops: ["discover", "describe", "decide", "call", "status"],
-			description: "Resolve tool approval decisions from tool tier, session mode, user policy, and safety override.",
-			metadata: {
-				implementation: "native-ts",
-				source: "magenta",
-				origin: "magenta1-general-harness",
-			},
-		};
-	}
-
-	discover(): Record<string, unknown> {
-		return {
-			provider: "approval-policy",
-			targets: [APPROVAL_POLICY_TARGET],
-			operations: ["decide", "status"],
-		};
-	}
-
-	toHcpServer(): HcpServer {
-		return {
-			describe: () => this.describe(),
-			call: (call: HcpRequest): unknown => {
-				switch (call.op || "decide") {
-					case "discover":
-					case "list":
-						return this.discover();
-					case "describe":
-						return {
-							name: "approval-policy",
-							target: APPROVAL_POLICY_TARGET,
-							description: this.describe().description,
-							operations: ["decide", "status"],
-							default_mode: "yolo",
-							tiers: ["read", "write", "exec"],
-							decisions: ["allow", "prompt", "deny"],
-						};
-					case "decide":
-					case "call":
-						return this.decide(call.input);
-					case "status":
-						return this.status();
-					default:
-						throw new Error(`unsupported approval operation ${call.op}`);
-				}
-			},
-		};
 	}
 }

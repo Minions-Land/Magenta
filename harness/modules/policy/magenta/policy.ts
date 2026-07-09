@@ -1,7 +1,6 @@
 import {
 	APPROVAL_POLICY_TARGET,
 	type ApprovalDecision,
-	type PolicyHcpServerBinding,
 	type PolicyProviderContract,
 	SHELL_POLICY_TARGET,
 	type ShellPolicyClassification,
@@ -24,12 +23,5 @@ export class PolicyProvider implements PolicyProviderContract {
 
 	classifyShellCommand(input: unknown): ShellPolicyClassification {
 		return classifyShellCommand(input);
-	}
-
-	toHcpServers(): PolicyHcpServerBinding[] {
-		return [
-			{ address: APPROVAL_POLICY_TARGET, target: this.approval.toHcpServer() },
-			{ address: SHELL_POLICY_TARGET, target: this.shell.toHcpServer() },
-		];
 	}
 }

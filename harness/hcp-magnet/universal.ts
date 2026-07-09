@@ -185,7 +185,7 @@ export class CapabilityMagnet<T = unknown> extends UniversalMagnet {
 			kind: this.descriptor.kind,
 			name: this.descriptor.name,
 			source: this.source,
-			instance: this.instance,
+			instance: this.hcpInstance() as T,
 		};
 	}
 

@@ -1,5 +1,3 @@
-import type { HcpServer } from "../../hcp-client/contract/hcp-server.ts";
-
 export const APPROVAL_POLICY_TARGET = "approval://policy";
 export const SHELL_POLICY_TARGET = "shell://policy";
 
@@ -38,10 +36,13 @@ export interface ApprovalDecision {
 	source: "user-policy" | "mode-yolo" | "safety-override" | "mode-tier";
 }
 
+/**
+ * Approval policy provider contract. Business logic only - HcpServer conversion
+ * is handled by the unified capability-server adapter.
+ */
 export interface ApprovalPolicyProviderContract {
 	decide(input: unknown): ApprovalDecision;
 	status(): ApprovalStatus;
-	toHcpServer(): HcpServer;
 }
 
 export type ShellPolicyDecision = "allow" | "prompt" | "block";
@@ -76,26 +77,26 @@ export interface ShellPolicyClassification {
 	};
 }
 
+/**
+ * Shell policy provider contract. Business logic only - HcpServer conversion
+ * is handled by the unified capability-server adapter.
+ */
 export interface ShellPolicyProviderContract {
 	classify(input: unknown): ShellPolicyClassification;
 	status(): ShellPolicyStatus;
-	toHcpServer(): HcpServer;
-}
-
-export interface PolicyHcpServerBinding {
-	address: typeof APPROVAL_POLICY_TARGET | typeof SHELL_POLICY_TARGET;
-	target: HcpServer;
 }
 
 /**
  * Source-neutral policy capability surface. The policy capability is not a
  * model tool; it is a selected provider bundle that runtime/hook code can call
  * directly after resolving `policy` through HCP.
+ *
+ * Note: This bundle contains two sub-providers (approval and shell).
+ * HcpServer conversion is handled by the unified capability-server adapter.
  */
 export interface PolicyProviderContract {
 	approval: ApprovalPolicyProviderContract;
 	shell: ShellPolicyProviderContract;
 	decideApproval(input: unknown): ApprovalDecision;
 	classifyShellCommand(input: unknown): ShellPolicyClassification;
-	toHcpServers(): PolicyHcpServerBinding[];
 }
