@@ -273,7 +273,7 @@ function asString(value: TomlValue | undefined): string | undefined {
 	return typeof value === "string" ? value : undefined;
 }
 
-function asTable(value: TomlValue | undefined): TomlTable | undefined {
+function _asTable(value: TomlValue | undefined): TomlTable | undefined {
 	return value && typeof value === "object" && !Array.isArray(value) ? value : undefined;
 }
 

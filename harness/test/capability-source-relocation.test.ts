@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { buildDefaultCapabilityHcp, createCapabilityMagnet, moduleForKind } from "../harness-component-protocol/assembly/capability.ts";
+import {
+	buildDefaultCapabilityHcp,
+	createCapabilityMagnet,
+	moduleForKind,
+} from "../harness-component-protocol/assembly/capability.ts";
 import { CAPABILITY_SOURCE_MAGNETS } from "../harness-component-protocol/assembly/sources.ts";
 
 /**

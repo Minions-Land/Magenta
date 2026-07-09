@@ -1,5 +1,5 @@
-import type { HcpMagnet } from "../../harness-component-protocol/HcpMagnetTypes.ts";
-import { NativeToolMagnet } from "../../hcp-magnet/native.ts";
+import type { AgentTool } from "@earendil-works/pi-agent-core";
+import { NativeToolMagnet } from "../magnet/native.ts";
 import {
 	BASH_TOOL_DESCRIPTION,
 	type BashExecuteOptions,
@@ -24,8 +24,22 @@ import {
 	type PackageDiagnostic,
 	type PackageOverlay,
 } from "../overlay/package-overlay.ts";
-import { ModuleHcpServer } from "../server/module-server.ts";
 import { buildDefaultCapabilityHcp } from "./capability.ts";
+
+/**
+ * HcpMagnet 的结构化类型（规范§2：全仓无 interface）
+ */
+type HcpMagnetShape = {
+	kind: string;
+	toTool?(): AgentTool;
+	toCapability?(): unknown;
+	toResource?(): unknown;
+	toHcpServer?(): {
+		describe(): import("../HcpServerTypes.ts").HcpServerDescription;
+		call(call: import("../HcpServerTypes.ts").HcpServerRequest): Promise<unknown> | unknown;
+		instance?<T = unknown>(selector?: string): T | undefined;
+	};
+};
 
 /**
  * Per-tool option passthrough for built-in tool magnets. pi supplies the
@@ -109,10 +123,10 @@ export async function buildSessionHcp(options: BuildSessionHcpOptions = {}): Pro
 	const hcp = new HcpClient();
 	const toolAddresses: string[] = [];
 
-	// 1. Built-in tool magnets → ONE ModuleHcpServer("tools").
+	// 1. Built-in tool magnets → ONE module("tools").
 	if (includeBuiltInTools) {
 		const magnets = buildBuiltInToolMagnets(cwd, options.toolOptions ?? {});
-		const registered = hcp.registerModule(buildToolsModule(magnets));
+		const registered = hcp.registerModule("tools", buildToolsModuleSlots(magnets));
 		toolAddresses.push(...registered);
 	}
 
@@ -141,13 +155,17 @@ export async function buildSessionHcp(options: BuildSessionHcpOptions = {}): Pro
 }
 
 /**
- * Build the `tools` ModuleHcpServer from a set of built-in tool magnets. The
+ * Build the `tools` module slots from a set of built-in tool magnets. The
  * in-module selector is the tool name (the suffix of the magnet's `tool:<name>`
  * address). Shared by `buildSessionHcp` and pi's per-runtime tool rebuild so
  * both produce an identical module (no dual registration paths).
  */
-export function buildToolsModule(magnets: HcpMagnet[]): ModuleHcpServer {
-	const slots = new Map<string, HcpMagnet>();
+export function buildToolsModule(magnets: HcpMagnetShape[]): Map<string, HcpMagnetShape> {
+	return buildToolsModuleSlots(magnets);
+}
+
+function buildToolsModuleSlots(magnets: HcpMagnetShape[]): Map<string, HcpMagnetShape> {
+	const slots = new Map<string, HcpMagnetShape>();
 	for (const magnet of magnets) {
 		const server = magnet.toHcpServer?.();
 		if (!server) continue;
@@ -158,7 +176,7 @@ export function buildToolsModule(magnets: HcpMagnet[]): ModuleHcpServer {
 		}
 		slots.set(selector, magnet);
 	}
-	return new ModuleHcpServer("tools", slots);
+	return slots;
 }
 
 /**
@@ -171,8 +189,8 @@ export function buildToolsModule(magnets: HcpMagnet[]): ModuleHcpServer {
  * @param opts - per-tool options (SSH ops, shell path, descriptions, etc.)
  * @returns array of NativeToolMagnets ready for HCP registration
  */
-export function buildBuiltInToolMagnets(cwd: string, opts: BuiltInToolOptions): HcpMagnet[] {
-	const magnets: HcpMagnet[] = [];
+export function buildBuiltInToolMagnets(cwd: string, opts: BuiltInToolOptions): HcpMagnetShape[] {
+	const magnets: HcpMagnetShape[] = [];
 	const desc = opts.descriptions ?? {};
 
 	// bash requires host operations; skip if not supplied (harness has no default).
@@ -280,7 +298,7 @@ function copyRegistrations(
 		if (options.skipExisting && slotAddrs.length > 0 && slotAddrs.every(({ address }) => into.resolve(address))) {
 			continue;
 		}
-		into.registerModule(module);
+		into.registerModule(module as any);
 		for (const { address } of slotAddrs) collect(address);
 	}
 

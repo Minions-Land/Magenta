@@ -193,7 +193,7 @@ path = "harness-component-protocol/harness-component-protocol.toml"
 kind = "assembly"
 name = "magnet"
 description = "Connectors that wrap implementations as AgentTools or HCP targets."
-path = "hcp-magnet/magnet.toml"
+path = "harness-component-protocol/magnet/magnet.toml"
 
 [[components]]
 kind = "assembly"

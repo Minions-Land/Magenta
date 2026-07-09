@@ -1,16 +1,14 @@
 /**
- * HCP server contract — the HcpServer role's shape (spec §2).
+ * HCP server protocol data types (spec §2).
+ *
+ * 按照规范§2："全仓无 interface"。此文件只包含协议数据类型（HcpServerRequest等），
+ * 不包含角色接口。HcpServer 是裸 class，在各 modules/<m>/HcpServer.ts 中定义。
  *
  * HCP is the management / assembly layer, NOT the agent loop's hot path
  * (see spec §1/§5). The loop calls `tool.execute()` directly, in-process; it
  * never wraps a tool call into an HCP message. HCP exists purely to discover,
  * configure, and manage components during assembly. Dispatch here is in-process
  * only — there is no transport, no serialization boundary.
- *
- * This module holds the pure server-side contracts shared by all three HCP
- * roles (HcpClient resolves them, modules implement them, HcpMagnet produces
- * them). The HcpClient implementation lives in `harness-component-protocol/harness-component-protocol.ts`; the
- * HcpMagnet contracts live in `hcp-HcpMagnetTypes.ts`.
  */
 
 /**
@@ -40,7 +38,7 @@ export interface HcpServerContext {
 /**
  * A single management call. `target` is a URI-like address (for example
  * `"tool:read"` or `"native:tool/read"`); the `HcpClient` resolves it by
- * prefix to a registered {@link HcpServer}.
+ * prefix to a registered HcpServer (裸 class).
  */
 export interface HcpServerRequest {
 	/** URI-like target address. The portion before the first `:` is the prefix. */
@@ -54,7 +52,7 @@ export interface HcpServerRequest {
 }
 
 /**
- * The result of handling an {@link HcpServerRequest}. Today HCP dispatch is in-process
+ * The result of handling an HcpServerRequest. Today HCP dispatch is in-process
  * with no serialization boundary (spec §1/§5), so a response is simply the
  * operation's return value. This alias names the request/response pair now so
  * the vocabulary is stable; when §3's protocol envelope lands, this becomes a
@@ -62,31 +60,10 @@ export interface HcpServerRequest {
  */
 export type HcpServerResponse<T = unknown> = T;
 
-/** A component endpoint reachable over HCP. */
-export interface HcpServer {
-	/** Stable, machine-readable description of this target. */
-	describe(): HcpServerDescription;
-	/** Handle a management call dispatched to this target. */
-	call(call: HcpServerRequest): Promise<unknown> | unknown;
-	/**
-	 * Assembly-time typed handoff: the selected source's in-process implementation
-	 * for this capability slot. HCP is the resolver — a consumer asks for a
-	 * capability by name and receives this instance, never knowing which source
-	 * supplied it. Absent for pure management / inspect-only targets (a tool
-	 * target returns its `AgentTool`; a compaction target returns its provider;
-	 * an inspect-only target returns nothing). Once resolved, the instance is
-	 * called directly on the hot path — HCP does not sit in that call.
-	 *
-	 * The optional `selector` disambiguates WHICH product to hand back when a
-	 * single server owns several addressable slots (a `ModuleHcpServer` for the
-	 * `tools` module routes `selector="read"` vs `"bash"`; a `runtime` module
-	 * routes `"process"` vs `"script-runtimes"`). Single-product servers ignore
-	 * it, so widening is purely additive — no existing zero-arg caller changes.
-	 */
-	instance?<T = unknown>(selector?: string): T | undefined;
-}
-
-/** Self-description returned by {@link HcpServer.describe}. */
+/**
+ * Self-description returned by HcpServer.describe().
+ * 这是协议数据类型，不是角色接口。
+ */
 export interface HcpServerDescription {
 	/** The target address this endpoint answers on. */
 	target: string;
@@ -104,10 +81,6 @@ export interface HcpServerDescription {
  * Context passed to a capability factory at assembly time. Mirrors the
  * tool-magnet context so a capability implementation can locate its own module
  * tree, sibling components, and the repo root if it needs them.
- *
- * Lives in the contract module because {@link HcpMagnet}'s source descriptor
- * (`CapabilitySourceMagnet.build`) depends on it; keeping it here avoids a
- * contract → assembly back-dependency.
  */
 export interface HcpMagnetBuildContext {
 	repoRoot: string;
@@ -123,3 +96,4 @@ export interface HcpMagnetBuildContext {
 	/** Whether this capability can be hot-swapped mid-session (spec §9). */
 	hotSwappable?: boolean;
 }
+

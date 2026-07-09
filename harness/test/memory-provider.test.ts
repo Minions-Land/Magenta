@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { HcpClient } from "../harness-component-protocol/HcpClient.ts";
-import { createCapabilityServer } from "../harness-component-protocol/server/capability-server.ts";
+import type { HcpServerRequest } from "../harness-component-protocol/HcpServerTypes.ts";
 import { SessionGroundingMemoryProvider } from "../modules/memory/magenta/session-grounding.ts";
 
 describe("session grounding memory provider", () => {
@@ -15,27 +15,41 @@ describe("session grounding memory provider", () => {
 			storePath,
 			now: () => 42,
 		});
-		const server = createCapabilityServer({
-			kind: "memory",
-			target: "memory://session-grounding",
-			description: "Session-scoped memory with JSON-lines persistence for lightweight grounding facts.",
-			provider,
-			operations: {
-				discover: (p) => p.discover(),
-				list: (p) => p.discover(),
-				describe: (p) => p.describe(),
-				read: (p) => p.read(),
-				get: (p) => p.read(),
-				inject: (p) => p.read(),
-				retain: (p, req) => p.retain(req.input),
-				recall: (p, req) => p.recall(req.input),
-				reflect: (p, req) => p.reflect(req.input),
+		const server: HcpServer = {
+			describe: () => ({
+				target: "memory://session-grounding",
+				kind: "memory",
+				ops: ["discover", "list", "describe", "read", "get", "inject", "retain", "recall", "reflect"],
+				description: "Session-scoped memory with JSON-lines persistence for lightweight grounding facts.",
+				metadata: {
+					implementation: "native-ts",
+					source: "magenta",
+				},
+			}),
+			call: async (request: HcpServerRequest) => {
+				const op = request.op || "read";
+				switch (op) {
+					case "discover":
+					case "list":
+						return provider.discover();
+					case "describe":
+						return provider.describe();
+					case "read":
+					case "get":
+					case "inject":
+						return provider.read();
+					case "retain":
+						return provider.retain(request.input);
+					case "recall":
+						return provider.recall(request.input);
+					case "reflect":
+						return provider.reflect(request.input);
+					default:
+						throw new Error(`Unknown operation: ${op}`);
+				}
 			},
-			metadata: {
-				implementation: "native-ts",
-				source: "magenta",
-			},
-		});
+			instance: () => provider,
+		};
 		const hcp = new HcpClient().register("memory", server);
 
 		await expect(hcp.dispatch({ target: "memory://session-grounding", op: "read" })).resolves.toMatchObject({

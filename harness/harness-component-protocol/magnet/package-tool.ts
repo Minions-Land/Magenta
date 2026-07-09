@@ -2,15 +2,18 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { HcpMagnet } from "../harness-component-protocol/HcpMagnetTypes.ts";
-import { parseToml, type TomlTable } from "../harness-component-protocol/registry/registry.ts";
+import { parseToml, type TomlTable } from "../registry/registry.ts";
 import {
 	execScriptRuntime,
 	type RuntimeSpec,
 	SCRIPT_RUNTIME_SPECS,
-} from "../modules/runtime/magenta/script-runtime.ts";
-import type { SandboxProfile, SandboxSelection } from "../modules/sandbox/HcpServer.ts";
-import { loadSandboxProviderFromPack, selectSandboxProfile } from "../modules/sandbox/magenta/sandbox.ts";
+} from "../../modules/runtime/magenta/script-runtime.ts";
+import {
+	loadSandboxProviderFromPack,
+	type SandboxProfile,
+	type SandboxSelection,
+	selectSandboxProfile,
+} from "../../modules/sandbox/magenta/sandbox.ts";
 import { createMcpToolMagnets } from "./mcp.ts";
 import { ProcessToolMagnet } from "./process.ts";
 import { type PythonLauncherResolver, PythonModuleToolMagnet } from "./python.ts";
@@ -62,14 +65,29 @@ export interface CreatePackageToolMagnetOptions {
 	context: PackageToolMagnetContext;
 }
 
+/**
+ * HcpMagnet 的结构化类型（规范§2：全仓无 interface）
+ */
+type HcpMagnetShape = {
+	kind: string;
+	toTool?(): unknown;
+	toCapability?(): unknown;
+	toResource?(): unknown;
+	toHcpServer?(): {
+		describe(): import("../HcpServerTypes.ts").HcpServerDescription;
+		call(call: import("../HcpServerTypes.ts").HcpServerRequest): Promise<unknown> | unknown;
+		instance?<T = unknown>(selector?: string): T | undefined;
+	};
+};
+
 export interface CreatePackageToolMagnetResult {
 	/** Single magnet for one-tool runtimes (process, python, script). */
-	magnet?: HcpMagnet;
+	magnet?: HcpMagnetShape;
 	/**
 	 * Multiple magnets for runtimes that fan out to several tools from one
 	 * descriptor (an MCP server exposes N tools over one connection).
 	 */
-	magnets?: HcpMagnet[];
+	magnets?: HcpMagnetShape[];
 	diagnostics: PackageToolMagnetDiagnostic[];
 }
 

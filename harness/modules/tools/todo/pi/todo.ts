@@ -10,8 +10,8 @@
 
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
-import type { NativeToolSpec } from "../../../../hcp-magnet/native.ts";
-import { NativeToolMagnet } from "../../../../hcp-magnet/native.ts";
+import type { NativeToolSpec } from "../../../../harness-component-protocol/magnet/native.ts";
+import { NativeToolMagnet } from "../../../../harness-component-protocol/magnet/native.ts";
 
 // Type definitions
 interface Todo {

@@ -2,11 +2,11 @@ import { existsSync } from "node:fs";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import type { HcpMagnet, HcpMagnetBinding } from "../../harness-component-protocol/HcpMagnetTypes.ts";
+import type { HcpMagnetBinding } from "../../harness-component-protocol/HcpMagnetTypes.ts";
 import {
 	createPackageToolMagnet as createPackageToolMagnetFromDescriptor,
 	type PackageToolMagnetDiagnosticCode,
-} from "../../hcp-magnet/package-tool.ts";
+} from "../magnet/package-tool.ts";
 import {
 	type CapabilityMagnetDiagnosticCode,
 	capabilityBindingKey,
@@ -153,7 +153,7 @@ export interface PackageOverlay {
 }
 
 export interface PackageToolAssembly {
-	magnets: HcpMagnet[];
+	magnets: any[];
 	tools: AgentTool[];
 	/**
 	 * Source-selected non-tool capability bindings, keyed by capability slot
@@ -413,7 +413,7 @@ export async function assemblePackageToolMagnets(
 	options: AssemblePackageToolMagnetsOptions = {},
 ): Promise<PackageToolAssembly> {
 	const diagnostics: PackageDiagnostic[] = [];
-	const magnets: HcpMagnet[] = [];
+	const magnets: any[] = [];
 	const onProgress = options.onProgress;
 	const total = overlay.components.length;
 
@@ -509,7 +509,7 @@ async function createCapabilityMagnetFromDescriptor(options: {
 		components: PackageResolvedComponent[];
 		componentMap: Map<string, PackageResolvedComponent>;
 	};
-}): Promise<{ magnet?: HcpMagnet; diagnostics: PackageDiagnostic[] }> {
+}): Promise<{ magnet?: any; diagnostics: PackageDiagnostic[] }> {
 	const { component, context } = options;
 	const diagnostics: PackageDiagnostic[] = [];
 

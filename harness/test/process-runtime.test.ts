@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { HcpClient } from "../harness-component-protocol/HcpClient.ts";
 import { HcpMagnet as RuntimeMagentaMagnet } from "../modules/runtime/magenta/HcpMagnet.ts";
-import { execProcess, ProcessRuntimeProvider } from "../modules/runtime/magenta/process-runtime.ts";
+import { execProcess } from "../modules/runtime/magenta/process-runtime.ts";
 import { loadSandboxProviderFromPack } from "../modules/sandbox/magenta/sandbox.ts";
 
 async function writeExecutableScript(dir: string, name: string, source: string): Promise<string> {

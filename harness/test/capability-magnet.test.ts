@@ -6,7 +6,7 @@ import {
 	createCapabilityMagnet,
 } from "../harness-component-protocol/assembly/capability.ts";
 import { HcpClient } from "../harness-component-protocol/HcpClient.ts";
-import { CapabilityMagnet } from "../hcp-magnet/universal.ts";
+import { CapabilityMagnet } from "../harness-component-protocol/magnet/universal.ts";
 
 const CONTEXT = { repoRoot: "/repo", packagesRoot: "/repo/packages" };
 

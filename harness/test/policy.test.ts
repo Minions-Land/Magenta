@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { HcpClient } from "../harness-component-protocol/HcpClient.ts";
-import { getHarnessRegistryPath, loadRegistry } from "../harness-component-protocol/registry/registry.ts";
-import { createCapabilityServer } from "../harness-component-protocol/server/capability-server.ts";
+import type { HcpServerRequest } from "../harness-component-protocol/HcpServerTypes.ts";
 import { APPROVAL_POLICY_TARGET, SHELL_POLICY_TARGET } from "../modules/policy/HcpServer.ts";
 import { ApprovalPolicyProvider, decideApproval } from "../modules/policy/magenta/approval.ts";
 import { classifyShellCommand, ShellPolicyProvider } from "../modules/policy/magenta/shell-policy.ts";
@@ -55,38 +54,58 @@ describe("policy providers", () => {
 
 	it("dispatches approval and shell policy through HCP", async () => {
 		const approvalProvider = new ApprovalPolicyProvider();
-		const approvalServer = createCapabilityServer({
-			kind: "approval",
-			target: APPROVAL_POLICY_TARGET,
-			description: "Resolve tool approval decisions from tool tier, session mode, user policy, and safety override.",
-			provider: approvalProvider,
-			operations: {
-				decide: (p, req) => p.decide(req.input),
-				call: (p, req) => p.decide(req.input),
-				status: (p) => p.status(),
+		const approvalServer: HcpServer = {
+			describe: () => ({
+				target: APPROVAL_POLICY_TARGET,
+				kind: "approval",
+				ops: ["decide", "call", "status"],
+				description: "Resolve tool approval decisions from tool tier, session mode, user policy, and safety override.",
+				metadata: {
+					implementation: "native-ts",
+					source: "magenta",
+				},
+			}),
+			call: async (request: HcpServerRequest) => {
+				const op = request.op || "decide";
+				switch (op) {
+					case "decide":
+					case "call":
+						return approvalProvider.decide(request.input);
+					case "status":
+						return approvalProvider.status();
+					default:
+						throw new Error(`Unknown operation: ${op}`);
+				}
 			},
-			metadata: {
-				implementation: "native-ts",
-				source: "magenta",
-			},
-		});
+			instance: () => approvalProvider,
+		};
 
 		const shellProvider = new ShellPolicyProvider();
-		const shellServer = createCapabilityServer({
-			kind: "shell",
-			target: SHELL_POLICY_TARGET,
-			description: "Classify shell command intent and suggest native Harness tools before execution.",
-			provider: shellProvider,
-			operations: {
-				classify: (p, req) => p.classify(req.input),
-				call: (p, req) => p.classify(req.input),
-				status: (p) => p.status(),
+		const shellServer: HcpServer = {
+			describe: () => ({
+				target: SHELL_POLICY_TARGET,
+				kind: "shell",
+				ops: ["classify", "call", "status"],
+				description: "Classify shell command intent and suggest native Harness tools before execution.",
+				metadata: {
+					implementation: "native-ts",
+					source: "magenta",
+				},
+			}),
+			call: async (request: HcpServerRequest) => {
+				const op = request.op || "classify";
+				switch (op) {
+					case "classify":
+					case "call":
+						return shellProvider.classify(request.input);
+					case "status":
+						return shellProvider.status();
+					default:
+						throw new Error(`Unknown operation: ${op}`);
+				}
 			},
-			metadata: {
-				implementation: "native-ts",
-				source: "magenta",
-			},
-		});
+			instance: () => shellProvider,
+		};
 
 		const hcp = new HcpClient()
 			.registerServer("approval://policy", approvalServer)

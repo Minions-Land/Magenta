@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { createMcpToolMagnets } from "../hcp-magnet/mcp.ts";
+import { createMcpToolMagnets } from "../harness-component-protocol/magnet/mcp.ts";
 
 /**
  * End-to-end integration test for the vendored bio-API MCP server.

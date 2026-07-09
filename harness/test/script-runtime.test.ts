@@ -3,7 +3,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { HcpClient } from "../harness-component-protocol/HcpClient.ts";
-import { getHarnessRegistryPath, loadRegistry } from "../harness-component-protocol/registry/registry.ts";
 import { HcpMagnet as RuntimeMagentaMagnet } from "../modules/runtime/magenta/HcpMagnet.ts";
 import { ScriptRuntimeProvider } from "../modules/runtime/magenta/script-runtime.ts";
 import { loadSandboxProviderFromPack } from "../modules/sandbox/magenta/sandbox.ts";

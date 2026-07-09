@@ -3,8 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { HcpClient } from "../harness-component-protocol/HcpClient.ts";
-import { getHarnessRegistryPath, loadRegistry } from "../harness-component-protocol/registry/registry.ts";
-import { createCapabilityServer } from "../harness-component-protocol/server/capability-server.ts";
+import type { HcpServerRequest } from "../harness-component-protocol/HcpServerTypes.ts";
 import { ContextProvider, discoverContextFiles } from "../modules/context/magenta/context.ts";
 
 describe("context provider", () => {
@@ -39,31 +38,43 @@ describe("context provider", () => {
 		const dir = await mkdtemp(join(tmpdir(), "magenta-context-hcp-"));
 		await writeFile(join(dir, "AGENTS.md"), "Use HCP target runtime words.");
 		const provider = new ContextProvider({ workspaceRoot: dir });
-		const server = createCapabilityServer({
-			kind: "context",
-			target: "context://{workspace,project}",
-			description: "Discover project instruction files and return model-safe context content.",
-			provider,
-			operations: {
-				discover: (p) => p.discover(),
-				list: (p) => p.discover(),
-				describe: () => ({
-					name: "project-context",
-					target: "context://project",
-					aliases: ["context://workspace"],
-					description: "Discover project instruction files and return model-safe context content.",
-					operations: ["read", "status"],
-				}),
-				read: (p) => p.read(),
-				call: (p) => p.read(),
-				status: (p) => p.status(),
+		const server: HcpServer = {
+			describe: () => ({
+				target: "context://{workspace,project}",
+				kind: "context",
+				ops: ["discover", "list", "describe", "read", "call", "status"],
+				description: "Discover project instruction files and return model-safe context content.",
+				metadata: {
+					implementation: "native-ts",
+					source: "magenta",
+					origin: "magenta1-general-harness",
+				},
+			}),
+			call: async (request: HcpServerRequest) => {
+				const op = request.op || "read";
+				switch (op) {
+					case "discover":
+					case "list":
+						return provider.discover();
+					case "describe":
+						return {
+							name: "project-context",
+							target: "context://project",
+							aliases: ["context://workspace"],
+							description: "Discover project instruction files and return model-safe context content.",
+							operations: ["read", "status"],
+						};
+					case "read":
+					case "call":
+						return provider.read();
+					case "status":
+						return provider.status();
+					default:
+						throw new Error(`Unknown operation: ${op}`);
+				}
 			},
-			metadata: {
-				implementation: "native-ts",
-				source: "magenta",
-				origin: "magenta1-general-harness",
-			},
-		});
+			instance: () => provider,
+		};
 		const hcp = new HcpClient().register("context", server);
 
 		await expect(hcp.dispatch({ target: "context://workspace", op: "status" })).resolves.toMatchObject({

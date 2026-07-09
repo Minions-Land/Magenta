@@ -1,7 +1,6 @@
 import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import { type Static, Type } from "typebox";
-import type { HcpMagnet } from "../../../harness-component-protocol/HcpMagnetTypes.ts";
-import type { HcpServer } from "../../../harness-component-protocol/HcpServerTypes.ts";
+import type { HcpServerDescription } from "../../../harness-component-protocol/HcpServerTypes.ts";
 
 /**
  * Tool Search — MCP-style deferral of tool schemas (spec §6).
@@ -66,11 +65,11 @@ export interface ToolSearchOptions {
  * tool (`toTool`) and expose an HCP server are included; the `kind` must be
  * `"tool"` in the description.
  */
-export function buildToolSearchManifest(magnets: readonly HcpMagnet[]): ToolSearchEntry[] {
+export function buildToolSearchManifest(magnets: readonly any[]): ToolSearchEntry[] {
 	const entries: ToolSearchEntry[] = [];
 	for (const magnet of magnets) {
 		if (typeof magnet.toTool !== "function" || typeof magnet.toHcpServer !== "function") continue;
-		let server: HcpServer;
+		let server: any;
 		try {
 			server = magnet.toHcpServer();
 		} catch {

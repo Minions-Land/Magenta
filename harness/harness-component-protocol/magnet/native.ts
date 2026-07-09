@@ -1,9 +1,20 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { TSchema } from "typebox";
-import type { HcpMagnet } from "../harness-component-protocol/HcpMagnetTypes.ts";
-import type { HcpServer, HcpServerDescription, HcpServerRequest } from "../harness-component-protocol/HcpServerTypes.ts";
-import { createReadExecute, type ReadToolOptions, readSchema } from "../modules/tools/index.ts";
+import type {
+	HcpServerDescription,
+	HcpServerRequest,
+} from "../HcpServerTypes.ts";
+import { createReadExecute, type ReadToolOptions, readSchema } from "../../modules/tools/index.ts";
 import type { UniversalMagnetState } from "./universal.ts";
+
+/**
+ * HcpServer 的结构化类型（规范§2：全仓无 interface）
+ */
+type HcpServerShape = {
+	describe(): HcpServerDescription;
+	call(call: HcpServerRequest): Promise<unknown> | unknown;
+	instance?<T = unknown>(selector?: string): T | undefined;
+};
 
 /**
  * Declarative spec for a native TS tool: the pure pieces a
@@ -32,11 +43,13 @@ export interface NativeToolSpec<TParameters extends TSchema = TSchema, TDetails 
 
 /**
  * A `native` HcpMagnet: wraps a native TS tool factory (from `harness/tools/pi`)
- * into a {@link HcpMagnet} that yields a loop-ready {@link AgentTool} and an
- * {@link HcpServer} for management. This is assembly-layer wiring only; the
+ * into an HcpMagnet (裸 class) that yields a loop-ready AgentTool and an
+ * HcpServer for management. This is assembly-layer wiring only; the
  * produced tool is what the loop calls in-process.
+ *
+ * 按照规范§2：裸 class，不 implements 任何 interface。
  */
-export class NativeToolMagnet<TParameters extends TSchema = TSchema, TDetails = any> implements HcpMagnet {
+export class NativeToolMagnet<TParameters extends TSchema = TSchema, TDetails = any> {
 	readonly kind = "native";
 	private readonly spec: NativeToolSpec<TParameters, TDetails>;
 	private readonly cwd: string;
@@ -72,7 +85,7 @@ export class NativeToolMagnet<TParameters extends TSchema = TSchema, TDetails = 
 	}
 
 	/** Produce an HCP management endpoint describing/dispatching this tool. */
-	toHcpServer(): HcpServer {
+	toHcpServer(): HcpServerShape {
 		const spec = this.spec;
 		const self = this;
 		const buildTool = () => this.toTool();

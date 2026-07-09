@@ -3,8 +3,8 @@ import { appendFile, mkdtemp, readFile, utimes, writeFile } from "node:fs/promis
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { createMcpToolMagnets } from "../hcp-magnet/mcp.ts";
-import { readMcpToolsCache, writeMcpToolsCache } from "../hcp-magnet/mcp-cache.ts";
+import { createMcpToolMagnets } from "../harness-component-protocol/magnet/mcp.ts";
+import { readMcpToolsCache, writeMcpToolsCache } from "../harness-component-protocol/magnet/mcp-cache.ts";
 
 /**
  * A mock MCP server that records every spawn by appending to a marker file

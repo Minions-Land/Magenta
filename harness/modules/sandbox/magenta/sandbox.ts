@@ -1,7 +1,10 @@
 import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
-import type { HcpServer, HcpServerDescription, HcpServerRequest } from "../../../harness-component-protocol/HcpServerTypes.ts";
+import type {
+	HcpServerDescription,
+	HcpServerRequest,
+} from "../../../harness-component-protocol/HcpServerTypes.ts";
 import { parseToml, type TomlTable } from "../../../harness-component-protocol/registry/registry.ts";
 import type {
 	SandboxDiscoverResult,
@@ -198,7 +201,7 @@ export class SandboxProvider implements SandboxProviderContract {
 		};
 	}
 
-	toSandboxHcpServer(): HcpServer {
+	toSandboxHcpServer() {
 		return {
 			describe: (): HcpServerDescription => ({
 				target: "sandbox://*",
@@ -230,7 +233,7 @@ export class SandboxProvider implements SandboxProviderContract {
 		};
 	}
 
-	toSandboxSelectHcpServer(): HcpServer {
+	toSandboxSelectHcpServer() {
 		return {
 			describe: (): HcpServerDescription => ({
 				target: "hook://sandbox-select",
@@ -259,3 +262,6 @@ export class SandboxProvider implements SandboxProviderContract {
 		};
 	}
 }
+
+// 重新导出供外部使用
+export type { SandboxProfile, SandboxSelection } from "../HcpServer.ts";

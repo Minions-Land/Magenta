@@ -2,9 +2,9 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { createMcpToolMagnets, McpConnection } from "../hcp-magnet/mcp.ts";
-import { McpStdioClient } from "../hcp-magnet/mcp-client.ts";
-import { createPackageToolMagnet } from "../hcp-magnet/package-tool.ts";
+import { createMcpToolMagnets, McpConnection } from "../harness-component-protocol/magnet/mcp.ts";
+import { McpStdioClient } from "../harness-component-protocol/magnet/mcp-client.ts";
+import { createPackageToolMagnet } from "../harness-component-protocol/magnet/package-tool.ts";
 
 /**
  * A minimal MCP stdio server implemented in Node for tests. It speaks the same

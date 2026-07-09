@@ -1,12 +1,10 @@
-import type { HcpMagnet } from "../../harness-component-protocol/HcpMagnetTypes.ts";
+import type { HcpMagnetClass } from "../../harness-component-protocol/HcpMagnetTypes.ts";
 import type { HcpMagnetBuildContext } from "../../harness-component-protocol/HcpServerTypes.ts";
-import { HcpClientcapabilityprefix } from "../../harness-component-protocol/HcpServerTypes.ts";
-import { CapabilityMagnet } from "../../hcp-magnet/universal.ts";
+import { CapabilityMagnet } from "../magnet/universal.ts";
 import { HcpClient } from "../HcpClient.ts";
-import { ModuleHcpServer } from "../server/module-server.ts";
 import { CAPABILITY_SOURCE_MAGNETS } from "./sources.ts";
 
-// HcpMagnetBuildContext is defined in hcp-HcpServerTypes.ts (the shared
+// HcpMagnetBuildContext is defined in HcpServerTypes.ts (the shared
 // contract, because CapabilitySourceMagnet.build depends on it). Re-exported
 // here so existing `assembly/capability.ts` consumers keep working.
 export type { HcpMagnetBuildContext };
@@ -184,13 +182,28 @@ export interface CapabilityMagnetDiagnostic {
 	source?: string;
 }
 
+/**
+ * HcpMagnet 的结构化类型（规范§2：无 interface，用结构化类型）
+ */
+type HcpMagnetShape = {
+	kind: string;
+	toTool?(): unknown;
+	toCapability?(): unknown;
+	toResource?(): unknown;
+	toHcpServer?(): {
+		describe(): import("../../harness-component-protocol/HcpServerTypes.ts").HcpServerDescription;
+		call(call: import("../../harness-component-protocol/HcpServerTypes.ts").HcpServerRequest): Promise<unknown> | unknown;
+		instance?<T = unknown>(selector?: string): T | undefined;
+	};
+};
+
 export interface CreateCapabilityMagnetResult {
-	magnet?: HcpMagnet;
+	magnet?: HcpMagnetShape;
 	diagnostics: CapabilityMagnetDiagnostic[];
 }
 
 /**
- * Resolve a non-tool component into a {@link CapabilityMagnet} by selecting the
+ * Resolve a non-tool component into an HcpMagnet (裸 class) by selecting the
  * factory for its declared `source`, building the implementation instance, and
  * wrapping it with the shared HCP management surface. The HCP target is
  * `${HcpClientcapabilityprefix}:${kind}` (e.g. `capability:compaction`), so the
@@ -230,7 +243,7 @@ export async function createCapabilityMagnet(
 		return { diagnostics };
 	}
 
-	let magnet: HcpMagnet;
+	let magnet: HcpMagnetShape;
 	try {
 		const result = await builder({
 			repoRoot: context.repoRoot,
@@ -242,9 +255,10 @@ export async function createCapabilityMagnet(
 			hotSwappable: component.hotSwappable,
 		});
 
-		// If the builder returns a CapabilityMagnet instance (class-based), use it directly
+		// If the builder returns an HcpMagnet instance (class-based), use it directly
+		// 规范§2：裸 class，结构化类型检查
 		if (result && typeof result === "object" && "toHcpServer" in result) {
-			magnet = result as HcpMagnet;
+			magnet = result as HcpMagnetShape;
 		} else {
 			// Old-style builder that returns a plain HcpServer instance - wrap it
 			magnet = new CapabilityMagnet({
@@ -311,7 +325,7 @@ export async function buildDefaultCapabilityHcp(
 	// owns several, each addressable by its selector. The selector within a
 	// module is the capability slot suffix ("compaction", "runtime:process") —
 	// unique per module and stable across the refactor.
-	const slotsByModule = new Map<string, Map<string, HcpMagnet>>();
+	const slotsByModule = new Map<string, Map<string, HcpMagnetShape>>();
 
 	for (const [slot, source] of Object.entries(defaults)) {
 		const { kind, name } = parseCapabilitySlot(slot);
@@ -326,14 +340,14 @@ export async function buildDefaultCapabilityHcp(
 		const selector = capabilitySlotName(kind, name);
 		let slots = slotsByModule.get(module);
 		if (!slots) {
-			slots = new Map<string, HcpMagnet>();
+			slots = new Map<string, HcpMagnetShape>();
 			slotsByModule.set(module, slots);
 		}
 		slots.set(selector, result.magnet);
 	}
 
 	for (const [module, slots] of slotsByModule) {
-		hcp.registerModule(new ModuleHcpServer(module, slots));
+		hcp.registerModule(module, slots);
 	}
 	return { hcp, diagnostics };
 }

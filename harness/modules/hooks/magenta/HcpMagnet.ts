@@ -1,58 +1,79 @@
-import type { HcpMagnetBuildContext } from "../../../harness-component-protocol/HcpServerTypes.ts";
-import { createCapabilityServer, targetName } from "../../../harness-component-protocol/server/capability-server.ts";
-import { CapabilityMagnet } from "../../../hcp-magnet/universal.ts";
+import { targetName } from "../../../harness-component-protocol/HcpClient.ts";
+import type {
+	HcpMagnetBinding,
+} from "../../../harness-component-protocol/HcpMagnetTypes.ts";
+import type {
+	HcpServerDescription,
+	HcpServerRequest,
+	HcpMagnetBuildContext,
+} from "../../../harness-component-protocol/HcpServerTypes.ts";
 import { HookProvider } from "./hooks.ts";
 
 /**
  * The magenta source's binding for the `hook` capability (spec §8).
- *
- * Wraps HookProvider (pure business logic) in a unified HcpServer adapter,
- * making HcpServer an explicit layer rather than hand-written in each provider.
+ * 按照规范§2：裸 class，不 implements、不继承任何基类。
  */
-export class HcpMagnet extends CapabilityMagnet {
+export class HcpMagnet {
 	static readonly module = "hooks";
 	static readonly kind = "hook";
 	static readonly source = "magenta";
 	static readonly isDefault = true;
 
+	readonly kind = "capability:hook";
+	private readonly capabilityKind: string;
+	private readonly name: string;
+	private readonly source: string;
+	private readonly hotSwappable: boolean;
+	private readonly provider: HookProvider;
+
 	constructor(context: HcpMagnetBuildContext) {
-		const kind = context.kind ?? "hook";
-		const name = context.name ?? "hook";
-		const source = context.source ?? "magenta";
+		this.capabilityKind = context.kind ?? "hook";
+		this.name = context.name ?? "hook";
+		this.source = context.source ?? "magenta";
+		this.hotSwappable = context.hotSwappable ?? false;
+		this.provider = new HookProvider();
+	}
 
-		const provider = new HookProvider();
-		const instance = createCapabilityServer({
-			kind: "hook",
-			target: "hook://*",
-			description: "Lifecycle hook provider migrated from Magenta1 general-harness.",
-			provider,
-			operations: {
-				discover: (p) => p.discover(),
-				list: (p) => p.discover(),
-				describe: (p, req) => p.describeHook(targetName(req.target)),
-				run: (p, req) => p.run(targetName(req.target), req.input),
-				call: (p, req) => p.run(targetName(req.target), req.input),
-			},
-			metadata: {
-				implementation: "native-ts",
-				source: "magenta",
-				origin: "magenta1-general-harness",
-			},
-		});
+	toCapability(): HcpMagnetBinding {
+		return {
+			kind: this.capabilityKind,
+			name: this.name,
+			source: this.source,
+			instance: this.provider,
+		};
+	}
 
-		super({
-			descriptor: {
-				target: `capability:${kind}`,
-				kind: kind,
-				name: name,
-				implementation: "capability:magenta",
+	toHcpServer() {
+		return {
+			describe: (): HcpServerDescription => ({
+				target: `capability:${this.capabilityKind}`,
+				kind: this.capabilityKind,
+				ops: ["discover", "list", "describe", "run", "call"],
 				description: "Lifecycle hook provider migrated from Magenta1 general-harness.",
 				metadata: {
-					hotSwappable: context.hotSwappable ?? false,
+					name: this.name,
+					implementation: "native-ts",
+					source: this.source,
+					origin: "magenta1-general-harness",
+					hotSwappable: this.hotSwappable,
 				},
+			}),
+			call: async (request: HcpServerRequest): Promise<unknown> => {
+				const op = request.op || "run";
+				switch (op) {
+					case "discover":
+					case "list":
+						return this.provider.discover();
+					case "describe":
+						return this.provider.describeHook(targetName(request.target));
+					case "run":
+					case "call":
+						return this.provider.run(targetName(request.target), request.input);
+					default:
+						throw new Error(`Unknown operation: ${op} for hook capability at ${request.target}`);
+				}
 			},
-			source: source,
-			instance,
-		});
+			instance: <T = unknown>(_selector?: string): T | undefined => this.provider as unknown as T,
+		};
 	}
 }

@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { HcpClient } from "../harness-component-protocol/HcpClient.ts";
-import { getHarnessRegistryPath, loadRegistry } from "../harness-component-protocol/registry/registry.ts";
 import { HcpMagnet as HookMagentaMagnet } from "../modules/hooks/magenta/HcpMagnet.ts";
 import { HookProvider } from "../modules/hooks/magenta/hooks.ts";
 
@@ -25,7 +24,14 @@ describe("hook provider", () => {
 	});
 
 	it("runs pre-tool hook as declarative sandbox/approval/shell-policy actions", async () => {
-		const magnet = new HookMagentaMagnet({ repoRoot: process.cwd(), packagesRoot: process.cwd(), kind: "hook", name: "hook", descriptorPath: "", source: "magenta" });
+		const magnet = new HookMagentaMagnet({
+			repoRoot: process.cwd(),
+			packagesRoot: process.cwd(),
+			kind: "hook",
+			name: "hook",
+			descriptorPath: "",
+			source: "magenta",
+		});
 		const hcp = new HcpClient().register("hook", magnet.toHcpServer());
 
 		await expect(
@@ -55,7 +61,14 @@ describe("hook provider", () => {
 	});
 
 	it("runs init and workflow hooks as action envelopes", async () => {
-		const magnet = new HookMagentaMagnet({ repoRoot: process.cwd(), packagesRoot: process.cwd(), kind: "hook", name: "hook", descriptorPath: "", source: "magenta" });
+		const magnet = new HookMagentaMagnet({
+			repoRoot: process.cwd(),
+			packagesRoot: process.cwd(),
+			kind: "hook",
+			name: "hook",
+			descriptorPath: "",
+			source: "magenta",
+		});
 		const hcp = new HcpClient().register("hook", magnet.toHcpServer());
 
 		await expect(

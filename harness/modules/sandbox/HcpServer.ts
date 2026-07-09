@@ -1,4 +1,7 @@
-import type { HcpServer } from "../../harness-component-protocol/HcpServerTypes.ts";
+import type {
+	HcpServerDescription,
+	HcpServerRequest,
+} from "../../harness-component-protocol/HcpServerTypes.ts";
 
 export type SandboxNetworkPolicy = "deny" | "allowlist" | "allow" | string;
 
@@ -51,11 +54,20 @@ export interface SandboxProviderOptions {
 	profiles: SandboxProfile[];
 }
 
+/**
+ * HcpServer 的结构化类型（规范§2：全仓无 interface）
+ */
+type HcpServerShape = {
+	describe(): HcpServerDescription;
+	call(call: HcpServerRequest): Promise<unknown> | unknown;
+	instance?<T = unknown>(selector?: string): T | undefined;
+};
+
 export interface SandboxProviderContract {
 	get(name: string): SandboxProfile;
 	list(): SandboxProfile[];
 	discover(): SandboxDiscoverResult;
 	resolve(input: unknown, fallbackName?: string): { selection: SandboxSelection; profile: SandboxProfile };
-	toSandboxHcpServer(): HcpServer;
-	toSandboxSelectHcpServer(): HcpServer;
+	toSandboxHcpServer(): HcpServerShape;
+	toSandboxSelectHcpServer(): HcpServerShape;
 }

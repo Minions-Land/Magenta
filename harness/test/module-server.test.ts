@@ -1,9 +1,8 @@
 import { describe, expect, it } from "vitest";
-import type { HcpMagnet } from "../harness-component-protocol/HcpMagnetTypes.ts";
-import type { HcpServer, HcpServerRequest } from "../harness-component-protocol/HcpServerTypes.ts";
-import { ModuleHcpServer } from "../harness-component-protocol/server/module-server.ts";
+import { HcpClient } from "../harness-component-protocol/HcpClient.ts";
+import type { HcpServerRequest } from "../harness-component-protocol/HcpServerTypes.ts";
 
-/** Minimal fake magnet for testing ModuleHcpServer routing. */
+/** Minimal fake magnet for testing module server routing. */
 function createFakeMagnet(target: string, kind: string, product: unknown): HcpMagnet {
 	return {
 		kind: "native",
@@ -22,11 +21,12 @@ function createFakeMagnet(target: string, kind: string, product: unknown): HcpMa
 describe("ModuleHcpServer (strict Model B — module IS the HcpServer)", () => {
 	it("single-slot module: instance() with no selector uses the sole slot", () => {
 		const compactionMagnet = createFakeMagnet("capability:compaction", "capability", { compact: true });
-		const module = new ModuleHcpServer("compaction", new Map([["compaction", compactionMagnet]]));
+		const hcp = new HcpClient();
+		hcp.registerModule("compaction", new Map([["compaction", compactionMagnet]]));
 
-		expect(module.moduleName).toBe("compaction");
-		expect(module.selectors()).toEqual(["compaction"]);
-		expect(module.slotAddresses()).toEqual([{ address: "capability:compaction", selector: "compaction" }]);
+		const module = hcp.resolveModule("compaction")!;
+		expect(module).toBeDefined();
+		expect(module.describe().metadata?.moduleName).toBe("compaction");
 
 		// Single-slot ergonomic rule: no selector needed.
 		expect(module.instance()).toEqual({ compact: true });
@@ -36,7 +36,8 @@ describe("ModuleHcpServer (strict Model B — module IS the HcpServer)", () => {
 	it("multi-slot module: instance(selector) routes to the right magnet", () => {
 		const readMagnet = createFakeMagnet("tool:read", "tool", { name: "read", execute: "read-fn" });
 		const bashMagnet = createFakeMagnet("tool:bash", "tool", { name: "bash", execute: "bash-fn" });
-		const module = new ModuleHcpServer(
+		const hcp = new HcpClient();
+		hcp.registerModule(
 			"tools",
 			new Map([
 				["read", readMagnet],
@@ -44,12 +45,9 @@ describe("ModuleHcpServer (strict Model B — module IS the HcpServer)", () => {
 			]),
 		);
 
-		expect(module.moduleName).toBe("tools");
-		expect(module.selectors()).toEqual(["read", "bash"]);
-		expect(module.slotAddresses()).toEqual([
-			{ address: "tool:read", selector: "read" },
-			{ address: "tool:bash", selector: "bash" },
-		]);
+		const module = hcp.resolveModule("tools")!;
+		expect(module).toBeDefined();
+		expect(module.describe().metadata?.moduleName).toBe("tools");
 
 		expect(module.instance("read")).toEqual({ name: "read", execute: "read-fn" });
 		expect(module.instance("bash")).toEqual({ name: "bash", execute: "bash-fn" });
@@ -62,13 +60,16 @@ describe("ModuleHcpServer (strict Model B — module IS the HcpServer)", () => {
 	it("call() routes ops to the selected slot's magnet server", async () => {
 		const readMagnet = createFakeMagnet("tool:read", "tool", { name: "read" });
 		const bashMagnet = createFakeMagnet("tool:bash", "tool", { name: "bash" });
-		const module = new ModuleHcpServer(
+		const hcp = new HcpClient();
+		hcp.registerModule(
 			"tools",
 			new Map([
 				["read", readMagnet],
 				["bash", bashMagnet],
 			]),
 		);
+
+		const module = hcp.resolveModule("tools")!;
 
 		// Module-level describe (no selector) returns the aggregate.
 		const agg = module.call({ target: "module:tools", op: "describe" }) as { kind: string };
@@ -95,7 +96,10 @@ describe("ModuleHcpServer (strict Model B — module IS the HcpServer)", () => {
 
 	it("single-slot call() defaults to the sole slot", async () => {
 		const compactionMagnet = createFakeMagnet("capability:compaction", "capability", { compact: true });
-		const module = new ModuleHcpServer("compaction", new Map([["compaction", compactionMagnet]]));
+		const hcp = new HcpClient();
+		hcp.registerModule("compaction", new Map([["compaction", compactionMagnet]]));
+
+		const module = hcp.resolveModule("compaction")!;
 		const echoed = await module.call({ target: "capability:compaction", op: "call", input: { y: 2 } });
 		expect(echoed).toEqual({ echo: { y: 2 }, from: "capability:compaction" });
 	});
@@ -103,7 +107,8 @@ describe("ModuleHcpServer (strict Model B — module IS the HcpServer)", () => {
 	it("describe() returns synthetic module-level summary", () => {
 		const processMagnet = createFakeMagnet("capability:runtime:process", "capability", {});
 		const scriptsMagnet = createFakeMagnet("capability:runtime:script-runtimes", "capability", {});
-		const module = new ModuleHcpServer(
+		const hcp = new HcpClient();
+		hcp.registerModule(
 			"runtime",
 			new Map([
 				["runtime:process", processMagnet],
@@ -111,6 +116,7 @@ describe("ModuleHcpServer (strict Model B — module IS the HcpServer)", () => {
 			]),
 		);
 
+		const module = hcp.resolveModule("runtime")!;
 		const desc = module.describe();
 		expect(desc.target).toBe("module:runtime");
 		expect(desc.kind).toBe("module");
@@ -123,7 +129,8 @@ describe("ModuleHcpServer (strict Model B — module IS the HcpServer)", () => {
 	it("describeSlots() returns each magnet's own per-slot description", () => {
 		const readMagnet = createFakeMagnet("tool:read", "tool", { name: "read" });
 		const bashMagnet = createFakeMagnet("tool:bash", "tool", { name: "bash" });
-		const module = new ModuleHcpServer(
+		const hcp = new HcpClient();
+		hcp.registerModule(
 			"tools",
 			new Map([
 				["read", readMagnet],
@@ -131,6 +138,7 @@ describe("ModuleHcpServer (strict Model B — module IS the HcpServer)", () => {
 			]),
 		);
 
+		const module = hcp.resolveModule("tools")!;
 		const slots = module.describeSlots();
 		expect(slots.map((s) => s.target)).toEqual(["tool:read", "tool:bash"]);
 		expect(slots.every((s) => s.kind === "tool")).toBe(true);

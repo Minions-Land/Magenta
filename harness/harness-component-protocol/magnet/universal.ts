@@ -1,11 +1,22 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type {
-	HcpMagnet,
 	HcpMagnetBinding,
 	HcpMagnetResource,
 	HcpMagnetResourceMergeMode,
-} from "../harness-component-protocol/HcpMagnetTypes.ts";
-import type { HcpServer, HcpServerDescription, HcpServerRequest } from "../harness-component-protocol/HcpServerTypes.ts";
+} from "../HcpMagnetTypes.ts";
+import type {
+	HcpServerDescription,
+	HcpServerRequest,
+} from "../HcpServerTypes.ts";
+
+/**
+ * HcpServer 的结构化类型（规范§2：全仓无 interface）
+ */
+type HcpServerShape = {
+	describe(): HcpServerDescription;
+	call(call: HcpServerRequest): Promise<unknown> | unknown;
+	instance?<T = unknown>(selector?: string): T | undefined;
+};
 
 export interface UniversalMagnetState {
 	enabled: boolean;
@@ -30,10 +41,12 @@ export interface UniversalMagnetOptions {
 /**
  * Base class for magnets that need a consistent HCP management surface.
  *
+ * 按照规范§2：裸 class，不 implements 任何 interface。使用结构化类型。
+ *
  * This keeps selectors and assembly code from caring whether an implementation is
  * native TS, a Rust process tool, a JSONL HCP process, MCP, WASM, or a remote API.
  */
-export abstract class UniversalMagnet implements HcpMagnet {
+export abstract class UniversalMagnet {
 	readonly kind: string;
 	protected readonly descriptor: UniversalMagnetDescriptor;
 	protected readonly state: UniversalMagnetState;
@@ -95,8 +108,8 @@ export abstract class UniversalMagnet implements HcpMagnet {
 		};
 	}
 
-	toHcpServer(): HcpServer {
-		const base: HcpServer = {
+	toHcpServer(): HcpServerShape {
+		const base: HcpServerShape = {
 			describe: () => this.describe(),
 			call: async (call: HcpServerRequest): Promise<unknown> => {
 				switch (call.op) {

@@ -12,7 +12,7 @@ import {
 	loadPackageOverlay,
 	parsePackageSelector,
 } from "../harness-component-protocol/overlay/package-overlay.ts";
-import type { ProcessToolMagnet } from "../hcp-magnet/process.ts";
+import type { ProcessToolMagnet } from "../harness-component-protocol/magnet/process.ts";
 import { loadSkills } from "../modules/skills/pi/skills.ts";
 
 const repoRoot = fileURLToPath(new URL("../..", import.meta.url));

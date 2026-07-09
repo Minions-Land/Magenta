@@ -4,8 +4,8 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { registerMagnetHcpServers } from "../harness-component-protocol/assembly/register-servers.ts";
 import { HcpClient } from "../harness-component-protocol/HcpClient.ts";
-import { HcpMagnetProcess } from "../hcp-magnet/hcp-process.ts";
-import { ProcessToolMagnet, processToolManifestFromToml } from "../hcp-magnet/process.ts";
+import { HcpMagnetProcess } from "../harness-component-protocol/magnet/hcp-process.ts";
+import { ProcessToolMagnet, processToolManifestFromToml } from "../harness-component-protocol/magnet/process.ts";
 
 async function writeExecutableScript(dir: string, name: string, source: string): Promise<string> {
 	const path = join(dir, name);

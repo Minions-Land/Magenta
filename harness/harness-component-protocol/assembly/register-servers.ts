@@ -1,6 +1,21 @@
-import type { HcpMagnet } from "../../harness-component-protocol/HcpMagnetTypes.ts";
+import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { HcpServerDescription } from "../../harness-component-protocol/HcpServerTypes.ts";
-import type { HcpClient } from "../HcpClient.ts";
+import { HcpClient } from "../HcpClient.ts";
+
+/**
+ * HcpMagnet 的结构化类型（规范§2：全仓无 interface）
+ */
+type HcpMagnetShape = {
+	kind: string;
+	toTool?(): AgentTool;
+	toCapability?(): unknown;
+	toResource?(): unknown;
+	toHcpServer?(): {
+		describe(): HcpServerDescription;
+		call(call: import("../HcpServerTypes.ts").HcpServerRequest): Promise<unknown> | unknown;
+		instance?<T = unknown>(selector?: string): T | undefined;
+	};
+};
 
 export type DuplicateMagnetHcpServerPolicy = "error" | "replace" | "skip";
 
@@ -39,7 +54,7 @@ export interface RegisterMagnetHcpServersResult {
  */
 export function registerMagnetHcpServers(
 	registry: HcpClient,
-	magnets: Iterable<HcpMagnet>,
+	magnets: Iterable<HcpMagnetShape>,
 	options: RegisterMagnetHcpServersOptions = {},
 ): RegisterMagnetHcpServersResult {
 	const duplicatePolicy = options.duplicates ?? "error";
@@ -80,4 +95,30 @@ export function registerMagnetHcpServers(
 	}
 
 	return { registrations, skipped };
+}
+
+/**
+ * Register tool magnets as one "tools" module server in the HCP client.
+ * 按照规范，使用结构化类型。
+ */
+export function registerToolMagnets(hcp: HcpClient, magnets: HcpMagnetShape[]): void {
+	const byModule = new Map<string, Map<string, HcpMagnetShape>>();
+
+	for (const magnet of magnets) {
+		const server = magnet.toHcpServer?.();
+		if (!server) continue;
+		const desc = server.describe();
+		const toolName = desc.metadata?.name as string || desc.target.replace("tool:", "");
+
+		let moduleSlots = byModule.get("tools");
+		if (!moduleSlots) {
+			moduleSlots = new Map();
+			byModule.set("tools", moduleSlots);
+		}
+		moduleSlots.set(toolName, magnet);
+	}
+
+	for (const [moduleName, slots] of byModule) {
+		hcp.registerModule(moduleName, slots);
+	}
 }
