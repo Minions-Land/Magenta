@@ -4,7 +4,6 @@ import { access, readFile } from "node:fs/promises";
 import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import type { AgentTool, AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
 import { type TSchema, Type } from "typebox";
-import type { HarnessCatalogEntry, HarnessComponentCatalog } from "../catalog/pi/catalog.ts";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, type TruncationResult } from "../core/utils/pi/truncate.ts";
 import { parseToml, type TomlTable } from "../hcp-client/registry/registry.ts";
 import type { HcpRequest } from "../hcp-client/contract/hcp-server.ts";
@@ -135,44 +134,6 @@ function asObject(value: unknown): Record<string, unknown> | undefined {
 	return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
 }
 
-function resolveCatalogLocalPath(catalog: HarnessComponentCatalog, path: string): string {
-	if (isAbsolute(path)) return path;
-	return resolve(resolveCatalogLocalRoot(catalog), path);
-}
-
-function resolveCatalogLocalRoot(catalog: HarnessComponentCatalog): string {
-	let dir = dirname(catalog.inventoryPath);
-	while (true) {
-		if (existsSync(join(dir, "harness.toml"))) return dir;
-		const parent = dirname(dir);
-		if (parent === dir) return resolve(dirname(catalog.inventoryPath), "..");
-		dir = parent;
-	}
-}
-
-function resolveCatalogSourcePath(catalog: HarnessComponentCatalog, path: string): string {
-	if (isAbsolute(path)) return path;
-	return resolve(catalog.inventory.repository_root, path);
-}
-
-function resolveCatalogComponentPath(catalog: HarnessComponentCatalog, entry: HarnessCatalogEntry): string {
-	const mappedPath = entry.migration.component?.path;
-	if (mappedPath) {
-		return resolveCatalogLocalPath(catalog, mappedPath);
-	}
-	if (!entry.path) {
-		throw new Error(`Catalog entry ${entry.id} has no manifest path`);
-	}
-	return resolveCatalogSourcePath(catalog, entry.path);
-}
-
-function resolveCatalogManifestRoot(catalog: HarnessComponentCatalog, entry: HarnessCatalogEntry): string {
-	if (entry.migration.component?.path) {
-		return resolveCatalogLocalRoot(catalog);
-	}
-	return catalog.inventory.repository_root;
-}
-
 export function processToolManifestFromToml(table: TomlTable): ProcessToolManifest {
 	const name = asString(table.name);
 	const description = asString(table.description);
@@ -201,41 +162,6 @@ export function processToolManifestFromToml(table: TomlTable): ProcessToolManife
 
 export async function loadProcessToolManifest(path: string): Promise<ProcessToolManifest> {
 	return processToolManifestFromToml(parseToml(await readFile(path, "utf-8")));
-}
-
-export async function createProcessToolMagnetFromCatalogEntry(
-	catalog: HarnessComponentCatalog,
-	entry: HarnessCatalogEntry,
-	options: Omit<ProcessToolMagnetOptions, "manifest" | "manifestRoot">,
-): Promise<ProcessToolMagnet<TSchema>> {
-	const manifestPath = resolveCatalogComponentPath(catalog, entry);
-	const manifest = await loadProcessToolManifest(manifestPath);
-	const sandboxProfile = options.sandboxProfile ?? (await loadCatalogSandboxProfile(catalog, manifest));
-	return new ProcessToolMagnet({
-		...options,
-		manifest,
-		sandboxProfile,
-		manifestRoot: resolveCatalogManifestRoot(catalog, entry),
-	});
-}
-
-async function loadCatalogSandboxProfile(
-	catalog: HarnessComponentCatalog,
-	manifest: ProcessToolManifest,
-): Promise<SandboxProfile | undefined> {
-	const packPath = resolve(resolveCatalogLocalRoot(catalog), "modules/sandbox/sandbox.toml");
-	if (!(await fileExists(packPath))) return undefined;
-	const provider = await loadSandboxProviderFromPack(packPath);
-	const selection = selectSandboxProfile({
-		tool: {
-			name: manifest.name,
-			operation: manifest.operation,
-			read_only: manifest.read_only ?? false,
-			destructive: manifest.destructive ?? false,
-			tags: manifest.tags ?? [],
-		},
-	});
-	return provider.get(selection.profile);
 }
 
 async function commandExists(command: string): Promise<boolean> {

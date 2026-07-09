@@ -101,17 +101,4 @@ describe("script runtime provider", () => {
 			}),
 		).rejects.toThrow(/process exceeded sandbox wall time/);
 	});
-
-	it("registers script runtime wrappers in the catalog map", async () => {
-		const registry = await loadRegistry(getHarnessRegistryPath());
-		const catalog = registry.catalogs[0]?.catalog;
-
-		for (const name of ["shell", "python", "node", "r", "julia"]) {
-			const entry = catalog.entries.find((item) => item.id === `general-harness:runtime:${name}`);
-			expect(entry?.migration).toMatchObject({
-				state: "integrated",
-				component: { kind: "runtime", name, path: "modules/runtime/script-runtimes.toml" },
-			});
-		}
-	});
 });

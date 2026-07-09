@@ -94,17 +94,4 @@ describe("hook provider", () => {
 			],
 		});
 	});
-
-	it("registers hook entries in the catalog map", async () => {
-		const registry = await loadRegistry(getHarnessRegistryPath());
-		const catalog = registry.catalogs[0]?.catalog;
-
-		for (const name of ["init", "pre-turn", "pre-llm", "post-llm", "pre-tool", "post-tool", "compact", "workflow"]) {
-			const entry = catalog.entries.find((item) => item.id === `general-harness:hook:${name}`);
-			expect(entry?.migration).toMatchObject({
-				state: "integrated",
-				component: { kind: "hook", name, path: "modules/hooks/hooks.toml" },
-			});
-		}
-	});
 });

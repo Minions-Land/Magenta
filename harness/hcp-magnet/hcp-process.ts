@@ -1,7 +1,6 @@
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
-import type { HarnessCatalogEntry, HarnessComponentCatalog } from "../catalog/pi/catalog.ts";
 import { parseToml, type TomlTable } from "../hcp-client/registry/registry.ts";
 import type { HcpRequest } from "../hcp-client/contract/hcp-server.ts";
 import {
@@ -61,37 +60,6 @@ function asStringArray(value: unknown): string[] {
 	return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
 
-function resolveCatalogLocalPath(catalog: HarnessComponentCatalog, path: string): string {
-	if (isAbsolute(path)) return path;
-	return resolve(resolveCatalogLocalRoot(catalog), path);
-}
-
-function resolveCatalogLocalRoot(catalog: HarnessComponentCatalog): string {
-	let dir = dirname(catalog.inventoryPath);
-	while (true) {
-		if (existsSync(join(dir, "harness.toml"))) return dir;
-		const parent = dirname(dir);
-		if (parent === dir) return resolve(dirname(catalog.inventoryPath), "..");
-		dir = parent;
-	}
-}
-
-function resolveCatalogSourcePath(catalog: HarnessComponentCatalog, path: string): string {
-	if (isAbsolute(path)) return path;
-	return resolve(catalog.inventory.repository_root, path);
-}
-
-function resolveCatalogComponentPath(catalog: HarnessComponentCatalog, entry: HarnessCatalogEntry): string {
-	const mappedPath = entry.migration.component?.path;
-	if (mappedPath) {
-		return resolveCatalogLocalPath(catalog, mappedPath);
-	}
-	if (!entry.path) {
-		throw new Error(`Catalog entry ${entry.id} has no manifest path`);
-	}
-	return resolveCatalogSourcePath(catalog, entry.path);
-}
-
 export function hcpProcessManifestFromToml(table: TomlTable): HcpProcessManifest {
 	const name = asString(table.name);
 	const description = asString(table.description);
@@ -115,17 +83,6 @@ export function hcpProcessManifestFromToml(table: TomlTable): HcpProcessManifest
 
 export async function loadHcpProcessManifest(path: string): Promise<HcpProcessManifest> {
 	return hcpProcessManifestFromToml(parseToml(await readFile(path, "utf-8")));
-}
-
-export async function createHcpProcessMagnetFromCatalogEntry(
-	catalog: HarnessComponentCatalog,
-	entry: HarnessCatalogEntry,
-	options: Omit<HcpProcessMagnetOptions, "manifest">,
-): Promise<HcpProcessMagnet> {
-	return new HcpProcessMagnet({
-		...options,
-		manifest: await loadHcpProcessManifest(resolveCatalogComponentPath(catalog, entry)),
-	});
 }
 
 function requestId(): string {

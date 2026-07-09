@@ -50,16 +50,4 @@ describe("context provider", () => {
 			content: expect.not.stringContaining("HCP"),
 		});
 	});
-
-	it("registers context provider in the catalog map", async () => {
-		const registry = await loadRegistry(getHarnessRegistryPath());
-		const catalog = registry.catalogs[0]?.catalog;
-
-		expect(
-			catalog.entries.find((entry) => entry.id === "runtime-provider:context:workspace")?.migration,
-		).toMatchObject({
-			state: "integrated",
-			component: { kind: "context", name: "workspace", path: "modules/context/context.toml" },
-		});
-	});
 });

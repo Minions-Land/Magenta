@@ -1,6 +1,5 @@
 // Re-export all harness capabilities
 
-export * from "./catalog/pi/catalog.ts";
 export * from "./core/env/pi/nodejs.ts";
 export * from "./core/messages/messages.ts";
 export * from "./core/session/pi/jsonl-repo.ts";
@@ -11,7 +10,6 @@ export { uuidv7 } from "./core/session/pi/uuid.ts";
 export * from "./core/types/types.ts";
 export * from "./core/utils/pi/shell-output.ts";
 export * from "./core/utils/pi/truncate.ts";
-export * from "./hcp-client/assembly/factory.ts";
 export * from "./hcp-client/assembly/register-servers.ts";
 export * from "./hcp-client/assembly/session-hcp.ts";
 export * from "./hcp-client/assembly/trunk-tools.ts";

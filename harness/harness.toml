@@ -182,12 +182,6 @@ name = "package-overlay"
 description = "Harness package overlay discovery and profile selection. Actual package contents live in the repository-level packages/ root."
 path = "hcp-client/overlay/package-overlay.toml"
 
-[[components]]
-kind = "catalog"
-name = "magenta1-harness-components"
-description = "Magenta 1 general-harness component inventory migrated as selectable harness metadata."
-path = "catalog/catalog.toml"
-
 # Assembly layer
 [[components]]
 kind = "assembly"
@@ -207,9 +201,3 @@ name = "registry"
 description = "TOML registry loader and component discovery."
 path = "hcp-client/registry/registry.toml"
 
-# Selectable component catalogs. These are inventories, not automatically
-# loop-ready implementations.
-[[catalogs]]
-name = "magenta1-harness-components"
-description = "111 Magenta 1 general-harness components with provenance and Magenta3 integration mapping."
-path = "catalog/catalog.toml"

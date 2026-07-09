@@ -45,11 +45,10 @@ import {
 	TUI,
 	visibleWidth,
 } from "@earendil-works/pi-tui";
-import type { HarnessPackage, HarnessSelectionItem, PackageDiagnostic, PackageOverlay } from "@magenta/harness";
+import type { HarnessPackage, PackageDiagnostic, PackageOverlay } from "@magenta/harness";
 import {
 	discoverHarnessPackages,
 	getHarnessRegistryPath,
-	listHarnessSelectionItems,
 	loadRegistry,
 	parsePackageSelector,
 } from "@magenta/harness";
@@ -5228,7 +5227,6 @@ export class InteractiveMode {
 		});
 		const moduleItems = this.harnessModuleMenuItems(snapshot);
 		const packageItems = await this.harnessPackageMenuItems(snapshot);
-		const catalogItems = this.harnessCatalogMenuItems(snapshot);
 
 		return {
 			value: "harness",
@@ -5339,7 +5337,6 @@ export class InteractiveMode {
 				},
 				...moduleItems,
 				...packageItems,
-				...catalogItems,
 			],
 		};
 	}
@@ -5490,87 +5487,6 @@ export class InteractiveMode {
 		];
 	}
 
-	private harnessCatalogMenuItems(snapshot: HarnessRuntimeSnapshot): FloatingMenuItem[] {
-		const registry = snapshot.registry.registry;
-		if (!registry || registry.catalogs.length === 0) return [];
-
-		const selectionItems = listHarnessSelectionItems(registry);
-		if (selectionItems.length === 0) return [];
-
-		const stateOrder = ["integrated", "available", "metadata-only", "external-boundary", "deferred-domain-pack"];
-		const stateLabels = new Map([
-			["integrated", "Integrated"],
-			["available", "Available"],
-			["metadata-only", "Metadata only"],
-			["external-boundary", "External boundary"],
-			["deferred-domain-pack", "Deferred domain pack"],
-		]);
-		const byState = new Map<string, HarnessSelectionItem[]>();
-		for (const item of selectionItems) {
-			const items = byState.get(item.migrationState) ?? [];
-			items.push(item);
-			byState.set(item.migrationState, items);
-		}
-
-		const stateItems = [...byState.entries()]
-			.sort(([left], [right]) => stateOrder.indexOf(left) - stateOrder.indexOf(right))
-			.map(([state, items]) => ({
-				value: `harness:catalog:${state}`,
-				label: stateLabels.get(state) ?? state,
-				description: `${items.length} entries`,
-				children: items
-					.sort((left, right) => left.label.localeCompare(right.label))
-					.map((item) => ({
-						value: `harness:catalog:item:${encodeMenuValuePart(item.id)}`,
-						label: item.label,
-						description: this.harnessCatalogItemDescription(item),
-						active: item.migrationState === "integrated",
-					})),
-			}));
-
-		return [
-			{
-				value: "harness:catalog",
-				label: "Catalog",
-				description: `${selectionItems.length} migrated/candidate entries`,
-				children: stateItems,
-			},
-		];
-	}
-
-	private harnessCatalogItemDescription(item: HarnessSelectionItem): string {
-		const component = item.component ? ` -> ${item.component.kind}/${item.component.name}` : "";
-		return `${item.kind} · ${item.origin} · ${item.readiness}${component}`;
-	}
-
-	private async showHarnessCatalogItem(id: string): Promise<void> {
-		const registry = await this.loadHarnessRegistryView();
-		if (!registry.registry) {
-			this.showStatus(formatHarnessRegistrySummary(registry));
-			return;
-		}
-		const item = listHarnessSelectionItems(registry.registry).find((candidate) => candidate.id === id);
-		if (!item) {
-			this.showWarning(`Unknown harness catalog item: ${id}`);
-			return;
-		}
-		this.showStatus(
-			[
-				`Harness catalog: ${item.label}`,
-				`ID: ${item.id}`,
-				`Kind: ${item.kind} (${item.type})`,
-				`Origin: ${item.origin} / ${item.originRel}`,
-				`Migration: ${item.migrationState} (${item.readiness})`,
-				item.component
-					? `Mapped component: ${item.component.kind}/${item.component.name}`
-					: "Mapped component: none",
-				item.sourcePath ? `Source path: ${item.sourcePath}` : "Source path: none",
-				item.notes ? `Notes: ${item.notes}` : undefined,
-			]
-				.filter((line): line is string => Boolean(line))
-				.join("\n"),
-		);
-	}
 
 	private async openHarnessMenu(): Promise<void> {
 		const root = await this.harnessMenuItems();
@@ -5657,10 +5573,6 @@ export class InteractiveMode {
 				void this.toggleHarnessPackageSelector(`${packageId}:${decodeMenuValuePart(parts[4])}`);
 				return true;
 			}
-		}
-		if (parts[1] === "catalog" && parts[2] === "item" && parts[3]) {
-			void this.showHarnessCatalogItem(decodeMenuValuePart(parts[3]));
-			return true;
 		}
 		if (item.value.includes(":impl:")) {
 			this.showSystemMessage(

@@ -86,24 +86,11 @@ describe("sandbox provider", () => {
 		});
 	});
 
-	it("is registered in the harness registry and catalog integration map", async () => {
+	it("is registered in the harness registry", async () => {
 		const registry = await loadRegistry(getHarnessRegistryPath());
 
 		expect(registry.components.find((component) => component.kind === "sandbox")).toMatchObject({
 			name: "sandbox",
-		});
-
-		const catalog = registry.catalogs[0]?.catalog;
-		const readonly = catalog.entries.find((entry) => entry.id === "general-harness:sandbox:readonly-fs");
-		const hook = catalog.entries.find((entry) => entry.id === "general-harness:hook:sandbox-select");
-
-		expect(readonly?.migration).toMatchObject({
-			state: "integrated",
-			component: { kind: "sandbox", name: "readonly-fs", path: "modules/sandbox/magenta/readonly-fs.toml" },
-		});
-		expect(hook?.migration).toMatchObject({
-			state: "integrated",
-			component: { kind: "hook", name: "sandbox-select", path: "modules/sandbox/magenta/sandbox.ts" },
 		});
 	});
 });

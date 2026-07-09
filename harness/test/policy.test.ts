@@ -77,20 +77,4 @@ describe("policy providers", () => {
 			suggested_tools: ["Write"],
 		});
 	});
-
-	it("registers policy providers in the catalog map", async () => {
-		const registry = await loadRegistry(getHarnessRegistryPath());
-		const catalog = registry.catalogs[0]?.catalog;
-
-		expect(catalog.entries.find((entry) => entry.id === "runtime-provider:approval:policy")?.migration).toMatchObject(
-			{
-				state: "integrated",
-				component: { kind: "approval", name: "policy", path: "modules/policy/policy.toml" },
-			},
-		);
-		expect(catalog.entries.find((entry) => entry.id === "runtime-provider:shell:policy")?.migration).toMatchObject({
-			state: "integrated",
-			component: { kind: "shell", name: "policy", path: "modules/policy/policy.toml" },
-		});
-	});
 });

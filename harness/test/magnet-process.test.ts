@@ -2,8 +2,6 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { loadHarnessComponentCatalog } from "../catalog/pi/catalog.ts";
-import { createMagnetFromCatalogEntry } from "../hcp-client/assembly/factory.ts";
 import { registerMagnetHcpServers } from "../hcp-client/assembly/register-servers.ts";
 import { HcpClient } from "../hcp-client/hcp-client.ts";
 import { HcpProcessMagnet } from "../hcp-magnet/hcp-process.ts";
@@ -286,71 +284,4 @@ rl.on("line", line => {
 		});
 	});
 
-	it("creates generic magnets from migrated Magenta1 catalog entries", async () => {
-		const catalog = await loadHarnessComponentCatalog(
-			"magenta1-harness-components",
-			new URL("../catalog/magenta/magenta1-components-inventory.json", import.meta.url).pathname,
-			{
-				integrationMapPath: new URL("../catalog/magenta/magenta1-integration-map.json", import.meta.url).pathname,
-			},
-		);
-		const astGrep = catalog.entries.find((entry) => entry.id === "general-harness:mcp:AstGrep");
-		const hcpProcess = catalog.entries.find((entry) => entry.id === "general-harness:hcp-process:echo-jsonl");
-		expect(astGrep).toBeDefined();
-		expect(hcpProcess).toBeDefined();
-
-		const processMagnet = await createMagnetFromCatalogEntry(catalog, astGrep!, { cwd: process.cwd() });
-		const processTarget = processMagnet.toHcpServer?.();
-		expect(processTarget).toBeDefined();
-		const processDescription = processTarget?.describe();
-		expect(processDescription).toMatchObject({
-			target: "tool://AstGrep",
-			kind: "tool",
-		});
-		expect(processDescription?.metadata).toMatchObject({
-			implementation: "process",
-			toolName: "AstGrep",
-		});
-		await expect(processTarget!.call({ target: "tool://AstGrep", op: "health" })).resolves.toMatchObject({
-			command: expect.stringContaining(
-				"harness/tools/grep/magenta/process-tools/target/release/magenta-process-tools",
-			),
-			runtime: "runtime://process",
-		});
-
-		const hcpMagnet = await createMagnetFromCatalogEntry(catalog, hcpProcess!, { cwd: process.cwd() });
-		const hcpTarget = hcpMagnet.toHcpServer?.();
-		expect(hcpTarget).toBeDefined();
-		expect(hcpTarget?.describe()).toMatchObject({
-			target: "hcp-process://echo-jsonl",
-			kind: "hcp-process",
-		});
-	});
-
-	it("executes a migrated process tool from the catalog", async () => {
-		const dir = await mkdtemp(join(tmpdir(), "magenta-rust-process-tool-"));
-		const catalog = await loadHarnessComponentCatalog(
-			"magenta1-harness-components",
-			new URL("../catalog/magenta/magenta1-components-inventory.json", import.meta.url).pathname,
-			{
-				integrationMapPath: new URL("../catalog/magenta/magenta1-integration-map.json", import.meta.url).pathname,
-			},
-		);
-		const echoJson = catalog.entries.find((entry) => entry.id === "general-harness:mcp:echo-json");
-		expect(echoJson).toBeDefined();
-
-		const magnet = await createMagnetFromCatalogEntry(catalog, echoJson!, { cwd: dir });
-		const tool = magnet.toTool?.();
-		expect(tool).toBeDefined();
-
-		const result = await tool!.execute("call-echo-json", { message: "hello" });
-		const firstContent = result.content[0];
-		expect(firstContent?.type).toBe("text");
-		expect(firstContent?.type === "text" ? firstContent.text : "").toContain('"message":"hello"');
-		expect(result.details.sandboxEnforced).toBe(true);
-		expect(result.details.runtimePolicy).toMatchObject({
-			network: "deny",
-			os_enforced: false,
-		});
-	});
 });
