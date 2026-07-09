@@ -1,5 +1,4 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { HcpServer } from "../../hcp-client/contract/hcp-server.ts";
 
 /**
  * Multi-agent orchestration contract.
@@ -22,6 +21,9 @@ import type { HcpServer } from "../../hcp-client/contract/hcp-server.ts";
  * criteria-based scoring, pairwise judging, stop-on-no-new-findings). Each preset
  * enforces that soul step via a guard prompt (see `guards`) prepended to the
  * relevant worker; the LLM cannot dilute it.
+ *
+ * Note: This interface contains only business logic. Conversion to HcpServer
+ * is handled by the unified capability-server adapter, not by the provider.
  */
 
 /** The set of supported orchestration patterns. */
@@ -359,12 +361,13 @@ export interface MultiAgentDiscoverResult {
  * The multi-agent orchestration capability surface. The assembly layer selects
  * a source implementation and hands the loop this instance; the loop invokes
  * `orchestrate` directly (HCP does not sit on the hot path).
+ *
+ * Note: Conversion to HcpServer is handled by the unified capability-server
+ * adapter, not by the provider.
  */
 export interface MultiAgentProviderContract {
 	/** Describe the provider: its target and the patterns it supports. */
 	discover(): MultiAgentDiscoverResult;
 	/** Run one orchestration to completion. */
 	orchestrate(request: OrchestrationRequest, signal?: AbortSignal): Promise<OrchestrationResult>;
-	/** Expose this provider as an HCP server endpoint. */
-	toHcpServer(): HcpServer;
 }

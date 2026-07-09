@@ -9,7 +9,6 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { HcpServer } from "../../../../hcp-client/contract/hcp-server.ts";
 import type {
 	CommonOptions,
 	MultiAgentDiscoverResult,
@@ -38,9 +37,9 @@ export interface WorkerRunner {
 const defaultRunner: WorkerRunner = { spawn: spawnWorker, parallel };
 
 const DEFAULT_MAX_CONCURRENT = 8;
-const TARGET = "multiagent://local";
+export const TARGET = "multiagent://local";
 
-const PATTERNS: Pattern[] = [
+export const PATTERNS: Pattern[] = [
 	"classify_and_act",
 	"fan_out_synthesize",
 	"adversarial_verify",
@@ -367,33 +366,5 @@ export class MultiAgentOrchestrator implements MultiAgentProviderContract {
 		const cwd = (req as CommonOptions).cwd ?? this.defaultCwd;
 		const result = await runWorkflowModule(scriptPath, args, this.runner, cwd, signal);
 		return assembleResult(req.pattern, result);
-	}
-
-	toHcpServer(): HcpServer {
-		const provider = this;
-		return {
-			describe() {
-				return {
-					target: TARGET,
-					kind: "multiagent",
-					ops: ["discover", "orchestrate"],
-					description: "Deterministic multi-agent orchestration workflows.",
-					metadata: { patterns: PATTERNS },
-				};
-			},
-			async call(request: import("../../../../hcp-client/contract/hcp-server.ts").HcpRequest) {
-				switch (request.op) {
-					case "discover":
-						return provider.discover();
-					case "orchestrate":
-						return provider.orchestrate(request.input as OrchestrationRequest);
-					default:
-						throw new Error(`Unsupported op: ${request.op}`);
-				}
-			},
-			instance<T>(_selector?: string): T {
-				return provider as unknown as T;
-			},
-		};
 	}
 }

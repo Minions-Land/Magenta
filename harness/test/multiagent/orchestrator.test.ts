@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { WorkerSlot } from "../../modules/multiagent/contract.ts";
 import { MultiAgentOrchestrator } from "../../modules/multiagent/workflow/magenta/orchestrator.ts";
+import { multiagentMagentaMagnet } from "../../modules/multiagent/workflow/magenta/magnet.ts";
 import { buildSystemPrompt } from "../../modules/multiagent/workflow/magenta/worker.ts";
 
 /**
@@ -29,7 +30,7 @@ describe("multiagent orchestrator", () => {
 	});
 
 	it("exposes an HCP server describing the orchestrate op", () => {
-		const server = new MultiAgentOrchestrator().toHcpServer();
+		const server = multiagentMagentaMagnet.build({ repoRoot: process.cwd(), packagesRoot: process.cwd() });
 		const desc = server.describe();
 		expect(desc.target).toBe("multiagent://local");
 		expect(desc.kind).toBe("multiagent");
