@@ -1,9 +1,8 @@
-import type { HcpRequest, HcpServer, HcpServerDescription } from "../../../hcp-client/contract/hcp-server.ts";
 import type { ShellPolicyClassification } from "../../policy/contract.ts";
 import { decideApproval } from "../../policy/magenta/approval.ts";
 import { classifyShellCommand } from "../../policy/magenta/shell-policy.ts";
 import { selectSandboxProfile } from "../../sandbox/magenta/sandbox.ts";
-import type { HookDescriptor, HookDiscoverResult, HookProviderContract, HookResult } from "../contract.ts";
+import type { HookDescriptor, HookDiscoverResult, HookProvider as IHookProvider, HookResult } from "../contract.ts";
 
 const LIFECYCLE_HOOKS = ["init", "pre-turn", "pre-llm", "post-llm", "pre-tool", "post-tool", "compact", "workflow"];
 
@@ -21,12 +20,6 @@ const HOOKS: readonly HookDescriptor[] = [
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function targetName(target: string): string {
-	if (target.startsWith("hook://")) return target.slice("hook://".length);
-	const index = target.indexOf(":");
-	return index === -1 ? target : target.slice(index + 1).replace(/^\/\//, "");
 }
 
 function defaultReturnMode(name: string): string {
@@ -203,7 +196,7 @@ export function runLifecycleHook(name: string, input: unknown): HookResult {
 	};
 }
 
-export class HookProvider implements HookProviderContract {
+export class HookProvider implements IHookProvider {
 	private readonly hooks = new Map<string, HookDescriptor>();
 
 	constructor(hooks: readonly HookDescriptor[] = HOOKS) {
@@ -241,41 +234,5 @@ export class HookProvider implements HookProviderContract {
 			throw new Error(`hook not found: ${name}`);
 		}
 		return hook;
-	}
-
-	describe(): HcpServerDescription {
-		return {
-			target: "hook://*",
-			kind: "hook",
-			ops: ["discover", "describe", "run", "call"],
-			description: "Lifecycle hook provider migrated from Magenta1 general-harness.",
-			metadata: {
-				implementation: "native-ts",
-				source: "magenta",
-				origin: "magenta1-general-harness",
-			},
-		};
-	}
-
-	toHcpServer(): HcpServer {
-		return {
-			describe: () => this.describe(),
-			call: (call: HcpRequest): unknown => {
-				const name = targetName(call.target);
-				const hook = this.describeHook(name);
-				switch (call.op || "run") {
-					case "discover":
-					case "list":
-						return this.discover();
-					case "describe":
-						return hook;
-					case "run":
-					case "call":
-						return this.run(hook.name, call.input);
-					default:
-						throw new Error(`unsupported hook operation ${call.op}`);
-				}
-			},
-		};
 	}
 }

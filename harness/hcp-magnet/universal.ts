@@ -195,8 +195,23 @@ export class CapabilityMagnet<T = unknown> extends UniversalMagnet {
 	 * `toCapability().instance` the SAME object — so HCP is the one resolver: a
 	 * consumer asking HCP to resolve this capability by name gets exactly what the
 	 * binding holds.
+	 *
+	 * If the instance is itself an HcpServer (e.g., wrapped via createCapabilityServer),
+	 * unwrap it by calling its instance() method to return the actual provider.
 	 */
 	protected override hcpInstance(_selector?: string): unknown {
+		// Check if instance is an HcpServer (has describe, call, instance methods)
+		if (
+			this.instance &&
+			typeof this.instance === "object" &&
+			"describe" in this.instance &&
+			"call" in this.instance &&
+			"instance" in this.instance &&
+			typeof (this.instance as any).instance === "function"
+		) {
+			// Instance is an HcpServer, unwrap it
+			return (this.instance as any).instance();
+		}
 		return this.instance;
 	}
 }

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { HcpClient } from "../hcp-client/hcp-client.ts";
 import { getHarnessRegistryPath, loadRegistry } from "../hcp-client/registry/registry.ts";
 import { HookProvider } from "../modules/hooks/magenta/hooks.ts";
+import { hookMagentaMagnet } from "../modules/hooks/magenta/magnet.ts";
 
 describe("hook provider", () => {
 	it("discovers and describes migrated lifecycle hooks", async () => {
@@ -24,7 +25,7 @@ describe("hook provider", () => {
 	});
 
 	it("runs pre-tool hook as declarative sandbox/approval/shell-policy actions", async () => {
-		const hcp = new HcpClient().register("hook", new HookProvider().toHcpServer());
+		const hcp = new HcpClient().register("hook", hookMagentaMagnet.build());
 
 		await expect(
 			hcp.dispatch({
@@ -53,7 +54,7 @@ describe("hook provider", () => {
 	});
 
 	it("runs init and workflow hooks as action envelopes", async () => {
-		const hcp = new HcpClient().register("hook", new HookProvider().toHcpServer());
+		const hcp = new HcpClient().register("hook", hookMagentaMagnet.build());
 
 		await expect(
 			hcp.dispatch({

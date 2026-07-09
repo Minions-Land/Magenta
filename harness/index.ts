@@ -25,6 +25,7 @@ export * from "./hcp-client/contract/hcp-server.ts";
 export * from "./hcp-magnet/hcp-process.ts";
 export * from "./hcp-magnet/mcp.ts";
 export * from "./hcp-magnet/mcp-client.ts";
+export * from "./hcp-client/server/capability-server.ts";
 export * from "./hcp-client/server/module-server.ts";
 export * from "./hcp-magnet/native.ts";
 export * from "./hcp-magnet/package-tool.ts";
@@ -44,7 +45,6 @@ export {
 } from "./modules/compaction/pi/utils.ts";
 export * from "./modules/context/magenta/context.ts";
 export * from "./modules/hooks/contract.ts";
-export * from "./modules/hooks/magenta/hooks.ts";
 export * from "./modules/memory/magenta/session-grounding.ts";
 export * from "./modules/multiagent/contract.ts";
 export * from "./modules/multiagent/message/message-store.ts";

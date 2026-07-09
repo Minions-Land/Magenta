@@ -1,5 +1,3 @@
-import type { HcpServer } from "../../hcp-client/contract/hcp-server.ts";
-
 export interface HookDescriptor {
 	name: string;
 	target: string;
@@ -23,9 +21,17 @@ export interface HookDiscoverResult {
 	hooks: HookDescriptor[];
 }
 
-export interface HookProviderContract {
+/**
+ * The hooks capability surface consumed by the agent loop. This is the
+ * injection contract: the loop calls the source-selected provider instead of
+ * statically importing hooks, so the assembly layer decides which source
+ * (magenta, ...) supplies the behavior.
+ *
+ * Note: This interface contains only business logic. Conversion to HcpServer
+ * is handled by the unified capability-server adapter, not by the provider.
+ */
+export interface HookProvider {
 	discover(): HookDiscoverResult;
 	describeHook(name: string): HookDescriptor;
 	run(name: string, input: unknown): HookResult | unknown;
-	toHcpServer(): HcpServer;
 }
