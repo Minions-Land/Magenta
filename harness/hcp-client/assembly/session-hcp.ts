@@ -8,7 +8,7 @@ import {
 } from "../overlay/package-overlay.ts";
 import type { HcpMagnet } from "../../hcp-client/contract/hcp-magnet.ts";
 import { NativeToolMagnet } from "../../hcp-magnet/native.ts";
-import { ModuleHcpServer } from "../../hcp-magnet/module-server.ts";
+import { ModuleHcpServer } from "../server/module-server.ts";
 import {
 	BASH_TOOL_DESCRIPTION,
 	type BashExecuteOptions,

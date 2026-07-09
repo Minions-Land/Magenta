@@ -4,7 +4,7 @@ import {
 	type HcpServer,
 	type HcpServerDescription,
 } from "../hcp-client/contract/hcp-server.ts";
-import type { ModuleHcpServer } from "../hcp-magnet/module-server.ts";
+import type { ModuleHcpServer } from "./server/module-server.ts";
 
 /**
  * HcpClient — the global, single router of the HCP layer (spec §2, §10.1).
