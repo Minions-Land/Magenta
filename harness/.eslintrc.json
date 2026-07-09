@@ -22,7 +22,7 @@
   },
   "overrides": [
     {
-      "files": ["hcp-client/**/*.ts", "modules/**/*.ts"],
+      "files": ["harness-component-protocol/**/*.ts", "modules/**/*.ts"],
       "excludedFiles": ["**/*.test.ts", "**/*.spec.ts"],
       "rules": {
         "@typescript-eslint/naming-convention": [
