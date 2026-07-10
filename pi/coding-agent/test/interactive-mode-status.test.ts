@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import * as path from "node:path";
 import { type AutocompleteProvider, CombinedAutocompleteProvider } from "@earendil-works/pi-tui";
@@ -150,7 +150,11 @@ describe("InteractiveMode harness menu", () => {
 		try {
 			const magentaPath = path.join(root, "harness", "tools", "bash", "magenta");
 			const piPath = path.join(root, "harness", "tools", "bash", "pi");
-			mkdirSync(path.join(magentaPath, "process-tools"), { recursive: true });
+			mkdirSync(magentaPath, { recursive: true });
+			writeFileSync(
+				path.join(magentaPath, "bash.toml"),
+				'command = "../../../_magenta/process-tools/target/release/magenta-process-tools"\n',
+			);
 			mkdirSync(piPath, { recursive: true });
 
 			const fakeThis: any = Object.create(InteractiveMode.prototype);
@@ -178,7 +182,6 @@ describe("InteractiveMode harness menu", () => {
 								path: path.join(root, "harness", "tools", "bash", "bash.toml"),
 								capability: "tool/bash",
 								status: "ready",
-								coreException: false,
 								component: {} as any,
 								implementations: [
 									{ source: "magenta", status: "ready", path: magentaPath },

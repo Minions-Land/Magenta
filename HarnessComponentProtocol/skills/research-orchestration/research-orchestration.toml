@@ -1,0 +1,6 @@
+kind = "skill"
+product = "resource"
+autoload = true
+name = "research-orchestration"
+source = "pi"
+description = "Explicit plan, implement, observe, reflect, and refine orchestration."

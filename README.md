@@ -81,8 +81,8 @@ than a chat window:
   work in parallel while the main session keeps context.
 - Peer-to-peer agent messages, so independent sessions can coordinate through a
   local mailbox.
-- Package overlays for specialized domains: AutOmicScience, Biomni,
-  ClaudeScience, and PantheonOS ship in-repo under `packages/`.
+- A package overlay boundary for separately managed domain expert bundles;
+  Magenta3 keeps the contract and template, not concrete domain content.
 - A single Magenta storage root: `~/.magenta/`, replacing legacy `~/.pi/`
   behavior for Magenta state.
 
@@ -157,8 +157,8 @@ order.
 | `ssh` | Operate on a remote checkout | `sub_agent` | Delegate work to headless agents |
 | `send_message` | Message another live session | | |
 
-Packages can add tools. For example, AutOmicScience contributes
-`omics_compute`, `omics_environment`, and `omics_preflight`.
+The package contract can add tools without making package transport a new HCP
+role. Concrete domain bundles are managed independently from Magenta3.
 
 ### Sub-Agents And Peer Messaging
 
@@ -296,14 +296,15 @@ Useful keys:
 
 ## Packages And Domains
 
-A Magenta package is a shippable domain bundle. It can contain tools, skills,
-system prompts, brand assets, and runtime metadata. Packages are assembled above
-the built-in Harness, so a domain can override or extend lower-level resources
-without patching the core app.
+A Magenta domain package is a separately shipped bundle of tools, skills,
+system prompts, brand assets, and runtime metadata. Magenta3 retains the generic
+overlay contract under `packages/`; concrete domain content is owned by the
+independent `MagentaPackages` repository. The production external-root
+connector is deferred and must not hardcode a sibling filesystem path.
 
 ```mermaid
 flowchart LR
-    subgraph PKG["packages/<Domain>/"]
+    subgraph PKG["External domain package"]
         MAN["package.toml"]
         TOOLS["tools/"]
         SKILLS["skills/"]
@@ -312,21 +313,15 @@ flowchart LR
         RUNTIME["runtime metadata<br/>Node · Python · process · MCP"]
     end
 
-    PKG --> OVERLAY["Package overlay loader"]
+    PKG --> CONNECTOR["Explicit package-root connector"]
+    CONNECTOR --> OVERLAY["Package overlay loader"]
     OVERLAY --> HCP["HCP assembly"]
     HCP --> SESSION["Agent session"]
     SESSION --> TUI["Magenta TUI"]
 ```
 
-The included domain packages (see [`packages/README.md`](./packages/README.md)
-for how they load and combine):
-
-| Package | Domain | Contents |
-|---|---|---|
-| [`AutOmicScience`](./packages/AutOmicScience/) | Single-cell, spatial, bulk omics, cancer & clinical genomics | 11 skills, 5 tools, system prompt, brand, Python/Pixi runtime (the reference package) |
-| [`Biomni`](./packages/Biomni/) | Biomedical AI (Stanford SNAP Lab) | 3 skills bundling executable tools across 20+ biomedical modules |
-| [`ClaudeScience`](./packages/ClaudeScience/) | Computational biology research | 32 skills across 9 profiles (structure, design, genomics, single-cell, research, viz, compute, meta) |
-| [`PantheonOS`](./packages/PantheonOS/) | Bioinformatics workflow best practices | 16 skills across 5 profiles (omics, imaging, communication, infrastructure) |
+See [`packages/README.md`](./packages/README.md) for the retained Magenta3-side
+interface and manifest template.
 
 Package commands:
 
@@ -425,8 +420,8 @@ Magenta3/
 ├── bin/                    # magenta launchers
 ├── brands/                 # brand registry
 ├── docs/                   # project documentation
-├── harness/                # Harness, HCP, MCP, tools, package overlay
-├── packages/               # domain packages
+├── HarnessComponentProtocol/ # Harness, HCP, MCP, tools, package overlay
+├── packages/               # domain package integration contract/template
 ├── pi/                     # vendored Pi foundation
 │   ├── ai/                 # model/provider layer
 │   ├── agent/              # agent runtime
@@ -531,10 +526,10 @@ npm run build
 - [`docs/AUTHENTICATION.md`](./docs/AUTHENTICATION.md) — credential lookup and setup
 - [`docs/BRANDING.md`](./docs/BRANDING.md) — brand system
 - [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) — layered package architecture
-- [`packages/README.md`](./packages/README.md) — domain packages and how they load
-- [`harness/README.md`](./harness/README.md) — Harness overview
-- [`harness/hcp-client/HCP-OVERVIEW.md`](./harness/hcp-client/HCP-OVERVIEW.md) — HCP walkthrough
-- [`harness/docs/DEVELOPING.md`](./harness/docs/DEVELOPING.md) — add tools, capabilities, resources, packages
+- [`packages/README.md`](./packages/README.md) — domain package integration boundary
+- [`HarnessComponentProtocol/README.md`](./HarnessComponentProtocol/README.md) — Harness overview
+- [`HarnessComponentProtocol/.HCP/HCP-OVERVIEW.md`](./HarnessComponentProtocol/.HCP/HCP-OVERVIEW.md) — HCP walkthrough
+- [`HarnessComponentProtocol/docs/DEVELOPING.md`](./HarnessComponentProtocol/docs/DEVELOPING.md) — add tools, capabilities, resources, packages
 
 ---
 

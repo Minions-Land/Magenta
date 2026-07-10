@@ -58,7 +58,9 @@ describe("tool-display helpers", () => {
 			summarizeToolCall(
 				{
 					name: "file_read",
-					args: { file_path: "/Users/mjm/Magenta3/harness/modules/skills/research-orchestration/pi/SKILL.md" },
+					args: {
+						file_path: "/Users/mjm/Magenta3/HarnessComponentProtocol/skills/research-orchestration/pi/SKILL.md",
+					},
 				},
 				80,
 			),

@@ -85,8 +85,8 @@ const PACKAGES = [
 	{ path: "package.json", version: BRAND_CONFIG.version, name: null },
 
 	// Product packages (use product version)
-	{ path: "harness/package.json", version: BRAND_CONFIG.version, name: `${BRAND_CONFIG.packageScope}/harness` },
-	{ path: "harness/memory/package.json", version: BRAND_CONFIG.version, name: `${BRAND_CONFIG.packageScope}/memory` },
+	{ path: "HarnessComponentProtocol/package.json", version: BRAND_CONFIG.version, name: `${BRAND_CONFIG.packageScope}/harness` },
+	{ path: "HarnessComponentProtocol/memory/package.json", version: BRAND_CONFIG.version, name: `${BRAND_CONFIG.packageScope}/memory` },
 
 	// Infra packages (use infra version, optionally rename)
 	{

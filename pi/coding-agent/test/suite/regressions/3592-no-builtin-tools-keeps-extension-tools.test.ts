@@ -82,8 +82,6 @@ describe("regression #3592: no-builtin-tools keeps extension tools enabled", () 
 				.sort(),
 		).toEqual(
 			[
-				"WebFetch",
-				"WebSearch",
 				"bash",
 				...BUILTIN_BACKGROUND_TOOLS,
 				"dynamic_tool",
@@ -94,6 +92,9 @@ describe("regression #3592: no-builtin-tools keeps extension tools enabled", () 
 				"read",
 				"send_message",
 				"show",
+				"todo",
+				"web-fetch",
+				"web-search",
 				"write",
 			].sort(),
 		);

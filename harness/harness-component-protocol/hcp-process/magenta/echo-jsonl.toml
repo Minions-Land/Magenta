@@ -1,7 +1,0 @@
-kind = "hcp-process"
-name = "echo-jsonl"
-description = "Example external HCP JSONL process boundary. It demonstrates how a process speaking HCP can be mounted behind Magenta without changing the agent loop."
-command = "magenta"
-args = ["hcp", "stdio"]
-env_allowlist = ["MAGENTA_GENERAL_HARNESS_ROOT", "PATH"]
-capabilities = ["hcp-jsonl", "external-process", "adapter-boundary"]

@@ -1,7 +1,0 @@
-kind = "tool"
-name = "ssh"
-description = "SSH-backed remote workspace operations for read, write, edit, and bash."
-source = "magenta"
-
-[exports]
-module = "tools/ssh/magenta/ssh.ts"

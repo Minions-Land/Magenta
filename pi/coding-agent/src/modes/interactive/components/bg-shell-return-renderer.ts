@@ -3,11 +3,10 @@
  * Supports collapsing long output with ctrl+o to expand.
  */
 
-import { Box, Container, Markdown, type MarkdownTheme, Spacer, Text } from "@earendil-works/pi-tui";
+import { Box, Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
 import type { MessageRenderer } from "../../../core/extensions/types.ts";
 import type { CustomMessage } from "../../../core/messages.ts";
 import { summarizeEventCollapsed, summarizeEventExpanded } from "../../../core/tools/bg-shell.ts";
-import type { Theme } from "../theme/theme.ts";
 
 interface BgShellReturnDetails {
 	id: string;

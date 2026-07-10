@@ -1,0 +1,68 @@
+// Re-export all harness capabilities
+
+export * from "./.HCP/assembly/session-hcp.ts";
+// HCP layer (management + assembly, not the loop hot path):
+//   HarnessComponentProtocol/HcpClient.ts       — HcpClient router (agent-facing)
+//   HarnessComponentProtocol/.HCP/               — HCP data types, assembly, registry, overlay, and transports
+export * from "./.HCP/HcpMagnetTypes.ts";
+export * from "./.HCP/HcpServerTypes.ts";
+export * from "./.HCP/overlay/package-overlay.ts";
+export * from "./.HCP/registry/registry.ts";
+export * from "./.HCP/transport/hcp-process.ts";
+export * from "./.HCP/transport/mcp.ts";
+export * from "./.HCP/transport/mcp-client.ts";
+export * from "./.HCP/transport/schema.ts";
+export * from "./_magenta/env/pi/nodejs.ts";
+export * from "./_magenta/env/ssh.ts";
+export * from "./_magenta/messages/messages.ts";
+export * from "./_magenta/session/pi/repo-utils.ts";
+export * from "./_magenta/session/pi/session.ts";
+export { uuidv7 } from "./_magenta/session/pi/uuid.ts";
+export * from "./_magenta/types/types.ts";
+export * from "./_magenta/utils/pi/truncate.ts";
+// 规范§2.1：<module>/HcpServer.ts 都导出裸 class HcpServer
+// 为避免命名冲突，只导出具体的 provider 类型，不导出 HcpServer class
+export type { CompactionProvider } from "./compaction/HcpServer.ts";
+export * from "./compaction/pi/branch-summarization.ts";
+export * from "./compaction/pi/compaction.ts";
+export * from "./compaction/pi/provider.ts";
+export {
+	computeFileLists,
+	createFileOps,
+	extractFileOpsFromMessage,
+	formatFileOperations,
+} from "./compaction/pi/utils.ts";
+export * from "./context/magenta/context.ts";
+export * from "./HcpClient.ts";
+export type { HookDescriptor, HookDiscoverResult, HookProvider, HookResult } from "./hooks/HcpServer.ts";
+export * from "./memory/magenta/session-grounding.ts";
+export type { OrchestrationRequest, OrchestrationResult } from "./multiagent/HcpServer.ts";
+export * from "./multiagent/message/message-store.ts";
+export {
+	MultiAgentOrchestrator,
+	type WorkerRunner,
+} from "./multiagent/workflow/magenta/orchestrator.ts";
+export * from "./policy/magenta/approval.ts";
+export * from "./policy/magenta/policy.ts";
+export * from "./policy/magenta/shell-policy.ts";
+export * from "./prompt-templates/pi/prompt-templates.ts";
+export * from "./runtime/magenta/process-runtime.ts";
+export * from "./runtime/magenta/script-runtime.ts";
+export * from "./sandbox/magenta/sandbox.ts";
+export {
+	formatSkillInvocation,
+	getHarnessSkillsDir,
+	loadSkillFile,
+	loadSkills,
+	loadSourcedSkills,
+	type SkillDiagnostic,
+	type SkillDiagnosticCode,
+} from "./skills/HcpServer.ts";
+export * from "./system-prompt/pi/descriptor.ts";
+export * from "./system-prompt/pi/provider.ts";
+export * from "./system-prompt/pi/system-prompt.ts";
+export * from "./tools/descriptor/package-tool.ts";
+// Tools: pure-execution tool logic + the AgentTool Tool contract.
+export * from "./tools/index.ts";
+export * from "./tools/process-tool.ts";
+export * from "./tools/todo/pi/todo.ts";

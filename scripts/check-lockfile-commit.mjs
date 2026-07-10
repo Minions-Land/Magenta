@@ -48,7 +48,7 @@ function getLockfilePackageChanges() {
 }
 
 function isWorkspacePackagePath(lockPath) {
-	return lockPath.startsWith("pi/") || lockPath === "harness" || lockPath.startsWith("harness/");
+	return lockPath.startsWith("pi/") || lockPath === "HarnessComponentProtocol" || lockPath.startsWith("HarnessComponentProtocol/");
 }
 
 function hasOnlyWorkspacePackageChanges(changes) {

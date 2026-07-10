@@ -1,0 +1,6 @@
+kind = "skill"
+product = "resource"
+autoload = true
+name = "pptx"
+source = "pi"
+description = "PowerPoint presentation creation, editing, inspection, and QA."

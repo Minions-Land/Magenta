@@ -9,6 +9,7 @@ import { formatNoModelsAvailableMessage } from "./auth-guidance.ts";
 import { AuthStorage } from "./auth-storage.ts";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
 import type { ExtensionRunner, LoadExtensionsResult, SessionStartEvent, ToolDefinition } from "./extensions/index.ts";
+import { HcpClientassembletools } from "./HcpClienttools.ts";
 import { convertToLlm } from "./messages.ts";
 import { ModelRegistry } from "./model-registry.ts";
 import { findInitialModel } from "./model-resolver.ts";
@@ -244,6 +245,16 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	}
 
 	const defaultActiveToolNames: string[] = ["read", "bash", "edit", "write", "bg_shell", "sub_agent"];
+	const sessionHcp = resourceLoader.getSessionHcp?.();
+	if (sessionHcp) {
+		await HcpClientassembletools({
+			hcp: sessionHcp,
+			cwd,
+			settingsManager,
+			sessionManager,
+			sshTarget: options.sshTarget,
+		});
+	}
 	const allowedToolNames = options.tools ?? (options.noTools === "all" ? [] : undefined);
 	const excludedToolNames = options.excludeTools;
 	const excludedToolNameSet = excludedToolNames ? new Set(excludedToolNames) : undefined;

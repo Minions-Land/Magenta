@@ -12,15 +12,15 @@
 			"@earendil-works/pi-agent-core/*": ["./pi/agent/src/*"],
 			"@earendil-works/pi-coding-agent": ["./pi/coding-agent/src/index.ts"],
 			"@earendil-works/pi-coding-agent/*": ["./pi/coding-agent/src/*"],
-			"@magenta/harness": ["./harness/index.ts"],
-			"@magenta/harness/*": ["./harness/*"],
-			"@magenta/memory": ["./harness/modules/memory/pi/index.ts"],
-			"@magenta/memory/*": ["./harness/modules/memory/pi/*"],
+			"@magenta/harness": ["./HarnessComponentProtocol/index.ts"],
+			"@magenta/harness/*": ["./HarnessComponentProtocol/*"],
+			"@magenta/memory": ["./HarnessComponentProtocol/memory/pi/index.ts"],
+			"@magenta/memory/*": ["./HarnessComponentProtocol/memory/pi/*"],
 			"typebox": ["./node_modules/typebox"],
 			"@earendil-works/pi-tui": ["./pi/tui/src/index.ts"],
 			"@earendil-works/pi-tui/*": ["./pi/tui/src/*"]
 		}
 	},
-	"include": ["pi/*/src/**/*", "pi/*/test/**/*", "pi/coding-agent/examples/**/*", "harness/**/*"],
+	"include": ["pi/*/src/**/*", "pi/*/test/**/*", "pi/coding-agent/examples/**/*", "HarnessComponentProtocol/**/*"],
 	"exclude": ["**/dist/**", "pi/coding-agent/examples/extensions/gondolin/**", "pi/coding-agent/src/extensions-disabled/**"]
 }

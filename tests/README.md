@@ -2,7 +2,7 @@
 
 Repo-level end-to-end tests. These drive the built CLI/TUI as a real process,
 so they complement (not replace) the per-package unit tests under each
-workspace and `harness/`.
+workspace and `HarnessComponentProtocol/`.
 
 ## Layout
 

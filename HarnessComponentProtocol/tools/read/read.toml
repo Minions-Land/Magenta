@@ -1,0 +1,28 @@
+kind = "tool"
+product = "tool"
+name = "read"
+source = "pi"
+sources = ["pi", "magenta"]
+description = "Read the contents of a file (with optional line offset/limit)."
+
+[source_config.magenta]
+implementation_manifest = "magenta/read.toml"
+requires = ["runtime:process", "sandbox"]
+
+[parameters]
+type = "object"
+required = ["path"]
+
+[parameters.properties.path]
+type = "string"
+description = "Path to the file to read (relative or absolute)"
+
+[parameters.properties.offset]
+type = "number"
+optional = true
+description = "Line number to start reading from (1-indexed)"
+
+[parameters.properties.limit]
+type = "number"
+optional = true
+description = "Maximum number of lines to read"

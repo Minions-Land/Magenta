@@ -1,0 +1,58 @@
+kind = "process"
+name = "lsp"
+description = "LSP-style language intelligence queries for diagnostics, symbols, definitions, references, hover, capabilities, and status."
+command = "../../../_magenta/process-tools/target/release/magenta-process-tools"
+args = ["lsp"]
+operation = "read"
+read_only = true
+destructive = false
+version = "1.0.0"
+tags = ["filesystem", "language-intelligence", "lsp", "ide", "symbols", "diagnostics"]
+capabilities = ["lsp-style", "document-symbols", "workspace-symbols", "definitions", "references", "hover", "diagnostics"]
+requires = []
+
+[parameters]
+type = "object"
+required = ["action"]
+
+[parameters.properties.action]
+type = "string"
+enum = ["diagnostics", "definition", "references", "hover", "symbols", "rename", "rename_file", "code_actions", "type_definition", "implementation", "status", "reload", "capabilities", "request"]
+description = "Language-intelligence action to run."
+
+[parameters.properties.file]
+type = "string"
+description = "File path. Use '*' for workspace diagnostics, workspace symbols, reload, or capabilities."
+
+[parameters.properties.line]
+type = "integer"
+description = "1-indexed line number for position-based actions."
+
+[parameters.properties.symbol]
+type = "string"
+description = "Symbol name. Supports name#N compatibility but the native fallback uses the name portion."
+
+[parameters.properties.query]
+type = "string"
+description = "Workspace symbol query, code-action selector, or raw request method name."
+
+[parameters.properties.new_name]
+type = "string"
+description = "Reserved for rename and rename_file compatibility."
+
+[parameters.properties.apply]
+type = "boolean"
+description = "Reserved for edit-producing LSP actions."
+
+[parameters.properties.timeout]
+type = "integer"
+description = "Reserved for language-server backend compatibility."
+
+[parameters.properties.payload]
+type = "string"
+description = "Reserved JSON payload for raw request compatibility."
+
+[parameters.properties.limit]
+type = "integer"
+description = "Maximum symbols, references, or diagnostic lines to render."
+default = 80

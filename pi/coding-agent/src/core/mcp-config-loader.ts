@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import { createMcpToolMagnets } from "@magenta/harness";
+import { createMcpTools, type HcpClient, type ProcessRuntimeProvider, type SandboxProvider } from "@magenta/harness";
 import { getAgentDir, getMcpServersPath } from "../config.ts";
 import type { ResourceDiagnostic } from "./diagnostics.ts";
 
@@ -11,7 +11,7 @@ import type { ResourceDiagnostic } from "./diagnostics.ts";
  * This is the general registration path for MCP servers: it mirrors the harness
  * "package" path (a `runtime = "mcp"` descriptor) but sources servers from a
  * user-owned config file instead of a shipped package. Each server is connected
- * via {@link createMcpToolMagnets} (the same hcp-magnet entry point the package
+ * via {@link createMcpTools} (the same transport entry point the package
  * path uses), and its remote tools are surfaced as AgentTools.
  *
  * Schema:
@@ -34,7 +34,7 @@ import type { ResourceDiagnostic } from "./diagnostics.ts";
  * the user's environment. The config file is user-owned; this is the same trust
  * model as the harness package path.
  */
-export interface McpServerConfig {
+export type McpServerConfig = {
 	/** Server name; also the default tool-name prefix. */
 	name: string;
 	/** Executable to spawn (absolute path or a command on PATH). */
@@ -47,16 +47,23 @@ export interface McpServerConfig {
 	name_prefix?: string;
 	/** Per-request timeout in milliseconds. Default: 30000. */
 	timeout_ms?: number;
-}
+	/** Selected sandbox profile. Explicit user MCP defaults to trusted for behavior parity. */
+	sandbox?: string;
+};
 
-export interface McpServersFile {
+export type McpServersFile = {
 	servers: McpServerConfig[];
-}
+};
 
-export interface LoadMcpToolsResult {
+export type LoadMcpToolsResult = {
 	tools: AgentTool[];
 	diagnostics: ResourceDiagnostic[];
-}
+};
+
+export type LoadUserMcpToolsOptions = {
+	hcp: HcpClient;
+	cwd: string;
+};
 
 function parseServersFile(raw: string): { servers: McpServerConfig[]; error?: string } {
 	let data: unknown;
@@ -80,7 +87,7 @@ function parseServersFile(raw: string): { servers: McpServerConfig[]; error?: st
  * error (returns no tools). A malformed file or a server that fails to connect
  * is downgraded to a diagnostic so one bad entry never blocks the others.
  */
-export async function loadUserMcpTools(): Promise<LoadMcpToolsResult> {
+export async function loadUserMcpTools(options: LoadUserMcpToolsOptions): Promise<LoadMcpToolsResult> {
 	const diagnostics: ResourceDiagnostic[] = [];
 	const path = getMcpServersPath();
 
@@ -101,6 +108,17 @@ export async function loadUserMcpTools(): Promise<LoadMcpToolsResult> {
 	const { servers, error } = parseServersFile(raw);
 	if (error) {
 		diagnostics.push({ type: "error", message: error, path });
+		return { tools: [], diagnostics };
+	}
+	const processRuntime = options.hcp.resolveCapability<ProcessRuntimeProvider>("runtime:process");
+	const sandboxProvider = options.hcp.resolveCapability<SandboxProvider>("sandbox");
+	if (!processRuntime || !sandboxProvider) {
+		diagnostics.push({
+			type: "error",
+			message:
+				"User MCP requires selected HCP capabilities runtime:process and sandbox before servers can be started.",
+			path,
+		});
 		return { tools: [], diagnostics };
 	}
 
@@ -130,7 +148,8 @@ export async function loadUserMcpTools(): Promise<LoadMcpToolsResult> {
 		seenNames.add(server.name);
 
 		try {
-			const magnets = await createMcpToolMagnets({
+			const sandbox = sandboxProvider.resolve({ profile: server.sandbox ?? "trusted" });
+			const mcpTools = await createMcpTools({
 				serverName: server.name,
 				namePrefix: server.name_prefix ?? server.name,
 				client: {
@@ -138,10 +157,31 @@ export async function loadUserMcpTools(): Promise<LoadMcpToolsResult> {
 					args: server.args,
 					env: server.env ? { ...process.env, ...server.env } : undefined,
 					requestTimeoutMs: server.timeout_ms,
+					spawnManaged: (input, signal) =>
+						processRuntime.spawnManaged(
+							{
+								command: input.command,
+								args: input.args,
+								cwd: input.cwd ?? options.cwd,
+								workspace_root: options.cwd,
+								env_overrides: Object.fromEntries(
+									Object.entries(input.env ?? {}).filter(
+										(entry): entry is [string, string] => typeof entry[1] === "string",
+									),
+								),
+								sandbox,
+								tool: {
+									name: `mcp:${server.name}`,
+									operation: "serve",
+									tags: ["trusted"],
+								},
+							},
+							signal,
+						),
 				},
 				cache: { dir: cacheDir, descriptorEnv: server.env },
 			});
-			for (const magnet of magnets) tools.push(magnet.toTool());
+			for (const mcpTool of mcpTools) tools.push(mcpTool.toTool());
 		} catch (error) {
 			diagnostics.push({
 				type: "warning",

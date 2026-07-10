@@ -37,20 +37,22 @@ export type { ReadToolInput, ReadToolDetails, ReadToolOptions, ReadOperations };
  * resize wiring that depends on pi-only utilities (worker threads + Photon WASM).
  * These are injected into the harness execute via {@link ReadToolOptions.operations}.
  */
-const defaultReadOperations: ReadOperations = {
-	readFile: (path) => fsReadFile(path),
-	access: (path) => fsAccess(path, constants.R_OK),
-	detectImageMimeType: detectSupportedImageMimeTypeFromFile,
-	resizeImage: async (bytes, mimeType): Promise<ResizedImageResult | null> => {
-		const resized = await resizeImage(bytes, mimeType);
-		if (!resized) return null;
-		return {
-			data: resized.data,
-			mimeType: resized.mimeType,
-			dimensionNote: formatDimensionNote(resized),
-		};
-	},
-};
+export function createLocalReadOperations(): ReadOperations {
+	return {
+		readFile: (path) => fsReadFile(path),
+		access: (path) => fsAccess(path, constants.R_OK),
+		detectImageMimeType: detectSupportedImageMimeTypeFromFile,
+		resizeImage: async (bytes, mimeType): Promise<ResizedImageResult | null> => {
+			const resized = await resizeImage(bytes, mimeType);
+			if (!resized) return null;
+			return {
+				data: resized.data,
+				mimeType: resized.mimeType,
+				dimensionNote: formatDimensionNote(resized),
+			};
+		},
+	};
+}
 
 interface CompactReadClassification {
 	kind: "docs" | "resource" | "skill";
@@ -225,7 +227,10 @@ export function createReadToolDefinition(
 	cwd: string,
 	options?: ReadToolOptions,
 ): ToolDefinition<typeof readSchema, ReadToolDetails | undefined> {
-	const execute = createReadExecute(cwd, { ...options, operations: options?.operations ?? defaultReadOperations });
+	const execute = createReadExecute(cwd, {
+		...options,
+		operations: options?.operations ?? createLocalReadOperations(),
+	});
 	return {
 		name: "read",
 		label: "read",

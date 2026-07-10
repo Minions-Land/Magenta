@@ -10,7 +10,7 @@ import type { BackgroundEventManager, MonitoredEvent } from "./background-events
  *
  * The controller owns one event ("assembly") that runs for the duration of a
  * reload's assembly phase. It is driven purely by the {@link PackageAssemblyProgress}
- * callback threaded into `assemblePackageToolMagnets`: each component start
+ * callback threaded into `assemblePackageSources`: each component start
  * advances the progress fraction (index/total) and updates the label to name the
  * component currently being built.
  */
@@ -42,7 +42,7 @@ export class PackageLoadController {
 	}
 
 	/**
-	 * The callback handed to `assemblePackageToolMagnets`. `start` moves the bar
+	 * The callback handed to `assemblePackageSources`. `start` moves the bar
 	 * to the fraction of components already finished and names the one now being
 	 * built; `assembled` advances the fraction to include it.
 	 */

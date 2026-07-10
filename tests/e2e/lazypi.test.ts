@@ -16,7 +16,7 @@ async function pathExists(path: string): Promise<boolean> {
 
 test.describe("Extension Retirement", () => {
 	test("removes the bundled harness extension registry", async () => {
-		expect(await pathExists(join(repoRoot, "harness/extensions"))).toBe(false);
+		expect(await pathExists(join(repoRoot, "HarnessComponentProtocol/extensions"))).toBe(false);
 	});
 
 	test("keeps migrated Pi UX features in Pi core/TUI", async () => {
@@ -37,10 +37,10 @@ test.describe("Extension Retirement", () => {
 
 	test("keeps reusable tools in Harness tools", async () => {
 		const expectedPaths = [
-			"harness/tools/todo/todo.toml",
-			"harness/tools/todo/pi/todo.ts",
-			"harness/tools/ssh/ssh.toml",
-			"harness/tools/ssh/magenta/ssh.ts",
+			"HarnessComponentProtocol/tools/todo/todo.toml",
+			"HarnessComponentProtocol/tools/todo/pi/todo.ts",
+			"HarnessComponentProtocol/tools/ssh/ssh.toml",
+			"HarnessComponentProtocol/tools/ssh/magenta/ssh.ts",
 		];
 
 		for (const relativePath of expectedPaths) {

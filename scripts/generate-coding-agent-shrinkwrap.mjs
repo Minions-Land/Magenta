@@ -135,7 +135,7 @@ function getInternalWorkspaces(lockPackages) {
 	const workspaces = new Map();
 
 	for (const [lockPath, entry] of Object.entries(lockPackages)) {
-		const isWorkspacePath = lockPath.startsWith("pi/") || lockPath === "harness" || lockPath.startsWith("harness/");
+		const isWorkspacePath = lockPath.startsWith("pi/") || lockPath === "HarnessComponentProtocol" || lockPath.startsWith("HarnessComponentProtocol/");
 		if (!isWorkspacePath || lockPath.includes("/node_modules/") || !entry.name || !entry.version) {
 			continue;
 		}

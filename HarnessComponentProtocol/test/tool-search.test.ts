@@ -1,0 +1,186 @@
+import { describe, expect, it } from "vitest";
+import { HcpClientassemble } from "../.HCP/assembly/session-hcp.ts";
+import type { HcpServerDescription } from "../.HCP/HcpServerTypes.ts";
+import { HcpClient } from "../HcpClient.ts";
+import {
+	buildToolSearchManifest,
+	createToolSearchTool,
+	type ToolSearchEntry,
+} from "../tools/tool-search/pi/tool-search.ts";
+
+/**
+ * Tool Search (spec §6) — MCP-style deferral of tool schemas. These tests pin
+ * the manifest-from-magnets extraction, the keyword ranking, and the activation
+ * contract (the meta-tool activates matches via the injected `onActivate`, which
+ * the harness wires to `setActiveTools`). No pi loop is needed: the meta-tool is
+ * a normal AgentTool whose `execute` mutates the active set for the next turn.
+ */
+
+const MANIFEST: ToolSearchEntry[] = [
+	{ name: "read", description: "Read the contents of a file with optional offset and limit." },
+	{ name: "write", description: "Write content to a file, creating or overwriting it." },
+	{ name: "grep", description: "Search file contents for a regex pattern." },
+	{ name: "web-search", description: "Search the web for current information." },
+];
+
+async function runSearch(
+	tool: ReturnType<typeof createToolSearchTool>,
+	params: { query?: string; activate?: string[]; preview?: boolean },
+): Promise<{ text: string; details: any }> {
+	const result = await tool.execute("call-1", params as never);
+	const text = result.content.map((c) => (c.type === "text" ? c.text : "")).join("\n");
+	return { text, details: result.details };
+}
+
+describe("Tool Search — manifest from HcpClient descriptions", () => {
+	it("extracts name and description from a tool address", () => {
+		const manifest = buildToolSearchManifest([
+			{
+				target: "tool:read",
+				kind: "tool",
+				ops: ["describe"],
+				description: "Read the contents of a file.",
+				metadata: { name: "read" },
+			},
+		]);
+		expect(manifest).toHaveLength(1);
+		expect(manifest[0]?.name).toBe("read");
+		expect(manifest[0]?.description).toContain("Read the contents");
+	});
+
+	it("skips non-tool descriptions", () => {
+		const capability: HcpServerDescription = {
+			target: "capability:memory",
+			kind: "memory",
+			ops: ["describe"],
+		};
+		expect(buildToolSearchManifest([capability])).toEqual([]);
+	});
+
+	it("assembles through the real tool-search Server and Magnet", async () => {
+		const hcp = new HcpClient();
+		const assembled = await HcpClientassemble({
+			hcp,
+			repoRoot: process.cwd(),
+			includeAutoload: false,
+			modules: ["tools/tool-search"],
+			settings: {
+				"tools/tool-search": { manifest: MANIFEST, onActivate: (names: readonly string[]) => names },
+			},
+		});
+		expect(assembled.diagnostics).toEqual([]);
+		expect(hcp.resolveInstance<{ name: string }>("tool:tool_search")?.name).toBe("tool_search");
+	});
+});
+
+describe("Tool Search — ranking", () => {
+	it("ranks name matches above description-only matches and requires every token to match", async () => {
+		const tool = createToolSearchTool({ manifest: MANIFEST, onActivate: (n) => n });
+		const { details } = await runSearch(tool, { query: "search", preview: true });
+		// "web-search" matches in name (score 2); "grep" matches "search" in description (score 1).
+		expect(details.matches[0]).toBe("web-search");
+		expect(details.matches).toContain("grep");
+		expect(details.matches).not.toContain("read");
+	});
+
+	it("returns nothing when a token matches no tool", async () => {
+		const tool = createToolSearchTool({ manifest: MANIFEST, onActivate: (n) => n });
+		const { details } = await runSearch(tool, { query: "nonexistent", preview: true });
+		expect(details.matches).toEqual([]);
+	});
+
+	it("lists everything for an empty query", async () => {
+		const tool = createToolSearchTool({ manifest: MANIFEST, onActivate: (n) => n });
+		const { details } = await runSearch(tool, { preview: true });
+		expect(details.matches.sort()).toEqual(["grep", "read", "web-search", "write"]);
+	});
+});
+
+describe("Tool Search — activation", () => {
+	it("activates the best matches via onActivate, preserving the always-active set", async () => {
+		const calls: string[][] = [];
+		const tool = createToolSearchTool({
+			manifest: MANIFEST,
+			alwaysActive: ["tool_search"],
+			onActivate: (names) => {
+				calls.push([...names]);
+				return names;
+			},
+		});
+		const { details } = await runSearch(tool, { query: "file" });
+		expect(calls).toHaveLength(1);
+		// always-active is preserved in the union handed to setActiveTools.
+		expect(calls[0]).toContain("tool_search");
+		expect(details.activated.length).toBeGreaterThan(0);
+		expect(details.active).toContain("tool_search");
+	});
+
+	it("preview mode never activates", async () => {
+		const calls: string[][] = [];
+		const tool = createToolSearchTool({
+			manifest: MANIFEST,
+			alwaysActive: ["tool_search"],
+			onActivate: (names) => {
+				calls.push([...names]);
+				return names;
+			},
+		});
+		const { text, details } = await runSearch(tool, { query: "file", preview: true });
+		expect(calls).toHaveLength(0);
+		expect(details.activated).toEqual([]);
+		expect(text).toContain("Preview only");
+	});
+
+	it("explicit activate list takes precedence over the query and ignores unknown names", async () => {
+		const calls: string[][] = [];
+		const tool = createToolSearchTool({
+			manifest: MANIFEST,
+			alwaysActive: ["tool_search"],
+			onActivate: (names) => {
+				calls.push([...names]);
+				return names;
+			},
+		});
+		const { text, details } = await runSearch(tool, { query: "grep", activate: ["read", "bogus"] });
+		expect(details.activated).toEqual(["read"]);
+		expect(calls[0]).toEqual(expect.arrayContaining(["tool_search", "read"]));
+		expect(calls[0]).not.toContain("bogus");
+		expect(text).toContain("Unknown tool name(s) ignored: bogus");
+	});
+
+	it("does not call onActivate when there is nothing to activate", async () => {
+		const calls: string[][] = [];
+		const tool = createToolSearchTool({
+			manifest: MANIFEST,
+			onActivate: (names) => {
+				calls.push([...names]);
+				return names;
+			},
+		});
+		await runSearch(tool, { query: "nonexistent" });
+		expect(calls).toHaveLength(0);
+	});
+});
+
+describe("Tool Search — meta-tool shape", () => {
+	it("is a normal AgentTool with a stable default name and schema", () => {
+		const tool = createToolSearchTool({ manifest: MANIFEST, onActivate: (n) => n });
+		expect(tool.name).toBe("tool_search");
+		expect(tool.label).toBe("Tool Search");
+		expect(tool.parameters).toBeDefined();
+		expect(typeof tool.execute).toBe("function");
+	});
+
+	it("honors a custom meta-tool name", () => {
+		const tool = createToolSearchTool({ manifest: MANIFEST, onActivate: (n) => n, name: "load_tools" });
+		expect(tool.name).toBe("load_tools");
+	});
+});
+
+// NOTE: The former "end-to-end deferral through AgentHarness" block was removed
+// with the AgentHarness wrapper (Route B). It exercised a multi-turn model loop
+// to prove an activated tool becomes visible on the next turn. That multi-turn
+// activation path is covered by pi's own tool-search integration tests, which
+// run against the real agent loop in `pi/agent`. The harness-level unit tests
+// above still pin the pieces the harness owns: manifest extraction, ranking,
+// and the `onActivate` activation contract.

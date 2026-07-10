@@ -1,4 +1,0 @@
-kind = "system-prompt"
-name = "system-prompt"
-description = "System prompt construction and templating for agent context"
-source = "Magenta"

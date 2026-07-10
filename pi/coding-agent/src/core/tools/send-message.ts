@@ -103,7 +103,6 @@ export class SendMessageController {
 	private readonly isStreaming?: () => boolean;
 	/** Random id identifying THIS process instance, to guard wake against PID reuse. */
 	private readonly bootId: string;
-	private lastState: PresenceState = "idle";
 	private wakeHandler?: () => void;
 
 	constructor(deps: SendMessageControllerDeps) {
@@ -171,7 +170,6 @@ export class SendMessageController {
 	 * store clears pid/boot id.
 	 */
 	recordPresence(state: PresenceState): void {
-		this.lastState = state;
 		try {
 			// Only advertise a pid when we can actually be woken via the signal path.
 			const pid = this.wakeable ? process.pid : null;

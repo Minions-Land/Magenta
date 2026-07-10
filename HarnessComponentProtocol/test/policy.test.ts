@@ -1,0 +1,88 @@
+import { describe, expect, it } from "vitest";
+import { HcpClient } from "../HcpClient.ts";
+import * as policyServer from "../policy/HcpServer.ts";
+import { ApprovalPolicyProvider, decideApproval } from "../policy/magenta/approval.ts";
+import { PolicyProvider } from "../policy/magenta/policy.ts";
+import { classifyShellCommand, ShellPolicyProvider } from "../policy/magenta/shell-policy.ts";
+
+describe("policy providers", () => {
+	it("decides approval from mode, tier, override, and user policy", () => {
+		expect(decideApproval({ tool: { name: "Read", read_only: true }, mode: "always-ask" })).toMatchObject({
+			target: "approval://policy",
+			tool: "Read",
+			tier: "read",
+			mode: "always-ask",
+			decision: "allow",
+			allowed: true,
+			source: "mode-tier",
+		});
+		expect(decideApproval({ tool: { name: "Bash", tags: ["shell"] }, mode: "write" })).toMatchObject({
+			tier: "exec",
+			decision: "prompt",
+			requires_prompt: true,
+		});
+		expect(
+			decideApproval({
+				tool: { name: "Bash", tags: ["shell"] },
+				mode: "yolo",
+				policies: { bash: "deny" },
+			}),
+		).toMatchObject({
+			decision: "deny",
+			denied: true,
+			source: "user-policy",
+		});
+	});
+
+	it("classifies shell commands without executing them", () => {
+		expect(classifyShellCommand({ command: "cat README.md" })).toMatchObject({
+			target: "shell://policy",
+			decision: "allow",
+			mutating: false,
+			suggested_tools: ["Read"],
+		});
+		expect(classifyShellCommand({ command: "sed -i 's/a/b/' file.txt" })).toMatchObject({
+			decision: "prompt",
+			mutating: true,
+			suggested_tools: ["EditHashline"],
+		});
+		expect(classifyShellCommand({ command: "" })).toMatchObject({
+			decision: "block",
+			findings: [{ code: "empty-command", severity: "block", suggested_tool: null }],
+		});
+	});
+
+	it("dispatches approval and shell policy through HCP", async () => {
+		const approvalProvider = new ApprovalPolicyProvider();
+		const shellProvider = new ShellPolicyProvider();
+		const provider = new PolicyProvider({ approval: approvalProvider, shell: shellProvider });
+		const source = {
+			kind: "native",
+			hotSwappable: false,
+			toCapability: () => ({ kind: "policy", name: "policy", source: "magenta", instance: provider }),
+		};
+		const hcp = new HcpClient();
+		hcp.registerModule(new policyServer.HcpServer(), new Map([["policy", source]]));
+
+		await expect(
+			hcp.dispatch({
+				target: "approval://policy",
+				op: "decide",
+				input: { tool: { name: "Edit", tags: ["workspace-write"] }, mode: "always-ask" },
+			}),
+		).resolves.toMatchObject({
+			decision: "prompt",
+			tier: "write",
+		});
+		await expect(
+			hcp.dispatch({
+				target: "shell://policy",
+				op: "classify",
+				input: { command: "echo hello > out.txt" },
+			}),
+		).resolves.toMatchObject({
+			decision: "prompt",
+			suggested_tools: ["Write"],
+		});
+	});
+});

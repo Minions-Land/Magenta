@@ -1,4 +1,0 @@
-kind = "contract"
-name = "messages"
-description = "Agent message contracts and conversion utilities shared across harness modules."
-source = "contract"

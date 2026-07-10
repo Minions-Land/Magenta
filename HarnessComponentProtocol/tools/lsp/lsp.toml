@@ -1,0 +1,11 @@
+kind = "tool"
+product = "tool"
+name = "lsp"
+description = "LSP-style language intelligence queries using the Magenta process-tool source."
+source = "magenta"
+sources = ["magenta"]
+origin = "magenta1-general-harness"
+
+[source_config.magenta]
+implementation_manifest = "magenta/lsp.toml"
+requires = ["runtime:process", "sandbox"]

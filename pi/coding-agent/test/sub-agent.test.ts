@@ -3,6 +3,7 @@ import { EventEmitter } from "node:events";
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { MultiAgentOrchestrator } from "@magenta/harness";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { APP_BINARY_NAME } from "../src/config.ts";
 import type { AgentSessionEvent } from "../src/core/agent-session.ts";
@@ -13,6 +14,7 @@ import {
 	SubAgentController,
 	type SubAgentReturnMessage,
 	type SubAgentSpawn,
+	type SubAgentWorkflowProvider,
 } from "../src/core/tools/sub-agent.ts";
 
 function textOf(result: { content: Array<{ type: string; text?: string }> }): string {
@@ -347,7 +349,7 @@ describe("built-in sub_agent tool", () => {
 				returned.push({ message, options: options ?? {} });
 			},
 			spawnAgent: createFakeSpawn(spawnRecords, { output: "unused" }),
-			workflowRunner: fakeRunner as never,
+			getWorkflowProvider: () => new MultiAgentOrchestrator({ cwd: tempDir, runner: fakeRunner as never }),
 		});
 		const tool = controller.createToolDefinition();
 		const ctx = createContext(tempDir);
@@ -382,6 +384,79 @@ describe("built-in sub_agent tool", () => {
 		expect(text).toContain("outcome");
 	});
 
+	it("resolves the current workflow provider at start so a package selection wins", async () => {
+		const result = {
+			pattern: "fan_out_synthesize" as const,
+			workers: [],
+			terminatedBy: "completed" as const,
+		};
+		const defaultOrchestrate = vi.fn(async () => result);
+		const packageOrchestrate = vi.fn(async () => result);
+		const defaultProvider: SubAgentWorkflowProvider = { orchestrate: defaultOrchestrate };
+		const packageProvider: SubAgentWorkflowProvider = { orchestrate: packageOrchestrate };
+		let selectedProvider = defaultProvider;
+
+		controller.shutdown();
+		controller = new SubAgentController(manager, {
+			sendMessage: (message, options) => {
+				returned.push({ message, options: options ?? {} });
+			},
+			getWorkflowProvider: () => selectedProvider,
+		});
+		selectedProvider = packageProvider;
+
+		const tool = controller.createToolDefinition();
+		const ctx = createContext(tempDir);
+		const start = await tool.execute(
+			"call-package-wf",
+			{
+				action: "start",
+				workflow: {
+					pattern: "fan_out_synthesize",
+					workers: [{ task: "inspect" }],
+					synthesizer: { task: "summarize" },
+				},
+			},
+			undefined,
+			undefined,
+			ctx,
+		);
+		await tool.execute(
+			"call-package-wait",
+			{ action: "wait", eventId: start.details?.id as string },
+			undefined,
+			undefined,
+			ctx,
+		);
+
+		expect(defaultOrchestrate).not.toHaveBeenCalled();
+		expect(packageOrchestrate).toHaveBeenCalledOnce();
+		expect(packageOrchestrate).toHaveBeenCalledWith(
+			expect.objectContaining({ pattern: "fan_out_synthesize", cwd: tempDir }),
+			expect.any(AbortSignal),
+		);
+	});
+
+	it("rejects workflows when the session HCP exposes no multiagent provider", async () => {
+		const tool = controller.createToolDefinition();
+		await expect(
+			tool.execute(
+				"call-missing-wf",
+				{
+					action: "start",
+					workflow: {
+						pattern: "fan_out_synthesize",
+						workers: [{ task: "inspect" }],
+						synthesizer: { task: "summarize" },
+					},
+				},
+				undefined,
+				undefined,
+				createContext(tempDir),
+			),
+		).rejects.toThrow("unavailable from the session HCP");
+	});
+
 	it("surfaces aggregated token/cost usage in the workflow result tree", async () => {
 		// Fake runner whose workers report usage, so the orchestrator aggregates it
 		// onto OrchestrationResult.usage and the result tree renders a usage line.
@@ -414,7 +489,7 @@ describe("built-in sub_agent tool", () => {
 				returned.push({ message, options: options ?? {} });
 			},
 			spawnAgent: createFakeSpawn(spawnRecords, { output: "unused" }),
-			workflowRunner: fakeRunner as never,
+			getWorkflowProvider: () => new MultiAgentOrchestrator({ cwd: tempDir, runner: fakeRunner as never }),
 		});
 		const tool = controller.createToolDefinition();
 		const ctx = createContext(tempDir);

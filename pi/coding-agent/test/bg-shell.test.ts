@@ -4,7 +4,11 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { BackgroundEventManager } from "../src/core/background-events.ts";
 import type { ExtensionContext } from "../src/core/extensions/types.ts";
-import { BackgroundShellController, type BackgroundShellReturnMessage } from "../src/core/tools/bg-shell.ts";
+import {
+	BackgroundShellController,
+	type BackgroundShellEventSnapshot,
+	type BackgroundShellReturnMessage,
+} from "../src/core/tools/bg-shell.ts";
 
 function textOf(result: { content: Array<{ type: string; text?: string }> }): string {
 	return result.content.map((part) => part.text ?? "").join("\n");
@@ -277,7 +281,8 @@ describe("built-in bg_shell tool", () => {
 
 		// eventData is a plain-data snapshot: it carries the renderer fields but
 		// none of the non-cloneable live-event handles.
-		const eventData = returned[0]?.message.details?.eventData as Record<string, unknown>;
+		const eventData = (returned[0]?.message.details as { eventData: BackgroundShellEventSnapshot } | undefined)
+			?.eventData;
 		expect(eventData).toMatchObject({ id: eventId, status: "exited", exitCode: 0, command: "printf returned-bg" });
 		expect(eventData).not.toHaveProperty("child");
 		expect(eventData).not.toHaveProperty("log");

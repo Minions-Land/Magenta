@@ -4446,9 +4446,19 @@ export class InteractiveMode {
 	}
 
 	private computeHarnessImplementationReadiness(implementationPath: string): string {
-		const processToolsDir = path.join(implementationPath, "process-tools");
-		if (!fs.existsSync(processToolsDir)) return "source-ready";
-		const releaseBinary = path.join(processToolsDir, "target", "release", "magenta-process-tools");
+		if (!fs.existsSync(implementationPath)) return "missing";
+		const usesSharedProcessRuntime = fs
+			.readdirSync(implementationPath, { withFileTypes: true })
+			.filter((entry) => entry.isFile() && entry.name.endsWith(".toml"))
+			.some((entry) =>
+				fs.readFileSync(path.join(implementationPath, entry.name), "utf8").includes("_magenta/process-tools"),
+			);
+		if (!usesSharedProcessRuntime) return "source-ready";
+		const releaseBinary = path.resolve(
+			implementationPath,
+			"../../../_magenta/process-tools/target/release",
+			process.platform === "win32" ? "magenta-process-tools.exe" : "magenta-process-tools",
+		);
 		return fs.existsSync(releaseBinary) ? "built" : "needs build";
 	}
 
@@ -5623,7 +5633,7 @@ export class InteractiveMode {
 		this.showStatus(
 			[
 				`Harness module: ${module.id}`,
-				`Status: ${module.status}${module.coreException ? " (core exception)" : ""}`,
+				`Status: ${module.status}`,
 				`Kind: ${module.kind}`,
 				`Capability: ${module.capability}`,
 				module.description ? `Description: ${module.description}` : undefined,

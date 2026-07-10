@@ -226,11 +226,11 @@ describe("DefaultResourceLoader", () => {
 			expect(toolNames.size).toBe(0);
 			expect(toolNames.has("bg_shell")).toBe(false);
 			expect(toolNames.has("sub_agent")).toBe(false);
-			for (const name of ["paper-analysis", "pptx", "research-orchestration"]) {
+			for (const name of ["paper-analysis", "pptx", "research-orchestration", "self-evo"]) {
 				expect(skillNames.has(name)).toBe(true);
 			}
 			for (const skill of skills.filter((candidate) =>
-				["paper-analysis", "pptx", "research-orchestration"].includes(candidate.name),
+				["paper-analysis", "pptx", "research-orchestration", "self-evo"].includes(candidate.name),
 			)) {
 				expect(skill.sourceInfo?.source).toBe("harness");
 				expect(skill.sourceInfo?.baseDir).toContain("skills");
@@ -334,6 +334,7 @@ describe("DefaultResourceLoader", () => {
 
 			const hcpNoPkg = loader.getSessionHcp();
 			expect(hcpNoPkg, "session HCP should exist even with no package").toBeDefined();
+			expect(hcpNoPkg?.resolve("skill:paper-analysis")).toBe(hcpNoPkg?.resolveModule("skills/paper-analysis"));
 			const providerNoPkg = hcpNoPkg?.resolveCapability<{
 				compact: unknown;
 				prepareCompaction: unknown;

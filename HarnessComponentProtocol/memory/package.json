@@ -1,0 +1,28 @@
+{
+	"name": "@magenta/memory",
+	"version": "0.0.1",
+	"description": "Embedding-based semantic memory storage and retrieval",
+	"type": "module",
+	"main": "./dist/pi/index.js",
+	"types": "./dist/pi/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/pi/index.d.ts",
+			"import": "./dist/pi/index.js"
+		}
+	},
+	"files": [
+		"dist"
+	],
+	"scripts": {
+		"build": "npm run clean && tsc -p tsconfig.build.json",
+		"clean": "rm -rf dist",
+		"test": "npm run build && node --test test/*.test.mjs"
+	},
+	"dependencies": {
+		"@earendil-works/pi-ai": "0.80.2"
+	},
+	"devDependencies": {
+		"typescript": "5.9.3"
+	}
+}

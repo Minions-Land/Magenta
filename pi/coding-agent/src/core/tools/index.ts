@@ -50,6 +50,7 @@ export {
 	type LsToolOptions,
 } from "./ls.ts";
 export {
+	createLocalReadOperations,
 	createReadTool,
 	createReadToolDefinition,
 	type ReadOperations,

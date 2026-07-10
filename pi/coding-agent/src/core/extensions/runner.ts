@@ -5,7 +5,7 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ImageContent, Model } from "@earendil-works/pi-ai";
 import type { KeyId } from "@earendil-works/pi-tui";
-import type { HcpClient, HookProviderContract } from "@magenta/harness";
+import type { HcpClient, HookProvider } from "@magenta/harness";
 import { type Theme, theme } from "../../modes/interactive/theme/theme.ts";
 import type { ResourceDiagnostic } from "../diagnostics.ts";
 import type { KeybindingsConfig } from "../keybindings.ts";
@@ -289,11 +289,9 @@ export class ExtensionRunner {
 	private shortcutDiagnostics: ResourceDiagnostic[] = [];
 	private commandDiagnostics: ResourceDiagnostic[] = [];
 	private staleMessage: string | undefined;
-	/** Phase 4: HCP for lifecycle hook delegation. Cached at setup (INV-3). */
-	private hcp?: HcpClient;
 	/** Phase 4: resolved HookProvider, cached at setHcp time so runtime hook
 	 * invocations are direct method calls, not per-turn HCP resolution (INV-3). */
-	private hookProvider?: HookProviderContract;
+	private hookProvider?: HookProvider;
 
 	constructor(
 		extensions: Extension[],
@@ -317,13 +315,12 @@ export class ExtensionRunner {
 	 * method calls, not per-turn HCP resolution (INV-3: hot path stays off HCP).
 	 */
 	setHcp(hcp?: HcpClient): void {
-		this.hcp = hcp;
 		if (!hcp) {
 			this.hookProvider = undefined;
 			return;
 		}
 		try {
-			this.hookProvider = hcp.resolveCapability<HookProviderContract>("hook");
+			this.hookProvider = hcp.resolveCapability<HookProvider>("hook");
 		} catch {
 			this.hookProvider = undefined;
 		}

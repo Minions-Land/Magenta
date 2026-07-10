@@ -1,0 +1,6 @@
+kind = "skill"
+product = "resource"
+autoload = true
+name = "paper-analysis"
+source = "pi"
+description = "Deep analysis of academic papers."

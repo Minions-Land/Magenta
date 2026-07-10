@@ -1,0 +1,15 @@
+kind = "system-prompt"
+product = "capability"
+slot = "system-prompt"
+autoload = true
+name = "system-prompt"
+description = "System prompt construction and templating for agent context"
+source = "pi"
+
+[assumption]
+compensates = "The model does not know the host's current tools, operating policy, repository context, or selected resources unless the session constructs and injects them."
+rationale = "stated"
+calibrated_for = ["any"]
+review_trigger = "model-change"
+load_bearing = "verified"
+eval_scenarios = []

@@ -3,8 +3,8 @@
 	"private": true,
 	"type": "module",
 	"workspaces": [
-		"harness",
-		"harness/modules/memory",
+		"HarnessComponentProtocol",
+		"HarnessComponentProtocol/memory",
 		"pi/*",
 		"pi/coding-agent/examples/extensions/with-deps",
 		"pi/coding-agent/examples/extensions/custom-provider-anthropic",
@@ -14,7 +14,7 @@
 	],
 	"scripts": {
 		"clean": "npm run clean --workspaces",
-		"build": "npm run build -w @magenta/harness -w @magenta/memory -w @earendil-works/pi-tui -w @earendil-works/pi-ai -w @earendil-works/pi-agent-core -w @earendil-works/pi-coding-agent",
+		"build": "npm run build -w @earendil-works/pi-ai -w @earendil-works/pi-agent-core -w @earendil-works/pi-tui -w @magenta/harness -w @magenta/memory -w @earendil-works/pi-coding-agent",
 		"sync-brand": "node scripts/sync-brand.mjs",
 		"check": "biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:ts-imports && npm run check:shrinkwrap && tsgo --noEmit && npm run check:browser-smoke",
 		"check:browser-smoke": "node scripts/check-browser-smoke.mjs",

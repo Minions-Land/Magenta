@@ -28,7 +28,7 @@
 			"pi/*/src/**/*.ts",
 			"pi/*/test/**/*.ts",
 			"pi/coding-agent/examples/**/*.ts",
-			"harness/**/*.ts",
+			"HarnessComponentProtocol/**/*.ts",
 			"!**/node_modules/**/*",
 			"!**/dist/**/*",
 			"!**/test-sessions.ts",

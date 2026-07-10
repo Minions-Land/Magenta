@@ -1,4 +1,0 @@
-kind = "skill"
-name = "skills"
-description = "Agent skills - user-invocable capabilities via /skill command"
-source = "pi"

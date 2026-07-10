@@ -1,8 +1,8 @@
 # Magenta3 架构文档
 
-> ⚠️ 本文档描述的是高层包结构与设计理念。harness 内部布局以 `harness/README.md`
-> 的五区布局(`hcp-contract/`、`hcp-client/`、`hcp-magnet/`、`modules/`、`core/`)
-> 为准。若两者冲突,以 `harness/README.md` 为准。
+> ⚠️ 本文档描述的是高层包结构与设计理念。Harness 内部布局以
+> `HarnessComponentProtocol/README.md` 的实体树(`.HCP/` 协议管线、
+> `_magenta/` 基础模块和业务模块)为准。若两者冲突,以后者为准。
 
 ## 概述
 
@@ -38,7 +38,7 @@ Magenta3 采用分层的模块化架构,将核心功能拆分为独立的包,提
   - `Compaction` - 上下文压缩
   - `BranchSummarization` - 分支总结
 - **依赖**: `@earendil-works/pi-agent-core`, `@earendil-works/pi-ai`
-- **位置**: `harness/` (五区布局: `hcp-contract/`、`hcp-client/`、`hcp-magnet/`、`modules/`、`core/`;详见 `harness/README.md`)
+- **位置**: `HarnessComponentProtocol/` (含 `.HCP/` 协议管线和 `_magenta/` 基础模块;详见 `HarnessComponentProtocol/README.md`)
 - **特性**: 通过 module augmentation 扩展 agent-core 的 `CustomAgentMessages`
 
 #### @magenta/memory
@@ -50,7 +50,7 @@ Magenta3 采用分层的模块化架构,将核心功能拆分为独立的包,提
   - `SimpleHashEmbedding` - 简单哈希实现
   - 向量相似度计算工具
 - **依赖**: `@earendil-works/pi-ai`
-- **位置**: `harness/modules/memory/`
+- **位置**: `HarnessComponentProtocol/memory/`
 
 ### 应用层 (Application Layer)
 
@@ -133,7 +133,7 @@ npm run build --workspaces
 
 ### 添加新的消息类型
 
-在 `harness/core/messages/messages.ts`:
+在 `HarnessComponentProtocol/_magenta/messages/messages.ts`:
 
 ```typescript
 export interface MyCustomMessage {
@@ -150,7 +150,7 @@ declare module "@earendil-works/pi-agent-core" {
 
 ### 添加新的执行环境
 
-实现 `harness/core/types/types.ts` 中的 `ExecutionEnv` 接口:
+实现 `HarnessComponentProtocol/_magenta/types/types.ts` 中的 `ExecutionEnv` 类型:
 
 ```typescript
 export class BrowserExecutionEnv implements ExecutionEnv {
@@ -160,7 +160,7 @@ export class BrowserExecutionEnv implements ExecutionEnv {
 
 ### 添加新的记忆后端
 
-实现 `harness/modules/memory/pi/types.ts` 中的 `MemoryStore` 接口:
+实现 `HarnessComponentProtocol/memory/pi/types.ts` 中的 `MemoryStore` 类型:
 
 ```typescript
 export class RedisMemoryStore implements MemoryStore {

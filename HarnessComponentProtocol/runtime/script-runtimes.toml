@@ -1,0 +1,57 @@
+kind = "runtime"
+product = "capability"
+slot = "runtime:script-runtimes"
+autoload = true
+requires = ["runtime:process"]
+name = "script-runtimes"
+description = "Shell/Python/Node/R/Julia runtime wrappers migrated from Magenta1 general-harness."
+source = "magenta"
+bundles = ["sandbox:magenta", "runtime:process:magenta"]
+origin = "magenta1-general-harness"
+origin_rel = "ported/adapted"
+impl = ["runtime/magenta/script-runtime.ts", "runtime/magenta/process-runtime.ts"]
+targets = ["runtime://shell", "runtime://python", "runtime://node", "runtime://r", "runtime://julia"]
+compiled_to = "runtime://process"
+
+[assumption]
+compensates = "Safety boundary: language runtimes (shell/python/node/R/julia) all compile down to runtime://process so their execution passes the same portable guards rather than trusting the model to run code safely. A more capable model does not remove the need to route execution through the sandbox."
+rationale = "stated"  # bundles=[sandbox, runtime:process] + compiled_to=runtime://process
+calibrated_for = ["any"]
+review_trigger = "never"
+load_bearing = "verified"
+eval_scenarios = []
+
+[[runtimes]]
+name = "shell"
+target = "runtime://shell"
+command = "sh"
+exec_flag = "-c"
+description = "Run POSIX shell code through runtime://process."
+
+[[runtimes]]
+name = "python"
+target = "runtime://python"
+command = "python3"
+exec_flag = "-c"
+description = "Run Python code through runtime://process."
+
+[[runtimes]]
+name = "node"
+target = "runtime://node"
+command = "node"
+exec_flag = "-e"
+description = "Run JavaScript code through runtime://process."
+
+[[runtimes]]
+name = "r"
+target = "runtime://r"
+command = "Rscript"
+exec_flag = "-e"
+description = "Run R code through runtime://process."
+
+[[runtimes]]
+name = "julia"
+target = "runtime://julia"
+command = "julia"
+exec_flag = "-e"
+description = "Run Julia code through runtime://process."

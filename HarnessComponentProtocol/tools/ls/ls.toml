@@ -1,0 +1,24 @@
+kind = "tool"
+product = "tool"
+name = "ls"
+source = "pi"
+sources = ["pi", "magenta"]
+description = "List directory entries."
+
+[source_config.magenta]
+implementation_manifest = "magenta/ls.toml"
+requires = ["runtime:process", "sandbox"]
+
+[parameters]
+type = "object"
+required = []
+
+[parameters.properties.path]
+type = "string"
+optional = true
+description = "Directory to list (default: current directory)"
+
+[parameters.properties.limit]
+type = "number"
+optional = true
+description = "Maximum number of entries to return (default: 500)"

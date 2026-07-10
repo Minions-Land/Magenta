@@ -293,7 +293,7 @@ export function summarizeToolCall(call: ToolDisplayCall, maxWidth = 50): string 
 			// Pattern 2: .../skills/skill-name/subdir/SKILL.md -> skill-name (find "skills" dir)
 			// Pattern 3: .../skill-name/SKILL.md -> skill-name (fallback to parent)
 			const parts = path.split("/").filter(Boolean);
-			const skillMdIndex = parts.findIndex((part) => part === "SKILL.md");
+			const skillMdIndex = parts.indexOf("SKILL.md");
 			if (skillMdIndex > 0) {
 				// Look backwards for a "skills" directory
 				const skillsDirIndex = parts.slice(0, skillMdIndex).lastIndexOf("skills");

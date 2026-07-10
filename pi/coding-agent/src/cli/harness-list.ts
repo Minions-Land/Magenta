@@ -33,7 +33,6 @@ export async function listHarnessModules(options: HarnessListOptions = {}): Prom
 						name: module.name,
 						description: module.description,
 						status: module.status,
-						coreException: module.coreException,
 						capability: module.capability,
 						path: module.path,
 						implementations: module.implementations,

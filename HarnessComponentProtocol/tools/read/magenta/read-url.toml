@@ -1,0 +1,34 @@
+kind = "process"
+name = "ReadUrl"
+description = "Fetch an HTTP(S) URL and render JSON, text, or lightweight HTML-to-text content with optional line slicing."
+command = "../../../_magenta/process-tools/target/release/magenta-process-tools"
+args = ["read-url"]
+operation = "read"
+read_only = true
+destructive = false
+version = "1.0.0"
+tags = ["web", "url", "network", "network-read", "fetch", "read"]
+capabilities = ["url-read", "html-to-text", "json-pretty-print", "line-slicing"]
+requires = []
+
+[parameters]
+type = "object"
+required = ["url"]
+
+[parameters.properties.url]
+type = "string"
+description = "HTTP or HTTPS URL to fetch. Bare www. URLs are normalized to https://."
+
+[parameters.properties.raw]
+type = "boolean"
+description = "Return the raw response body instead of lightweight rendering"
+default = false
+
+[parameters.properties.offset]
+type = "integer"
+description = "1-indexed starting line for rendered output"
+default = 1
+
+[parameters.properties.limit]
+type = "integer"
+description = "Maximum rendered lines to return"

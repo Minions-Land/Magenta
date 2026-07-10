@@ -1,0 +1,6 @@
+kind = "skill"
+product = "resource"
+autoload = true
+name = "self-evo"
+source = "magenta"
+description = "Development mode for evolving Magenta's harness."

@@ -1,0 +1,12 @@
+kind = "tool"
+product = "tool"
+name = "web-search"
+description = "Search the web using the Magenta process-tool source."
+source = "magenta"
+sources = ["magenta"]
+autoload = true
+origin = "magenta1-general-harness"
+
+[source_config.magenta]
+implementation_manifest = "magenta/web-search.toml"
+requires = ["runtime:process", "sandbox"]

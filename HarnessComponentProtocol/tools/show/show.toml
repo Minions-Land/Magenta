@@ -1,0 +1,6 @@
+kind = "tool"
+product = "tool"
+name = "show"
+description = "Display local files or remote URLs in the host preview surface."
+source = "pi"
+sources = ["pi"]

@@ -1,0 +1,23 @@
+kind = "tool"
+product = "tool"
+name = "bash"
+source = "pi"
+sources = ["pi", "magenta"]
+description = "Execute a bash command in the current working directory. Returns stdout and stderr. Output is truncated to the last lines or KB (whichever is hit first). If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds."
+
+[source_config.magenta]
+implementation_manifest = "magenta/bash.toml"
+requires = ["runtime:process", "sandbox"]
+
+[parameters]
+type = "object"
+required = ["command"]
+
+[parameters.properties.command]
+type = "string"
+description = "Bash command to execute"
+
+[parameters.properties.timeout]
+type = "number"
+optional = true
+description = "Timeout in seconds (optional, no default timeout)"

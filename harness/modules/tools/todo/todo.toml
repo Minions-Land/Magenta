@@ -1,8 +1,0 @@
-kind = "tool"
-name = "todo"
-description = "Manage a session-scoped todo list. State is stored in tool result details for proper branching support."
-source = "pi"
-
-[exports]
-module = "tools/todo/pi/todo.ts"
-factory = "createTodoMagnet"

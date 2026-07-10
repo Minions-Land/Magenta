@@ -3,11 +3,9 @@ import { createWriteStream, type WriteStream } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { StringEnum } from "@earendil-works/pi-ai";
-import {
-	type OrchestrationRequest as MultiAgentOrchestrationRequest,
-	type OrchestrationResult as MultiAgentOrchestrationResult,
-	MultiAgentOrchestrator,
-	type WorkerRunner as WorkflowRunner,
+import type {
+	OrchestrationRequest as MultiAgentOrchestrationRequest,
+	OrchestrationResult as MultiAgentOrchestrationResult,
 } from "@magenta/harness";
 import { type Static, Type } from "typebox";
 import { APP_BINARY_NAME, APP_NAME, getAgentDir } from "../../config.ts";
@@ -116,6 +114,11 @@ export type SubAgentSpawn = (command: string, args: string[], options: SpawnOpti
 export type SubAgentModelSelection = {
 	provider: string;
 	model: string;
+};
+
+/** The HCP-selected multiagent capability surface consumed by this facade. */
+export type SubAgentWorkflowProvider = {
+	orchestrate(request: MultiAgentOrchestrationRequest, signal?: AbortSignal): Promise<MultiAgentOrchestrationResult>;
 };
 
 export type SubAgentReturnMessage<T = unknown> = {
@@ -513,7 +516,7 @@ export class SubAgentController {
 	private spawnAgent: SubAgentSpawn;
 	private agentCommand: string;
 	private getDefaultModel?: () => SubAgentModelSelection | undefined;
-	private workflowRunner?: WorkflowRunner;
+	private getWorkflowProvider?: () => SubAgentWorkflowProvider | undefined;
 
 	constructor(
 		manager: BackgroundEventManager,
@@ -522,14 +525,14 @@ export class SubAgentController {
 			spawnAgent?: SubAgentSpawn;
 			agentCommand?: string;
 			getDefaultModel?: () => SubAgentModelSelection | undefined;
-			workflowRunner?: WorkflowRunner;
+			getWorkflowProvider?: () => SubAgentWorkflowProvider | undefined;
 		},
 	) {
 		this.sendMessage = options.sendMessage;
 		this.spawnAgent = options.spawnAgent ?? spawn;
 		this.agentCommand = options.agentCommand ?? APP_BINARY_NAME;
 		this.getDefaultModel = options.getDefaultModel;
-		this.workflowRunner = options.workflowRunner;
+		this.getWorkflowProvider = options.getWorkflowProvider;
 		this.monitor = manager.registerSource({
 			id: "agents",
 			title: "agents",
@@ -971,6 +974,11 @@ export class SubAgentController {
 	}
 
 	private startWorkflow(input: WorkflowInput, parentCwd: string): SubAgentEvent {
+		const provider = this.getWorkflowProvider?.();
+		if (!provider) {
+			throw new Error("Multi-agent workflow capability is unavailable from the session HCP");
+		}
+
 		const id = `agent_${String(this.nextAgentNumber++).padStart(3, "0")}`;
 		const cwd = resolve(parentCwd, ".");
 		const stamp = timestampForFile();
@@ -1004,11 +1012,10 @@ export class SubAgentController {
 		this.events.set(id, event);
 		this.monitor.update();
 
-		const request = buildOrchestrationRequest(input);
+		const request = { ...buildOrchestrationRequest(input), cwd } as MultiAgentOrchestrationRequest;
 		log.write(`# workflow ${input.pattern}${input.name ? ` (${input.name})` : ""}\n\n`);
-		const orchestrator = new MultiAgentOrchestrator({ cwd, runner: this.workflowRunner });
 
-		void orchestrator
+		void provider
 			.orchestrate(request, abort.signal)
 			.then((result) => {
 				if (event.status !== "running") return;

@@ -34,15 +34,13 @@ import {
 	streamSimple,
 } from "@earendil-works/pi-ai/compat";
 import {
-	buildBuiltInToolMagnets,
-	buildToolsModule,
 	type CompactionProvider,
 	createSshToolOperations,
 	formatSkillInvocation,
 	type HcpClient,
-	type PolicyProviderContract,
-	type ProcessRuntimeProviderContract,
-	type SandboxProviderContract,
+	type PolicyProvider,
+	type ProcessRuntimeProvider,
+	type SandboxProvider,
 	type SshTarget,
 	type SshToolOperations,
 } from "@magenta/harness";
@@ -96,6 +94,7 @@ import {
 	wrapRegisteredTools,
 } from "./extensions/index.ts";
 import { emitSessionShutdownEvent } from "./extensions/runner.ts";
+import { HcpClientassembletools } from "./HcpClienttools.ts";
 import type { BashExecutionMessage, CustomMessage } from "./messages.ts";
 import type { ModelRegistry } from "./model-registry.ts";
 import { PackageLoadController } from "./package-load-events.ts";
@@ -113,7 +112,7 @@ import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts"
 import { BackgroundShellController } from "./tools/bg-shell.ts";
 import { createAllToolDefinitions } from "./tools/index.ts";
 import { formatPeerMessages, PEER_MESSAGE_CUSTOM_TYPE, SendMessageController } from "./tools/send-message.ts";
-import { SubAgentController } from "./tools/sub-agent.ts";
+import { SubAgentController, type SubAgentWorkflowProvider } from "./tools/sub-agent.ts";
 import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.ts";
 
 // ============================================================================
@@ -329,9 +328,12 @@ export class AgentSession {
 	// Resolved at _buildRuntime (including reload) so they stay current. RESOLVED
 	// but NOT enforced by default (policy defaults to yolo, sandbox to none) per
 	// C5.2/C5.3 parity requirement. Actual enforcement is opt-in only.
-	private _policyProvider?: PolicyProviderContract;
-	private _sandboxProvider?: SandboxProviderContract;
-	private _runtimeProvider?: ProcessRuntimeProviderContract;
+	// biome-ignore lint/correctness/noUnusedPrivateClassMembers: retained for the explicit policy opt-in integration stage.
+	private _policyProvider?: PolicyProvider;
+	// biome-ignore lint/correctness/noUnusedPrivateClassMembers: retained for the explicit sandbox opt-in integration stage.
+	private _sandboxProvider?: SandboxProvider;
+	// biome-ignore lint/correctness/noUnusedPrivateClassMembers: retained for the managed runtime integration stage.
+	private _runtimeProvider?: ProcessRuntimeProvider;
 
 	// Extension system
 	private _extensionRunner!: ExtensionRunner;
@@ -403,6 +405,7 @@ export class AgentSession {
 		});
 		this._subAgents = new SubAgentController(this._backgroundEvents, {
 			sendMessage: (message, options) => this.sendCustomMessage(message, options),
+			getWorkflowProvider: () => this._resolveMultiAgentProvider(),
 			getDefaultModel: () =>
 				this.model
 					? {
@@ -498,6 +501,11 @@ export class AgentSession {
 		return hcp?.resolveCapability?.<CompactionProvider>("compaction");
 	}
 
+	private _resolveMultiAgentProvider(): SubAgentWorkflowProvider | undefined {
+		const hcp: HcpClient | undefined = this._resourceLoader.getSessionHcp?.();
+		return hcp?.resolveCapability?.<SubAgentWorkflowProvider>("multiagent");
+	}
+
 	/**
 	 * Phase 5: Resolve the command-execution safety capabilities from the session
 	 * HCP. These are RESOLVED (made consultable) but NOT consumed by default — pi's
@@ -511,20 +519,20 @@ export class AgentSession {
 	 * test double), in which case pi's current no-guard behavior applies — identical
 	 * either way.
 	 */
-	private _resolvePolicyProvider(): PolicyProviderContract | undefined {
+	private _resolvePolicyProvider(): PolicyProvider | undefined {
 		const hcp: HcpClient | undefined = this._resourceLoader.getSessionHcp?.();
-		return hcp?.resolveCapability?.<PolicyProviderContract>("policy");
+		return hcp?.resolveCapability?.<PolicyProvider>("policy");
 	}
 
-	private _resolveSandboxProvider(): SandboxProviderContract | undefined {
+	private _resolveSandboxProvider(): SandboxProvider | undefined {
 		const hcp: HcpClient | undefined = this._resourceLoader.getSessionHcp?.();
-		return hcp?.resolveCapability?.<SandboxProviderContract>("sandbox");
+		return hcp?.resolveCapability?.<SandboxProvider>("sandbox");
 	}
 
-	private _resolveRuntimeProvider(): ProcessRuntimeProviderContract | undefined {
+	private _resolveRuntimeProvider(): ProcessRuntimeProvider | undefined {
 		const hcp: HcpClient | undefined = this._resourceLoader.getSessionHcp?.();
 		// runtime is multi-slot; the process runtime lives at `runtime:process`.
-		return hcp?.resolveCapability?.<ProcessRuntimeProviderContract>("runtime:process");
+		return hcp?.resolveCapability?.<ProcessRuntimeProvider>("runtime:process");
 	}
 
 	/**
@@ -2744,9 +2752,6 @@ export class AgentSession {
 		flagValues?: Map<string, boolean | string>;
 		includeAllExtensionTools?: boolean;
 	}): void {
-		const autoResizeImages = this.settingsManager.getImageAutoResize();
-		const shellCommandPrefix = this.settingsManager.getShellCommandPrefix();
-		const shellPath = this.settingsManager.getShellPath();
 		// Phase 2 (HCP unification): resolve built-in tools from the session HCP
 		// instead of local construction. Build tool magnets with per-runtime options
 		// (SSH ops, shell path, auto-resize) and register into the session HCP, then
@@ -2762,10 +2767,17 @@ export class AgentSession {
 					]),
 				)
 			: sessionHcp
-				? this._resolveBuiltInToolsFromHcp(sessionHcp, { autoResizeImages, shellCommandPrefix, shellPath })
+				? this._resolveBuiltInToolsFromHcp(sessionHcp)
 				: (createAllToolDefinitions(this._cwd, {
-						read: { autoResizeImages, operations: this._sshOperations?.read },
-						bash: { commandPrefix: shellCommandPrefix, shellPath, operations: this._sshOperations?.bash },
+						read: {
+							autoResizeImages: this.settingsManager.getImageAutoResize(),
+							operations: this._sshOperations?.read,
+						},
+						bash: {
+							commandPrefix: this.settingsManager.getShellCommandPrefix(),
+							shellPath: this.settingsManager.getShellPath(),
+							operations: this._sshOperations?.bash,
+						},
 						write: { operations: this._sshOperations?.write },
 						edit: { operations: this._sshOperations?.edit },
 					}) as Record<string, ToolDefinition>);
@@ -2836,47 +2848,15 @@ export class AgentSession {
 		});
 	}
 
-	private _resolveBuiltInToolsFromHcp(
-		sessionHcp: HcpClient,
-		options: { autoResizeImages: boolean; shellCommandPrefix?: string; shellPath?: string },
-	): Record<string, ToolDefinition> {
-		// Build tool magnets with per-runtime options (SSH ops, shell path, auto-resize)
-		// and register them into the session HCP, replacing any prior registrations
-		// (since _buildRuntime can run multiple times, e.g. on reload).
-		const bashOps = this._sshOperations?.bash ?? createLocalBashOperations({ shellPath: options.shellPath });
-		// Source canonical model-facing descriptions from pi's own tool-definition
-		// factories so HCP-resolved tools stay byte-identical (INV-5.2). bash & grep
-		// descriptions are already single-sourced in harness (BASH_TOOL_DESCRIPTION,
-		// GREP_DESCRIPTION); read/edit/write/find/ls strings live in pi.
+	private _resolveBuiltInToolsFromHcp(sessionHcp: HcpClient): Record<string, ToolDefinition> {
+		// Tools were built once by the session assembler. Runtime code only resolves
+		// their addresses and adds pi-owned rendering metadata.
 		const canonical = createAllToolDefinitions(this._cwd) as Record<string, ToolDefinition>;
-		const magnets = buildBuiltInToolMagnets(this._cwd, {
-			read: { autoResizeImages: options.autoResizeImages, operations: this._sshOperations?.read },
-			bash: { commandPrefix: options.shellCommandPrefix, operations: bashOps },
-			write: { operations: this._sshOperations?.write },
-			edit: { operations: this._sshOperations?.edit },
-			grep: {},
-			find: {},
-			ls: {},
-			descriptions: {
-				read: canonical.read?.description,
-				edit: canonical.edit?.description,
-				write: canonical.write?.description,
-				find: canonical.find?.description,
-				ls: canonical.ls?.description,
-			},
-		});
-
-		// Register the tools as ONE ModuleHcpServer("tools"), replacing any prior
-		// tools module (since _buildRuntime can run multiple times, e.g. on reload).
-		// registerModule replaces by module name, so per-runtime rebuilds stay clean
-		// — no dual flat/module registration paths.
-		sessionHcp.registerModule(buildToolsModule(magnets));
-
-		// Resolve back through the module chain and convert to ToolDefinitions.
+		// Resolve through the module chain and convert to ToolDefinitions.
 		// resolveInstance supplies the in-module selector (the tool name) from the
-		// routing index, so the tools ModuleHcpServer routes to the right magnet.
+		// routing index, so each tools/<name>/HcpServer routes to its selected source.
 		const resolved: Record<string, ToolDefinition> = {};
-		const builtInNames = ["read", "bash", "edit", "write", "grep", "find", "ls"];
+		const builtInNames = ["read", "bash", "edit", "write", "grep", "find", "ls", "show", "todo"];
 		for (const name of builtInNames) {
 			const tool = sessionHcp.resolveInstance<AgentTool>(`tool:${name}`);
 			if (tool) {
@@ -2888,15 +2868,12 @@ export class AgentSession {
 				if (canonicalDef) {
 					def.promptSnippet = canonicalDef.promptSnippet;
 					def.promptGuidelines = canonicalDef.promptGuidelines;
+					def.prepareArguments = canonicalDef.prepareArguments;
 					def.renderCall = canonicalDef.renderCall;
 					def.renderResult = canonicalDef.renderResult;
 				}
 				resolved[name] = def;
 			}
-		}
-		// `show` tool is pi-local (not in harness magnets); include from canonical.
-		if (canonical.show) {
-			resolved.show = canonical.show;
 		}
 		return resolved;
 	}
@@ -2912,6 +2889,16 @@ export class AgentSession {
 		await this._resourceLoader.reload({
 			onPackageAssemblyProgress: this._packageLoad.onProgress,
 		});
+		const sessionHcp = this._resourceLoader.getSessionHcp?.();
+		if (sessionHcp) {
+			await HcpClientassembletools({
+				hcp: sessionHcp,
+				cwd: this._cwd,
+				settingsManager: this.settingsManager,
+				sessionManager: this.sessionManager,
+				sshOperations: this._sshOperations,
+			});
+		}
 		this._packageLoad.finish();
 		this._buildRuntime({
 			activeToolNames: this.getActiveToolNames(),
