@@ -5,9 +5,6 @@ import type { SettingsManager } from "./settings-manager.ts";
 import { createLocalBashOperations } from "./tools/bash.ts";
 import { createLocalReadOperations } from "./tools/read.ts";
 
-const HCP_CLIENT_TOOL_NAMES = ["read", "bash", "edit", "write", "grep", "find", "ls", "show", "todo"] as const;
-const HCP_CLIENT_TOOL_MODULES = HCP_CLIENT_TOOL_NAMES.map((name) => `tools/${name}`);
-
 export type HcpClienttoolassemblyoptions = {
 	hcp: HcpClient;
 	cwd: string;
@@ -29,7 +26,8 @@ export async function HcpClientassembletools(options: HcpClienttoolassemblyoptio
 		repoRoot: options.cwd,
 		cwd: options.cwd,
 		includeAutoload: false,
-		modules: HCP_CLIENT_TOOL_MODULES,
+		includeSelectedProducts: ["tool"],
+		skipOccupied: true,
 		settings: {
 			"tools/read": {
 				autoResizeImages: options.settingsManager.getImageAutoResize(),
@@ -56,14 +54,9 @@ export async function HcpClientassembletools(options: HcpClienttoolassemblyoptio
 	});
 
 	const errors = assembled.diagnostics.filter((diagnostic) => diagnostic.type === "error");
-	const missing = HCP_CLIENT_TOOL_NAMES.filter((name) => options.hcp.resolveInstance(`tool:${name}`) === undefined);
-	if (errors.length === 0 && missing.length === 0) return;
-
-	const reasons = [
-		...errors.map((diagnostic) => diagnostic.message),
-		...(missing.length > 0 ? [`missing tool addresses: ${missing.join(", ")}`] : []),
-	];
-	throw new Error(`HcpClient core tool assembly failed: ${reasons.join("; ")}`);
+	if (errors.length > 0) {
+		throw new Error(`HcpClient tool assembly failed: ${errors.map((diagnostic) => diagnostic.message).join("; ")}`);
+	}
 }
 
 function HcpClientloadtodostate(sessionManager: Pick<SessionManager, "getBranch">): TodoState | undefined {

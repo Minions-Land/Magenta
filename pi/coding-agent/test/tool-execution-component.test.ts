@@ -1,3 +1,5 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { Text, type TUI } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
@@ -487,6 +489,34 @@ describe("ToolExecutionComponent parity", () => {
 			expect(expanded).toContain(scenario.hidden);
 		});
 	}
+
+	test("labels source-owned HCP skills from their owning slot without a Source-name list", () => {
+		const root = mkdtempSync(join(tmpdir(), "hcp-skill-render-"));
+		try {
+			const slotDir = join(root, "skills", "future-skill");
+			const sourceDir = join(slotDir, "future-agent");
+			mkdirSync(sourceDir, { recursive: true });
+			writeFileSync(join(slotDir, "future-skill.toml"), 'kind = "skill"\nname = "future-skill"\n');
+
+			const component = new ToolExecutionComponent(
+				"read",
+				"tool-source-owned-skill",
+				{ path: join(sourceDir, "SKILL.md") },
+				{},
+				createReadToolDefinition(process.cwd()),
+				createFakeTui(),
+				process.cwd(),
+			);
+			component.updateResult(
+				{ content: [{ type: "text", text: "hidden" }], details: undefined, isError: false },
+				false,
+			);
+
+			expect(stripAnsi(component.render(120).join("\n"))).toContain("[skill] future-skill");
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
 
 	for (const scenario of [
 		{ title: "SKILL.md", path: join(process.cwd(), "attio", "SKILL.md"), compact: "[skill] attio:120-329" },

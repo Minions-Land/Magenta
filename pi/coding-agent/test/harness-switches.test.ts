@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
 	buildHarnessToolSwitches,
-	formatHarnessRegistrySummary,
+	formatHarnessComponentsSummary,
 	formatHarnessRuntimeSummary,
 } from "../src/core/harness-switches.ts";
 import { createSyntheticSourceInfo } from "../src/core/source-info.ts";
 
 describe("harness switches", () => {
-	it("orders built-in tools first and marks active tools", () => {
+	it("orders tools by name and marks active tools", () => {
 		const tools = buildHarnessToolSwitches(
 			[
 				{
@@ -20,15 +20,15 @@ describe("harness switches", () => {
 					name: "read",
 					description: "Read files",
 					parameters: {},
-					sourceInfo: createSyntheticSourceInfo("<builtin:read>", { source: "builtin" }),
+					sourceInfo: createSyntheticSourceInfo("<hcp:pi:read>", { source: "pi" }),
 				},
 			],
 			["read"],
 		);
 
-		expect(tools.map((tool) => tool.name)).toEqual(["read", "custom"]);
-		expect(tools[0]?.active).toBe(true);
-		expect(tools[1]?.active).toBe(false);
+		expect(tools.map((tool) => tool.name)).toEqual(["custom", "read"]);
+		expect(tools[0]?.active).toBe(false);
+		expect(tools[1]?.active).toBe(true);
 	});
 
 	it("keeps package tool source visible in the harness switch view", () => {
@@ -56,37 +56,67 @@ describe("harness switches", () => {
 		]);
 	});
 
-	it("formats registry and runtime summaries without implying memory is wired", () => {
-		const registry = {
-			name: "magenta-harness",
+	it("formats generated component and runtime summaries", () => {
+		const components = {
 			components: [
-				{ kind: "tool", name: "read", path: "/tmp/read.toml", spec: {} },
-				{ kind: "memory", name: "memory", path: "/tmp/memory.toml", spec: {} },
+				{
+					id: "tool/read",
+					module: "tools/read",
+					kind: "tool",
+					name: "read",
+					product: "tool" as const,
+					status: "active" as const,
+					descriptorPath: "tools/read/read.toml",
+					sources: [
+						{
+							source: "pi",
+							status: "active" as const,
+							selected: true,
+							active: true,
+							descriptorPath: "tools/read/read.toml",
+						},
+					],
+				},
+				{
+					id: "memory/memory",
+					module: "memory",
+					kind: "memory",
+					name: "memory",
+					product: "capability" as const,
+					status: "selected" as const,
+					descriptorPath: "memory/memory.toml",
+					sources: [
+						{
+							source: "magenta",
+							status: "selected" as const,
+							selected: true,
+							active: false,
+							descriptorPath: "memory/memory.toml",
+						},
+					],
+				},
 			],
-			catalogs: [],
-			modules: [],
 		};
 
-		expect(formatHarnessRegistrySummary({ path: "/tmp/harness.toml", registry })).toContain(
-			"tool/read, memory/memory",
-		);
+		expect(formatHarnessComponentsSummary(components)).toContain("tool/read, memory/memory");
 
 		const summary = formatHarnessRuntimeSummary({
 			autoCompact: true,
 			skillCommands: false,
 			loadedSkills: 2,
 			loadedExtensions: 1,
-			tools: [{ name: "read", active: true, source: "builtin" }],
+			tools: [{ name: "read", active: true, source: "pi" }],
 			harnessPackages: ["AutOmicScience"],
 			packageToolCount: 1,
 			packageDiagnosticCount: 0,
 			activeHookEvents: ["session_before_compact"],
-			registry: { registry },
+			components,
 		});
 
 		expect(summary).toContain("Auto-compact: enabled");
 		expect(summary).toContain("Skill commands: disabled (2 skills loaded)");
 		expect(summary).toContain("Packages: AutOmicScience; tools:1; diagnostics:0");
-		expect(summary).toContain("Memory: registered; no AgentSession runtime switch yet");
+		expect(summary).toContain("Memory: available");
+		expect(summary).toContain("Components: 1/2 active");
 	});
 });

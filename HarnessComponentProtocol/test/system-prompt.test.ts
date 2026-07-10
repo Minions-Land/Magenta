@@ -1,4 +1,4 @@
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -106,5 +106,34 @@ content_path = "SYSTEM.md"
 			source: "TestPackage",
 			contentPath: join(root, "system-prompt", "SYSTEM.md"),
 		});
+	});
+
+	it("rejects descriptor-local symlinks that resolve outside the descriptor directory", async () => {
+		const root = await mkdtemp(join(tmpdir(), "magenta-system-prompt-symlink-"));
+		try {
+			const env = new NodeExecutionEnv({ cwd: root });
+			await env.writeFile(
+				"system-prompt/system-prompt.toml",
+				`kind = "system-prompt"
+name = "system-prompt"
+content_path = "LINK.md"
+`,
+			);
+			const outsidePath = join(root, "OUTSIDE.md");
+			await writeFile(outsidePath, "Outside prompt.");
+			await symlink(outsidePath, join(root, "system-prompt", "LINK.md"), "file");
+
+			const result = await loadSystemPromptDescriptor(join(root, "system-prompt", "system-prompt.toml"));
+
+			expect(result.descriptor?.contentPath).toBeUndefined();
+			expect(result.diagnostics).toContainEqual(
+				expect.objectContaining({
+					code: "system_prompt_descriptor_invalid",
+					message: expect.stringContaining("escapes descriptor directory"),
+				}),
+			);
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
 	});
 });

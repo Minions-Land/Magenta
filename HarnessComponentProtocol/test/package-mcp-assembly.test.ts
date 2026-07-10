@@ -4,9 +4,10 @@ import { join } from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { afterEach, describe, expect, it } from "vitest";
 import { HcpClientbuildsession } from "../.HCP/assembly/session-hcp.ts";
-import { loadPackageOverlay } from "../.HCP/overlay/package-overlay.ts";
+import { loadPackageOverlay } from "../_magenta/packages/package-overlay.ts";
 
-const MOCK_MCP_SERVER = `const readline = require("node:readline");
+const MOCK_MCP_SERVER = `#!/usr/bin/env node
+const readline = require("node:readline");
 const lines = readline.createInterface({ input: process.stdin });
 const send = (id, result) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id, result }) + "\\n");
 lines.on("line", (line) => {
@@ -39,8 +40,8 @@ describe("package MCP HCP assembly", () => {
 		const harnessRoot = join(packageRoot, "harness");
 		const toolsRoot = join(harnessRoot, "tools");
 		await mkdir(toolsRoot, { recursive: true });
-		const serverPath = join(packageRoot, "server.cjs");
-		await writeFile(serverPath, MOCK_MCP_SERVER);
+		const serverPath = join(toolsRoot, "mock-server.cjs");
+		await writeFile(serverPath, MOCK_MCP_SERVER, { mode: 0o755 });
 		await writeFile(
 			join(packageRoot, "package.toml"),
 			`schema_version = "magenta.package.v1"
@@ -67,8 +68,8 @@ path = "tools/mock-server.toml"
 name = "mock_server"
 description = "Mock package MCP"
 runtime = "mcp"
-command = ${JSON.stringify(process.execPath)}
-args = [${JSON.stringify(serverPath)}]
+command = "./mock-server.cjs"
+args = []
 name_prefix = "bio"
 `,
 		);

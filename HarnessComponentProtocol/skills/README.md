@@ -28,7 +28,7 @@ HcpClient -> skills/<skill>/HcpServer -> <source>/HcpMagnet -> SKILL.md
 `HcpMagnet.toResource()` returns a file-backed `skill` Resource. Skills do not
 enter capability builder resolution and do not produce agent tools.
 
-The registered trunk slots are:
+The repository-selected skill slots are:
 
 - `paper-analysis` from `pi`
 - `pptx` from `pi`
@@ -72,7 +72,7 @@ Names are limited to lowercase letters, digits, and hyphens. Descriptions are
 required. `disable-model-invocation: true` keeps a skill out of model-visible
 discovery while still allowing a parent workflow to read it as an asset.
 
-## Registration
+## TOML Declaration
 
 Each real slot has its own `harness.toml` row and descriptor:
 
@@ -85,13 +85,15 @@ path = "skills/example-skill/example-skill.toml"
 
 ```toml
 kind = "skill"
+product = "resource"
+autoload = true
 name = "example-skill"
 source = "pi"
 description = "What this skill does."
 ```
 
-The generated assembly has one `HCP_MAGNETS` inventory; session assembly filters
-its skill entries, registers the root first, and then registers each leaf Server.
+The generated `HCP_MAGNETS` rows are filtered by session assembly, which routes
+the root first and then each leaf Server.
 Therefore `resolve("skill:example-skill")` returns the real
 `skills/example-skill/HcpServer` instance.
 

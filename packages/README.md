@@ -7,11 +7,13 @@ Concrete packages are independently managed in the `MagentaPackages`
 repository. Magenta3 does not copy or vendor their content, and it does not
 hardcode that repository's checkout path.
 
-The reusable package parsing and overlay interface remains in
-[`HarnessComponentProtocol/.HCP/overlay/package-overlay.ts`](../HarnessComponentProtocol/.HCP/overlay/package-overlay.ts).
+The reusable Package parsing and overlay interface remains in
+[`HarnessComponentProtocol/_magenta/packages/package-overlay.ts`](../HarnessComponentProtocol/_magenta/packages/package-overlay.ts).
 Its contract is covered by temporary-package fixtures in the Harness test
-suite. A future external-root integration can connect MagentaPackages through
-that boundary without making a package a new HCP role.
+suite. External roots enter explicitly through `packagesRoot`; Pi exposes the
+same boundary as `DefaultResourceLoaderOptions.harnessPackagesRoot` and the CLI
+flag `--harness-packages-root <dir>`. None of these paths make Package a new HCP
+role.
 
 See [`templates/harness-package/README.md`](./templates/harness-package/README.md)
 for the generic manifest shape.

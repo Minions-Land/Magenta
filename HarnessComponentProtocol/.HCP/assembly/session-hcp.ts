@@ -1,15 +1,21 @@
 import { isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
+import type {
+	PackageAssemblyProgress,
+	PackageDiagnostic,
+	PackageOverlay,
+} from "../../_magenta/packages/package-overlay.ts";
+import { getHarnessPackagesRoot } from "../../_magenta/packages/package-overlay.ts";
+import type { PackageToolDiagnostic } from "../../_magenta/packages/tool-diagnostic.ts";
 import { HcpClient } from "../../HcpClient.ts";
-import {
-	expandPackageToolBuildSettings,
-	type PackageToolBuildSettings,
-	type PackageToolDiagnostic,
-} from "../../tools/descriptor/package-tool.ts";
-import type { HcpMagnetBinding, HcpMagnetBuildContext, HcpMagnetResource } from "../HcpMagnetTypes.ts";
-import type { PackageAssemblyProgress, PackageDiagnostic, PackageOverlay } from "../overlay/package-overlay.ts";
-import { getHarnessPackagesRoot } from "../overlay/package-overlay.ts";
+import { expandPackageToolBuildSettings, type PackageToolBuildSettings } from "../../tools/descriptor/package-tool.ts";
+import type {
+	HcpMagnetBinding,
+	HcpMagnetBuildContext,
+	HcpMagnetResource,
+	HcpMagnetResourcebuildsettings,
+} from "../HcpMagnetTypes.ts";
 import { HCP_MAGNETS, HCP_SERVERS } from "./sources.generated.ts";
 
 const HCP_ROOT = fileURLToPath(new URL("../..", import.meta.url));
@@ -21,6 +27,7 @@ type HcpMagnetproduct = {
 	toTool?(): AgentTool;
 	toCapability?(): HcpMagnetBinding;
 	toResource?(): HcpMagnetResource;
+	dispose?(): void | Promise<void>;
 };
 
 type HcpMagnetclass = {
@@ -44,16 +51,21 @@ export type HcpClientcomponent = {
 	requires: readonly string[];
 	HcpMagnet: HcpMagnetclass;
 	settings?: unknown;
+	/** Explicit overlay precedence: replace an address owned by another Module. */
+	overrideExisting?: boolean;
 };
 
 export type HcpClientassemblydiagnostic = {
 	type: "warning" | "error";
 	code:
 		| "component_dependency_missing"
+		| "component_dependency_cycle"
 		| "component_build_failed"
 		| "component_product_invalid"
 		| "component_server_missing"
-		| "component_source_unavailable";
+		| "component_source_unavailable"
+		| "component_address_collision"
+		| "component_routing_failed";
 	message: string;
 	module: string;
 	name: string;
@@ -69,8 +81,14 @@ export type HcpClientassembleoptions = {
 	includeAutoload?: boolean;
 	/** Additionally assemble these real module paths through the same pipeline. */
 	modules?: readonly string[];
+	/** Additionally assemble selected generated rows for these Magnet products. */
+	includeSelectedProducts?: readonly HcpClientcomponent["product"][];
 	/** Dynamic entries, such as package-selected components, merged into this assembly pass. */
 	components?: readonly HcpClientcomponent[];
+	/** Leave components whose canonical address is already routed untouched. */
+	skipOccupied?: boolean;
+	/** Whether this pass may replace an address already owned by the same Module slot. Default true. */
+	replaceExisting?: boolean;
 	/** Source constructor settings keyed by `module:name`, then by module path. */
 	settings?: Readonly<Record<string, unknown>>;
 	descriptions?: Readonly<Record<string, string | undefined>>;
@@ -85,78 +103,221 @@ export type HcpClientassembleresult = {
 };
 
 /**
- * The one component construction and registration pipeline.
+ * The one component construction and attachment pipeline.
  *
- * Every input is a real TOML/codegen registration: module Server, selected
- * source Magnet, product, slot, and dependency edges. Package and host phases
- * may add entries or settings, but they do not get another builder or registry.
+ * Every input comes from a TOML declaration and its generated module Server,
+ * selected source Magnet, product, slot, and dependency edges. Package and host
+ * phases may add components or settings, but they use this same path.
  */
 export async function HcpClientassemble(options: HcpClientassembleoptions): Promise<HcpClientassembleresult> {
 	const packagesRoot = options.packagesRoot ?? getHarnessPackagesRoot(options.repoRoot);
 	const disabledModules = new Set(options.disabledModules ?? []);
 	const requestedModules = new Set(options.modules ?? []);
-	const inventory: readonly HcpClientcomponent[] = HCP_MAGNETS;
-	const generated = inventory.filter((entry) => {
+	const selectedProducts = new Set(options.includeSelectedProducts ?? []);
+	const generatedComponents: readonly HcpClientcomponent[] = HCP_MAGNETS;
+	const generated = generatedComponents.filter((entry) => {
 		if (!entry.selected || HcpClientmoduledisabled(entry.module, disabledModules)) return false;
 		return (
 			(options.includeAutoload !== false && entry.autoload) ||
+			selectedProducts.has(entry.product) ||
 			requestedModules.has(entry.module) ||
 			options.settings?.[`${entry.module}:${entry.name}`] !== undefined ||
 			options.settings?.[entry.module] !== undefined ||
 			options.settings?.[entry.name] !== undefined
 		);
 	});
-	const components = HcpClientdedupecomponents([...generated, ...(options.components ?? [])]);
-	const pending = [...components];
+	const requestedComponents = HcpClientdedupecomponents([
+		...generated,
+		...(options.components ?? []).filter((component) => !HcpClientmoduledisabled(component.module, disabledModules)),
+	]);
+	const components = HcpClientdependencyclosure(
+		requestedComponents.filter(
+			(component) =>
+				!options.skipOccupied || options.hcp.resolve(HcpClientcomponentaddress(component)) === undefined,
+		),
+		generatedComponents,
+		options.hcp,
+		disabledModules,
+	);
 	const addresses: string[] = [];
 	const builtComponents: HcpClientassembleresult["builtComponents"] = [];
 	const diagnostics: HcpClientassemblydiagnostic[] = [];
-
-	while (pending.length > 0) {
-		let progressed = false;
-		for (let index = 0; index < pending.length; ) {
-			const component = pending[index]!;
-			const missing = component.requires.filter(
-				(requirement) => options.hcp.resolve(`capability:${requirement}`) === undefined,
-			);
-			if (missing.length > 0) {
-				index += 1;
+	const providers = new Map<string, HcpClientcomponent>();
+	for (const component of components) {
+		if (component.product === "capability" && component.slot) providers.set(component.slot, component);
+	}
+	const waiting = new Map<HcpClientcomponent, number>();
+	const dependants = new Map<HcpClientcomponent, HcpClientcomponent[]>();
+	const absent = new Map<HcpClientcomponent, string[]>();
+	for (const component of components) {
+		let dependencyCount = 0;
+		const missing: string[] = [];
+		for (const requirement of new Set(component.requires)) {
+			const provider = providers.get(requirement);
+			if (provider) {
+				dependencyCount += 1;
+				const waitingDependants = dependants.get(provider) ?? [];
+				waitingDependants.push(component);
+				dependants.set(provider, waitingDependants);
 				continue;
 			}
-
-			pending.splice(index, 1);
-			progressed = true;
-			const result = await HcpClientbuildcomponent(component, options, packagesRoot);
-			if (result.diagnostic) {
-				diagnostics.push(result.diagnostic);
-				continue;
-			}
-			if (!result.magnet) continue;
-			const registration = HcpClientregistercomponent(options.hcp, component, result.magnet);
-			if (registration.diagnostic) diagnostics.push(registration.diagnostic);
-			else {
-				addresses.push(...registration.addresses);
-				builtComponents.push({ component, addresses: registration.addresses });
-			}
+			if (options.hcp.resolve(`capability:${requirement}`) === undefined) missing.push(requirement);
 		}
+		waiting.set(component, dependencyCount);
+		if (missing.length > 0) absent.set(component, missing);
+	}
 
-		if (progressed) continue;
-		for (const component of pending.splice(0)) {
-			const missing = component.requires.filter(
-				(requirement) => options.hcp.resolve(`capability:${requirement}`) === undefined,
-			);
-			diagnostics.push({
-				type: "error",
-				code: "component_dependency_missing",
-				message: `${component.module}:${component.name} requires unresolved capabilities [${missing.join(", ")}].`,
-				module: component.module,
-				name: component.name,
-				source: component.source,
-			});
+	const ready = components.filter((component) => waiting.get(component) === 0 && !absent.has(component));
+	const attempted = new Set<HcpClientcomponent>();
+	const available = new Set<HcpClientcomponent>();
+	for (let index = 0; index < ready.length; index++) {
+		const component = ready[index]!;
+		attempted.add(component);
+		const result = await HcpClientbuildcomponent(component, options, packagesRoot);
+		if (result.diagnostic) {
+			diagnostics.push(result.diagnostic);
+			continue;
+		}
+		if (!result.magnet) continue;
+		const routed = HcpClientregistercomponent(
+			options.hcp,
+			component,
+			result.magnet,
+			options.replaceExisting !== false,
+		);
+		if (routed.diagnostic) {
+			await HcpClientdisposeproduct(result.magnet);
+			diagnostics.push(routed.diagnostic);
+			continue;
+		}
+		addresses.push(...routed.addresses);
+		builtComponents.push({ component, addresses: routed.addresses });
+		available.add(component);
+		for (const dependant of dependants.get(component) ?? []) {
+			const remaining = (waiting.get(dependant) ?? 1) - 1;
+			waiting.set(dependant, remaining);
+			if (remaining === 0 && !absent.has(dependant)) ready.push(dependant);
 		}
 	}
 
+	const pending = components.filter((component) => !attempted.has(component));
+	const cycles = HcpClientdependencycycles(pending, providers);
+	for (const component of pending) {
+		const missing = component.requires.filter((requirement) => {
+			const provider = providers.get(requirement);
+			return provider ? !available.has(provider) : options.hcp.resolve(`capability:${requirement}`) === undefined;
+		});
+		const cycle = cycles.has(component);
+		diagnostics.push({
+			type: "error",
+			code: cycle ? "component_dependency_cycle" : "component_dependency_missing",
+			message: cycle
+				? `${component.module}:${component.name} participates in a capability dependency cycle [${missing.join(", ")}].`
+				: `${component.module}:${component.name} requires unresolved capabilities [${missing.join(", ")}].`,
+			module: component.module,
+			name: component.name,
+			source: component.source,
+		});
+	}
+
 	return { hcp: options.hcp, addresses: [...new Set(addresses)], builtComponents, diagnostics };
+}
+
+async function HcpClientdisposeproduct(magnet: HcpMagnetproduct): Promise<void> {
+	if (typeof magnet.dispose !== "function") return;
+	try {
+		await magnet.dispose();
+	} catch {
+		// Preserve the routing diagnostic; cleanup is best-effort.
+	}
+}
+
+function HcpClientdependencyclosure(
+	components: readonly HcpClientcomponent[],
+	generatedComponents: readonly HcpClientcomponent[],
+	hcp: HcpClient,
+	disabledModules: ReadonlySet<string>,
+): HcpClientcomponent[] {
+	const expanded = [...components];
+	const provided = new Set(
+		expanded
+			.filter((component) => component.product === "capability" && component.slot)
+			.map((component) => component.slot!),
+	);
+	const selectedProviders = new Map(
+		generatedComponents
+			.filter(
+				(component) =>
+					component.selected &&
+					component.product === "capability" &&
+					component.slot &&
+					!HcpClientmoduledisabled(component.module, disabledModules),
+			)
+			.map((component) => [component.slot!, component]),
+	);
+
+	for (let index = 0; index < expanded.length; index++) {
+		for (const requirement of new Set(expanded[index]!.requires)) {
+			if (provided.has(requirement) || hcp.resolve(`capability:${requirement}`)) continue;
+			const provider = selectedProviders.get(requirement);
+			if (!provider) continue;
+			expanded.push(provider);
+			provided.add(requirement);
+		}
+	}
+	return expanded;
+}
+
+function HcpClientdependencycycles(
+	components: readonly HcpClientcomponent[],
+	providers: ReadonlyMap<string, HcpClientcomponent>,
+): Set<HcpClientcomponent> {
+	const pending = new Set(components);
+	const indices = new Map<HcpClientcomponent, number>();
+	const lowLinks = new Map<HcpClientcomponent, number>();
+	const stack: HcpClientcomponent[] = [];
+	const stacked = new Set<HcpClientcomponent>();
+	const cycles = new Set<HcpClientcomponent>();
+	let nextIndex = 0;
+
+	const visit = (component: HcpClientcomponent): void => {
+		const index = nextIndex++;
+		indices.set(component, index);
+		lowLinks.set(component, index);
+		stack.push(component);
+		stacked.add(component);
+
+		for (const requirement of new Set(component.requires)) {
+			const provider = providers.get(requirement);
+			if (!provider || !pending.has(provider)) continue;
+			if (!indices.has(provider)) {
+				visit(provider);
+				lowLinks.set(component, Math.min(lowLinks.get(component)!, lowLinks.get(provider)!));
+			} else if (stacked.has(provider)) {
+				lowLinks.set(component, Math.min(lowLinks.get(component)!, indices.get(provider)!));
+			}
+		}
+
+		if (lowLinks.get(component) !== indices.get(component)) return;
+		const connected: HcpClientcomponent[] = [];
+		let member: HcpClientcomponent;
+		do {
+			member = stack.pop()!;
+			stacked.delete(member);
+			connected.push(member);
+		} while (member !== component);
+		const selfCycle =
+			connected.length === 1 &&
+			connected[0]!.requires.some((requirement) => providers.get(requirement) === connected[0]);
+		if (connected.length > 1 || selfCycle) {
+			for (const cycleMember of connected) cycles.add(cycleMember);
+		}
+	};
+
+	for (const component of components) {
+		if (!indices.has(component)) visit(component);
+	}
+	return cycles;
 }
 
 async function HcpClientbuildcomponent(
@@ -224,6 +385,7 @@ function HcpClientregistercomponent(
 	hcp: HcpClient,
 	component: HcpClientcomponent,
 	magnet: HcpMagnetproduct,
+	replaceExisting: boolean,
 ): { addresses: string[]; diagnostic?: HcpClientassemblydiagnostic } {
 	const products = [
 		typeof magnet.toTool === "function" ? "tool" : undefined,
@@ -259,19 +421,49 @@ function HcpClientregistercomponent(
 		};
 	}
 
-	HcpClientregisterparents(hcp, component.module);
-	const selector = HcpClientcomponentselector(component, magnet);
-	const addresses = hcp.registerModule(new HcpServer(), new Map([[selector, magnet]]), { merge: true });
-	return { addresses };
+	try {
+		HcpClientregisterparents(hcp, component.module);
+		const server = hcp.resolveModule(component.module) ?? new HcpServer();
+		const selector = HcpClientcomponentselector(component, magnet);
+		const addresses = hcp.registerModule(server, new Map([[selector, magnet]]), {
+			merge: true,
+			replace: replaceExisting,
+			override: component.overrideExisting === true,
+		});
+		return { addresses };
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		return {
+			addresses: [],
+			diagnostic: {
+				type: "error",
+				code: message.startsWith("HcpClient address collision:")
+					? "component_address_collision"
+					: "component_routing_failed",
+				message: `${component.module}:${component.name} could not be routed: ${message}`,
+				module: component.module,
+				name: component.name,
+				source: component.source,
+			},
+		};
+	}
 }
 
 function HcpClientcomponentselector(component: HcpClientcomponent, magnet: HcpMagnetproduct): string {
 	if (component.product === "capability") return component.slot!;
-	if (component.product === "resource") return component.source;
+	if (component.product === "resource") {
+		const resource = magnet.toResource!();
+		return `${resource.kind}:${resource.name}`;
+	}
 	if (component.module.startsWith("tools/")) return component.source;
 	if (component.module !== "tools") return component.name;
 	const tool = magnet.toTool!();
 	return `tool:${tool.name}`;
+}
+
+function HcpClientcomponentaddress(component: HcpClientcomponent): string {
+	if (component.product === "capability") return `capability:${component.slot}`;
+	return `${component.product === "tool" ? "tool" : component.kind}:${component.name}`;
 }
 
 function HcpClientregisterparents(hcp: HcpClient, module: string): void {
@@ -287,7 +479,9 @@ function HcpClientdedupecomponents(components: readonly HcpClientcomponent[]): H
 	const bySlot = new Map<string, HcpClientcomponent>();
 	for (const component of components) {
 		const key =
-			component.product === "capability" ? `capability:${component.slot}` : `${component.module}:${component.name}`;
+			component.product === "capability"
+				? `capability:${component.slot}`
+				: `${component.product}:${component.module}:${component.kind}:${component.name}`;
 		bySlot.set(key, component);
 	}
 	return [...bySlot.values()];
@@ -320,14 +514,15 @@ export type HcpClientbuildsessionresult = {
 	diagnostics: Array<PackageDiagnostic | HcpClientassemblydiagnostic>;
 	toolAddresses: string[];
 	packageToolAddresses: string[];
+	packageResourceAddresses: string[];
 };
 
-/** Construct the one session Client, then delegate every registration to HcpClientassemble. */
+/** Construct the one session Client, then delegate every component attachment to HcpClientassemble. */
 export async function HcpClientbuildsession(
 	options: HcpClientbuildsessionoptions = {},
 ): Promise<HcpClientbuildsessionresult> {
 	const repoRoot = options.repoRoot ?? process.cwd();
-	const packagesRoot = options.packagesRoot ?? getHarnessPackagesRoot(repoRoot);
+	const packagesRoot = options.packagesRoot ?? options.overlay?.packagesRoot ?? getHarnessPackagesRoot(repoRoot);
 	const hcp = new HcpClient();
 	const packageDiagnostics: PackageDiagnostic[] = [];
 	const packageToolDiagnostics: PackageToolDiagnostic[] = [];
@@ -343,6 +538,7 @@ export async function HcpClientbuildsession(
 		});
 	}
 	const toolOptions = options.toolOptions ?? {};
+	const disabledModules = new Set(options.disabledModules ?? []);
 	const baseAssembled = await HcpClientassemble({
 		hcp,
 		repoRoot,
@@ -355,11 +551,12 @@ export async function HcpClientbuildsession(
 		descriptions: toolOptions.descriptions as Readonly<Record<string, string | undefined>> | undefined,
 	});
 	const packageToolComponents: HcpClientcomponent[] = [];
-	for (const template of packageComponentTemplates.filter((component) => component.product === "tool")) {
+	for (const template of packageComponentTemplates.filter(
+		(component) => component.product === "tool" && !HcpClientmoduledisabled(component.module, disabledModules),
+	)) {
 		const settings = template.settings as PackageToolBuildSettings;
 		const expanded = await expandPackageToolBuildSettings(settings, {
 			repoRoot,
-			packagesRoot,
 			components: settings.components,
 			componentMap: settings.componentMap,
 			resolveCapability: hcp.resolveCapability.bind(hcp),
@@ -378,8 +575,15 @@ export async function HcpClientbuildsession(
 		packagesRoot,
 		cwd: options.cwd ?? repoRoot,
 		includeAutoload: false,
+		disabledModules: options.disabledModules,
 		components: packageToolComponents,
 	});
+	const builtPackageToolComponents = new Set(packageAssembled.builtComponents.map(({ component }) => component));
+	for (const component of packageToolComponents) {
+		if (builtPackageToolComponents.has(component)) continue;
+		const product = (component.settings as PackageToolBuildSettings | undefined)?.product;
+		await product?.close?.();
+	}
 	const assembled: HcpClientassembleresult = {
 		hcp,
 		addresses: [...new Set([...baseAssembled.addresses, ...packageAssembled.addresses])],
@@ -397,6 +601,12 @@ export async function HcpClientbuildsession(
 		.filter(({ component }) => packageComponentSet.has(component))
 		.flatMap(({ addresses }) => addresses)
 		.filter((address) => address.startsWith("tool:"));
+	const packageResourceComponentSet = new Set(
+		packageComponentTemplates.filter((component) => component.product === "resource"),
+	);
+	const packageResourceAddresses = assembled.builtComponents
+		.filter(({ component }) => packageResourceComponentSet.has(component))
+		.flatMap(({ addresses }) => addresses);
 	for (const [index, component] of (options.overlay?.components ?? []).entries()) {
 		options.onPackageAssemblyProgress?.({
 			phase: "assembled",
@@ -411,6 +621,7 @@ export async function HcpClientbuildsession(
 		diagnostics,
 		toolAddresses: [...new Set(toolAddresses)],
 		packageToolAddresses: [...new Set(packageToolAddresses)],
+		packageResourceAddresses: [...new Set(packageResourceAddresses)],
 	};
 }
 
@@ -420,20 +631,17 @@ function HcpClientpackagecomponents(
 	toolDiagnostics: PackageToolDiagnostic[],
 ): HcpClientcomponent[] {
 	const components: HcpClientcomponent[] = [];
-	const inventory = HCP_MAGNETS as readonly HcpClientcomponent[];
+	const generatedComponents = HCP_MAGNETS as readonly HcpClientcomponent[];
 	const packageContext = {
 		components: overlay.components,
 		componentMap: overlay.componentMap,
 		diagnostics: toolDiagnostics,
 	};
-	const resourceComponents = new Set(
-		Object.values(overlay.resources).flatMap((resources) => resources.map((resource) => resource.component)),
-	);
-
+	const packageResourceTargets = new Set<string>();
 	for (const component of overlay.components) {
 		if (component.kind === "tool") {
-			const root = inventory.find(
-				(entry) => entry.module === "tools" && entry.source === "descriptor" && entry.product === "tool",
+			const root = generatedComponents.find(
+				(entry) => entry.product === "tool" && entry.kind === component.kind && entry.source === "descriptor",
 			);
 			if (!root || !component.path) continue;
 			const settings: PackageToolBuildSettings = { component, ...packageContext };
@@ -445,12 +653,71 @@ function HcpClientpackagecomponents(
 				descriptorPath: component.path,
 				requires: ["runtime:process", "sandbox"],
 				settings,
+				overrideExisting: true,
 			});
 			continue;
 		}
-		if (resourceComponents.has(component)) continue;
 
-		const kindCandidates = inventory.filter(
+		const resourceKind = HcpClientpackagecomponentkind(component.kind);
+		const resourceRoot = generatedComponents.find(
+			(entry) => entry.product === "resource" && entry.kind === resourceKind && entry.source === "descriptor",
+		);
+		if (resourceRoot) {
+			if (!component.path) {
+				diagnostics.push({
+					type: "error",
+					code: "package_component_invalid",
+					message: `Package ${component.packageId} ${component.kind}:${component.name} must declare a content path.`,
+					path: component.sourcePath,
+					packageId: component.packageId,
+					profile: component.profile,
+				});
+				continue;
+			}
+			const target = `${resourceKind}:${component.name}`;
+			if (packageResourceTargets.has(target)) {
+				diagnostics.push({
+					type: "error",
+					code: "package_component_invalid",
+					message: `Package Resource address ${target} is declared more than once; append fragments need distinct names.`,
+					path: component.path,
+					packageId: component.packageId,
+					profile: component.profile,
+				});
+				continue;
+			}
+			packageResourceTargets.add(target);
+			const settings: HcpMagnetResourcebuildsettings = {
+				name: component.name,
+				source: component.source ?? component.packageId,
+				mergeMode: component.kind === "append-system-prompt" ? "append" : "replace",
+				...(resourceKind === "system-prompt"
+					? { descriptorPath: component.path }
+					: { contentPath: component.path }),
+				metadata: {
+					origin: "package",
+					packageId: component.packageId,
+					packageDir: component.packageDir,
+					...(component.profile ? { profile: component.profile } : {}),
+					sourcePath: component.sourcePath,
+					...(component.description ? { description: component.description } : {}),
+					...(component.includeInContext === undefined ? {} : { includeInContext: component.includeInContext }),
+				},
+			};
+			components.push({
+				...resourceRoot,
+				kind: resourceKind,
+				name: component.name,
+				selected: true,
+				autoload: true,
+				descriptorPath: component.path,
+				settings,
+				overrideExisting: true,
+			});
+			continue;
+		}
+
+		const kindCandidates = generatedComponents.filter(
 			(entry) => entry.product === "capability" && entry.kind === component.kind,
 		);
 		if (kindCandidates.length === 0) continue;
@@ -487,7 +754,15 @@ function HcpClientpackagecomponents(
 			selected: true,
 			autoload: true,
 			descriptorPath: component.path ?? selected.descriptorPath,
+			overrideExisting: true,
 		});
 	}
 	return components;
+}
+
+/** Normalize Package contract aliases; available Resource kinds come only from HCP_MAGNETS. */
+function HcpClientpackagecomponentkind(kind: string): string {
+	if (kind === "prompt") return "prompt-template";
+	if (kind === "append-system-prompt") return "system-prompt";
+	return kind;
 }

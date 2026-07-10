@@ -369,7 +369,7 @@ Propose an improved description based on these patterns. Iterate up to 5 times, 
 
 ---
 
-## Gate and Register
+## Gate and Declare
 
 Before landing the skill, run Magenta's verification gates:
 
@@ -384,25 +384,52 @@ npm test                     # No regressions
 npm run inspect              # Confirm skill resolves correctly
 ```
 
-### Register in harness.toml
+### Connect the Three HCP Roles
 
-Add the skill to `HarnessComponentProtocol/harness.toml`:
+Skills do not add another HCP role. The owning skill Module has a real
+`HcpServer`; its Source has a thin `HcpMagnet` whose one product is a Resource.
+`HcpClient` consumes the generated declarations during assembly.
+
+The component descriptor records the product and Source:
+
+```toml
+kind = "skill"
+product = "resource"
+autoload = true
+name = "skill-name"
+source = "magenta" # or the actual origin Source
+description = "When to load and what this skill provides."
+```
+
+Add the descriptor path to `HarnessComponentProtocol/harness.toml`:
 
 ```toml
 [[components]]
 kind = "skill"
 name = "skill-name"
-source = "magenta"  # or "pi", "codex", etc.
 path = "skills/skill-name/skill-name.toml"
 ```
 
-### Verify Registration
+Then run codegen. Keep the one assembly chain explicit:
 
-```bash
-npm run inspect | grep -A 5 "skill-name"
+```text
+TOML declarations
+  -> HCP_SERVERS and HCP_MAGNETS
+  -> assembly
+  -> HcpClient runtime resources
 ```
 
-Confirm the skill appears in the registry and has no warnings.
+The generated arrays are rebuildable projections, not additional runtime
+roles. Do not introduce another catalog or selection layer for skills.
+
+### Verify the Declaration
+
+```bash
+npm run inspect | rg -A 5 "skill-name"
+```
+
+Confirm the skill appears among the generated component rows. Build and tests
+must also prove that its `HcpMagnet.toResource()` product assembles correctly.
 
 ---
 
@@ -410,9 +437,11 @@ Confirm the skill appears in the registry and has no warnings.
 
 ### Skills are Resources, Not Capabilities
 
-- Skills have **no code builder** — they're content-only
-- Never add a skill to `CAPABILITY_KINDS`
-- Use `content_path` in the descriptor, not `exports.factory`
+- A Skill Source Magnet produces a Resource through `toResource()`.
+- Do not classify a skill as a Capability merely to force it through a slot or
+  `capability:*` address.
+- Capability remains a legitimate Magnet product for loop-internal values; it
+  is simply the wrong product for a content-only skill.
 
 ### Source Discipline
 
@@ -448,7 +477,7 @@ When improving an existing skill:
 6. **Iterate** until satisfied
 7. **Optimize** description (optional)
 8. **Gate** with `npm run build/test/check`
-9. **Register** in `harness.toml`
+9. **Declare** in TOML and regenerate `HCP_SERVERS` / `HCP_MAGNETS`
 
 Take your time. Think carefully. This is important work — these skills will be used extensively. Write a draft, step back, and improve it before showing the user.
 

@@ -19,6 +19,7 @@
 import { readFile } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parse } from "smol-toml";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const harnessRoot = resolve(here, "..");
@@ -29,89 +30,11 @@ const asJson = args.has("--json");
 const staleOnly = args.has("--stale");
 const checkRule = args.has("--check");
 
-// Minimal TOML reader: we only need [[components]] name/path and each
-// component's [assumption] table. Reuse the built registry loader if present,
-// else fall back to a tiny parser. To avoid a build dependency we parse the
-// few fields we need directly.
-function stripComments(line) {
-	// remove trailing # comments not inside quotes (best-effort; our tomls are simple)
-	let inStr = false;
-	let quote = "";
-	for (let i = 0; i < line.length; i++) {
-		const c = line[i];
-		if (inStr) {
-			if (c === quote) inStr = false;
-		} else if (c === '"' || c === "'") {
-			inStr = true;
-			quote = c;
-		} else if (c === "#") {
-			return line.slice(0, i);
-		}
-	}
-	return line;
-}
-
-function parseScalar(raw) {
-	const v = raw.trim();
-	if (v.startsWith("[")) {
-		// simple inline array of strings
-		return v
-			.replace(/^\[/, "")
-			.replace(/\]$/, "")
-			.split(",")
-			.map((s) => s.trim().replace(/^["']|["']$/g, ""))
-			.filter(Boolean);
-	}
-	return v.replace(/^["']|["']$/g, "");
-}
-
-// Extract the [[components]] path list from harness.toml.
-function parseComponentPaths(text) {
-	const paths = [];
-	const lines = text.split(/\r?\n/);
-	let inComp = false;
-	for (const rawLine of lines) {
-		const line = stripComments(rawLine).trim();
-		if (line === "[[components]]") {
-			inComp = true;
-			continue;
-		}
-		if (line.startsWith("[[") || line.startsWith("[")) {
-			if (line !== "[[components]]") inComp = false;
-		}
-		if (inComp && line.startsWith("path")) {
-			const eq = line.indexOf("=");
-			if (eq >= 0) paths.push(parseScalar(line.slice(eq + 1)));
-		}
-	}
-	return paths;
-}
-
-// Extract top-level name/kind and the [assumption] block from a component toml.
-function parseComponent(text) {
-	const lines = text.split(/\r?\n/);
-	const top = {};
-	const assumption = {};
-	let section = "top";
-	for (const rawLine of lines) {
-		const line = stripComments(rawLine).trim();
-		if (!line) continue;
-		if (line.startsWith("[")) {
-			section = line === "[assumption]" ? "assumption" : "other";
-			continue;
-		}
-		const eq = line.indexOf("=");
-		if (eq < 0) continue;
-		const key = line.slice(0, eq).trim();
-		const val = parseScalar(line.slice(eq + 1));
-		if (section === "top") top[key] = val;
-		else if (section === "assumption") assumption[key] = val;
-	}
-	return { top, assumption };
-}
-
 const indexText = await readFile(indexPath, "utf-8");
-const compPaths = parseComponentPaths(indexText);
+const index = parse(indexText);
+const compPaths = (Array.isArray(index.components) ? index.components : [])
+	.map((component) => component?.path)
+	.filter((path) => typeof path === "string");
 
 const rows = [];
 const allComponents = [];
@@ -123,7 +46,9 @@ for (const p of compPaths) {
 	} catch {
 		continue;
 	}
-	const { top, assumption } = parseComponent(text);
+	const top = parse(text);
+	const assumption =
+		top.assumption && typeof top.assumption === "object" && !Array.isArray(top.assumption) ? top.assumption : {};
 	allComponents.push({
 		name: top.name ?? "?",
 		kind: top.kind ?? "?",

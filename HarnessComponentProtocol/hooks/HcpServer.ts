@@ -79,8 +79,8 @@ export type HookDiscoverResult = {
  * statically importing hooks, so the assembly layer decides which source
  * (magenta, ...) supplies the behavior.
  *
- * This type contains only business logic. Conversion to HcpServer is handled
- * by the unified capability-server adapter, not by the provider.
+ * This type contains only business logic. The real module HcpServer above owns
+ * HCP routing; the provider does not construct or register HCP entities.
  */
 export type HookProvider = {
 	discover(): HookDiscoverResult;

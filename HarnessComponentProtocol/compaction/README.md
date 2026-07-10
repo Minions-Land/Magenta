@@ -31,13 +31,22 @@ const result = await compact(prep, model, session);
 3. **Execution**: Generate AI summaries for branches, insert compaction markers
 4. **Result**: Compacted message list that fits within limits while preserving context
 
-## Registration
+## TOML Declaration
 
 ```toml
 [[components]]
 kind = "compaction"
 name = "compaction"
 path = "compaction/compaction.toml"
+```
+
+```toml
+kind = "compaction"
+product = "capability"
+slot = "compaction"
+autoload = true
+name = "compaction"
+source = "pi"
 ```
 
 ## Dependencies

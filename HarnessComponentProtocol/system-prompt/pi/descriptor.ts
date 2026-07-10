@@ -1,6 +1,7 @@
+import { existsSync, realpathSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
-import { parseToml, type TomlTable, type TomlValue } from "../../.HCP/registry/registry.ts";
+import { parseToml, type TomlTable, type TomlValue } from "../../_magenta/utils/pi/toml.ts";
 import type { SystemPromptDescriptor, SystemPromptDescriptorDiagnostic } from "../HcpServer.ts";
 
 export type {
@@ -78,7 +79,7 @@ function resolveDescriptorLocalReference(
 	}
 	const descriptorDir = dirname(descriptorPath);
 	const resolvedPath = resolve(descriptorDir, reference);
-	if (!isWithinDir(descriptorDir, resolvedPath)) {
+	if (!isWithinDir(descriptorDir, resolvedPath) || !isRealPathWithinDir(descriptorDir, resolvedPath)) {
 		diagnostics.push({
 			type: "error",
 			code: "system_prompt_descriptor_invalid",
@@ -93,6 +94,15 @@ function resolveDescriptorLocalReference(
 function isWithinDir(parentDir: string, childPath: string): boolean {
 	const rel = relative(parentDir, childPath);
 	return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+}
+
+function isRealPathWithinDir(parentDir: string, childPath: string): boolean {
+	if (!existsSync(childPath)) return true;
+	try {
+		return isWithinDir(realpathSync(parentDir), realpathSync(childPath));
+	} catch {
+		return false;
+	}
 }
 
 function asString(value: TomlValue | undefined): string | undefined {

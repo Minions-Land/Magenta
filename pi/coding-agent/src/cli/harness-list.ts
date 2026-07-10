@@ -1,42 +1,23 @@
-import { getHarnessRegistryPath, type HarnessModuleDescriptor, loadRegistry } from "@magenta/harness";
 import chalk from "chalk";
+import { buildHarnessComponentsView, type HarnessComponentView } from "../core/harness-switches.ts";
 
 export interface HarnessListOptions {
 	json?: boolean;
 }
 
-function moduleImplementationSummary(module: HarnessModuleDescriptor): string {
-	return module.implementations
-		.map((implementation) => `${implementation.source}:${implementation.status}`)
-		.join(", ");
-}
-
-function moduleDescription(module: HarnessModuleDescriptor): string {
-	const implementations = moduleImplementationSummary(module);
-	return `${module.status}${implementations ? ` · ${implementations}` : ""}`;
+function sourceSummary(component: HarnessComponentView): string {
+	return component.sources.map((source) => `${source.source}:${source.status}`).join(", ");
 }
 
 export async function listHarnessModules(options: HarnessListOptions = {}): Promise<void> {
-	const registry = await loadRegistry(getHarnessRegistryPath());
-	const modules = registry.modules.slice().sort((left, right) => left.id.localeCompare(right.id));
+	const components = buildHarnessComponentsView().components;
 
 	if (options.json) {
 		console.log(
 			JSON.stringify(
 				{
-					name: registry.name,
-					description: registry.description,
-					moduleCount: modules.length,
-					modules: modules.map((module) => ({
-						id: module.id,
-						kind: module.kind,
-						name: module.name,
-						description: module.description,
-						status: module.status,
-						capability: module.capability,
-						path: module.path,
-						implementations: module.implementations,
-					})),
+					componentCount: components.length,
+					components,
 				},
 				null,
 				2,
@@ -45,8 +26,8 @@ export async function listHarnessModules(options: HarnessListOptions = {}): Prom
 		return;
 	}
 
-	console.log(chalk.bold(`Harness modules (${modules.length})`));
-	for (const module of modules) {
-		console.log(`${module.id.padEnd(30)} ${moduleDescription(module)}`);
+	console.log(chalk.bold(`Harness components (${components.length})`));
+	for (const component of components) {
+		console.log(`${component.id.padEnd(30)} ${component.status} · ${sourceSummary(component)}`);
 	}
 }

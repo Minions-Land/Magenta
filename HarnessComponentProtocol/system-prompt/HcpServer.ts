@@ -1,5 +1,5 @@
-import type { TomlTable } from "../.HCP/registry/registry.ts";
 import type { Skill } from "../_magenta/types/types.ts";
+import type { TomlTable } from "../_magenta/utils/pi/toml.ts";
 
 export class HcpServer {
 	readonly moduleName = "system-prompt";

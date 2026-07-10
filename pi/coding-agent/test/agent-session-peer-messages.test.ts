@@ -54,7 +54,7 @@ describe("AgentSession peer messaging", () => {
 			expect(tool?.description).toContain("another agent session");
 			expect(tool?.promptGuidelines?.some((g) => g.includes("send_message"))).toBe(true);
 		} finally {
-			session.dispose();
+			await session.dispose();
 		}
 	});
 
@@ -82,7 +82,7 @@ describe("AgentSession peer messaging", () => {
 				verify.close();
 			}
 		} finally {
-			session.dispose();
+			await session.dispose();
 		}
 	});
 });

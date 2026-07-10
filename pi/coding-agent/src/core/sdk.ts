@@ -259,19 +259,18 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	const excludedToolNames = options.excludeTools;
 	const excludedToolNameSet = excludedToolNames ? new Set(excludedToolNames) : undefined;
 	const packageToolNames = resourceLoader.getPackageTools().tools.map((tool) => tool.name);
-	// Harness trunk tools (web-search, web-fetch) behave like built-ins: on by
-	// default, but disabled by noTools. Seed them into the initial active set so
-	// they are gated the same way as read/bash rather than force-activated.
-	const trunkToolNames = resourceLoader.getTrunkTools().tools.map((tool) => tool.name);
+	const defaultHcpToolNames = resourceLoader.getDefaultToolNames?.() ?? [];
 	// User-configured MCP tools (~/.magenta/agent/mcp-servers.json) are on by default,
 	// like package tools: the user opted in by configuring the server.
 	const userMcpToolNames = resourceLoader.getUserMcpTools().tools.map((tool) => tool.name);
 	const initialActiveToolNames: string[] = (
 		options.tools
 			? [...options.tools]
-			: options.noTools
+			: options.noTools === "all"
 				? []
-				: [...defaultActiveToolNames, ...trunkToolNames, ...packageToolNames, ...userMcpToolNames]
+				: options.noTools === "builtin"
+					? [...packageToolNames, ...userMcpToolNames]
+					: [...defaultActiveToolNames, ...defaultHcpToolNames, ...packageToolNames, ...userMcpToolNames]
 	).filter((name) => !excludedToolNameSet?.has(name));
 
 	let agent: Agent;
@@ -411,6 +410,8 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		sshTarget: options.sshTarget,
 		modelRegistry,
 		initialActiveToolNames,
+		autoActivateLoadedTools: options.tools === undefined && options.noTools !== "all",
+		autoActivateDefaultTools: options.tools === undefined && options.noTools === undefined,
 		allowedToolNames,
 		excludedToolNames,
 		extensionRunnerRef,

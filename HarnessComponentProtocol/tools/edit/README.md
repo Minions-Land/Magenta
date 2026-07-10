@@ -73,16 +73,20 @@ Returns `AgentToolResult` with:
 Override default filesystem operations for remote editing:
 
 ```typescript
-interface EditOperations {
+type EditOperations = {
   readFile: (absolutePath: string) => Promise<Buffer>;
   writeFile: (absolutePath: string, content: string) => Promise<void>;
   access: (absolutePath: string) => Promise<void>;
-}
+};
 ```
 
-## Registration
+## HCP Declaration
+
+`HarnessComponentProtocol/harness.toml` selects this component declaration for
+codegen:
 
 ```toml
+[[components]]
 kind = "tool"
 name = "edit"
 path = "tools/edit/edit.toml"

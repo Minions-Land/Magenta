@@ -47,9 +47,13 @@ Returns `AgentToolResult` with:
 - Configurable timeout
 - Streaming output accumulation
 
-## Registration
+## HCP Declaration
+
+`HarnessComponentProtocol/harness.toml` selects this component declaration for
+codegen:
 
 ```toml
+[[components]]
 kind = "tool"
 name = "bash"
 path = "tools/bash/bash.toml"

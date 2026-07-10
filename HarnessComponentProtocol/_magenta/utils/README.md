@@ -34,6 +34,7 @@ Harness Module and is not registered with HCP.
 - `file-mutation-queue.ts` — Per-file serialization for write/edit operations
 - `output-accumulator.ts` — Streaming output collection with bounded memory
 - `child-process.ts` — Cross-platform process spawn helpers
+- `toml.ts` — Shared standards-compliant TOML parsing for runtime descriptors
 
 ## Truncation Strategy
 

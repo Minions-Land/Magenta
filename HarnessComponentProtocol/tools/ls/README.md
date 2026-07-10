@@ -65,11 +65,11 @@ src/
 Override for remote directory listing:
 
 ```typescript
-interface LsOperations {
+type LsOperations = {
   exists: (absolutePath: string) => Promise<boolean> | boolean;
   stat: (absolutePath: string) => Promise<{ isDirectory: () => boolean }>;
   readdir: (absolutePath: string) => Promise<string[]> | string[];
-}
+};
 ```
 
 Example for SSH-based listing:
@@ -87,9 +87,13 @@ createLsExecute(cwd, {
 });
 ```
 
-## Registration
+## HCP Declaration
+
+`HarnessComponentProtocol/harness.toml` selects this component declaration for
+codegen:
 
 ```toml
+[[components]]
 kind = "tool"
 name = "ls"
 path = "tools/ls/ls.toml"

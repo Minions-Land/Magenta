@@ -14,19 +14,6 @@ const allowedTopLevel = new Set([
 	"README-harness.md",
 	"HcpClient.ts",
 	"_magenta",
-	"catalog",
-	"compaction",
-	"context",
-	"hooks",
-	"memory",
-	"multiagent",
-	"policy",
-	"prompt-templates",
-	"runtime",
-	"sandbox",
-	"skills",
-	"system-prompt",
-	"tools",
 	"docs",
 	"eval",
 	"eslint.config.mjs",
@@ -41,7 +28,6 @@ const allowedTopLevel = new Set([
 ]);
 
 const ignoredOutputDirs = new Set(["dist", "node_modules"]);
-const implementationSourceNames = new Set(["pi", "codex", "jcode", "claude-code", "magenta", "descriptor"]);
 const deprecatedPackKinds = new Set(["hcp-process-pack", "sandbox-pack", "runtime-pack", "hook-pack", "policy-pack"]);
 const infrastructureRoots = [resolve(harnessRoot, ".HCP"), resolve(harnessRoot, "_magenta")];
 const foldedToolModuleNames = new Set([
@@ -54,32 +40,23 @@ const foldedToolModuleNames = new Set([
 	"read-anchored",
 	"read-url",
 ]);
-const sourceModuleDirs = [
-	".HCP",
-	"compaction",
-	"context",
-	"_magenta/env",
-	"hooks",
-	"memory",
-	"_magenta/messages",
-	"policy",
-	"prompt-templates",
-	"runtime",
-	"sandbox",
-	"_magenta/session",
-	"skills",
-	"system-prompt",
-	"test",
-	"tools",
-	"_magenta/types",
-	"_magenta/utils",
-];
-const capabilityModules = new Map();
+const declaredModules = new Map();
 const checkedRoleFiles = new Set();
-const registeredComponentPaths = new Set();
+const declaredComponentPaths = new Set();
 const productionScanIgnoredDirs = new Set([".git", ".tmp", "coverage", "dist", "node_modules", "target"]);
 const forbiddenHcpIdentifiers = new Set(["CapabilitySourceMagnet", "ModuleHcpServer"]);
 const allowedHcpClientConstructor = resolve(harnessRoot, ".HCP", "assembly", "session-hcp.ts");
+const allowedInfrastructurePaths = new Set([
+	"HCP-OVERVIEW.md",
+	"HcpMagnetTypes.ts",
+	"HcpServerTypes.ts",
+	"README.md",
+	"assembly",
+	"assembly/session-hcp.ts",
+	"assembly/sources.generated.ts",
+	"transport",
+	"transport/hcp-process.ts",
+]);
 const sharedProcessToolsRoot = resolve(harnessRoot, "_magenta", "process-tools");
 const sharedProcessToolsCommand = "../../../_magenta/process-tools/target/release/magenta-process-tools";
 
@@ -109,6 +86,7 @@ function resolveInside(baseDir, ref, context) {
 }
 
 function checkTopLevel() {
+	const allowed = new Set([...allowedTopLevel, ...declaredTopLevelDirectories()]);
 	for (const entry of readdirSync(harnessRoot, { withFileTypes: true })) {
 		if (ignoredOutputDirs.has(entry.name)) {
 			note(`ignoring local output directory ${pathLabel(join(harnessRoot, entry.name))}`);
@@ -117,14 +95,29 @@ function checkTopLevel() {
 		// Dot-prefixed entries are local/tooling state (.git, ._magenta, editor dirs),
 		// not part of the tracked source tree.
 		if (entry.name.startsWith(".")) continue;
-		if (!allowedTopLevel.has(entry.name)) {
+		if (!allowed.has(entry.name)) {
 			fail(`unexpected top-level harness entry: ${entry.name}`);
 		}
 	}
 }
 
+function declaredTopLevelDirectories() {
+	const index = readToml(join(harnessRoot, "harness.toml"));
+	const rows = [...(Array.isArray(index.modules) ? index.modules : []), ...(Array.isArray(index.components) ? index.components : [])];
+	return rows.flatMap((row) => {
+		if (!row || typeof row !== "object" || Array.isArray(row) || typeof row.path !== "string") return [];
+		const first = row.path.split(/[\\/]/).find((part) => part && part !== "." && part !== "..");
+		return first ? [first] : [];
+	});
+}
+
 function checkReadmes() {
-	for (const dir of sourceModuleDirs) {
+	const expected = new Set([".HCP", "eval", "test", ...declaredTopLevelDirectories()]);
+	const supportRoot = join(harnessRoot, "_magenta");
+	for (const entry of readdirSync(supportRoot, { withFileTypes: true })) {
+		if (entry.isDirectory()) expected.add(`_magenta/${entry.name}`);
+	}
+	for (const dir of expected) {
 		const fullPath = join(harnessRoot, dir);
 		if (!existsSync(fullPath)) {
 			fail(`missing expected harness module directory: ${dir}`);
@@ -135,16 +128,15 @@ function checkReadmes() {
 	}
 }
 
-function checkRegistry() {
+function checkDeclarations() {
 	const index = readToml(join(harnessRoot, "harness.toml"));
 	const modules = Array.isArray(index.modules) ? index.modules : [];
 	const components = Array.isArray(index.components) ? index.components : [];
-	const catalogs = Array.isArray(index.catalogs) ? index.catalogs : [];
 	const seen = new Set();
 
 	for (const module of modules) {
 		const key = `${module.kind}:${module.name}`;
-		if (seen.has(key)) fail(`duplicate module registration: ${key}`);
+		if (seen.has(key)) fail(`duplicate module declaration: ${key}`);
 		seen.add(key);
 		const moduleDir = resolveInside(harnessRoot, module.path, `module ${key}`);
 		if (!moduleDir) continue;
@@ -156,7 +148,7 @@ function checkRegistry() {
 			fail(`module ${key} registers infrastructure/shared code at ${pathLabel(moduleDir)}`);
 			continue;
 		}
-		checkRoleFile(join(moduleDir, "HcpServer.ts"), "HcpServer", `registered Harness Module ${key}`);
+		checkRoleFile(join(moduleDir, "HcpServer.ts"), "HcpServer", `declared Harness Module ${key}`);
 		for (const source of declaredSourceNames(module, key, { allowEmpty: true })) {
 			const sourceDirectories = findModuleSourceDirectories(harnessRoot, moduleDir, module, source);
 			if (sourceDirectories.length === 0) {
@@ -164,14 +156,14 @@ function checkRegistry() {
 				continue;
 			}
 			for (const sourceDir of sourceDirectories) {
-				checkRoleFile(join(sourceDir, "HcpMagnet.ts"), "HcpMagnet", `registered Harness Module ${key}:${source}`);
+				checkRoleFile(join(sourceDir, "HcpMagnet.ts"), "HcpMagnet", `declared Harness Module ${key}:${source}`);
 			}
 		}
 	}
 
 	for (const component of components) {
 		const key = `${component.kind}:${component.name}`;
-		if (seen.has(key)) fail(`duplicate component registration: ${key}`);
+		if (seen.has(key)) fail(`duplicate component declaration: ${key}`);
 		seen.add(key);
 		if (component.kind === "tool" && foldedToolModuleNames.has(component.name)) {
 			fail(`component ${key} is a folded tool sub-operation; register the owning tool module instead`);
@@ -179,7 +171,7 @@ function checkRegistry() {
 
 		const componentPath = resolveInside(harnessRoot, component.path, `component ${key}`);
 		if (!componentPath) continue;
-		registeredComponentPaths.add(componentPath);
+		declaredComponentPaths.add(componentPath);
 		if (!existsSync(componentPath)) {
 			fail(`component ${key} points to missing file: ${pathLabel(componentPath)}`);
 			continue;
@@ -202,32 +194,7 @@ function checkRegistry() {
 		}
 		checkComponentSourceDirectory(componentPath, spec, key);
 		checkLegacyMagnetReferences(spec, key);
-		registerHarnessModule(componentPath, spec, key);
-	}
-
-	for (const catalog of catalogs) {
-		const catalogPath = resolveInside(harnessRoot, catalog.path, `catalog ${catalog.name}`);
-		if (!catalogPath) continue;
-		if (!existsSync(catalogPath)) {
-			fail(`catalog ${catalog.name} points to missing file: ${pathLabel(catalogPath)}`);
-			continue;
-		}
-		const spec = readToml(catalogPath);
-		const catalogDir = dirname(catalogPath);
-		if (spec.inventory?.path) {
-			const inventoryPath = resolveInside(catalogDir, spec.inventory.path, `catalog ${catalog.name} inventory`);
-			if (inventoryPath && !existsSync(inventoryPath)) {
-				fail(`catalog ${catalog.name} inventory is missing: ${pathLabel(inventoryPath)}`);
-			}
-		} else {
-			fail(`catalog ${catalog.name} is missing [inventory].path`);
-		}
-		if (spec.integration?.path) {
-			const integrationPath = resolveInside(catalogDir, spec.integration.path, `catalog ${catalog.name} integration`);
-			if (integrationPath && !existsSync(integrationPath)) {
-				fail(`catalog ${catalog.name} integration map is missing: ${pathLabel(integrationPath)}`);
-			}
-		}
+		declareHarnessModule(componentPath, spec, key);
 	}
 }
 
@@ -235,13 +202,13 @@ function checkCapabilityDescriptors() {
 	for (const descriptorPath of collectFiles(harnessRoot, (entry) => entry.name.endsWith(".toml"))) {
 		const spec = readToml(descriptorPath);
 		if (!spec.assumption || typeof spec.assumption !== "object" || Array.isArray(spec.assumption)) continue;
-		if (registeredComponentPaths.has(descriptorPath)) continue;
+		if (declaredComponentPaths.has(descriptorPath)) continue;
 
 		const key = `${spec.kind ?? "<unknown>"}:${spec.name ?? basename(descriptorPath, ".toml")}`;
 		fail(`capability descriptor ${pathLabel(descriptorPath)} (${key}) is not registered in harness.toml`);
 		checkComponentSourceDirectory(descriptorPath, spec, key);
 		checkLegacyMagnetReferences(spec, key);
-		registerHarnessModule(descriptorPath, spec, key);
+		declareHarnessModule(descriptorPath, spec, key);
 	}
 }
 
@@ -260,12 +227,12 @@ function checkLegacyMagnetReferences(value, context) {
 	for (const entry of Object.values(value)) checkLegacyMagnetReferences(entry, context);
 }
 
-function registerHarnessModule(componentPath, spec, key) {
+function declareHarnessModule(componentPath, spec, key) {
 	const moduleDir = dirname(componentPath);
-	let module = capabilityModules.get(moduleDir);
+	let module = declaredModules.get(moduleDir);
 	if (!module) {
 		module = { contexts: [], sources: new Map() };
-		capabilityModules.set(moduleDir, module);
+		declaredModules.set(moduleDir, module);
 	}
 	module.contexts.push(key);
 
@@ -294,11 +261,8 @@ function declaredSourceNames(spec, key, { allowEmpty = false } = {}) {
 		fail(`component ${key} selected source=${selected} is missing from sources`);
 	}
 	return sources.filter((source) => {
-		if (typeof source === "string" && implementationSourceNames.has(source)) return true;
-		fail(
-			`component ${key} declares invalid source=${String(source)}; expected one of ` +
-				`${[...implementationSourceNames].join(", ")}`,
-		);
+		if (typeof source === "string" && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(source)) return true;
+		fail(`component ${key} declares invalid source=${String(source)}; use a lowercase source path segment`);
 		return false;
 	});
 }
@@ -315,13 +279,13 @@ function checkComponentSourceDirectory(componentPath, spec, key) {
 	}
 }
 
-function checkCapabilityModuleRoles() {
-	for (const [moduleDir, module] of capabilityModules) {
+function checkDeclaredModuleRoles() {
+	for (const [moduleDir, module] of declaredModules) {
 		const moduleName = basename(moduleDir);
 		checkRoleFile(
 			join(moduleDir, "HcpServer.ts"),
 			"HcpServer",
-			`capability module ${moduleName} (${module.contexts.join(", ")})`,
+			`Harness Module ${moduleName} (${module.contexts.join(", ")})`,
 		);
 
 		for (const [source, sourceDirectories] of module.sources) {
@@ -333,7 +297,7 @@ function checkCapabilityModuleRoles() {
 				checkRoleFile(
 					join(sourceDir, "HcpMagnet.ts"),
 					"HcpMagnet",
-					`capability source ${moduleName}:${source}`,
+					`Module Source ${moduleName}:${source}`,
 				);
 			}
 		}
@@ -393,7 +357,7 @@ function checkToolLayout() {
 	}
 	for (const entry of readdirSync(toolsRoot, { withFileTypes: true })) {
 		if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
-		if (implementationSourceNames.has(entry.name)) {
+		if (existsSync(join(toolsRoot, entry.name, "HcpMagnet.ts"))) {
 			checkRoleFile(
 				join(toolsRoot, entry.name, "HcpMagnet.ts"),
 				"HcpMagnet",
@@ -579,19 +543,30 @@ function checkHarnessClassOnlyTypes() {
 	}
 }
 
-function checkRetiredHcpLayout() {
-	if (existsSync(join(harnessRoot, ".HCP", "magnet"))) {
-		fail("retired HarnessComponentProtocol/.HCP/magnet directory must not exist");
-	}
-	if (existsSync(join(harnessRoot, ".HCP", "transport", "HcpServer.ts"))) {
-		fail("HarnessComponentProtocol/.HCP/transport is infrastructure and must not own HcpServer.ts");
-	}
-	if (existsSync(join(harnessRoot, ".HCP", "hcp-process"))) {
-		fail("HarnessComponentProtocol/.HCP/hcp-process is retired; HcpMagnetProcess is injectable transport plumbing, not a Module");
-	}
+export function isAllowedInfrastructurePath(relativePath) {
+	return allowedInfrastructurePaths.has(relativePath.replaceAll("\\", "/"));
 }
 
-function HcpStructureinfrastructureboundaries() {
+function checkInfrastructureLayout() {
+	const hcpRoot = resolve(harnessRoot, ".HCP");
+	const visit = (directory) => {
+		for (const entry of readdirSync(directory, { withFileTypes: true })) {
+			const entryPath = join(directory, entry.name);
+			const relativePath = relative(hcpRoot, entryPath).replaceAll("\\", "/");
+			if (!isAllowedInfrastructurePath(relativePath)) {
+				fail(
+					`${pathLabel(entryPath)} is outside the closed .HCP protocol layout; ` +
+						"generic Package, MCP, configuration, and registry support belongs under _magenta",
+				);
+				continue;
+			}
+			if (entry.isDirectory()) visit(entryPath);
+		}
+	};
+	visit(hcpRoot);
+}
+
+function checkInfrastructureBoundaries() {
 	const generatedAssembly = resolve(harnessRoot, ".HCP", "assembly", "sources.generated.ts");
 	for (const filePath of collectProductionSourceFiles(resolve(harnessRoot, ".HCP"))) {
 		if (filePath === generatedAssembly) continue;
@@ -608,7 +583,7 @@ function HcpStructureinfrastructureboundaries() {
 		resolve(harnessRoot, "_magenta"),
 		(entry) => entry.name.endsWith(".toml") && entry.name !== "Cargo.toml",
 	)) {
-		fail(`${pathLabel(filePath)} must not exist; _magenta is host support code, not a Harness Module registry`);
+		fail(`${pathLabel(filePath)} must not exist; _magenta is host support code, not a Harness Module declaration`);
 	}
 
 	for (const root of infrastructureRoots) {
@@ -675,13 +650,13 @@ function checkHcpCoreFiles() {
 export function runStructureCheck() {
 	checkTopLevel();
 	checkReadmes();
-	checkRegistry();
+	checkDeclarations();
 	checkCapabilityDescriptors();
-	checkCapabilityModuleRoles();
+	checkDeclaredModuleRoles();
 	checkExistingRoleFiles();
 	checkHarnessClassOnlyTypes();
-	checkRetiredHcpLayout();
-	HcpStructureinfrastructureboundaries();
+	checkInfrastructureLayout();
+	checkInfrastructureBoundaries();
 	checkPackageBoundary();
 	checkSupportLayout();
 	checkToolLayout();

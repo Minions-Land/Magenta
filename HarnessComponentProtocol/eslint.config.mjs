@@ -149,7 +149,7 @@ export default [
 		},
 	},
 	{
-		files: ["HcpClient.ts", ".HCP/Hcp*Types.ts", ".HCP/assembly/**/*.ts", ".HCP/transport/hcp-process.ts"],
+		files: ["HcpClient.ts", ".HCP/**/*.ts"],
 		rules: {
 			"hcp-exports/require-prefix": "error",
 		},

@@ -2,7 +2,7 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { McpStdioClient } from "../.HCP/transport/mcp-client.ts";
+import { McpStdioClient, type McpStdioManagedProcess } from "../_magenta/mcp/client.ts";
 import type { ProcessRuntimeManagedHandle } from "../runtime/HcpServer.ts";
 import { ProcessRuntimeProvider } from "../runtime/magenta/process-runtime.ts";
 import { createManagedMcpSpawner } from "./mcp-test-utils.ts";
@@ -33,6 +33,58 @@ async function writeMockServer(): Promise<{ cwd: string; path: string }> {
 }
 
 describe("managed MCP stdio client", () => {
+	it("closes a process whose spawn finishes after close begins", async () => {
+		let releaseSpawn!: (process: ProcessRuntimeManagedHandle) => void;
+		const provider = new ProcessRuntimeProvider();
+		const spawned = await provider.spawnManaged({
+			command: process.execPath,
+			args: ["-e", "setInterval(() => {}, 1000)"],
+			cwd: process.cwd(),
+			workspace_root: process.cwd(),
+			allow_direct_exec: true,
+		});
+		const client = new McpStdioClient({
+			command: process.execPath,
+			spawnManaged: () =>
+				new Promise((resolve) => {
+					releaseSpawn = resolve;
+				}),
+		});
+
+		const connecting = client.connect();
+		const closing = client.close();
+		releaseSpawn(spawned);
+
+		await expect(connecting).rejects.toThrow(/closed while connecting/);
+		await closing;
+		await expect(spawned.exit).resolves.toMatchObject({ reason: "close" });
+	});
+
+	it("closes the managed process once when close interrupts initialize", async () => {
+		let closeCount = 0;
+		const managedProcess: McpStdioManagedProcess = {
+			write: async () => {},
+			onStdoutLine: () => () => {},
+			onStderr: () => () => {},
+			exit: new Promise(() => {}),
+			close: async () => {
+				closeCount += 1;
+			},
+		};
+		const client = new McpStdioClient({
+			command: "mock-mcp",
+			spawnManaged: async () => managedProcess,
+		});
+
+		const connecting = client.connect();
+		const rejected = expect(connecting).rejects.toThrow(/MCP client closed/);
+		await Promise.resolve();
+		await client.close();
+		await rejected;
+
+		expect(closeCount).toBe(1);
+	});
+
 	it("uses an injected runtime process for handshake, calls, and close", async () => {
 		const server = await writeMockServer();
 		const provider = new ProcessRuntimeProvider();

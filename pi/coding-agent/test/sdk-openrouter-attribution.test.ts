@@ -140,7 +140,7 @@ describe("createAgentSession provider attribution headers", () => {
 			);
 			return capturedOptions?.headers;
 		} finally {
-			session.dispose();
+			await session.dispose();
 			for (const provider of registeredProviders.reverse()) {
 				modelRegistry.unregisterProvider(provider);
 			}

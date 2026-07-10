@@ -111,7 +111,7 @@ interface AgentSession {
   abort(): Promise<void>;
 
   // Cleanup
-  dispose(): void;
+  dispose(): Promise<void>;
 }
 ```
 

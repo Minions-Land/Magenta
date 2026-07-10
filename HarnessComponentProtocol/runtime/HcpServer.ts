@@ -205,8 +205,8 @@ export type RuntimePolicyStatus = {
 };
 
 /**
- * Process runtime provider surface. Business logic only - HcpServer conversion
- * is handled by the unified capability-server adapter.
+ * Process runtime provider surface. Business logic only; the real module
+ * HcpServer above owns HCP routing.
  */
 export type ProcessRuntimeProvider = {
 	discover(): Record<string, unknown>;
@@ -252,8 +252,8 @@ export type ScriptRuntimeDescription = {
 };
 
 /**
- * Script runtime provider surface. Business logic only - HcpServer conversion
- * is handled by the unified capability-server adapter.
+ * Script runtime provider surface. Business logic only; the real module
+ * HcpServer above owns HCP routing.
  */
 export type ScriptRuntimeProvider = {
 	discover(): Record<string, unknown>;

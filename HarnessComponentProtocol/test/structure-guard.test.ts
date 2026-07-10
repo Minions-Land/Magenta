@@ -11,10 +11,13 @@ type HcpSyntaxInspection = {
 type StructureGuard = {
 	hasNamedClassExport(source: string, className: string, fileName?: string): boolean;
 	inspectHcpSyntax(source: string, fileName?: string): HcpSyntaxInspection;
+	isAllowedInfrastructurePath(relativePath: string): boolean;
 };
 
 const structureGuardUrl = new URL("../scripts/check-structure.mjs", import.meta.url);
-const { hasNamedClassExport, inspectHcpSyntax }: StructureGuard = await import(structureGuardUrl.href);
+const { hasNamedClassExport, inspectHcpSyntax, isAllowedInfrastructurePath }: StructureGuard = await import(
+	structureGuardUrl.href
+);
 
 describe("HCP structure guard syntax checks", () => {
 	it("requires a named role-class export", () => {
@@ -60,5 +63,13 @@ describe("HCP structure guard syntax checks", () => {
 		expect(inspected.interfaceDeclarations.map(({ name }) => name)).toEqual(["Contract"]);
 		expect(inspected.implementsClauses.map(({ className }) => className)).toEqual(["Adapter"]);
 		expect(inspected.toHcpServerMembers).toHaveLength(1);
+	});
+
+	it("keeps .HCP as a closed protocol layout", () => {
+		expect(isAllowedInfrastructurePath("assembly/session-hcp.ts")).toBe(true);
+		expect(isAllowedInfrastructurePath("transport/hcp-process.ts")).toBe(true);
+		expect(isAllowedInfrastructurePath("mcp/client.ts")).toBe(false);
+		expect(isAllowedInfrastructurePath("packages/package-overlay.ts")).toBe(false);
+		expect(isAllowedInfrastructurePath("transport/client.ts")).toBe(false);
 	});
 });

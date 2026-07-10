@@ -1,6 +1,6 @@
 # Harness Module Template
 
-This directory provides the standard layout for a registered built-in module.
+This directory provides the standard layout for a TOML-declared Harness Module.
 
 ```text
 HarnessComponentProtocol/<module>/
@@ -30,7 +30,7 @@ export class HcpServer {
 }
 ```
 
-Each built-in source owns a bare Magnet class. A capability source looks like:
+Each declared Source owns a bare Magnet class. A Capability Source looks like:
 
 ```typescript
 import type { HcpMagnetBinding } from "../../.HCP/HcpMagnetTypes.ts";
@@ -41,7 +41,9 @@ export class HcpMagnet {
   static readonly module = "my-module";
   static readonly kind = "my-module";
   static readonly source = "pi";
-  static readonly isDefault = true;
+  static build(context: HcpMagnetBuildContext) {
+    return new HcpMagnet(context);
+  }
 
   readonly kind = "capability:my-module";
   readonly hotSwappable: boolean;
@@ -67,10 +69,10 @@ A tool Magnet uses `toTool()`; a resource Magnet uses `toResource()`. A Magnet
 must produce exactly one product. It never exposes `toHcpServer()` and never
 selects among sources.
 
-## Registration
+## TOML Declaration
 
-1. Create `<module>.toml` with `kind`, `name`, `description`, `source`, and
-   implementation paths.
+1. Create `<module>.toml` with `kind`, `product`, `slot` when applicable,
+   `name`, `source`, and Source-specific dependencies.
 2. Add the component path to `harness.toml`.
 3. Export the public product from `index.ts` when it is part of the package API.
 4. Generate the static assembly map:
@@ -79,8 +81,8 @@ selects among sources.
 npm run generate:hcp-sources
 ```
 
-Do not hand-edit `.HCP/assembly/sources.generated.ts` or add another Server,
-source, or builder registry.
+Do not hand-edit `.HCP/assembly/sources.generated.ts` or add another Server list,
+Source list, or builder table.
 
 ## Resources
 

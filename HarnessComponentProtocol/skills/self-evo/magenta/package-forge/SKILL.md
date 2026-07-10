@@ -6,18 +6,20 @@ disable-model-invocation: true
 # Sub-skill: Package Forge (Encapsulate an External Project as a Package)
 
 > Chapter of `self-evo`. Not indexed, not independently invocable. Enter here
-> from the parent skill when the capability is a **whole external project** or a
+> from the parent skill when the input is a **whole external project** or a
 > heavy/multi-component body of work that should stay isolated rather than
-> dissolve into the trunk.
+> become owned by the Magenta3 harness repository.
 
-Where the Pi path (intake + conversion) *dissolves* a small extension into the
-harness trunk, package-forge *encapsulates*. The output is a self-contained
-bundle in the independently managed `MagentaPackages` repository. It brings its
+Where the Pi path integrates a small extension directly into the harness,
+package-forge preserves an independent ownership boundary. The output is a
+self-contained bundle in the independently managed `MagentaPackages`
+repository. It brings its
 own components, environment, and process-backed tool descriptors where
-required. A package does not invent an HCP Server; when explicitly integrated,
-its products stay under real Harness Modules and source Magnets.
+required. A Package does not invent another HCP role or assembly system. When
+explicitly integrated, its products still enter the one HcpClient path under
+real Module `HcpServer` and Source `HcpMagnet` ownership.
 
-## When to forge instead of dissolve
+## When to forge instead of integrate directly
 
 Forge when any of these hold:
 
@@ -27,7 +29,7 @@ Forge when any of these hold:
 - It is many components that belong together and want a boundary.
 - It should be independently shippable / versioned.
 
-Otherwise, prefer dissolving via intake + conversion. Do not create a package
+Otherwise, prefer direct integration via intake + conversion. Do not create a package
 for a single lightweight tool.
 
 ## Package anatomy
@@ -44,14 +46,24 @@ for a single lightweight tool.
 Key rules:
 
 - **Ownership is separate.** Magenta3's root `packages/` retains the generic
-  contract and templates only. Concrete domain packages live in
+  Package boundary, schema, templates, and API. Concrete domain Packages live in
   `MagentaPackages` and follow that repository's lifecycle. Do not vendor them
   into Magenta3 or hardcode the sibling repository's absolute path.
-- **Integration is explicit.** `HarnessComponentProtocol/.HCP/overlay` is a
-  generic boundary for a package root supplied by configuration. It does not
+- **Integration is explicit.** `HarnessComponentProtocol/_magenta/packages` is
+  the generic boundary for a Package root supplied as `packagesRoot`. It does not
   own, discover by fixed filesystem convention, or release domain packages.
+  Use the existing API rather than adding a repository-specific loader:
+
+  ```typescript
+  await discoverHarnessPackages({ repoRoot, packagesRoot });
+  await loadPackageOverlay({ repoRoot, packagesRoot, selections });
+  ```
+
+  Harness TOML still generates `HCP_SERVERS` and `HCP_MAGNETS`; selected Package
+  rows enter that same assembly through the overlay. A Package manifest does
+  not create or hand-edit another generated list.
 - **Package components use a flat `tools/<tool>/` / `skills/<skill>/` layout.**
-  The `<name>/<source>/` split is for in-harness trunk components, not inside a
+  The `<name>/<source>/` split is for harness-owned components, not inside a
   package — the package itself is the source scope.
 - **Ship manifest + lock, not built environments.** `pixi.toml` + `pixi.lock`
   are tracked; `.pixi/`, conda envs, and `runs/` outputs are gitignored.
@@ -75,12 +87,13 @@ Heavy runtimes do not create another HCP role or infrastructure-owned Module:
 ## Forge procedure
 
 1. **Audit the external project read-only.** Map its components to harness
-   primitives (tools / skills / resources). This is the same dissection as the
-   existing integration studies when available; do not infer an interface from
+   products (Tools / Capabilities / Resources). Capability here means a Magnet
+   product for a slot/address, not another HCP role. This is the same dissection
+   as the existing integration studies when available; do not infer an API from
    a package name.
 2. **Decide the boundary.** What stays in the package vs. what (if anything)
-   dissolves into the trunk. Default: keep the domain-specific body packaged;
-   only genuinely generic pieces migrate to the trunk.
+   becomes harness-owned. Default: keep the domain-specific body packaged;
+   only genuinely generic pieces migrate into `HarnessComponentProtocol/`.
 3. **Scaffold the package in `MagentaPackages`.** Write `package.toml`
    (`schema_version`, `id`, `name`, `kind`, `domain`, `[[components]]`). Use
    Magenta3's `packages/templates/harness-package/` only as the generic
@@ -92,15 +105,17 @@ Heavy runtimes do not create another HCP role or infrastructure-owned Module:
    get process/runtime metadata; skills are flat `SKILL.md`; resources get
    `content_path`. Packaged tools, skills, and resources do **not** carry
    `[assumption]` (see the decision matrix in `docs/assumption-metadata.md`);
-   only a packaged *Capability* would, following the same rule as the trunk.
+   only a packaged Capability product would, following the same assumption
+   rule as a harness-owned Capability product.
 6. **Preserve provenance.** Record origin repository + commit in package
    metadata. The package's origin tag reflects the external source, not
    `magenta`.
 7. **Gate in the owning repository.** Run `MagentaPackages`' documented package
    checks. Run Magenta3's HCP build/test/inspect gates only when an explicit
-   integration change is made here. The production external-root connector is
-   deferred; implement and test that boundary explicitly rather than assuming a
-   sibling path.
+   integration change is made here. Pass the selected external root explicitly
+   as `packagesRoot` to the generic discovery/overlay API. Tests should use a
+   temporary external root; production configuration must never infer the
+   `MagentaPackages` sibling path.
 
 ## Guardrails
 
@@ -108,8 +123,8 @@ Heavy runtimes do not create another HCP role or infrastructure-owned Module:
   under `HarnessComponentProtocol/`.
 - Do not vendor huge environments into git.
 - Do not let a package tool escape the process sandbox.
-- Keep the package boundary honest: if everything ends up dissolving into the
-  trunk anyway, you should have used intake + conversion instead.
+- Keep the package boundary honest: if everything should become harness-owned,
+  use intake + conversion instead.
 
 > TODO(pilot): add a worked external-project → package migration once the first
 > forge target is selected.

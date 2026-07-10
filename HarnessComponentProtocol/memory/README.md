@@ -151,8 +151,8 @@ path = "memory/memory.toml"
 ```
 
 The TOML selects the `magenta` Source for the session-grounding capability. The
-generated HCP arrays and runtime routing remain owned by `HcpClient`; memory does
-not define a separate registration layer.
+generated HCP arrays and runtime routing remain owned by `HcpClient`; memory has
+no parallel selection or assembly state.
 
 ## Dependencies
 

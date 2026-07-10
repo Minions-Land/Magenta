@@ -203,22 +203,173 @@ describe("HcpServer module routing", () => {
 
 	it("merging a parent preserves its child-module subtree", () => {
 		const hcp = new HcpClient();
-		hcp.registerModule(new HcpServer("tools"), new Map());
+		const tools = new HcpServer("tools");
+		hcp.registerModule(tools, new Map());
 		hcp.registerModule(
 			new HcpServer("tools/read"),
 			new Map([["pi", createFakeMagnet("tool:read", "tool", { name: "read" })]]),
 		);
 
-		hcp.registerModule(
-			new HcpServer("tools"),
-			new Map([["package", createFakeMagnet("tool:package", "tool", { name: "package" })]]),
-			{ merge: true },
-		);
+		hcp.registerModule(tools, new Map([["package", createFakeMagnet("tool:package", "tool", { name: "package" })]]), {
+			merge: true,
+		});
 
-		expect(hcp.modules()).toEqual(["tools/read", "tools"]);
+		expect(hcp.modules()).toEqual(["tools", "tools/read"]);
 		expect(hcp.resolve("tool:read")).toBe(hcp.resolveModule("tools/read"));
 		expect(hcp.resolve("tool:package")).toBe(hcp.resolveModule("tools"));
 		expect(hcp.resolveModule("tools")?.describe().metadata?.children).toEqual(["tools/read"]);
+	});
+
+	it("atomically swaps addresses between slots updated in one merge", () => {
+		const hcp = new HcpClient();
+		const tools = new HcpServer("tools");
+		hcp.registerModule(
+			tools,
+			new Map([
+				["left", createFakeMagnet("tool:left", "tool", { name: "left-v1" })],
+				["right", createFakeMagnet("tool:right", "tool", { name: "right-v1" })],
+			]),
+		);
+
+		hcp.registerModule(
+			tools,
+			new Map([
+				["left", createFakeMagnet("tool:right", "tool", { name: "left-v2" })],
+				["right", createFakeMagnet("tool:left", "tool", { name: "right-v2" })],
+			]),
+			{ merge: true },
+		);
+
+		expect(hcp.resolveInstance<{ name: string }>("tool:right")?.name).toBe("left-v2");
+		expect(hcp.resolveInstance<{ name: string }>("tool:left")?.name).toBe("right-v2");
+	});
+
+	it("keeps existing routes intact when a replacement Server cannot be attached", () => {
+		const hcp = new HcpClient();
+		const original = createFakeMagnet("tool:read", "tool", { name: "original" });
+		hcp.registerModule(new HcpServer("tools"), new Map([["read", original]]));
+		const lockedServer = Object.freeze({ moduleName: "tools", description: "locked" });
+
+		expect(() =>
+			hcp.registerModule(lockedServer, new Map([["read", createFakeMagnet("tool:read", "tool", { name: "new" })]])),
+		).toThrow();
+
+		expect(hcp.resolveInstance("tool:read")).toEqual({ name: "original" });
+		expect(hcp.modules()).toEqual(["tools"]);
+		expect(hcp.addresses()).toEqual(["tool:read"]);
+	});
+
+	it("keeps one HcpServer entity for every merged Module", () => {
+		const hcp = new HcpClient();
+		const server = new HcpServer("runtime");
+		hcp.registerModule(
+			server,
+			new Map([["runtime:process", createFakeMagnet("capability:runtime:process", "capability", {})]]),
+		);
+		hcp.registerModule(
+			server,
+			new Map([
+				["runtime:script-runtimes", createFakeMagnet("capability:runtime:script-runtimes", "capability", {})],
+			]),
+			{ merge: true },
+		);
+
+		expect(hcp.resolveModule("runtime")).toBe(server);
+		expect(() => hcp.registerModule(new HcpServer("runtime"), new Map(), { merge: true })).toThrow(
+			/reuse the existing HcpServer instance/,
+		);
+	});
+
+	it("disposes each routed Magnet once and clears the Client", async () => {
+		const hcp = new HcpClient();
+		let disposeCalls = 0;
+		class SelectorHcpServer extends HcpServer {
+			describeSource(selector: string, _magnet: HcpMagnet) {
+				return { target: `tool:${selector}`, kind: "tool", ops: ["call"] };
+			}
+
+			sourceAddresses(selector: string) {
+				return [`tool:${selector}`];
+			}
+		}
+		const shared = {
+			...createFakeMagnet("tool:shared", "tool", { name: "shared" }),
+			dispose: () => {
+				disposeCalls += 1;
+			},
+		};
+		hcp.registerModule(
+			new SelectorHcpServer("tools"),
+			new Map([
+				["first", shared],
+				["second", shared],
+			]),
+		);
+
+		await hcp.dispose();
+
+		expect(disposeCalls).toBe(1);
+		expect(hcp.modules()).toEqual([]);
+		expect(hcp.addresses()).toEqual([]);
+	});
+
+	it("disposes a Magnet retired by a slot replacement", async () => {
+		const disposed: string[] = [];
+		const hcp = new HcpClient();
+		const server = new HcpServer("tools");
+		const first = {
+			...createFakeMagnet("tool:shared", "tool", { name: "shared" }),
+			dispose: () => {
+				disposed.push("first");
+			},
+		};
+		const second = {
+			...createFakeMagnet("tool:shared", "tool", { name: "shared" }),
+			dispose: () => {
+				disposed.push("second");
+			},
+		};
+		hcp.registerModule(server, new Map([["shared", first]]));
+		hcp.registerModule(server, new Map([["shared", second]]), { merge: true });
+		await Promise.resolve();
+
+		expect(disposed).toEqual(["first"]);
+		await hcp.dispose();
+		expect(disposed).toEqual(["first", "second"]);
+	});
+
+	it("does not dispose a retired Magnet that is synchronously reattached", async () => {
+		const disposed: string[] = [];
+		const hcp = new HcpClient();
+		const server = new HcpServer("tools");
+		const first = {
+			...createFakeMagnet("tool:shared", "tool", { name: "first" }),
+			dispose: () => {
+				disposed.push("first");
+			},
+		};
+		const second = {
+			...createFakeMagnet("tool:shared", "tool", { name: "second" }),
+			dispose: () => {
+				disposed.push("second");
+			},
+		};
+		const third = createFakeMagnet("tool:shared", "tool", { name: "third" });
+
+		hcp.registerModule(server, new Map([["shared", first]]));
+		hcp.registerModule(server, new Map([["shared", second]]), { merge: true });
+		hcp.registerModule(server, new Map([["shared", first]]), { merge: true });
+		await Promise.resolve();
+		await Promise.resolve();
+
+		expect(disposed).toEqual(["second"]);
+		expect(hcp.resolveInstance("tool:shared")).toEqual({ name: "first" });
+
+		hcp.registerModule(server, new Map([["shared", third]]), { merge: true });
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(disposed).toEqual(["second", "first"]);
+		await hcp.dispose();
 	});
 
 	it("keeps the tools root independent and lists its direct children", () => {
@@ -231,13 +382,37 @@ describe("HcpServer module routing", () => {
 		hcp.registerModule(new HcpServer("tools/bash"), new Map());
 		hcp.registerModule(deep, new Map());
 
-		expect(hcp.modules()).toEqual(["tools", "tools/read", "tools/bash", "tools/read/internal"]);
+		expect(hcp.modules()).toEqual(["tools", "tools/bash", "tools/read", "tools/read/internal"]);
 		expect(hcp.resolveModule("tools")).toBe(root);
 		expect(hcp.resolve("tool:read")).toBe(read);
 		expect(hcp.resolve("tool:read")).toBe(hcp.resolveModule("tools/read"));
 		expect(hcp.resolve("tool:read")).not.toBe(root);
 		expect(hcp.resolveModule("tools")?.describe().metadata?.children).toEqual(["tools/read", "tools/bash"]);
 		expect(hcp.resolveModule("tools/read")?.describe().metadata?.children).toEqual(["tools/read/internal"]);
+	});
+
+	it("lets an explicit overlay replace a descendant address without leaving a stale Magnet", async () => {
+		const disposed: string[] = [];
+		const hcp = new HcpClient();
+		const root = new HcpServer("tools");
+		const original = {
+			...createFakeMagnet("tool:read", "tool", { name: "read", source: "repository" }),
+			dispose: () => {
+				disposed.push("repository");
+			},
+		};
+		const replacement = createFakeMagnet("tool:read", "tool", { name: "read", source: "package" });
+		hcp.registerModule(root, new Map());
+		hcp.registerModule(new HcpServer("tools/read"), new Map([["pi", original]]));
+
+		hcp.registerModule(root, new Map([["tool:read", replacement]]), { merge: true, override: true });
+		await Promise.resolve();
+
+		expect(hcp.resolve("tool:read")).toBe(root);
+		expect(hcp.resolveInstance("tool:read")).toEqual({ name: "read", source: "package" });
+		expect(hcp.resolveModule("tools/read")).toBeUndefined();
+		expect(disposed).toEqual(["repository"]);
+		await hcp.dispose();
 	});
 
 	it("describe() returns synthetic module-level summary", () => {

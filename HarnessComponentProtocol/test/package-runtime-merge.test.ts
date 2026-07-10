@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { HcpClientbuildsession } from "../.HCP/assembly/session-hcp.ts";
-import type { PackageOverlay, PackageResolvedComponent } from "../.HCP/overlay/package-overlay.ts";
+import type { PackageOverlay, PackageResolvedComponent } from "../_magenta/packages/package-overlay.ts";
 import { ProcessRuntimeProvider } from "../runtime/magenta/process-runtime.ts";
 import { ScriptRuntimeProvider } from "../runtime/magenta/script-runtime.ts";
 
@@ -9,6 +9,7 @@ const RUNTIME_PROCESS_COMPONENT: PackageResolvedComponent = {
 	name: "process",
 	source: "magenta",
 	packageId: "RuntimeFixture",
+	packageDir: "/repo/packages/RuntimeFixture",
 	key: "runtime:process",
 	baseDir: "/repo/packages/RuntimeFixture",
 	sourcePath: "/repo/packages/RuntimeFixture/runtime/process.toml",
@@ -32,14 +33,6 @@ function runtimeOverlay(component = RUNTIME_PROCESS_COMPONENT): PackageOverlay {
 		components: [component],
 		componentMap: new Map([[component.key, component]]),
 		overrides: [],
-		resources: {
-			skillPaths: [],
-			promptTemplatePaths: [],
-			themePaths: [],
-			systemPromptPaths: [],
-			appendSystemPromptPaths: [],
-			brandPaths: [],
-		},
 		diagnostics: [],
 	};
 }

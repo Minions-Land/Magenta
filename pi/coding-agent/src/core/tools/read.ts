@@ -14,7 +14,7 @@ import {
 	type ResizedImageResult,
 	readSchema,
 } from "@magenta/harness";
-import { constants } from "fs";
+import { constants, existsSync } from "fs";
 import { access as fsAccess, readFile as fsReadFile } from "fs/promises";
 import type { Static } from "typebox";
 import { getReadmePath } from "../../config.ts";
@@ -106,7 +106,10 @@ function getPiDocsClassification(absolutePath: string): CompactReadClassificatio
 	return undefined;
 }
 
-const SOURCE_DIR_NAMES = new Set(["pi", "codex", "jcode", "claude-code", "magenta"]);
+function isHcpSkillSlot(directory: string): boolean {
+	const slotName = basename(directory);
+	return existsSync(resolvePath(directory, "HcpServer.ts")) || existsSync(resolvePath(directory, `${slotName}.toml`));
+}
 
 function getCompactReadClassification(
 	args: ReadRenderArgs | undefined,
@@ -118,10 +121,13 @@ function getCompactReadClassification(
 	const absolutePath = resolveToCwd(rawPath, cwd);
 	const fileName = basename(absolutePath);
 	if (fileName === "SKILL.md") {
-		// Handle <capability>/<source>/SKILL.md structure
 		const skillDir = dirname(absolutePath);
-		const immediateParent = basename(skillDir);
-		const skillName = SOURCE_DIR_NAMES.has(immediateParent) ? basename(dirname(skillDir)) : immediateParent;
+		const owningSlot = dirname(skillDir);
+		const skillName = isHcpSkillSlot(skillDir)
+			? basename(skillDir)
+			: isHcpSkillSlot(owningSlot)
+				? basename(owningSlot)
+				: basename(skillDir);
 		return { kind: "skill", label: skillName || fileName };
 	}
 

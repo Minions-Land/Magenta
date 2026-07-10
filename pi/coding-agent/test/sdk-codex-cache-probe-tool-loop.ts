@@ -178,7 +178,6 @@ function createMinimalResourceLoader(systemPrompt: string): ResourceLoader {
 		getThemes: () => ({ themes: [], diagnostics: [] }),
 		getPackageOverlay: () => undefined,
 		getPackageTools: () => ({ tools: [], diagnostics: [] }),
-		getTrunkTools: () => ({ tools: [], diagnostics: [] }),
 		getUserMcpTools: () => ({ tools: [], diagnostics: [] }),
 		getAgentsFiles: () => ({ agentsFiles: [] }),
 		getSystemPrompt: () => systemPrompt,
@@ -491,7 +490,7 @@ async function main(): Promise<void> {
 	console.log(`session file: ${session.sessionFile}`);
 
 	unsubscribe();
-	session.dispose();
+	await session.dispose();
 }
 
 main().catch((error: unknown) => {

@@ -2,8 +2,8 @@
  * Minimal Model Context Protocol (MCP) client over a stdio transport.
  *
  * This is a deliberately small, dependency-free implementation of the subset of
- * the MCP protocol the harness needs to attract an external MCP server's tools
- * into the HCP tool address space: the `initialize` handshake, `tools/list`
+ * the MCP protocol the harness needs to expose an external MCP server's tools
+ * through an owning Harness tool Module: the `initialize` handshake, `tools/list`
  * discovery, and `tools/call` dispatch. It speaks newline-delimited JSON-RPC 2.0
  * over the managed process's stdin/stdout, matching the stdio transport every MCP
  * server ships.
@@ -26,6 +26,29 @@ export type McpToolSchema = {
 	/** JSON Schema for the tool's arguments (MCP `inputSchema`). */
 	inputSchema?: Record<string, unknown>;
 };
+
+export function validateMcpToolSchemas(value: unknown): McpToolSchema[] {
+	if (!Array.isArray(value)) throw new Error("MCP tools/list result must contain a tools array");
+	return value.map((candidate, index) => {
+		if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) {
+			throw new Error(`MCP tools/list tool[${index}] must be an object`);
+		}
+		const tool = candidate as Record<string, unknown>;
+		if (typeof tool.name !== "string" || tool.name.length === 0) {
+			throw new Error(`MCP tools/list tool[${index}] must have a non-empty name`);
+		}
+		if (tool.description !== undefined && typeof tool.description !== "string") {
+			throw new Error(`MCP tools/list tool[${index}] description must be a string`);
+		}
+		if (
+			tool.inputSchema !== undefined &&
+			(!tool.inputSchema || typeof tool.inputSchema !== "object" || Array.isArray(tool.inputSchema))
+		) {
+			throw new Error(`MCP tools/list tool[${index}] inputSchema must be an object`);
+		}
+		return candidate as McpToolSchema;
+	});
+}
 
 export type McpToolContent = {
 	type: string;
@@ -109,6 +132,8 @@ export class McpStdioClient {
 	private closed = false;
 	private exitError?: Error;
 	private stderrTail = "";
+	private connectPromise?: Promise<void>;
+	private processClosePromise?: Promise<void>;
 
 	constructor(options: McpStdioClientOptions) {
 		this.options = options;
@@ -122,8 +147,18 @@ export class McpStdioClient {
 	async connect(): Promise<void> {
 		if (this.initialized) return;
 		if (this.closed) throw new Error("McpStdioClient has been closed and cannot reconnect");
+		if (!this.connectPromise) {
+			this.connectPromise = this.connectOnce().finally(() => {
+				this.connectPromise = undefined;
+			});
+		}
+		await this.connectPromise;
+	}
+
+	private async connectOnce(): Promise<void> {
 		this.exitError = undefined;
 		this.stderrTail = "";
+		this.processClosePromise = undefined;
 
 		const managedProcess = await this.options.spawnManaged(
 			{
@@ -134,6 +169,10 @@ export class McpStdioClient {
 			},
 			this.options.signal,
 		);
+		if (this.closed) {
+			await this.closeManagedProcess(managedProcess);
+			throw new Error("McpStdioClient was closed while connecting");
+		}
 		this.process = managedProcess;
 		this.removeStdoutListener = managedProcess.onStdoutLine((line) => this.handleLine(line));
 		this.removeStderrListener = managedProcess.onStderr((chunk) => this.captureStderr(chunk));
@@ -155,9 +194,10 @@ export class McpStdioClient {
 			this.initialized = true;
 			void result;
 		} catch (error) {
-			await managedProcess.close();
+			await this.closeManagedProcess(managedProcess);
 			this.detachProcess();
 			this.process = undefined;
+			this.processClosePromise = undefined;
 			this.exitError = undefined;
 			throw error;
 		}
@@ -166,8 +206,11 @@ export class McpStdioClient {
 	/** Discover the tools the server exposes via `tools/list`. */
 	async listTools(): Promise<McpToolSchema[]> {
 		this.ensureConnected();
-		const result = (await this.request("tools/list", {})) as { tools?: McpToolSchema[] } | undefined;
-		return result?.tools ?? [];
+		const result = await this.request("tools/list", {});
+		if (!result || typeof result !== "object" || Array.isArray(result) || !("tools" in result)) {
+			throw new Error("MCP tools/list result must be an object with a tools array");
+		}
+		return validateMcpToolSchemas((result as { tools: unknown }).tools);
 	}
 
 	/** Invoke a remote tool via `tools/call`. */
@@ -182,13 +225,25 @@ export class McpStdioClient {
 
 	/** Terminate the server process and reject any in-flight requests. */
 	async close(): Promise<void> {
-		if (this.closed) return;
+		const connecting = this.connectPromise;
+		if (this.closed) {
+			await connecting?.catch(() => undefined);
+			return;
+		}
 		this.closed = true;
 		this.initialized = false;
 		this.failAll(new Error("MCP client closed"));
-		await this.process?.close();
+		await this.closeManagedProcess(this.process);
+		await connecting?.catch(() => undefined);
 		this.detachProcess();
 		this.process = undefined;
+		this.processClosePromise = undefined;
+	}
+
+	private closeManagedProcess(managedProcess: McpStdioManagedProcess | undefined): Promise<void> {
+		if (!managedProcess) return Promise.resolve();
+		this.processClosePromise ??= managedProcess.close();
+		return this.processClosePromise;
 	}
 
 	private ensureConnected(): void {
@@ -271,6 +326,9 @@ export class McpStdioClient {
 	private handleExit(exit: McpStdioManagedProcessExit): void {
 		if (this.closed) return;
 		this.initialized = false;
+		this.detachProcess();
+		this.process = undefined;
+		this.processClosePromise = undefined;
 		const stderr = this.stderrTail.trim();
 		const suffix = stderr === "" ? "" : `\nMCP stderr:\n${stderr}`;
 		const reason =

@@ -8,7 +8,8 @@ The `todo` tool allows the LLM to manage a todo list within the current session.
 
 ## Migrated from
 
-Previously located at `harness/extensions/pi/bundled/todo.ts` as a PI Extension. Migrated to `harness/HarnessComponentProtocol/tools/todo/` as a native HCP tool.
+Previously located at `harness/extensions/pi/bundled/todo.ts` as a Pi Extension.
+It now lives at `HarnessComponentProtocol/tools/todo/` as an HCP tool component.
 
 ## Usage
 
@@ -41,9 +42,10 @@ await todoTool.execute("4", { action: "clear" });
 
 ## Integration
 
-### As HCP Component
+### HCP Declaration
 
-Registered in `harness/harness.toml`:
+`HarnessComponentProtocol/harness.toml` selects this component declaration for
+codegen:
 
 ```toml
 [[components]]
@@ -56,13 +58,9 @@ path = "tools/todo/todo.toml"
 ### Usage in Code
 
 ```typescript
-import { createTodoMagnet } from "@magenta/harness";
+import { createTodoTool } from "@magenta/harness";
 
-const todoMagnet = createTodoMagnet(process.cwd());
-const todoTool = todoMagnet.toTool();
-
-// Register with agent
-agent.registerTool(todoTool);
+const todoTool = createTodoTool(process.cwd());
 ```
 
 ## Testing
@@ -70,8 +68,8 @@ agent.registerTool(todoTool);
 Run tests:
 
 ```bash
-cd harness
-npm test -- todo
+cd HarnessComponentProtocol
+npm test -- test/tools/todo/todo.test.ts
 ```
 
 All tests are located in `test/tools/todo/todo.test.ts`.
@@ -81,12 +79,12 @@ All tests are located in `test/tools/todo/todo.test.ts`.
 Todo state is maintained in the `details` field of tool results:
 
 ```typescript
-interface TodoDetails {
+type TodoDetails = {
   action: "list" | "add" | "toggle" | "clear";
   todos: Todo[];
   nextId: number;
   error?: string;
-}
+};
 ```
 
 This approach ensures that:

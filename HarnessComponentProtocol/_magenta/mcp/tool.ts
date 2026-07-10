@@ -1,13 +1,14 @@
 import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { TextContent } from "@earendil-works/pi-ai";
 import { type TSchema, Type } from "typebox";
-import { type McpToolsCacheOptions, readMcpToolsCache, writeMcpToolsCache } from "./mcp-cache.ts";
+import { type McpToolsCacheOptions, readMcpToolsCache, writeMcpToolsCache } from "./cache.ts";
 import {
 	McpStdioClient,
 	type McpStdioClientOptions,
 	type McpToolCallResult,
 	type McpToolSchema,
-} from "./mcp-client.ts";
+	validateMcpToolSchemas,
+} from "./client.ts";
 import type { JsonSchema } from "./schema.ts";
 
 /**
@@ -33,40 +34,76 @@ export type McpToolDetails = {
  * rather than re-spawning per call the way one-shot process tools do.
  */
 export class McpConnection {
-	private readonly client: McpStdioClient;
+	private client?: McpStdioClient;
+	private readonly clientOptions: McpStdioClientOptions;
 	private connectPromise?: Promise<void>;
+	private idleClosePromise?: Promise<void>;
+	private toolReferences = 0;
+	private terminal = false;
 	readonly serverName: string;
 
 	constructor(serverName: string, options: McpStdioClientOptions) {
 		this.serverName = serverName;
+		this.clientOptions = options;
 		this.client = new McpStdioClient(options);
 	}
 
 	/** Connect once; concurrent callers await the same in-flight handshake. */
 	async ensureConnected(): Promise<void> {
-		if (this.client.isConnected) return;
+		await this.idleClosePromise;
+		if (this.terminal) throw new Error(`MCP connection ${this.serverName} has been closed`);
+		if (!this.client) this.client = new McpStdioClient(this.clientOptions);
+		const client = this.client;
+		if (client.isConnected) return;
 		if (!this.connectPromise) {
-			this.connectPromise = this.client.connect().catch((error) => {
-				// Allow a later call to retry a failed connect.
-				this.connectPromise = undefined;
-				throw error;
-			});
+			this.connectPromise = client.connect();
 		}
-		await this.connectPromise;
+		const connecting = this.connectPromise;
+		try {
+			await connecting;
+		} finally {
+			if (this.connectPromise === connecting) this.connectPromise = undefined;
+		}
 	}
 
 	async listTools(): Promise<McpToolSchema[]> {
 		await this.ensureConnected();
-		return this.client.listTools();
+		return this.client!.listTools();
 	}
 
 	async callTool(name: string, args: Record<string, unknown>): Promise<McpToolCallResult> {
 		await this.ensureConnected();
-		return this.client.callTool(name, args);
+		return this.client!.callTool(name, args);
 	}
 
 	async close(): Promise<void> {
-		await this.client.close();
+		this.terminal = true;
+		this.toolReferences = 0;
+		await this.idleClosePromise;
+		const client = this.client;
+		await client?.close();
+		if (this.client === client) this.client = undefined;
+	}
+
+	retainTool(): void {
+		if (this.terminal) throw new Error(`MCP connection ${this.serverName} has been closed`);
+		this.toolReferences += 1;
+	}
+
+	async releaseTool(): Promise<void> {
+		if (this.toolReferences > 0) this.toolReferences -= 1;
+		if (this.toolReferences !== 0 || this.terminal) return;
+		if (!this.idleClosePromise) {
+			const client = this.client;
+			const connecting = this.connectPromise;
+			const closing = Promise.resolve(client?.close()).finally(() => {
+				if (this.client === client) this.client = undefined;
+				if (this.connectPromise === connecting) this.connectPromise = undefined;
+				if (this.idleClosePromise === closing) this.idleClosePromise = undefined;
+			});
+			this.idleClosePromise = closing;
+		}
+		await this.idleClosePromise;
 	}
 }
 
@@ -75,7 +112,7 @@ export type McpToolOptions = {
 	tool: McpToolSchema;
 	/**
 	 * Prefix applied to the remote tool name to namespace it in the local tool
-	 * address space and avoid collisions with built-in tools. The exposed tool
+	 * address space and avoid collisions with repository-declared tools. The exposed tool
 	 * name becomes `<prefix>_<remoteTool>` (sanitized).
 	 */
 	namePrefix?: string;
@@ -113,6 +150,7 @@ export class McpTool {
 	private readonly toolName: string;
 	private readonly parameters: TSchema;
 	private readonly toolDescription: string;
+	private released = false;
 
 	constructor(options: McpToolOptions) {
 		const { connection, tool, namePrefix } = options;
@@ -123,9 +161,16 @@ export class McpTool {
 		this.remoteToolName = tool.name;
 		this.toolName = localName;
 		this.toolDescription = description;
+		this.connection.retainTool();
 		this.parameters =
 			(tool.inputSchema as JsonSchema | undefined) ??
 			(Type.Object({}, { additionalProperties: true }) as unknown as TSchema);
+	}
+
+	async close(): Promise<void> {
+		if (this.released) return;
+		this.released = true;
+		await this.connection.releaseTool();
 	}
 
 	toTool(): AgentTool<TSchema, McpToolDetails> {
@@ -206,28 +251,38 @@ export async function discoverMcpTools(options: CreateMcpToolsOptions): Promise<
 			}
 		: undefined;
 
-	let tools: McpToolSchema[] | undefined;
-	if (cacheOptions) {
-		tools = await readMcpToolsCache(cacheOptions);
+	try {
+		let tools: McpToolSchema[] | undefined;
+		if (cacheOptions) tools = await readMcpToolsCache(cacheOptions);
+		if (tools) {
+			tools = validateMcpToolSchemas(tools);
+		} else {
+			// Cache miss (or no cache): enumerate live, which spawns the server now.
+			tools = await connection.listTools();
+			if (cacheOptions) await writeMcpToolsCache(cacheOptions, tools);
+		}
+		return { connection, tools };
+	} catch (error) {
+		await connection.close();
+		throw error;
 	}
-
-	if (!tools) {
-		// Cache miss (or no cache): enumerate live, which spawns the server now.
-		tools = await connection.listTools();
-		if (cacheOptions) await writeMcpToolsCache(cacheOptions, tools);
-	}
-
-	return { connection, tools };
 }
 
 export async function createMcpTools(options: CreateMcpToolsOptions): Promise<McpTool[]> {
 	const { connection, tools } = await discoverMcpTools(options);
-	return tools.map(
-		(tool) =>
-			new McpTool({
-				connection,
-				tool,
-				namePrefix: options.namePrefix,
-			}),
-	);
+	try {
+		const products = tools.map(
+			(tool) =>
+				new McpTool({
+					connection,
+					tool,
+					namePrefix: options.namePrefix,
+				}),
+		);
+		if (products.length === 0) await connection.close();
+		return products;
+	} catch (error) {
+		await connection.close();
+		throw error;
+	}
 }

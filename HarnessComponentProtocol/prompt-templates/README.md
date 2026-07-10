@@ -73,12 +73,12 @@ Other fields are preserved but not used by the loader.
 
 ```typescript
 const { promptTemplates } = await loadSourcedPromptTemplates(env, [
-  { path: "/builtin/templates", source: "builtin" },
+  { path: "/bundled/templates", source: "bundled" },
   { path: "/user/templates", source: "user" }
 ]);
 
 for (const { promptTemplate, source } of promptTemplates) {
-  console.log(promptTemplate.name, source);  // "example" "builtin"
+  console.log(promptTemplate.name, source);  // "example" "bundled"
 }
 ```
 
@@ -100,13 +100,22 @@ Template names are derived from filenames:
 - `example-template.md` → name: `"example-template"`
 - `my_prompt.md` → name: `"my_prompt"`
 
-## Registration
+## TOML Declaration
 
 ```toml
 [[components]]
 kind = "prompt-template"
 name = "prompt-templates"
 path = "prompt-templates/prompt-templates.toml"
+```
+
+```toml
+kind = "prompt-template"
+product = "capability"
+slot = "prompt-template"
+autoload = true
+name = "prompt-templates"
+source = "pi"
 ```
 
 ## Dependencies
@@ -118,7 +127,7 @@ path = "prompt-templates/prompt-templates.toml"
 
 1. **Reusable prompts**: Standard prompts for common tasks
 2. **Parameter substitution**: Templates with `{{variable}}` placeholders
-3. **Multi-source**: Combine built-in and user-defined templates
+3. **Multi-source**: Combine bundled and user-defined templates
 4. **Dynamic loading**: Discover templates at runtime
 
 ## Architecture Notes

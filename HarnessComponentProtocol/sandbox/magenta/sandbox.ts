@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
-import { parseToml, type TomlTable } from "../../.HCP/registry/registry.ts";
+import { parseToml, type TomlTable } from "../../_magenta/utils/pi/toml.ts";
 import type {
 	SandboxDiscoverResult,
 	SandboxProfile,

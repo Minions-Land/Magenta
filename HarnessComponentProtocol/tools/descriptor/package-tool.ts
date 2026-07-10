@@ -1,34 +1,20 @@
 import { readFile } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import { parseToml, type TomlTable } from "../../.HCP/registry/registry.ts";
-import { discoverMcpTools, McpTool, type McpToolOptions, mcpToolName } from "../../.HCP/transport/mcp.ts";
-import { parametersFromToml } from "../../.HCP/transport/schema.ts";
+import { parametersFromToml } from "../../_magenta/mcp/schema.ts";
+import { discoverMcpTools, McpTool, type McpToolOptions, mcpToolName } from "../../_magenta/mcp/tool.ts";
+import type { PackageToolDiagnostic } from "../../_magenta/packages/tool-diagnostic.ts";
+import { parseToml, type TomlTable } from "../../_magenta/utils/pi/toml.ts";
 import type { ProcessRuntimeProvider, ScriptRuntimeProvider } from "../../runtime/HcpServer.ts";
 import type { SandboxProvider } from "../../sandbox/HcpServer.ts";
 import { ProcessTool } from "../process-tool.ts";
 import { type PythonLauncherResolver, PythonModuleTool } from "../python-module-tool.ts";
 
-export type PackageToolDiagnosticCode =
-	| "package_tool_descriptor_missing"
-	| "package_tool_descriptor_read_failed"
-	| "package_tool_descriptor_invalid"
-	| "package_tool_environment_missing"
-	| "package_tool_sandbox_missing"
-	| "package_tool_runtime_missing"
-	| "package_tool_runtime_unsupported";
-
-export type PackageToolDiagnostic = {
-	type: "warning" | "error";
-	code: PackageToolDiagnosticCode;
-	message: string;
-	path?: string;
-	packageId?: string;
-	profile?: string;
-};
+export type { PackageToolDiagnostic, PackageToolDiagnosticCode } from "../../_magenta/packages/tool-diagnostic.ts";
 
 export type PackageToolComponent = {
 	packageId: string;
+	packageDir: string;
 	profile?: string;
 	kind: string;
 	name: string;
@@ -39,6 +25,7 @@ export type PackageToolComponent = {
 
 export type PackageToolRuntimeComponent = {
 	packageId: string;
+	packageDir: string;
 	kind: string;
 	name: string;
 	path?: string;
@@ -47,7 +34,6 @@ export type PackageToolRuntimeComponent = {
 export type PackageToolContext = {
 	resolveCapability<T>(name: string): T | undefined;
 	repoRoot: string;
-	packagesRoot: string;
 	components: PackageToolRuntimeComponent[];
 	componentMap: Map<string, PackageToolRuntimeComponent>;
 };
@@ -67,6 +53,7 @@ export type HcpMagnettoolproduct = {
 	readonly kind: string;
 	readonly source?: string;
 	toTool(): AgentTool;
+	close?(): void | Promise<void>;
 };
 
 export type PackageToolBuildSettings = {
@@ -75,6 +62,7 @@ export type PackageToolBuildSettings = {
 	componentMap: Map<string, PackageToolRuntimeComponent>;
 	diagnostics: PackageToolDiagnostic[];
 	mcp?: McpToolOptions;
+	product?: HcpMagnettoolproduct;
 	toolName?: string;
 };
 
@@ -109,7 +97,8 @@ export async function expandPackageToolBuildSettings(
 	const namePrefix = asString(descriptor.name_prefix) ?? asString(descriptor.namePrefix);
 	const descriptorEnv = mcpEnvFromDescriptor(descriptor.env);
 	const clientEnv = descriptorEnv ? { ...process.env, ...descriptorEnv } : process.env;
-	const resolvedCommand = resolveMcpCommand(context.repoRoot, command);
+	const resolvedCommand = resolvePackageCommand(component, command, diagnostics);
+	if (!resolvedCommand) return [];
 	try {
 		const discovered = await discoverMcpTools({
 			serverName: asString(descriptor.name) ?? component.name,
@@ -126,7 +115,7 @@ export async function expandPackageToolBuildSettings(
 							command: input.command,
 							args: input.args,
 							cwd: input.cwd ?? dirname(component.path!),
-							workspace_root: context.repoRoot,
+							workspace_root: component.packageDir,
 							env_overrides: Object.fromEntries(
 								Object.entries(input.env ?? {}).filter(
 									(entry): entry is [string, string] => typeof entry[1] === "string",
@@ -143,11 +132,18 @@ export async function expandPackageToolBuildSettings(
 				descriptorEnv,
 			},
 		});
-		return discovered.tools.map((tool) => ({
-			...settings,
-			mcp: { connection: discovered.connection, tool, namePrefix },
-			toolName: mcpToolName(tool.name, namePrefix),
-		}));
+		if (discovered.tools.length === 0) {
+			await discovered.connection.close();
+			return [];
+		}
+		return discovered.tools.map((tool) => {
+			const product = new McpTool({ connection: discovered.connection, tool, namePrefix });
+			return {
+				...settings,
+				product,
+				toolName: mcpToolName(tool.name, namePrefix),
+			};
+		});
 	} catch (error) {
 		const message = formatUnknownError(error);
 		const notStarted = /ENOENT|not found|no such file|spawn\b/i.test(message);
@@ -229,6 +225,8 @@ export async function createPackageToolProduct(
 			});
 			return { diagnostics };
 		}
+		const resolvedCommand = resolvePackageCommand(component, command, diagnostics);
+		if (!resolvedCommand) return { diagnostics };
 		const fixedArgs = asStringArray(descriptor.args);
 		const descriptorPath = component.path;
 		const tool = new ProcessTool({
@@ -236,10 +234,10 @@ export async function createPackageToolProduct(
 			description,
 			parameters,
 			buildInvocation: (params) => ({
-				command,
+				command: resolvedCommand,
 				args: [...fixedArgs, ...processArgsFromParams(params)],
 				cwd: dirname(descriptorPath),
-				workspaceRoot: context.repoRoot,
+				workspaceRoot: component.packageDir,
 				timeoutMs: asNumber(descriptor.timeout_ms),
 			}),
 			toolMetadata,
@@ -260,15 +258,14 @@ export async function createPackageToolProduct(
 		if (!asString(descriptor.python_bin) && !pythonLauncher) return { diagnostics };
 		const module = asString(descriptor.module) ?? runtime;
 		const modulePath =
-			asString(descriptor.module_path) ??
-			runtimeComponentRelativePath(resolve(context.packagesRoot, component.packageId), runtimeComponent);
+			asString(descriptor.module_path) ?? runtimeComponentRelativePath(component.packageDir, runtimeComponent);
 		const tool = new PythonModuleTool({
 			name,
 			description,
 			parameters,
 			module,
 			modulePath,
-			packageDir: resolve(context.packagesRoot, component.packageId),
+			packageDir: component.packageDir,
 			descriptorPath: component.path,
 			pythonBin: asString(descriptor.python_bin),
 			pythonLauncher,
@@ -293,7 +290,7 @@ export async function createPackageToolProduct(
 		// Unsupported names fall through to the normal missing-runtime diagnostic.
 	}
 	if (scriptRuntime && scriptRuntimeDescription) {
-		const code = await scriptCodeFromDescriptor(component, context, descriptor, diagnostics);
+		const code = await scriptCodeFromDescriptor(component, descriptor, diagnostics);
 		if (!code) return { diagnostics };
 		const fixedArgs = asStringArray(descriptor.args);
 		const descriptorPath = component.path;
@@ -306,7 +303,7 @@ export async function createPackageToolProduct(
 					command: scriptRuntimeDescription.command,
 					args: fixedArgs,
 					cwd: dirname(descriptorPath),
-					workspaceRoot: context.repoRoot,
+					workspaceRoot: component.packageDir,
 					policyInput: params ?? {},
 					timeoutMs: asNumber(descriptor.timeout_ms),
 				}),
@@ -364,7 +361,6 @@ export async function createPackageToolProduct(
 
 async function scriptCodeFromDescriptor(
 	component: PackageToolComponent,
-	context: PackageToolContext,
 	descriptor: TomlTable,
 	diagnostics: PackageToolDiagnostic[],
 ): Promise<string | undefined> {
@@ -408,7 +404,7 @@ async function scriptCodeFromDescriptor(
 		return undefined;
 	}
 
-	const packageDir = resolve(context.packagesRoot, component.packageId);
+	const packageDir = component.packageDir;
 	const resolvedScriptPath = resolve(dirname(component.path!), scriptPath);
 	if (!isWithinDir(packageDir, resolvedScriptPath)) {
 		diagnostics.push({
@@ -650,15 +646,25 @@ async function readPackageToolDescriptor(
 	}
 }
 
-/**
- * Resolve an MCP server command. Absolute commands and bare executables (looked
- * up on PATH) are used as-is; package/repo-relative paths are resolved against
- * the repo root so a committed server binary can be referenced portably.
- */
-function resolveMcpCommand(repoRoot: string, command: string): string {
+/** Resolve a package command without inventing a path from its manifest id. */
+function resolvePackageCommand(
+	component: PackageToolComponent,
+	command: string,
+	diagnostics: PackageToolDiagnostic[],
+): string | undefined {
 	if (isAbsolute(command)) return command;
-	if (command.includes("/") || command.includes("\\")) return resolve(repoRoot, command);
-	return command;
+	if (!(command.includes("/") || command.includes("\\"))) return command;
+	const resolvedCommand = resolve(dirname(component.path!), command);
+	if (isWithinDir(component.packageDir, resolvedCommand)) return resolvedCommand;
+	diagnostics.push({
+		type: "error",
+		code: "package_tool_descriptor_invalid",
+		message: `Package ${component.packageId} tool ${component.name} command escapes the package directory: ${command}`,
+		path: component.path,
+		packageId: component.packageId,
+		profile: component.profile,
+	});
+	return undefined;
 }
 
 /** Read an optional `[env]` table from an MCP descriptor into string pairs. */

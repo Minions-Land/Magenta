@@ -7,9 +7,7 @@ export class HcpMagnet {
 	static readonly kind = "tool";
 	static readonly source = "pi";
 	static build(context: HcpMagnetBuildContext) {
-		if (!HcpMagnetisoptions(context.settings)) {
-			throw new Error("tools/tool-search:pi requires manifest and onActivate settings");
-		}
+		if (!HcpMagnetisoptions(context.settings)) return undefined;
 		return new HcpMagnet(createToolSearchTool(context.settings));
 	}
 

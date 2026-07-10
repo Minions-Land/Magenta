@@ -44,9 +44,13 @@ Returns file content with:
 - Automatic encoding detection
 - Truncation preserves beginning of file (unlike bash which shows end)
 
-## Registration
+## HCP Declaration
+
+`HarnessComponentProtocol/harness.toml` selects this component declaration for
+codegen:
 
 ```toml
+[[components]]
 kind = "tool"
 name = "read"
 path = "tools/read/read.toml"

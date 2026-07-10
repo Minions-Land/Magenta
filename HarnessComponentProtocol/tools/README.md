@@ -9,7 +9,7 @@ Each tool is an independent module under `tools/`:
 ```
 tools/
   bash/
-    bash.toml      — Tool registration
+    bash.toml      — Tool and Source declaration
     pi/bash.ts     — Pi implementation
     README.md
   edit/
@@ -43,7 +43,7 @@ Shared code used by multiple tools lives under `HarnessComponentProtocol/_magent
 Each tool exports:
 - **Schema** (`<tool>Schema`) — TypeBox parameter schema
 - **Execute factory** (`create<Tool>Execute`) — Pure execution function
-- **Operations interface** — Injectable filesystem/exec operations (for testing)
+- **Operations type** — Injectable filesystem/exec operations (for testing)
 - **Types** — Input/Output/Options types
 
 The pi packages consume these via `@magenta/harness` and wrap them with rendering (TUI) to produce `ToolDefinition` objects for the agent loop.
@@ -59,14 +59,20 @@ import {
 } from "@magenta/harness";
 ```
 
-## Registration
+## HCP Declaration
 
-Each tool registers individually in `HarnessComponentProtocol/harness.toml`:
+Each tool has a local TOML declaration, and `HarnessComponentProtocol/harness.toml`
+selects that component for codegen:
+
 ```toml
 [[components]]
 kind = "tool"
 name = "bash"
 path = "tools/bash/bash.toml"
 ```
+
+Codegen projects the selected declarations into the generated `HcpServer` and
+`HcpMagnet` data consumed by `HcpClient`; it does not create another runtime
+role.
 
 See individual tool READMEs for details.

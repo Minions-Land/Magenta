@@ -22,7 +22,7 @@ function createRenderKindDefinition(name: string, renderKind: string): ToolDefin
 	return {
 		name,
 		label: name,
-		description: "harness trunk tool",
+		description: "HCP web tool",
 		parameters: Type.Any(),
 		renderKind,
 		execute: async () => ({ content: [{ type: "text", text: "" }], details: {} }),

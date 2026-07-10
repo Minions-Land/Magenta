@@ -94,15 +94,19 @@ createGrepExecute(cwd, {
 Override for remote search:
 
 ```typescript
-interface GrepOperations {
+type GrepOperations = {
   isDirectory: (absolutePath: string) => Promise<boolean> | boolean;
   readFile: (absolutePath: string) => Promise<string> | string;
-}
+};
 ```
 
-## Registration
+## HCP Declaration
+
+`HarnessComponentProtocol/harness.toml` selects this component declaration for
+codegen:
 
 ```toml
+[[components]]
 kind = "tool"
 name = "grep"
 path = "tools/grep/grep.toml"

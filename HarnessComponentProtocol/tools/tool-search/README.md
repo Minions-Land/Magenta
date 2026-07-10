@@ -1,17 +1,15 @@
-# Tools Search Module
+# Tool Search Tool
 
-The **tools-search** module implements **Tool Search** (spec §6): MCP-style
+The **tool-search** component implements MCP-style
 deferral of tool schemas so context stays flat as the tool count grows.
 
-## Why it is its own top-level module
+## Role
 
-Tool Search is a Harness capability in its own right, not a single tool and not
-assembly-time wiring. It sits above the individual tool magnets: it consumes
-their cheap `describe()` metadata (name + short description, no parameter
-schema), lets the model discover tools by keyword on demand, and activates the
-matches so their full schemas materialize into the active set for subsequent
-turns. That aggregation role is why it lives beside `tools/` rather than inside
-`assembly/`.
+Tool Search is a normal Tool product under `tools/tool-search`. It consumes
+the name and description data exposed through the session `HcpClient`, lets the
+model discover tools by keyword on demand, and activates matches so their full
+schemas materialize into the active set for subsequent turns. Its aggregation
+behavior does not introduce another HCP runtime role.
 
 This generalizes to the broader **Harness Search** idea: the same
 "enumerate names now, materialize the expensive thing on demand" pattern MCP
@@ -26,8 +24,9 @@ turn from `activeToolNames`. So a tool call that invokes `setActiveTools` takes
 effect on the next model turn, and only `activeTools` are serialized to the
 model. Deferral is therefore purely a function of which tools are active.
 
-- `buildToolSearchManifest(magnets)` — builds the cheap name+description catalog
-  from tool magnets' `describe()`, never realizing a schema.
+- `buildToolSearchManifest(descriptions)` — builds the cheap name+description
+  catalog from `HcpServer` descriptions owned by the session `HcpClient`, never
+  realizing a schema.
 - `createToolSearchTool({ manifest, onActivate, alwaysActive, name?, limit? })` —
   a normal `AgentTool` (`tool_search`) that ranks manifest entries by keyword,
   supports explicit `activate` / `preview`, and activates matches via the
@@ -41,16 +40,32 @@ initial active set. Default sessions are unchanged.
 
 ## Search strategy is pluggable (planned)
 
-The keyword ranker is the built-in default. The search strategy
+The keyword ranker is the default implementation. The search strategy
 (keyword / BM25 / regex / embedding) is a substitutable concern — Claude's own
 tool search ships regex + BM25 + custom variants — so a future
 `ToolSearchStrategy` seam lets alternative rankers plug in without changing the
-deferral mechanism or the meta-tool contract.
+deferral mechanism or the meta-tool behavior.
 
 ## Structure
 
 ```
-tools-search/
-  tool-search.ts   — manifest builder + tool_search meta-tool factory
+tools/tool-search/
+  HcpServer.ts
+  tool-search.toml
+  pi/
+    HcpMagnet.ts
+    tool-search.ts   — searchable catalog + tool_search factory
   README.md
+```
+
+## HCP Declaration
+
+`HarnessComponentProtocol/harness.toml` selects this component declaration for
+codegen:
+
+```toml
+[[components]]
+kind = "tool"
+name = "tool-search"
+path = "tools/tool-search/tool-search.toml"
 ```

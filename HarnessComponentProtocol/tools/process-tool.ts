@@ -2,7 +2,7 @@ import { access, readFile } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
 import type { AgentTool, AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
 import { type TSchema, Type } from "typebox";
-import { parseToml, type TomlTable } from "../.HCP/registry/registry.ts";
+import { parseToml, type TomlTable } from "../_magenta/utils/pi/toml.ts";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, type TruncationResult } from "../_magenta/utils/pi/truncate.ts";
 import type {
 	ProcessExecOutput,

@@ -90,7 +90,7 @@ describe("Phase 5: policy/sandbox/runtime resolution (C5.1-C5.3)", () => {
 		const shellClassification = policy?.shell?.classify?.({ command: "rm -rf /" });
 		expect(shellClassification?.decision).toBe("allow");
 
-		session.dispose();
+		await session.dispose();
 	});
 
 	it("C5.3: bash execution is byte-identical with default policy (no prompts, no denials)", async () => {
@@ -115,7 +115,7 @@ describe("Phase 5: policy/sandbox/runtime resolution (C5.1-C5.3)", () => {
 			.join("");
 		expect(text).toContain("Phase 5 parity test");
 
-		session.dispose();
+		await session.dispose();
 	});
 
 	it("AgentSession caches policy/sandbox/runtime providers when HCP present", async () => {
@@ -131,6 +131,6 @@ describe("Phase 5: policy/sandbox/runtime resolution (C5.1-C5.3)", () => {
 		const approvalDecision = sessionAny._policyProvider.decideApproval({ tool: "read", tier: "read" });
 		expect(approvalDecision.decision).toBe("allow");
 
-		session.dispose();
+		await session.dispose();
 	});
 });

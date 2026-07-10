@@ -76,8 +76,8 @@ export class HcpServer {
  * enforces that soul step via a guard prompt (see `guards`) prepended to the
  * relevant worker; the LLM cannot dilute it.
  *
- * This module contains only business logic. Conversion to HcpServer is handled
- * by the unified capability-server adapter, not by the provider.
+ * This module contains only business logic. The real module HcpServer above
+ * owns HCP routing; providers do not construct or register HCP entities.
  */
 
 /** The set of supported orchestration patterns. */
@@ -416,8 +416,8 @@ export type MultiAgentDiscoverResult = {
  * a source implementation and hands the loop this instance; the loop invokes
  * `orchestrate` directly (HCP does not sit on the hot path).
  *
- * Note: Conversion to HcpServer is handled by the unified capability-server
- * adapter, not by the provider.
+ * The real module HcpServer above owns HCP routing; the provider remains a
+ * source-selected business value.
  */
 export type MultiAgentProvider = {
 	/** Describe the provider: its target and the patterns it supports. */

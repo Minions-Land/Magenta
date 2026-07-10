@@ -46,7 +46,7 @@ import {
 	visibleWidth,
 } from "@earendil-works/pi-tui";
 import type { HarnessPackage, PackageDiagnostic, PackageOverlay } from "@magenta/harness";
-import { discoverHarnessPackages, getHarnessRegistryPath, loadRegistry, parsePackageSelector } from "@magenta/harness";
+import { discoverHarnessPackages, parsePackageSelector } from "@magenta/harness";
 import chalk from "chalk";
 import { spawn, spawnSync } from "child_process";
 import {
@@ -77,13 +77,13 @@ import type {
 } from "../../core/extensions/index.ts";
 import { FooterDataProvider, type ReadonlyFooterDataProvider } from "../../core/footer-data-provider.ts";
 import {
+	buildHarnessComponentsView,
 	buildHarnessToolSwitches,
-	formatHarnessRegistrySummary,
+	formatHarnessComponentsSummary,
 	formatHarnessRuntimeSummary,
 	HARNESS_HOOK_EVENTS,
-	type HarnessRegistryView,
 	type HarnessRuntimeSnapshot,
-	hasRegistryComponent,
+	hasHarnessComponent,
 } from "../../core/harness-switches.ts";
 import { configureHttpDispatcher, formatHttpIdleTimeoutMs } from "../../core/http-dispatcher.ts";
 import { ImageTokenController } from "../../core/image-tokens.ts";
@@ -4393,18 +4393,16 @@ export class InteractiveMode {
 		});
 	}
 
-	private async loadHarnessRegistryView(): Promise<HarnessRegistryView> {
-		try {
-			const path = getHarnessRegistryPath();
-			return { path, registry: await loadRegistry(path) };
-		} catch (error) {
-			return { error: error instanceof Error ? error.message : String(error) };
-		}
+	private getHarnessComponentsView() {
+		return buildHarnessComponentsView(this.session.resourceLoader.getSessionHcp?.());
 	}
 
 	private async loadHarnessPackagesView(): Promise<HarnessPackagesView> {
 		try {
-			const result = await discoverHarnessPackages({ repoRoot: this.sessionManager.getCwd() });
+			const result = await discoverHarnessPackages({
+				repoRoot: this.sessionManager.getCwd(),
+				packagesRoot: this.session.resourceLoader.getHarnessPackagesRoot?.(),
+			});
 			return {
 				packagesRoot: result.packagesRoot,
 				packages: result.packages,
@@ -4420,69 +4418,24 @@ export class InteractiveMode {
 	}
 
 	private getHarnessModule(snapshot: HarnessRuntimeSnapshot, id: string) {
-		return snapshot.registry.registry?.modules.find((module) => module.id === id);
+		return snapshot.components.components.find((component) => component.id === id);
 	}
-
-	// Memoizes implementation-readiness fs probes for the duration of a single
-	// menu build. The same implementation paths recur across the tools and modules
-	// views, so without this each menu open re-runs fs.existsSync many times over.
-	// Reset (via beginHarnessMenuBuild) at each menu-open entry point so a rebuild
-	// still reflects on-disk changes (e.g. a binary built between opens).
-	private harnessReadinessCache: Map<string, string> | undefined;
 
 	private beginHarnessMenuBuild(): void {
-		this.harnessReadinessCache = new Map();
-	}
-
-	private getHarnessImplementationReadiness(implementationPath: string | undefined): string {
-		if (!implementationPath) return "no path";
-		this.harnessReadinessCache ??= new Map();
-		const cache = this.harnessReadinessCache;
-		const cached = cache.get(implementationPath);
-		if (cached !== undefined) return cached;
-		const readiness = this.computeHarnessImplementationReadiness(implementationPath);
-		cache.set(implementationPath, readiness);
-		return readiness;
-	}
-
-	private computeHarnessImplementationReadiness(implementationPath: string): string {
-		if (!fs.existsSync(implementationPath)) return "missing";
-		const usesSharedProcessRuntime = fs
-			.readdirSync(implementationPath, { withFileTypes: true })
-			.filter((entry) => entry.isFile() && entry.name.endsWith(".toml"))
-			.some((entry) =>
-				fs.readFileSync(path.join(implementationPath, entry.name), "utf8").includes("_magenta/process-tools"),
-			);
-		if (!usesSharedProcessRuntime) return "source-ready";
-		const releaseBinary = path.resolve(
-			implementationPath,
-			"../../../_magenta/process-tools/target/release",
-			process.platform === "win32" ? "magenta-process-tools.exe" : "magenta-process-tools",
-		);
-		return fs.existsSync(releaseBinary) ? "built" : "needs build";
+		// Kept as the menu-build boundary for callers; component state is already
+		// derived from generated HCP rows and the current Client.
 	}
 
 	private formatHarnessImplementationDescription(input: {
 		source: string;
 		status: string;
-		path?: string;
-		notes?: string;
+		descriptorPath?: string;
 		active: boolean;
 	}): string {
-		const readiness = this.getHarnessImplementationReadiness(input.path);
-		return [
-			input.active ? "active runtime bridge" : "registered implementation",
-			input.status,
-			readiness,
-			input.path,
-			input.notes,
-		]
-			.filter(Boolean)
-			.join(" · ");
+		return [input.active ? "active" : undefined, input.status, input.descriptorPath].filter(Boolean).join(" · ");
 	}
 
 	private isHarnessToolImplementationActive(toolSource: string, implementationSource: string): boolean {
-		if (toolSource === "builtin") return implementationSource === "pi";
 		return toolSource === implementationSource;
 	}
 
@@ -4505,7 +4458,6 @@ export class InteractiveMode {
 	}
 
 	private async createHarnessRuntimeSnapshot(): Promise<HarnessRuntimeSnapshot> {
-		const registry = await this.loadHarnessRegistryView();
 		const packageTools = this.session.resourceLoader.getPackageTools();
 		return {
 			autoCompact: this.session.autoCompactionEnabled,
@@ -4517,7 +4469,7 @@ export class InteractiveMode {
 			packageToolCount: packageTools.tools.length,
 			packageDiagnosticCount: packageTools.diagnostics.length,
 			activeHookEvents: this.getHarnessActiveHookEvents(),
-			registry,
+			components: this.getHarnessComponentsView(),
 		};
 	}
 
@@ -4716,23 +4668,24 @@ export class InteractiveMode {
 	}
 
 	private async showHarnessMemorySummary(): Promise<void> {
-		const registry = await this.loadHarnessRegistryView();
-		const registered = hasRegistryComponent(registry.registry, "memory");
-		const registryLine = registry.error ? `Registry: unavailable (${registry.error})` : "Registry: loaded";
+		const components = this.getHarnessComponentsView();
+		const available = hasHarnessComponent(components, "memory");
+		const active = components.components.some(
+			(component) => component.kind === "memory" && component.status === "active",
+		);
 		this.showStatus(
 			[
 				"Harness memory",
-				`Component: ${registered ? "registered" : "not registered"}`,
+				`Component: ${available ? "declared" : "not declared"}`,
+				`Session HCP: ${active ? "active" : "inactive"}`,
 				"Runtime switch: not exposed in AgentSession yet",
-				registryLine,
 			].join("\n"),
 		);
 	}
 
 	/**
-	 * C6.1/C6.2: Inspect the LIVE session HcpClient via describeAll(). Unlike the
-	 * registry.json-backed inspect rows (which show a static on-disk inventory),
-	 * this reflects what is actually wired into the running session's ONE HCP:
+	 * Inspect the live session HcpClient via describeAll(). This reflects what is
+	 * actually wired into the running session's one HCP:
 	 * every `tool:*` and `capability:*` target that pi resolves at runtime
 	 * (compaction, hooks, policy, sandbox, runtime, etc.). Inspect-only — no toggles.
 	 */
@@ -4794,8 +4747,8 @@ export class InteractiveMode {
 			return;
 		}
 
-		if (action === "registry" || action === "components") {
-			this.showStatus(formatHarnessRegistrySummary(await this.loadHarnessRegistryView()));
+		if (action === "components") {
+			this.showStatus(formatHarnessComponentsSummary(this.getHarnessComponentsView()));
 			return;
 		}
 
@@ -4871,7 +4824,7 @@ export class InteractiveMode {
 			return;
 		}
 
-		this.showWarning("Usage: /harness [status|registry|hooks|memory|compact|skills|tool|package]");
+		this.showWarning("Usage: /harness [status|components|hooks|memory|compact|skills|tool|package]");
 	}
 
 	private commandDockShouldRouteInput(data: string): boolean {
@@ -5191,7 +5144,7 @@ export class InteractiveMode {
 		const toolItems = snapshot.tools.map((tool) => {
 			const module = this.getHarnessModule(snapshot, `tool/${tool.name}`);
 			const implementationItems =
-				module?.implementations.map((implementation) => {
+				module?.sources.map((implementation) => {
 					const active = this.isHarnessToolImplementationActive(tool.source, implementation.source);
 					return {
 						value: `harness:tool:${encodeMenuValuePart(tool.name)}:impl:${encodeMenuValuePart(implementation.source)}`,
@@ -5199,8 +5152,7 @@ export class InteractiveMode {
 						description: this.formatHarnessImplementationDescription({
 							source: implementation.source,
 							status: implementation.status,
-							path: implementation.path,
-							notes: implementation.notes,
+							descriptorPath: implementation.descriptorPath,
 							active,
 						}),
 						active,
@@ -5309,24 +5261,22 @@ export class InteractiveMode {
 				{
 					value: "harness:memory",
 					label: "Memory",
-					description: "Registered component; no AgentSession switch yet",
+					description: "Declared component; no AgentSession switch yet",
 					children: [
 						{ value: "harness:memory:inspect", label: "Inspect memory status" },
 						{
-							value: "harness:memory:impl:registered",
-							label: "Registered",
-							description: "Registry component only for now",
+							value: "harness:memory:impl:magenta",
+							label: "Magenta",
+							description: "Selected HCP Source",
 							active: true,
 						},
 					],
 				},
 				{
-					value: "harness:registry",
-					label: "Registry",
-					description: snapshot.registry.error
-						? "unavailable"
-						: `${snapshot.registry.registry?.components.length ?? 0} components`,
-					children: [{ value: "harness:registry:inspect", label: "Inspect registry" }],
+					value: "harness:components",
+					label: "Components",
+					description: `${snapshot.components.components.length} generated declarations`,
+					children: [{ value: "harness:components:inspect", label: "Inspect components" }],
 				},
 				{
 					value: "harness:livehcp",
@@ -5347,19 +5297,19 @@ export class InteractiveMode {
 	}
 
 	private harnessModuleMenuItems(snapshot: HarnessRuntimeSnapshot): FloatingMenuItem[] {
-		const modules = snapshot.registry.registry?.modules ?? [];
+		const modules = snapshot.components.components;
 		if (modules.length === 0) return [];
 		return [
 			{
 				value: "harness:modules",
 				label: "Modules",
-				description: `${modules.length} registered capability slots`,
+				description: `${modules.length} generated component declarations`,
 				children: modules
 					.slice()
 					.sort((left, right) => left.id.localeCompare(right.id))
 					.map((module) => {
 						const encodedId = encodeMenuValuePart(module.id);
-						const implementations = module.implementations
+						const implementations = module.sources
 							.map((implementation) => `${implementation.source}:${implementation.status}`)
 							.join(", ");
 						return {
@@ -5372,15 +5322,14 @@ export class InteractiveMode {
 									label: "Inspect",
 									description: "Print module and implementation details",
 								},
-								...module.implementations.map((implementation) => ({
+								...module.sources.map((implementation) => ({
 									value: `harness:module:${encodedId}:impl:${encodeMenuValuePart(implementation.source)}`,
 									label: formatHarnessSourceLabel(implementation.source),
 									description: this.formatHarnessImplementationDescription({
 										source: implementation.source,
 										status: implementation.status,
-										path: implementation.path,
-										notes: implementation.notes,
-										active: false,
+										descriptorPath: implementation.descriptorPath,
+										active: implementation.active,
 									}),
 								})),
 							],
@@ -5538,10 +5487,8 @@ export class InteractiveMode {
 			void this.showHarnessMemorySummary();
 			return true;
 		}
-		if (item.value === "harness:registry:inspect") {
-			void this.loadHarnessRegistryView().then((registry) =>
-				this.showStatus(formatHarnessRegistrySummary(registry)),
-			);
+		if (item.value === "harness:components:inspect") {
+			this.showStatus(formatHarnessComponentsSummary(this.getHarnessComponentsView()));
 			return true;
 		}
 		if (item.value === "harness:livehcp:inspect") {
@@ -5589,25 +5536,22 @@ export class InteractiveMode {
 	}
 
 	private async showHarnessToolImplementationSelection(toolName: string, source: string): Promise<void> {
-		const registry = await this.loadHarnessRegistryView();
-		const module = registry.registry?.modules.find((candidate) => candidate.id === `tool/${toolName}`);
-		const implementation = module?.implementations.find((candidate) => candidate.source === source);
-		const piImplementation = module?.implementations.find((candidate) => candidate.source === "pi");
-		const activeSource = this.session
-			.getAllTools()
-			.some((tool) => tool.name === toolName && tool.sourceInfo.source === "builtin")
-			? "pi"
-			: "unknown";
-		const requestedPath = implementation?.path ?? "not registered";
-		const activePath = activeSource === "pi" ? (piImplementation?.path ?? "Pi built-in bridge") : activeSource;
-		const readiness = this.getHarnessImplementationReadiness(implementation?.path);
+		const module = this.getHarnessComponentsView().components.find(
+			(candidate) => candidate.id === `tool/${toolName}`,
+		);
+		const implementation = module?.sources.find((candidate) => candidate.source === source);
+		const activeSource =
+			this.session.getAllTools().find((tool) => tool.name === toolName)?.sourceInfo.source ?? "unknown";
+		const requestedPath = implementation?.descriptorPath ?? "not declared";
+		const activePath =
+			module?.sources.find((candidate) => candidate.source === activeSource)?.descriptorPath ?? activeSource;
 
 		this.showSystemMessage(
 			[
 				`Harness implementation inspected: tool/${toolName}`,
 				`Requested source: ${formatHarnessSourceLabel(source)}`,
 				`Requested path: ${requestedPath}`,
-				`Requested readiness: ${readiness}`,
+				`Requested status: ${implementation?.status ?? "not declared"}`,
 				`Active source remains: ${formatHarnessSourceLabel(activeSource)}`,
 				`Active path: ${activePath}`,
 				"No runtime implementation switch was performed; this row is inspect-only until implementation hot-swap is wired.",
@@ -5617,37 +5561,31 @@ export class InteractiveMode {
 	}
 
 	private async showHarnessModuleItem(id: string, source?: string): Promise<void> {
-		const registry = await this.loadHarnessRegistryView();
-		if (!registry.registry) {
-			this.showStatus(formatHarnessRegistrySummary(registry));
-			return;
-		}
-		const module = registry.registry.modules.find((candidate) => candidate.id === id);
+		const module = this.getHarnessComponentsView().components.find((candidate) => candidate.id === id);
 		if (!module) {
 			this.showWarning(`Unknown harness module: ${id}`);
 			return;
 		}
 		const implementations = source
-			? module.implementations.filter((implementation) => implementation.source === source)
-			: module.implementations;
+			? module.sources.filter((implementation) => implementation.source === source)
+			: module.sources;
 		this.showStatus(
 			[
 				`Harness module: ${module.id}`,
 				`Status: ${module.status}`,
 				`Kind: ${module.kind}`,
-				`Capability: ${module.capability}`,
+				`Product: ${module.product}`,
+				`Module: ${module.module}`,
 				module.description ? `Description: ${module.description}` : undefined,
-				`Descriptor: ${module.path}`,
+				`Descriptor: ${module.descriptorPath}`,
 				implementations.length > 0
-					? `Implementations:\n${implementations
+					? `Sources:\n${implementations
 							.map(
 								(implementation) =>
-									`  - ${formatHarnessSourceLabel(implementation.source)}: ${implementation.status}; ${this.getHarnessImplementationReadiness(implementation.path)}${
-										implementation.path ? ` (${implementation.path})` : ""
-									}${implementation.notes ? `\n    ${implementation.notes}` : ""}`,
+									`  - ${formatHarnessSourceLabel(implementation.source)}: ${implementation.status} (${implementation.descriptorPath})`,
 							)
 							.join("\n")}`
-					: "Implementations: none",
+					: "Sources: none",
 				source ? "Selection: implementation switching is planned; this row is inspect-only for now." : undefined,
 			]
 				.filter((line): line is string => Boolean(line))

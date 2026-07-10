@@ -1,4 +1,4 @@
-import type { Registry } from "@magenta/harness";
+import { HCP_MAGNETS, HCP_SERVERS, type HcpClient } from "@magenta/harness";
 import type { ToolInfo } from "./extensions/index.ts";
 
 export const HARNESS_HOOK_EVENTS = [
@@ -33,11 +33,29 @@ export const HARNESS_HOOK_EVENTS = [
 	"input",
 ] as const;
 
-export interface HarnessRegistryView {
-	path?: string;
-	registry?: Registry;
-	error?: string;
-}
+export type HarnessSourceView = {
+	source: string;
+	status: "active" | "selected" | "available";
+	selected: boolean;
+	active: boolean;
+	descriptorPath: string;
+};
+
+export type HarnessComponentView = {
+	id: string;
+	module: string;
+	kind: string;
+	name: string;
+	product: "tool" | "capability" | "resource";
+	description?: string;
+	status: "active" | "selected" | "available";
+	descriptorPath: string;
+	sources: HarnessSourceView[];
+};
+
+export type HarnessComponentsView = {
+	components: HarnessComponentView[];
+};
 
 export interface HarnessToolSwitch {
 	name: string;
@@ -56,7 +74,7 @@ export interface HarnessRuntimeSnapshot {
 	packageToolCount: number;
 	packageDiagnosticCount: number;
 	activeHookEvents: string[];
-	registry: HarnessRegistryView;
+	components: HarnessComponentsView;
 }
 
 export function buildHarnessToolSwitches(tools: ToolInfo[], activeToolNames: string[]): HarnessToolSwitch[] {
@@ -68,56 +86,87 @@ export function buildHarnessToolSwitches(tools: ToolInfo[], activeToolNames: str
 			description: tool.description,
 			source: tool.sourceInfo.source,
 		}))
-		.sort((a, b) => {
-			if (a.source === "builtin" && b.source !== "builtin") return -1;
-			if (a.source !== "builtin" && b.source === "builtin") return 1;
-			return a.name.localeCompare(b.name);
-		});
+		.sort((left, right) => left.name.localeCompare(right.name));
 }
 
-export function countRegistryComponentsByKind(registry: Registry | undefined): Map<string, number> {
+export function buildHarnessComponentsView(hcp?: HcpClient): HarnessComponentsView {
+	const descriptions = new Map(hcp?.describeAll().map((description) => [description.target, description]) ?? []);
+	const components = new Map<string, HarnessComponentView>();
+	for (const row of HCP_MAGNETS) {
+		const id = `${row.kind}/${row.name}`;
+		const target =
+			row.product === "capability"
+				? `capability:${row.slot}`
+				: row.product === "tool"
+					? `tool:${row.name}`
+					: `${row.kind}:${row.name}`;
+		const description = descriptions.get(target);
+		const describedSource = description?.metadata?.source;
+		const active =
+			typeof describedSource === "string"
+				? describedSource === row.source
+				: Boolean(hcp?.resolveModule(row.module)) && row.selected;
+		const source: HarnessSourceView = {
+			source: row.source,
+			status: active ? "active" : row.selected ? "selected" : "available",
+			selected: row.selected,
+			active,
+			descriptorPath: row.descriptorPath,
+		};
+		const existing = components.get(id);
+		if (existing) {
+			existing.sources.push(source);
+			if (source.status === "active") existing.status = "active";
+			else if (source.status === "selected" && existing.status === "available") existing.status = "selected";
+			continue;
+		}
+		const HcpServer = HCP_SERVERS.get(row.module);
+		const serverDescription = HcpServer ? new HcpServer().description : undefined;
+		components.set(id, {
+			id,
+			module: row.module,
+			kind: row.kind,
+			name: row.name,
+			product: row.product,
+			description: description?.description ?? serverDescription,
+			status: source.status,
+			descriptorPath: row.descriptorPath,
+			sources: [source],
+		});
+	}
+	return {
+		components: [...components.values()].sort((left, right) => left.id.localeCompare(right.id)),
+	};
+}
+
+export function countHarnessComponentsByKind(view: HarnessComponentsView): Map<string, number> {
 	const counts = new Map<string, number>();
-	for (const component of registry?.components ?? []) {
+	for (const component of view.components) {
 		counts.set(component.kind, (counts.get(component.kind) ?? 0) + 1);
 	}
 	return counts;
 }
 
-export function hasRegistryComponent(registry: Registry | undefined, kind: string, name?: string): boolean {
-	return (registry?.components ?? []).some((component) => {
+export function hasHarnessComponent(view: HarnessComponentsView, kind: string, name?: string): boolean {
+	return view.components.some((component) => {
 		if (component.kind !== kind) return false;
 		return name === undefined || component.name === name;
 	});
 }
 
-export function formatHarnessRegistrySummary(view: HarnessRegistryView): string {
-	if (view.error) {
-		return `Harness registry unavailable: ${view.error}`;
-	}
-
-	const registry = view.registry;
-	if (!registry) {
-		return "Harness registry not loaded.";
-	}
-
-	const counts = [...countRegistryComponentsByKind(registry).entries()]
-		.sort(([a], [b]) => a.localeCompare(b))
+export function formatHarnessComponentsSummary(view: HarnessComponentsView): string {
+	const counts = [...countHarnessComponentsByKind(view).entries()]
+		.sort(([left], [right]) => left.localeCompare(right))
 		.map(([kind, count]) => `${kind}:${count}`)
 		.join(", ");
-	const pathLine = view.path ? `\nPath: ${view.path}` : "";
-	const names = registry.components.map((component) => `${component.kind}/${component.name}`).join(", ");
-
-	return `Harness registry: ${registry.name ?? "unnamed"} (${registry.components.length} components)\nKinds: ${
-		counts || "none"
-	}${pathLine}\nComponents: ${names || "none"}`;
+	const names = view.components.map((component) => component.id).join(", ");
+	return `Harness components (${view.components.length})\nKinds: ${counts || "none"}\nComponents: ${names || "none"}`;
 }
 
 export function formatHarnessRuntimeSummary(snapshot: HarnessRuntimeSnapshot): string {
 	const activeTools = snapshot.tools.filter((tool) => tool.active).map((tool) => tool.name);
-	const memoryRegistered = hasRegistryComponent(snapshot.registry.registry, "memory");
-	const registryStatus = snapshot.registry.error
-		? "unavailable"
-		: `${snapshot.registry.registry?.components.length ?? 0} components`;
+	const memoryAvailable = hasHarnessComponent(snapshot.components, "memory");
+	const activeComponents = snapshot.components.components.filter((component) => component.status === "active").length;
 	const hookStatus = snapshot.activeHookEvents.length > 0 ? snapshot.activeHookEvents.join(", ") : "none";
 	const packageStatus =
 		snapshot.harnessPackages.length > 0
@@ -133,7 +182,7 @@ export function formatHarnessRuntimeSummary(snapshot: HarnessRuntimeSnapshot): s
 		}`,
 		`Packages: ${packageStatus}`,
 		`Hooks: ${snapshot.loadedExtensions} extensions loaded; active events: ${hookStatus}`,
-		`Memory: ${memoryRegistered ? "registered; no AgentSession runtime switch yet" : "not registered"}`,
-		`Registry: ${registryStatus}`,
+		`Memory: ${memoryAvailable ? "available" : "not declared"}`,
+		`Components: ${activeComponents}/${snapshot.components.components.length} active`,
 	].join("\n");
 }

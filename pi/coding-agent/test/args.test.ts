@@ -249,6 +249,19 @@ describe("parseArgs", () => {
 		});
 	});
 
+	describe("Harness Package flags", () => {
+		test("parses package selectors and their explicit root", () => {
+			const result = parseArgs([
+				"--harness-package",
+				"ExternalDomain:general",
+				"--harness-packages-root",
+				"../MagentaPackages",
+			]);
+			expect(result.harnessPackages).toEqual(["ExternalDomain:general"]);
+			expect(result.harnessPackagesRoot).toBe("../MagentaPackages");
+		});
+	});
+
 	describe("--prompt-template flag", () => {
 		test("parses single --prompt-template", () => {
 			const result = parseArgs(["--prompt-template", "./prompts"]);

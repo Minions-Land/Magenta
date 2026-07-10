@@ -63,8 +63,23 @@ export type HcpMagnetBinding<T = unknown> = {
 export type HcpMagnetResourceMergeMode = "replace" | "append";
 
 /**
- * A resolved Resource binding produced by a magnet (spec §5, the primitive HCP
- * adds to the Tool/Capability pair). A Resource is context **data** injected
+ * Host-supplied settings for a descriptor-backed Resource Source. The Source
+ * class is always `descriptor`; `source` records the actual owner of the data
+ * (for example a Package id or `user`).
+ */
+export type HcpMagnetResourcebuildsettings = {
+	name: string;
+	source: string;
+	mergeMode: HcpMagnetResourceMergeMode;
+	contentPath?: string;
+	content?: string;
+	descriptorPath?: string;
+	metadata?: Record<string, unknown>;
+};
+
+/**
+ * A resolved Resource binding produced by a Magnet. Resource is the third
+ * Magnet product beside Tool and Capability. It is context **data** injected
  * into the model's context and *referenced* rather than *called* — e.g. a
  * package's `SYSTEM.md` system-prompt content. Unlike an HcpMagnetBinding
  * (a live in-process code provider) a Resource carries inert content plus the
@@ -87,4 +102,6 @@ export type HcpMagnetResource = {
 	contentPath?: string;
 	/** Inline content, when the resource carries data directly rather than a path. */
 	content?: string;
+	/** Host-owned provenance or loading details that do not affect HCP routing. */
+	metadata?: Record<string, unknown>;
 };

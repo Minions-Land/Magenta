@@ -43,7 +43,7 @@ describe("createAgentSession session manager defaults", () => {
 		expect(sessionDir).toBe(expectedSessionDir);
 		expect(sessionFile?.startsWith(`${expectedSessionDir}/`)).toBe(true);
 
-		session.dispose();
+		await session.dispose();
 	});
 
 	it("keeps an explicit sessionManager override", async () => {
@@ -61,7 +61,7 @@ describe("createAgentSession session manager defaults", () => {
 		expect(session.sessionManager).toBe(sessionManager);
 		expect(session.sessionManager.isPersisted()).toBe(false);
 
-		session.dispose();
+		await session.dispose();
 	});
 
 	it("derives cwd from an explicit sessionManager when cwd is omitted", async () => {
@@ -90,6 +90,6 @@ describe("createAgentSession session manager defaults", () => {
 
 		expect(realpathSync(output.trim())).toBe(realpathSync(sessionCwd));
 
-		session.dispose();
+		await session.dispose();
 	});
 });

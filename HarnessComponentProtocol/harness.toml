@@ -1,5 +1,5 @@
 name = "magenta-harness"
-description = "Magenta3 harness component registry: pure-execution tools plus the HCP/HcpMagnet assembly layer."
+description = "Magenta3 Harness Modules and their HcpServer/HcpMagnet declarations."
 
 [[modules]]
 kind = "tool"
@@ -12,6 +12,37 @@ product = "tool"
 kind = "skill"
 name = "skills"
 path = "skills"
+sources = ["descriptor"]
+product = "resource"
+
+[[modules]]
+kind = "prompt-template"
+name = "descriptor"
+path = "prompt-templates"
+sources = ["descriptor"]
+product = "resource"
+
+[[modules]]
+kind = "system-prompt"
+name = "descriptor"
+path = "system-prompt"
+sources = ["descriptor"]
+product = "resource"
+requires = ["system-prompt"]
+
+[[modules]]
+kind = "theme"
+name = "themes"
+path = "themes"
+sources = ["descriptor"]
+product = "resource"
+
+[[modules]]
+kind = "brand"
+name = "brand"
+path = "brand"
+sources = ["descriptor"]
+product = "resource"
 
 [[components]]
 kind = "tool"

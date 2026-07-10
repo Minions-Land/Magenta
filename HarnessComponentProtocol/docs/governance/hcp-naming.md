@@ -25,7 +25,7 @@ Derived rules:
 
 - There are only three HCP roles: Client, Server, and Magnet.
 - Name is role; path is identity. Module role files export `class HcpServer` and
-  source role files export `class HcpMagnet`.
+  Source role files export `class HcpMagnet`.
 - There is no `contract/` role layer, role interface, or role base class.
 - Common routing belongs in `HcpClient`; each module Server contains only its
   module-specific identity and behavior.
@@ -35,12 +35,12 @@ Derived rules:
 ### HcpClient
 
 The one router lives at `HarnessComponentProtocol/HcpClient.ts` and exports
-`class HcpClient`. There is no `HcpRegistry`, per-module Client, prefix Client,
-or alternate package Client.
+`class HcpClient`. There is no per-module Client, prefix Client, alternate
+Package Client, or fourth role beside it.
 
 ### HcpServer
 
-Every actual module or grouping entity owns `<module>/HcpServer.ts`, exporting
+Every actual Module or grouping entity owns `<module>/HcpServer.ts`, exporting
 bare `class HcpServer`. Examples:
 
 - `runtime/HcpServer.ts`
@@ -53,14 +53,14 @@ Tools and skills require both ownership levels: the root grouping Server does
 not replace a leaf Server, and a leaf Server does not replace the root.
 
 There is no `ModuleHcpServer`, `CapabilityHcpServer`, anonymous Server, or
-Server produced by a Magnet. Assembly, registry, overlay, and transport are
-infrastructure, not Harness Modules, and therefore cannot own `HcpServer` role
-files.
+Server produced by a Magnet. Assembly, config parsing, Package overlay, and
+transport are infrastructure, not Harness Modules, and therefore cannot own
+`HcpServer` role files.
 
 ### HcpMagnet
 
-Every built-in source owns a source-local `HcpMagnet.ts`, exporting bare
-`class HcpMagnet`. Examples:
+Every repository-declared Source owns a Source-local `HcpMagnet.ts`, exporting
+bare `class HcpMagnet`. Examples:
 
 - `memory/magenta/HcpMagnet.ts`
 - `tools/read/pi/HcpMagnet.ts`
@@ -69,9 +69,10 @@ Every built-in source owns a source-local `HcpMagnet.ts`, exporting bare
 Runtime technology does not form a Magnet subtype hierarchy. Names such as
 `UniversalMagnet`, `ProcessToolMagnet`, `PythonModuleToolMagnet`, and
 `HcpProcessMagnet` are retired. `ProcessTool`, `PythonModuleTool`, and `McpTool`
-are product/transport adapters, not sources or Magnet role classes.
-`HcpMagnetProcess` is a concrete JSONL transport entity that an owning source
-may inject and use; it is not itself a Module, source role, or automatically
+are real product/transport entities outside `.HCP/`, not Sources or Magnet role
+classes.
+`HcpMagnetProcess` is a concrete JSONL transport entity that an owning Source
+may inject and use; it is not itself a Module, Source role, or automatically
 assembled Magnet. Production default assembly has no reference to it.
 
 ## 2. Protocol Data Names
@@ -127,9 +128,11 @@ HarnessComponentProtocol/
     HcpServerTypes.ts
     HcpMagnetTypes.ts
     assembly/
-    overlay/
-    registry/
     transport/
+  _magenta/
+    mcp/
+    packages/
+    utils/pi/toml.ts
   <module>/
     HcpServer.ts
     <source>/HcpMagnet.ts
@@ -142,14 +145,15 @@ HarnessComponentProtocol/
 
 `.HCP/HcpServerTypes.ts` and `.HCP/HcpMagnetTypes.ts` contain data types, not
 substitute role abstractions. `.HCP/transport/` contains concrete transport
-plumbing. It cannot own a Server, register itself as a Module, or create a
+plumbing. It cannot own a Server, attach itself as a Module, or create a
 fourth HCP role. `HcpMagnetProcess` lives there as injectable plumbing; it is
-not included in generated built-in assembly.
+not included in generated assembly.
 
-`_magenta/session`, `_magenta/env`, `_magenta/messages`, `_magenta/types`, and
-`_magenta/utils` are private host/shared support libraries. They are not
-Modules, Sources, HCP roles, or a contract layer, and they never gain HCP entity
-names merely from being consumed by Modules.
+`_magenta/mcp`, `_magenta/packages`, `_magenta/session`, `_magenta/env`,
+`_magenta/messages`, `_magenta/types`, and `_magenta/utils` are private
+host/shared support libraries. They are not Modules, Sources, HCP roles, or a
+contract layer, and they never gain HCP entity names merely from being consumed
+by Modules.
 
 ## 4. TypeScript Mechanics
 
@@ -157,36 +161,36 @@ names merely from being consumed by Modules.
   `export class HcpMagnet`.
 - Production HCP and module code uses structural `type` aliases, not
   `interface`, `implements`, or a `contract/` layer.
-- A source role class `HcpMagnet` produces exactly one of `toTool()`,
+- A Source role class `HcpMagnet` produces exactly one of `toTool()`,
   `toCapability()`, or `toResource()`. Magnet-side data/transport entities such
   as `HcpMagnetProcess` are not source role classes.
-- `toHcpServer()` is forbidden. Management behavior belongs to the real module
+- `toHcpServer()` is forbidden. Management behavior belongs to the real Module
   Server.
-- Structural correctness is checked where role objects are registered and
+- Structural correctness is checked where role objects are attached and
   consumed; no separate role interface is imported by every implementation.
 
 ## 5. Generated Assembly
 
 Same-name role classes are collected by static code generation:
 
-1. `harness.toml` and registered component TOML files identify module and source
+1. `harness.toml` and declared component TOML files identify Module and Source
    paths.
 2. `scripts/generate-hcp-sources.mjs` verifies each real role file and generates
    `.HCP/assembly/sources.generated.ts`.
-3. `HCP_SERVERS` maps module names to real `HcpServer` classes.
-4. `HCP_MAGNETS` is the only source `HcpMagnet` class list; consumers filter it
-   by generated static metadata rather than maintaining derived tool, skill,
-   capability, or resource Magnet registries.
-5. Assembly registers those real entities with the one HcpClient.
+3. `HCP_SERVERS` maps Module names to real `HcpServer` classes.
+4. `HCP_MAGNETS` is the only Source `HcpMagnet` class list; consumers filter it
+   by generated static metadata rather than maintaining product-specific Magnet
+   lists.
+5. Assembly attaches those real entities to the one HcpClient.
 
-Adding a built-in module/source requires its TOML declaration and real role
+Adding a repository Module/Source requires its TOML declaration and real role
 files, followed by:
 
 ```bash
 npm run generate:hcp-sources
 ```
 
-Do not add a hand-written parallel Server or source registry.
+Do not add a hand-written parallel Server map or Source list.
 
 ## 6. Review Checklist
 
@@ -202,7 +206,7 @@ Examples:
 
 - `HcpServerRequest`: legal Server protocol entity.
 - `HcpMagnetProcess`: legal Magnet-process transport entity, injected by an
-  owning source and never registered as a Module.
+  owning Source and never assembled as a Module.
 - `HcpMagnetJsonlRequest`: legal JSONL request used by `HcpMagnetProcess`.
 - `HcpMagnetResource`: legal Magnet product entity.
 - `HcpClientcapabilityprefix`: legal lowercase tail because no intermediate
@@ -216,12 +220,12 @@ Examples:
 
 `scripts/check-structure.mjs` rejects:
 
-- missing or wrongly exported registered `HcpServer.ts` / `HcpMagnet.ts` roles;
+- missing or wrongly exported declared `HcpServer.ts` / `HcpMagnet.ts` roles;
 - production `interface` declarations and `implements` clauses;
-- `toHcpServer` on a source Magnet;
+- `toHcpServer` on a Source Magnet;
 - retired HCP identifiers such as `CapabilitySourceMagnet` and
   `ModuleHcpServer`; and
-- recreation of `.HCP/magnet/`.
+- recreation of `.HCP/magnet/` or generic Package/MCP subsystems under `.HCP/`.
 
 `npm run generate:hcp-sources -- --check` rejects drift between TOML, real role
 files, and generated static assembly.

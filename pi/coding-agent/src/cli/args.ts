@@ -40,6 +40,7 @@ export interface Args {
 	skills?: string[];
 	harnessList?: boolean;
 	harnessPackages?: string[];
+	harnessPackagesRoot?: string;
 	promptTemplates?: string[];
 	noPromptTemplates?: boolean;
 	themes?: string[];
@@ -162,6 +163,8 @@ export function parseArgs(args: string[]): Args {
 		} else if (arg === "--harness-package" && i + 1 < args.length) {
 			result.harnessPackages = result.harnessPackages ?? [];
 			result.harnessPackages.push(args[++i]);
+		} else if (arg === "--harness-packages-root" && i + 1 < args.length) {
+			result.harnessPackagesRoot = args[++i];
 		} else if (arg === "--prompt-template" && i + 1 < args.length) {
 			result.promptTemplates = result.promptTemplates ?? [];
 			result.promptTemplates.push(args[++i]);
@@ -277,8 +280,9 @@ ${chalk.bold("Options:")}
   --extension, -e <path>         Load an extension file (can be used multiple times)
   --no-extensions, -ne           Disable extension discovery (explicit -e paths still work)
   --skill <path>                 Load a skill file or directory (can be used multiple times)
-  --harness-list                 List registered Harness modules and implementation sources
+  --harness-list                 List generated Harness components and Source selections
   --harness-package <selector>   Load a harness package, e.g. AutOmicScience
+  --harness-packages-root <dir>  Read Harness Packages from this explicit root
   --no-skills, -ns               Disable skills discovery and loading
   --prompt-template <path>       Load a prompt template file or directory (can be used multiple times)
   --no-prompt-templates, -np     Disable prompt template discovery and loading

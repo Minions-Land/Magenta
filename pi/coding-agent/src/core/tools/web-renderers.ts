@@ -1,5 +1,5 @@
 /**
- * Renderers for harness trunk web tools (web-search, web-fetch).
+ * Renderers for HCP web tools (web-search, web-fetch).
  * Parse the deterministic text output from Rust process tools and render
  * structured views with clickable links.
  */

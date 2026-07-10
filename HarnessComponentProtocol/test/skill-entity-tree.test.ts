@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { HcpClientbuildsession } from "../.HCP/assembly/session-hcp.ts";
 import type { HcpMagnetResource } from "../.HCP/HcpMagnetTypes.ts";
-import { parseToml } from "../.HCP/registry/registry.ts";
+import { parseToml } from "../_magenta/utils/pi/toml.ts";
 
 const HARNESS_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -43,8 +43,8 @@ describe("HCP skill entity tree", () => {
 			"skills/research-orchestration",
 			"skills/self-evo",
 		]);
-		expect(hcp.resolveModule("skills/paper-analysis")?.describe().metadata?.slots).toEqual(["pi"]);
-		expect(hcp.resolveModule("skills/self-evo")?.describe().metadata?.slots).toEqual(["magenta"]);
+		expect(hcp.resolveModule("skills/paper-analysis")?.describe().metadata?.slots).toEqual(["skill:paper-analysis"]);
+		expect(hcp.resolveModule("skills/self-evo")?.describe().metadata?.slots).toEqual(["skill:self-evo"]);
 	});
 
 	it("resolves each skill through its leaf Server to a source Resource", async () => {
@@ -62,7 +62,7 @@ describe("HCP skill entity tree", () => {
 			expect(server?.describe()).toMatchObject({
 				target: `module:skills/${skill}`,
 				kind: "module",
-				metadata: { slots: [source], componentKind: "skill" },
+				metadata: { slots: [`skill:${skill}`], componentKind: "skill" },
 			});
 			await expect(hcp.dispatch({ target: `skill:${skill}`, op: "describe" })).resolves.toMatchObject({
 				target: `skill:${skill}`,

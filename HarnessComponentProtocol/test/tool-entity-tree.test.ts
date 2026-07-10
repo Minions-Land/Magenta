@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { HcpClientassemble } from "../.HCP/assembly/session-hcp.ts";
 import { HCP_MAGNETS, HCP_SERVERS } from "../.HCP/assembly/sources.generated.ts";
-import { parseToml } from "../.HCP/registry/registry.ts";
+import { parseToml } from "../_magenta/utils/pi/toml.ts";
 import { HcpClient } from "../HcpClient.ts";
 
 const HARNESS_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");

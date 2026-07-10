@@ -1,8 +1,8 @@
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
-import type { PackageToolDiagnosticCode } from "../../tools/descriptor/package-tool.ts";
-import { parseToml, type TomlTable, type TomlValue } from "../registry/registry.ts";
+import { parseToml, type TomlTable, type TomlValue } from "../utils/pi/toml.ts";
+import type { PackageToolDiagnosticCode } from "./tool-diagnostic.ts";
 
 export const PACKAGE_MANIFEST_FILE = "package.toml";
 export const PACKAGE_SCHEMA_VERSION = "magenta.package.v1";
@@ -84,6 +84,7 @@ export type PackageComponentRef = {
 
 export type PackageResolvedComponent = PackageComponentRef & {
 	packageId: string;
+	packageDir: string;
 	profile?: string;
 	key: string;
 	baseDir: string;
@@ -96,24 +97,6 @@ export type PackageComponentBundle = {
 	name?: string;
 	source: string;
 	raw: string;
-};
-
-export type PackageResourcePath = {
-	packageId: string;
-	profile?: string;
-	name: string;
-	path: string;
-	sourcePath: string;
-	component: PackageResolvedComponent;
-};
-
-export type PackageOverlayResources = {
-	skillPaths: PackageResourcePath[];
-	promptTemplatePaths: PackageResourcePath[];
-	themePaths: PackageResourcePath[];
-	systemPromptPaths: PackageResourcePath[];
-	appendSystemPromptPaths: PackageResourcePath[];
-	brandPaths: PackageResourcePath[];
 };
 
 export type PackageComponentOverride = {
@@ -135,7 +118,6 @@ export type PackageOverlay = {
 	components: PackageResolvedComponent[];
 	componentMap: Map<string, PackageResolvedComponent>;
 	overrides: PackageComponentOverride[];
-	resources: PackageOverlayResources;
 	diagnostics: PackageDiagnostic[];
 };
 
@@ -159,10 +141,12 @@ export type DiscoverHarnessPackagesResult = {
 
 export type DiscoverHarnessPackagesOptions = {
 	repoRoot?: string;
+	packagesRoot?: string;
 };
 
 export type LoadPackageOverlayOptions = {
 	repoRoot?: string;
+	packagesRoot?: string;
 	selections: Array<string | PackageProfileSelection>;
 	includeDefaultProfiles?: boolean;
 };
@@ -194,7 +178,7 @@ export async function discoverHarnessPackages(
 	options: DiscoverHarnessPackagesOptions = {},
 ): Promise<DiscoverHarnessPackagesResult> {
 	const repoRoot = resolve(options.repoRoot ?? process.cwd());
-	const root = getHarnessPackagesRoot(repoRoot);
+	const root = resolve(options.packagesRoot ?? getHarnessPackagesRoot(repoRoot));
 	const diagnostics: PackageDiagnostic[] = [];
 	const packages: HarnessPackage[] = [];
 
@@ -296,9 +280,9 @@ async function loadHarnessPackageManifest(
 
 export async function loadPackageOverlay(options: LoadPackageOverlayOptions): Promise<PackageOverlay> {
 	const repoRoot = resolve(options.repoRoot ?? process.cwd());
-	const packagesRoot = getHarnessPackagesRoot(repoRoot);
+	const packagesRoot = resolve(options.packagesRoot ?? getHarnessPackagesRoot(repoRoot));
 	const includeDefaultProfiles = options.includeDefaultProfiles ?? true;
-	const discovery = await discoverHarnessPackages({ repoRoot });
+	const discovery = await discoverHarnessPackages({ repoRoot, packagesRoot });
 	const packageMap = new Map(discovery.packages.map((pkg) => [pkg.id, pkg]));
 	const selections = options.selections.map((selection) =>
 		typeof selection === "string" ? parsePackageSelector(selection) : selection,
@@ -344,7 +328,6 @@ export async function loadPackageOverlay(options: LoadPackageOverlayOptions): Pr
 		components: resolvedComponents,
 		componentMap: resolvedComponentMap,
 		overrides,
-		resources: collectOverlayResources(resolvedComponents),
 		diagnostics,
 	};
 }
@@ -634,6 +617,7 @@ function resolveComponent(
 	return {
 		...component,
 		packageId: pkg.id,
+		packageDir: pkg.dir,
 		profile,
 		key: componentKey(component),
 		baseDir,
@@ -758,7 +742,7 @@ function resolvePackageLocalReference(options: {
 	}
 
 	const resolvedPath = resolve(options.baseDir, options.reference);
-	if (!isWithinDir(options.packageDir, resolvedPath)) {
+	if (!isWithinDir(options.packageDir, resolvedPath) || !isRealPathWithinDir(options.packageDir, resolvedPath)) {
 		options.diagnostics.push({
 			type: "error",
 			code: options.invalidCode,
@@ -778,6 +762,15 @@ function isWithinDir(parentDir: string, childPath: string): boolean {
 	return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
 }
 
+function isRealPathWithinDir(parentDir: string, childPath: string): boolean {
+	if (!existsSync(childPath)) return true;
+	try {
+		return isWithinDir(realpathSync(parentDir), realpathSync(childPath));
+	} catch {
+		return false;
+	}
+}
+
 function overlayComponentMap(components: PackageResolvedComponent[]): {
 	componentMap: Map<string, PackageResolvedComponent>;
 	overrides: PackageComponentOverride[];
@@ -788,56 +781,13 @@ function overlayComponentMap(components: PackageResolvedComponent[]): {
 		const replaced = componentMap.get(component.key);
 		if (replaced) {
 			overrides.push({ key: component.key, replaced, replacement: component });
+			// Map.set() preserves the first insertion position. Reinsert so iteration
+			// reflects actual last-writer precedence for ordered Resource merging.
+			componentMap.delete(component.key);
 		}
 		componentMap.set(component.key, component);
 	}
 	return { componentMap, overrides };
-}
-
-function collectOverlayResources(components: PackageResolvedComponent[]): PackageOverlayResources {
-	const resources: PackageOverlayResources = {
-		skillPaths: [],
-		promptTemplatePaths: [],
-		themePaths: [],
-		systemPromptPaths: [],
-		appendSystemPromptPaths: [],
-		brandPaths: [],
-	};
-
-	for (const component of components) {
-		if (!component.path) continue;
-		const resource = {
-			packageId: component.packageId,
-			profile: component.profile,
-			name: component.name,
-			path: component.path,
-			sourcePath: component.sourcePath,
-			component,
-		};
-		switch (component.kind) {
-			case "skill":
-				resources.skillPaths.push(resource);
-				break;
-			case "prompt":
-			case "prompt-template":
-				resources.promptTemplatePaths.push(resource);
-				break;
-			case "theme":
-				resources.themePaths.push(resource);
-				break;
-			case "system-prompt":
-				resources.systemPromptPaths.push(resource);
-				break;
-			case "append-system-prompt":
-				resources.appendSystemPromptPaths.push(resource);
-				break;
-			case "brand":
-				resources.brandPaths.push(resource);
-				break;
-		}
-	}
-
-	return resources;
 }
 
 function componentKey(component: Pick<PackageComponentRef, "kind" | "name">): string {

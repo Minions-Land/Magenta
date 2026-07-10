@@ -2,6 +2,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { AgentSession } from "../src/core/agent-session.ts";
 import { createExtensionRuntime } from "../src/core/extensions/loader.ts";
 import type { ResourceLoader } from "../src/core/resource-loader.ts";
 import { createAgentSession } from "../src/core/sdk.ts";
@@ -11,8 +12,10 @@ import { createSyntheticSourceInfo } from "../src/core/source-info.ts";
 describe("createAgentSession skills option", () => {
 	let tempDir: string;
 	let skillsDir: string;
+	let sessions: AgentSession[];
 
 	beforeEach(() => {
+		sessions = [];
 		tempDir = join(tmpdir(), `pi-sdk-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 		skillsDir = join(tempDir, "skills", "test-skill");
 		mkdirSync(skillsDir, { recursive: true });
@@ -32,7 +35,8 @@ This is a test skill.
 		);
 	});
 
-	afterEach(() => {
+	afterEach(async () => {
+		await Promise.all(sessions.splice(0).map((session) => session.dispose()));
 		if (tempDir) {
 			rmSync(tempDir, { recursive: true, force: true });
 		}
@@ -44,6 +48,7 @@ This is a test skill.
 			agentDir: tempDir,
 			sessionManager: SessionManager.inMemory(),
 		});
+		sessions.push(session);
 
 		// Skills should be discovered and exposed on the session
 		expect(session.resourceLoader.getSkills().skills.length).toBeGreaterThan(0);
@@ -58,7 +63,6 @@ This is a test skill.
 			getThemes: () => ({ themes: [], diagnostics: [] }),
 			getPackageOverlay: () => undefined,
 			getPackageTools: () => ({ tools: [], diagnostics: [] }),
-			getTrunkTools: () => ({ tools: [], diagnostics: [] }),
 			getUserMcpTools: () => ({ tools: [], diagnostics: [] }),
 			getAgentsFiles: () => ({ agentsFiles: [] }),
 			getSystemPrompt: () => undefined,
@@ -73,6 +77,7 @@ This is a test skill.
 			sessionManager: SessionManager.inMemory(),
 			resourceLoader,
 		});
+		sessions.push(session);
 
 		expect(session.resourceLoader.getSkills().skills).toEqual([]);
 		expect(session.resourceLoader.getSkills().diagnostics).toEqual([]);
@@ -96,7 +101,6 @@ This is a test skill.
 			getThemes: () => ({ themes: [], diagnostics: [] }),
 			getPackageOverlay: () => undefined,
 			getPackageTools: () => ({ tools: [], diagnostics: [] }),
-			getTrunkTools: () => ({ tools: [], diagnostics: [] }),
 			getUserMcpTools: () => ({ tools: [], diagnostics: [] }),
 			getAgentsFiles: () => ({ agentsFiles: [] }),
 			getSystemPrompt: () => undefined,
@@ -111,6 +115,7 @@ This is a test skill.
 			sessionManager: SessionManager.inMemory(),
 			resourceLoader,
 		});
+		sessions.push(session);
 
 		expect(session.resourceLoader.getSkills().skills).toEqual([customSkill]);
 		expect(session.resourceLoader.getSkills().diagnostics).toEqual([]);

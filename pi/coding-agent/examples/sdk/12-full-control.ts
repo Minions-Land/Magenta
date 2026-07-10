@@ -44,7 +44,6 @@ const resourceLoader: ResourceLoader = {
 	getThemes: () => ({ themes: [], diagnostics: [] }),
 	getPackageOverlay: () => undefined,
 	getPackageTools: () => ({ tools: [], diagnostics: [] }),
-	getTrunkTools: () => ({ tools: [], diagnostics: [] }),
 	getUserMcpTools: () => ({ tools: [], diagnostics: [] }),
 	getAgentsFiles: () => ({ agentsFiles: [] }),
 	getSystemPrompt: () => `You are a minimal assistant.
@@ -77,5 +76,5 @@ try {
 	await session.prompt("List files in the current directory.");
 	console.log();
 } finally {
-	session.dispose();
+	await session.dispose();
 }

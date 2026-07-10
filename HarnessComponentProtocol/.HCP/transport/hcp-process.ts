@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
+import { parseToml, type TomlTable } from "../../_magenta/utils/pi/toml.ts";
 import type { HcpServerRequest } from "../HcpServerTypes.ts";
-import { parseToml, type TomlTable } from "../registry/registry.ts";
 
 type HcpMagnetProcesssandboxprofile = {
 	kind: "sandbox" | string;

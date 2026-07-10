@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
-import type { McpStdioClientOptions, McpToolSchema } from "./mcp-client.ts";
+import type { McpStdioClientOptions, McpToolSchema } from "./client.ts";
 
 /**
  * Disk cache for an MCP server's `tools/list` result.

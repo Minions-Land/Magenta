@@ -145,7 +145,38 @@ describe("InteractiveMode.setToolsExpanded", () => {
 });
 
 describe("InteractiveMode harness menu", () => {
-	test("shows Magenta and Pi tool implementations from the Harness registry", async () => {
+	test("discovers packages from the resource loader's explicit root", async () => {
+		const root = mkdtempSync(path.join(homedir(), "magenta-harness-packages-root-"));
+		try {
+			const repoRoot = path.join(root, "repo");
+			const packagesRoot = path.join(root, "external-packages");
+			mkdirSync(repoRoot, { recursive: true });
+			mkdirSync(path.join(packagesRoot, "ExternalDomain"), { recursive: true });
+			writeFileSync(
+				path.join(packagesRoot, "ExternalDomain", "package.toml"),
+				`schema_version = "magenta.package.v1"
+id = "ExternalDomain"
+name = "External Domain"
+`,
+			);
+			const fakeThis = {
+				sessionManager: { getCwd: () => repoRoot },
+				session: {
+					resourceLoader: { getHarnessPackagesRoot: () => packagesRoot },
+				},
+			};
+
+			const view = await (InteractiveMode as any).prototype.loadHarnessPackagesView.call(fakeThis);
+
+			expect(view.packagesRoot).toBe(packagesRoot);
+			expect(view.packages.map((pkg: { id: string }) => pkg.id)).toEqual(["ExternalDomain"]);
+			expect(view.diagnostics).toEqual([]);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	test("shows Magenta and Pi Sources from generated HCP data", async () => {
 		const root = mkdtempSync(path.join(homedir(), "magenta-harness-menu-"));
 		try {
 			const magentaPath = path.join(root, "harness", "tools", "bash", "magenta");
@@ -163,33 +194,40 @@ describe("InteractiveMode harness menu", () => {
 				skillCommands: true,
 				loadedSkills: 0,
 				loadedExtensions: 0,
-				tools: [{ name: "bash", active: true, source: "builtin" }],
+				tools: [{ name: "bash", active: true, source: "pi" }],
 				harnessPackages: [],
 				packageToolCount: 0,
 				packageDiagnosticCount: 0,
 				activeHookEvents: [],
-				registry: {
-					registry: {
-						name: "magenta-harness",
-						components: [],
-						catalogs: [],
-						modules: [
-							{
-								id: "tool/bash",
-								kind: "tool",
-								name: "bash",
-								description: "Bash",
-								path: path.join(root, "harness", "tools", "bash", "bash.toml"),
-								capability: "tool/bash",
-								status: "ready",
-								component: {} as any,
-								implementations: [
-									{ source: "magenta", status: "ready", path: magentaPath },
-									{ source: "pi", status: "ready", path: piPath },
-								],
-							},
-						],
-					},
+				components: {
+					components: [
+						{
+							id: "tool/bash",
+							module: "tools/bash",
+							kind: "tool",
+							name: "bash",
+							product: "tool",
+							description: "Bash",
+							descriptorPath: path.join(root, "harness", "tools", "bash", "bash.toml"),
+							status: "active",
+							sources: [
+								{
+									source: "magenta",
+									status: "available",
+									selected: false,
+									active: false,
+									descriptorPath: magentaPath,
+								},
+								{
+									source: "pi",
+									status: "active",
+									selected: true,
+									active: true,
+									descriptorPath: piPath,
+								},
+							],
+						},
+					],
 				},
 			});
 			fakeThis.loadHarnessPackagesView = async () => ({
@@ -208,8 +246,8 @@ describe("InteractiveMode harness menu", () => {
 			expect(labels).toContain("Magenta");
 			expect(labels).toContain("Pi");
 			expect(bash.description).toContain("implementation: Pi");
-			expect(magenta.description).toContain("needs build");
-			expect(pi.description).toContain("active runtime bridge");
+			expect(magenta.description).toContain("available");
+			expect(pi.description).toContain("active");
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}

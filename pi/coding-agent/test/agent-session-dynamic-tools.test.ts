@@ -53,6 +53,30 @@ additionalProperties = true
 	);
 }
 
+function writeUserMcpFixture(agentDir: string): void {
+	const serverPath = join(agentDir, "dynamic-mcp.cjs");
+	writeFileSync(
+		serverPath,
+		`const readline = require("node:readline");
+const lines = readline.createInterface({ input: process.stdin });
+const send = (id, result) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id, result }) + "\\n");
+lines.on("line", (line) => {
+  const message = JSON.parse(line);
+  if (message.method === "initialize") send(message.id, { protocolVersion: "2024-11-05", capabilities: { tools: {} } });
+  if (message.method === "tools/list") {
+    send(message.id, { tools: [{ name: "ping", description: "Dynamic MCP ping", inputSchema: { type: "object" } }] });
+  }
+});
+`,
+	);
+	writeFileSync(
+		join(agentDir, "mcp-servers.json"),
+		JSON.stringify({
+			servers: [{ name: "dynamic", command: process.execPath, args: [serverPath], name_prefix: "user" }],
+		}),
+	);
+}
+
 describe("AgentSession dynamic tool registration", () => {
 	let tempDir: string;
 	let agentDir: string;
@@ -126,8 +150,8 @@ describe("AgentSession dynamic tool registration", () => {
 			origin: "top-level",
 		});
 		expect(readTool?.sourceInfo).toMatchObject({
-			path: "<builtin:read>",
-			source: "builtin",
+			path: "<hcp:pi:read>",
+			source: "pi",
 			scope: "temporary",
 			origin: "top-level",
 		});
@@ -135,7 +159,7 @@ describe("AgentSession dynamic tool registration", () => {
 		expect(session.systemPrompt).toContain("- dynamic_tool: Run dynamic test behavior");
 		expect(session.systemPrompt).toContain("- Use dynamic_tool when the user asks for dynamic behavior tests.");
 
-		session.dispose();
+		await session.dispose();
 	});
 
 	it("returns source metadata for SDK custom tools", async () => {
@@ -178,7 +202,7 @@ describe("AgentSession dynamic tool registration", () => {
 		});
 		expect(session.getActiveToolNames()).toContain("sdk_tool");
 
-		session.dispose();
+		await session.dispose();
 	});
 
 	it("registers selected harness package tools and enables them by default", async () => {
@@ -211,7 +235,37 @@ describe("AgentSession dynamic tool registration", () => {
 		});
 		expect(session.getActiveToolNames()).toContain("test_package_tool");
 
-		session.dispose();
+		await session.dispose();
+	});
+
+	it("keeps explicit Package and user MCP tools active when built-in defaults are disabled", async () => {
+		writeHarnessPackageFixture(tempDir);
+		writeUserMcpFixture(agentDir);
+		const settingsManager = SettingsManager.create(tempDir, agentDir);
+		const sessionManager = SessionManager.inMemory();
+		const resourceLoader = new DefaultResourceLoader({
+			cwd: tempDir,
+			agentDir,
+			settingsManager,
+			harnessPackages: ["TestDomain"],
+		});
+		await resourceLoader.reload();
+
+		const { session } = await createAgentSession({
+			cwd: tempDir,
+			agentDir,
+			model: getModel("anthropic", "claude-sonnet-4-5")!,
+			settingsManager,
+			sessionManager,
+			resourceLoader,
+			noTools: "builtin",
+		});
+
+		expect(session.getActiveToolNames()).toEqual(expect.arrayContaining(["test_package_tool", "user_ping"]));
+		expect(session.getActiveToolNames()).not.toContain("read");
+		expect(session.getActiveToolNames()).not.toContain("web-search");
+
+		await session.dispose();
 	});
 
 	it("reloads runtime harness package tool selections", async () => {
@@ -248,7 +302,71 @@ describe("AgentSession dynamic tool registration", () => {
 		expect(session.getAllTools().map((tool) => tool.name)).not.toContain("test_package_tool");
 		expect(session.getActiveToolNames()).not.toContain("test_package_tool");
 
-		session.dispose();
+		await session.dispose();
+	});
+
+	it("activates user MCP tools added during reload", async () => {
+		const settingsManager = SettingsManager.create(tempDir, agentDir);
+		const sessionManager = SessionManager.inMemory();
+		const resourceLoader = new DefaultResourceLoader({
+			cwd: tempDir,
+			agentDir,
+			settingsManager,
+		});
+		await resourceLoader.reload();
+		const { session } = await createAgentSession({
+			cwd: tempDir,
+			agentDir,
+			model: getModel("anthropic", "claude-sonnet-4-5")!,
+			settingsManager,
+			sessionManager,
+			resourceLoader,
+		});
+		expect(session.getAllTools().map((tool) => tool.name)).not.toContain("user_ping");
+
+		writeUserMcpFixture(agentDir);
+		await session.reload();
+
+		const userTool = session.getAllTools().find((tool) => tool.name === "user_ping");
+		expect(userTool?.sourceInfo).toMatchObject({
+			path: "<user-mcp:user_ping>",
+			source: "user-mcp",
+			origin: "top-level",
+		});
+		expect(session.getActiveToolNames()).toContain("user_ping");
+		await session.dispose();
+	});
+
+	it("preserves explicit tool disablement while activating only newly loaded tools", async () => {
+		writeHarnessPackageFixture(tempDir);
+		const settingsManager = SettingsManager.create(tempDir, agentDir);
+		const sessionManager = SessionManager.inMemory();
+		const resourceLoader = new DefaultResourceLoader({
+			cwd: tempDir,
+			agentDir,
+			settingsManager,
+			harnessPackages: ["TestDomain"],
+		});
+		await resourceLoader.reload();
+		const { session } = await createAgentSession({
+			cwd: tempDir,
+			agentDir,
+			model: getModel("anthropic", "claude-sonnet-4-5")!,
+			settingsManager,
+			sessionManager,
+			resourceLoader,
+		});
+
+		session.setActiveToolsByName(
+			session.getActiveToolNames().filter((name) => name !== "test_package_tool" && name !== "web-search"),
+		);
+		writeUserMcpFixture(agentDir);
+		await session.reload();
+
+		expect(session.getActiveToolNames()).not.toContain("test_package_tool");
+		expect(session.getActiveToolNames()).not.toContain("web-search");
+		expect(session.getActiveToolNames()).toContain("user_ping");
+		await session.dispose();
 	});
 
 	it("keeps custom tools active but omits them from available tools when promptSnippet is not provided", async () => {
@@ -294,6 +412,6 @@ describe("AgentSession dynamic tool registration", () => {
 		expect(session.systemPrompt).not.toContain("hidden_tool");
 		expect(session.systemPrompt).not.toContain("Description should not appear in available tools");
 
-		session.dispose();
+		await session.dispose();
 	});
 });

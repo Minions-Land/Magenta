@@ -53,4 +53,4 @@ const { session } = await createAgentSession({
 	sessionManager: SessionManager.inMemory(),
 });
 console.log("Session created with filtered skills");
-session.dispose();
+await session.dispose();

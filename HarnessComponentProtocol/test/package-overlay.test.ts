@@ -1,11 +1,16 @@
-import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { TSchema } from "typebox";
 import { describe, expect, it } from "vitest";
 import { HcpClientbuildsession } from "../.HCP/assembly/session-hcp.ts";
-import { discoverHarnessPackages, loadPackageOverlay, parsePackageSelector } from "../.HCP/overlay/package-overlay.ts";
+import type { HcpMagnetResource } from "../.HCP/HcpMagnetTypes.ts";
+import {
+	discoverHarnessPackages,
+	loadPackageOverlay,
+	parsePackageSelector,
+} from "../_magenta/packages/package-overlay.ts";
 import type { ProcessToolDetails } from "../tools/process-tool.ts";
 
 type SessionAssembly = Awaited<ReturnType<typeof HcpClientbuildsession>>;
@@ -48,6 +53,157 @@ describe("harness package overlay", () => {
 		expect(parsePackageSelector("AutOmicScience:scrna,spatial")).toEqual({
 			packageId: "AutOmicScience",
 			profiles: ["scrna", "spatial"],
+		});
+	});
+
+	it("assembles tools from an explicitly managed external root", async () => {
+		const repoRoot = await mkdtemp(join(tmpdir(), "magenta-package-host-"));
+		const packagesRoot = await mkdtemp(join(tmpdir(), "magenta-packages-"));
+		const packageDir = join(packagesRoot, "external-folder");
+		let assembly: SessionAssembly | undefined;
+		try {
+			await writeText(
+				join(packageDir, "package.toml"),
+				`schema_version = "magenta.package.v1"
+id = "ExternalDomain"
+name = "External Domain"
+kind = "domain"
+default_profiles = ["general"]
+
+[[profiles]]
+name = "general"
+harness = "general/harness.toml"
+`,
+			);
+			await writeText(
+				join(packageDir, "general", "harness.toml"),
+				`[[components]]
+kind = "tool"
+name = "external_echo"
+path = "tools/external-echo.toml"
+`,
+			);
+			await writeText(
+				join(packageDir, "general", "tools", "external-echo.toml"),
+				`kind = "tool"
+name = "external_echo"
+description = "Echo through an externally managed package."
+runtime = "process"
+command = "node"
+args = ["-e", "process.stdin.pipe(process.stdout)"]
+operation = "execute"
+read_only = true
+destructive = false
+
+[parameters]
+type = "object"
+additionalProperties = true
+`,
+			);
+
+			const discovery = await discoverHarnessPackages({ repoRoot, packagesRoot });
+			expect(discovery.packagesRoot).toBe(packagesRoot);
+			expect(discovery.packages.map((pkg) => pkg.id)).toEqual(["ExternalDomain"]);
+
+			const overlay = await loadPackageOverlay({ repoRoot, packagesRoot, selections: ["ExternalDomain"] });
+			expect(overlay.packagesRoot).toBe(packagesRoot);
+			expect(overlay.packages.map((pkg) => pkg.id)).toEqual(["ExternalDomain"]);
+			expect(overlay.diagnostics).toEqual([]);
+
+			assembly = await HcpClientbuildsession({ repoRoot, overlay });
+			expect(assembly.diagnostics).toEqual([]);
+			expect(assembly.packageToolAddresses).toEqual(["tool:external_echo"]);
+			expect(assembly.hcp.resolveInstance<AgentTool>("tool:external_echo")?.name).toBe("external_echo");
+			const result = await resolveProcessTool(assembly, "external_echo").execute("external-call", {});
+			expect(firstText(result)).toBe("{}");
+		} finally {
+			await assembly?.hcp.dispose();
+			await Promise.all([
+				rm(repoRoot, { recursive: true, force: true }),
+				rm(packagesRoot, { recursive: true, force: true }),
+			]);
+		}
+	});
+
+	it("routes a Package Resource through the root Server and replaces a repository leaf address", async () => {
+		await withTempRepo(async ({ repoRoot, packagesRoot }) => {
+			const packageDir = join(packagesRoot, "OverrideDomain");
+			await writeText(
+				join(packageDir, "package.toml"),
+				`schema_version = "magenta.package.v1"
+id = "OverrideDomain"
+name = "Override Domain"
+
+[[components]]
+kind = "skill"
+name = "paper-analysis"
+path = "skills/paper-analysis"
+
+[[components]]
+kind = "prompt"
+name = "package-prompt"
+path = "prompts/package-prompt.md"
+
+[[components]]
+kind = "theme"
+name = "package-theme"
+path = "themes/package-theme.json"
+
+[[components]]
+kind = "brand"
+name = "package-brand"
+path = "brand/BRAND.md"
+`,
+			);
+			await writeText(
+				join(packageDir, "skills", "paper-analysis", "SKILL.md"),
+				`---
+name: paper-analysis
+description: Package override.
+---
+
+# Package paper analysis
+`,
+			);
+			await writeText(join(packageDir, "prompts", "package-prompt.md"), "Package prompt.");
+			await writeText(join(packageDir, "themes", "package-theme.json"), "{}");
+			await writeText(join(packageDir, "brand", "BRAND.md"), "Package brand.");
+
+			const overlay = await loadPackageOverlay({ repoRoot, selections: ["OverrideDomain"] });
+			const assembly = await HcpClientbuildsession({ repoRoot, overlay });
+			try {
+				expect(assembly.diagnostics).toEqual([]);
+				expect([...assembly.packageResourceAddresses].sort()).toEqual(
+					[
+						"brand:package-brand",
+						"prompt-template:package-prompt",
+						"skill:paper-analysis",
+						"theme:package-theme",
+					].sort(),
+				);
+				expect(assembly.hcp.resolve("skill:paper-analysis")).toBe(assembly.hcp.resolveModule("skills"));
+				expect(assembly.hcp.resolveModule("skills/paper-analysis")).toBeUndefined();
+				expect(assembly.hcp.resolveInstance<HcpMagnetResource>("skill:paper-analysis")).toMatchObject({
+					kind: "skill",
+					name: "paper-analysis",
+					source: "OverrideDomain",
+					contentPath: join(packageDir, "skills", "paper-analysis"),
+					metadata: { origin: "package", packageId: "OverrideDomain", packageDir },
+				});
+				for (const [address, module] of [
+					["prompt-template:package-prompt", "prompt-templates"],
+					["theme:package-theme", "themes"],
+					["brand:package-brand", "brand"],
+				] as const) {
+					expect(assembly.hcp.resolve(address)).toBe(assembly.hcp.resolveModule(module));
+					expect(assembly.hcp.resolveInstance<HcpMagnetResource>(address)).toMatchObject({
+						name: address.slice(address.indexOf(":") + 1),
+						source: "OverrideDomain",
+					});
+				}
+			} finally {
+				await assembly.hcp.dispose();
+			}
 		});
 	});
 
@@ -215,14 +371,20 @@ scRNA.
 			expect(overlay.overrides).toHaveLength(2);
 			expect(overlay.overrides[0]?.key).toBe("skill:omics-shared");
 			expect(overlay.overrides[1]?.key).toBe("system-prompt:system-prompt");
-			expect(overlay.resources.skillPaths.map((resource) => resource.name).sort()).toEqual([
-				"omics-scrna",
-				"omics-shared",
-			]);
-			expect(overlay.resources.systemPromptPaths.map((resource) => resource.path)).toEqual([
-				join(packagesRoot, "AutOmicScience", "task", "scrna", "system-prompt", "system-prompt.toml"),
-			]);
-			expect(overlay.resources.brandPaths.map((resource) => resource.name)).toEqual(["omics-brand"]);
+			expect(
+				overlay.components
+					.filter((component) => component.kind === "skill")
+					.map((component) => component.name)
+					.sort(),
+			).toEqual(["omics-scrna", "omics-shared"]);
+			expect(
+				overlay.components
+					.filter((component) => component.kind === "system-prompt")
+					.map((component) => component.path),
+			).toEqual([join(packagesRoot, "AutOmicScience", "task", "scrna", "system-prompt", "system-prompt.toml")]);
+			expect(
+				overlay.components.filter((component) => component.kind === "brand").map((component) => component.name),
+			).toEqual(["omics-brand"]);
 		});
 	});
 
@@ -308,7 +470,10 @@ profiles = ["beta"]
 			const skillNames = async (selector: string): Promise<string[]> => {
 				const overlay = await loadPackageOverlay({ repoRoot, selections: [selector] });
 				expect(overlay.diagnostics).toEqual([]);
-				return overlay.resources.skillPaths.map((resource) => resource.name).sort();
+				return overlay.components
+					.filter((component) => component.kind === "skill")
+					.map((component) => component.name)
+					.sort();
 			};
 
 			// No selector + empty default_profiles = no narrowing → whole package.
@@ -465,7 +630,7 @@ type = "object"
 
 				const result = await resolveProcessTool(assembly, "env_probe").execute("tool-call", {});
 				expect(firstText(result)).toContain('"secret":null');
-				expect(result?.details.runtimePolicy?.fs_read).toEqual([await realpath(repoRoot)]);
+				expect(result?.details.runtimePolicy?.fs_read).toEqual([await realpath(join(packagesRoot, "EnvDomain"))]);
 			} finally {
 				delete process.env.MAGENTA_PACKAGE_SECRET;
 			}
@@ -942,9 +1107,40 @@ path = "../../../outside-skill"
 			});
 
 			expect(overlay.componentMap.has("skill:escaping-skill")).toBe(false);
-			expect(overlay.resources.skillPaths).toEqual([]);
+			expect(overlay.components.some((component) => component.key === "skill:escaping-skill")).toBe(false);
 			expect(overlay.diagnostics.some((diagnostic) => diagnostic.code === "package_harness_invalid")).toBe(true);
 			expect(overlay.diagnostics.some((diagnostic) => diagnostic.code === "package_component_invalid")).toBe(true);
+		});
+	});
+
+	it("rejects a package-local symlink that resolves outside the Package directory", async () => {
+		await withTempRepo(async ({ repoRoot, packagesRoot }) => {
+			const packageDir = join(packagesRoot, "SymlinkDomain");
+			const outsideSkill = join(repoRoot, "outside-skill");
+			await writeText(join(outsideSkill, "SKILL.md"), "# Outside");
+			await writeText(
+				join(packageDir, "package.toml"),
+				`schema_version = "magenta.package.v1"
+id = "SymlinkDomain"
+name = "Symlink Domain"
+
+[[components]]
+kind = "skill"
+name = "outside"
+path = "linked-skill"
+`,
+			);
+			await symlink(outsideSkill, join(packageDir, "linked-skill"), "dir");
+
+			const overlay = await loadPackageOverlay({ repoRoot, selections: ["SymlinkDomain"] });
+
+			expect(overlay.componentMap.has("skill:outside")).toBe(false);
+			expect(overlay.diagnostics).toContainEqual(
+				expect.objectContaining({
+					code: "package_component_invalid",
+					message: expect.stringContaining("escapes the package directory"),
+				}),
+			);
 		});
 	});
 });

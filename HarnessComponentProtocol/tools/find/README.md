@@ -85,9 +85,9 @@ Paths are relative to the search directory.
 The tool requires `fd` to be available. Pi's tools-manager auto-downloads `fd` if missing via the injected `ensureTool` dependency.
 
 ```typescript
-interface FindExecuteDeps {
+type FindExecuteDeps = {
   ensureTool: (tool: string, silent?: boolean) => Promise<string | undefined>;
-}
+};
 ```
 
 ## Pluggable Operations
@@ -95,13 +95,13 @@ interface FindExecuteDeps {
 Override for custom file search:
 
 ```typescript
-interface FindOperations {
+type FindOperations = {
   exists: (absolutePath: string) => Promise<boolean> | boolean;
   glob: (pattern: string, cwd: string, options: {
     ignore: string[];
     limit: number;
   }) => Promise<string[]> | string[];
-}
+};
 ```
 
 Example for remote search:
@@ -117,9 +117,13 @@ createFindExecute(cwd, {
 });
 ```
 
-## Registration
+## HCP Declaration
+
+`HarnessComponentProtocol/harness.toml` selects this component declaration for
+codegen:
 
 ```toml
+[[components]]
 kind = "tool"
 name = "find"
 path = "tools/find/find.toml"

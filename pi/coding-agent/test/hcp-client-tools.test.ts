@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { HcpClientbuildsession, type SshToolOperations } from "@magenta/harness";
+import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import { HcpClientassembletools } from "../src/core/HcpClienttools.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
@@ -65,9 +66,10 @@ describe("HcpClient host tool assembly", () => {
 
 		await HcpClientassembletools({ hcp, cwd: root, settingsManager, sessionManager, sshOperations });
 
-		for (const name of ["read", "bash", "edit", "write", "grep", "find", "ls", "show", "todo"]) {
+		for (const name of ["read", "bash", "edit", "write", "grep", "find", "ls", "lsp", "show", "todo"]) {
 			expect(hcp.resolveInstance(`tool:${name}`), `tool:${name}`).toBeDefined();
 		}
+		expect(hcp.resolveInstance("tool:tool-search")).toBeUndefined();
 		const read = hcp.resolveInstance<AgentTool>("tool:read")!;
 		await expect(read.execute("read-1", { path: "remote.txt" })).resolves.toMatchObject({
 			content: [{ type: "text", text: "remote contents" }],
@@ -82,5 +84,34 @@ describe("HcpClient host tool assembly", () => {
 			content: [{ type: "text", text: "7. [ ] From this branch" }],
 			details: { nextId: 8 },
 		});
+	});
+
+	it("fills missing defaults without replacing a Package-owned tool address", async () => {
+		const root = join(tmpdir(), `hcp-client-tools-package-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+		const agentDir = join(root, "agent");
+		mkdirSync(agentDir, { recursive: true });
+		roots.push(root);
+
+		const settingsManager = SettingsManager.create(root, agentDir);
+		const { hcp } = await HcpClientbuildsession({ repoRoot: root });
+		const packageRead: AgentTool = {
+			name: "read",
+			label: "Read",
+			description: "Package-owned read tool",
+			parameters: Type.Any(),
+			execute: async () => ({ content: [{ type: "text" as const, text: "package read" }], details: {} }),
+		};
+		const tools = hcp.resolveModule("tools")!;
+		hcp.registerModule(
+			tools,
+			new Map([["tool:read", { kind: "tool:package", source: "package", toTool: () => packageRead }]]),
+			{ merge: true, override: true },
+		);
+
+		await HcpClientassembletools({ hcp, cwd: root, settingsManager });
+
+		expect(hcp.resolveInstance("tool:read")).toBe(packageRead);
+		expect(hcp.resolveInstance("tool:bash")).toBeDefined();
+		await hcp.dispose();
 	});
 });

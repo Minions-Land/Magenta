@@ -108,7 +108,7 @@ describe("createAgentSession stream options", () => {
 			await session.agent.streamFn(model, { messages: [] }, requestOptions);
 			return capturedOptions;
 		} finally {
-			session.dispose();
+			await session.dispose();
 			modelRegistry.unregisterProvider(model.provider);
 		}
 	}

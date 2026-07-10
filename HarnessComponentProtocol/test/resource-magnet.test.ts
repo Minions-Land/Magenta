@@ -13,8 +13,8 @@ const context = {
 	source: "pi",
 };
 
-describe("Resource primitive", () => {
-	it("is the only primitive produced by a skill source Magnet", () => {
+describe("Resource product", () => {
+	it("is the only product produced by a skill Source Magnet", () => {
 		const magnet = paperAnalysisPi.HcpMagnet.build(context);
 
 		expect(magnet.toResource()).toMatchObject({

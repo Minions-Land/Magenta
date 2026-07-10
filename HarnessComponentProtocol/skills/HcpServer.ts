@@ -99,8 +99,6 @@ export function getHarnessSkillsDir(): string {
 }
 
 /** Canonical harness implementation sources; a skill's identity is its slot dir, not its source dir. */
-const SOURCE_DIR_NAMES = new Set(["pi", "codex", "jcode", "claude-code", "magenta"]);
-
 /**
  * Load skills from one or more directories.
  *
@@ -317,13 +315,10 @@ export async function loadSkillFile(
 
 	const { frontmatter, body } = parsed.value;
 	const skillDir = dirnameEnvPath(filePath);
-	// A skill's canonical name is its capability directory. When the SKILL.md sits inside a
-	// `<capability>/<source>/` slot (harness-native layout), the immediate parent is the source
-	// (e.g. `pi`), so the capability name is the grandparent. Otherwise the parent dir names it.
+	// Direct skills use their immediate directory. A source-owned
+	// `<skill>/<source>/SKILL.md` may instead name the grandparent skill slot.
 	const immediateParent = basenameEnvPath(skillDir);
-	const parentDirName = SOURCE_DIR_NAMES.has(immediateParent)
-		? basenameEnvPath(dirnameEnvPath(skillDir))
-		: immediateParent;
+	const grandparent = basenameEnvPath(dirnameEnvPath(skillDir));
 	const description = typeof frontmatter.description === "string" ? frontmatter.description : undefined;
 
 	for (const error of validateDescription(description)) {
@@ -331,8 +326,8 @@ export async function loadSkillFile(
 	}
 
 	const frontmatterName = typeof frontmatter.name === "string" ? frontmatter.name : undefined;
-	const name = frontmatterName || parentDirName;
-	for (const error of validateName(name, parentDirName)) {
+	const name = frontmatterName || immediateParent;
+	for (const error of validateName(name, [immediateParent, grandparent])) {
 		diagnostics.push({ type: "warning", code: "invalid_metadata", message: error, path: filePath });
 	}
 
@@ -372,9 +367,13 @@ function extractMetadata(frontmatter: SkillFrontmatter): Record<string, unknown>
 	return entries.length > 0 ? Object.fromEntries(entries) : undefined;
 }
 
-function validateName(name: string, parentDirName: string): string[] {
+function validateName(name: string, directoryNames: readonly string[]): string[] {
 	const errors: string[] = [];
-	if (name !== parentDirName) errors.push(`name "${name}" does not match parent directory "${parentDirName}"`);
+	if (!directoryNames.includes(name)) {
+		errors.push(
+			`name "${name}" does not match parent directory "${directoryNames[0]}" or owning slot "${directoryNames[1]}"`,
+		);
+	}
 	if (name.length > MAX_NAME_LENGTH) errors.push(`name exceeds ${MAX_NAME_LENGTH} characters (${name.length})`);
 	if (!/^[a-z0-9-]+$/.test(name)) {
 		errors.push("name contains invalid characters (must be lowercase a-z, 0-9, hyphens only)");

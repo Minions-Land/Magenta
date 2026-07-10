@@ -1,4 +1,4 @@
-import type { McpStdioManagedProcessInput, McpStdioManagedSpawner } from "../.HCP/transport/mcp-client.ts";
+import type { McpStdioManagedProcessInput, McpStdioManagedSpawner } from "../_magenta/mcp/client.ts";
 import type { ProcessRuntimeManagedHandle } from "../runtime/HcpServer.ts";
 import { ProcessRuntimeProvider } from "../runtime/magenta/process-runtime.ts";
 

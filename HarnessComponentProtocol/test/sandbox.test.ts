@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getHarnessRegistryPath, loadRegistry } from "../.HCP/registry/registry.ts";
+import { HCP_MAGNETS } from "../.HCP/assembly/sources.generated.ts";
 import { HcpClient } from "../HcpClient.ts";
 import * as sandboxServer from "../sandbox/HcpServer.ts";
 import * as sandboxMagenta from "../sandbox/magenta/HcpMagnet.ts";
@@ -112,11 +112,10 @@ describe("sandbox provider", () => {
 		});
 	});
 
-	it("is registered in the harness registry", async () => {
-		const registry = await loadRegistry(getHarnessRegistryPath());
-
-		expect(registry.components.find((component) => component.kind === "sandbox")).toMatchObject({
+	it("is declared in the generated HCP rows", () => {
+		expect(HCP_MAGNETS.find((component) => component.kind === "sandbox")).toMatchObject({
 			name: "sandbox",
+			source: "magenta",
 		});
 	});
 });

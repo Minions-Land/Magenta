@@ -68,7 +68,7 @@ describe("regression #3592: no-builtin-tools keeps extension tools enabled", () 
 			noTools: options?.noTools,
 			tools: options?.tools,
 		});
-		await session.bindExtensions({});
+		await session.bindExtensions({ shutdownHandler: () => {} });
 		return session;
 	}
 
@@ -89,6 +89,7 @@ describe("regression #3592: no-builtin-tools keeps extension tools enabled", () 
 				"find",
 				"grep",
 				"ls",
+				"lsp",
 				"read",
 				"send_message",
 				"show",
@@ -102,7 +103,12 @@ describe("regression #3592: no-builtin-tools keeps extension tools enabled", () 
 		expect(session.systemPrompt).toContain("- dynamic_tool: Run dynamic test behavior");
 		expect(session.systemPrompt).not.toContain("- read:");
 		expect(session.systemPrompt).not.toContain("- bash:");
-		session.dispose();
+
+		await session.reload();
+		expect(session.getActiveToolNames()).toEqual(["dynamic_tool"]);
+		expect(session.systemPrompt).not.toContain("- web-search:");
+		expect(session.systemPrompt).not.toContain("- web-fetch:");
+		await session.dispose();
 	});
 
 	it("still disables all tools when noTools is all", async () => {
@@ -111,7 +117,11 @@ describe("regression #3592: no-builtin-tools keeps extension tools enabled", () 
 		expect(session.getAllTools()).toEqual([]);
 		expect(session.getActiveToolNames()).toEqual([]);
 		expect(session.systemPrompt).toContain("Available tools:\n(none)");
-		session.dispose();
+
+		await session.reload();
+		expect(session.getAllTools()).toEqual([]);
+		expect(session.getActiveToolNames()).toEqual([]);
+		await session.dispose();
 	});
 
 	it("propagates noTools through service-based session creation", async () => {
@@ -135,6 +145,6 @@ describe("regression #3592: no-builtin-tools keeps extension tools enabled", () 
 			expect(session.systemPrompt).not.toContain(`- ${toolName}:`);
 		}
 		expect(session.systemPrompt).not.toContain("- read:");
-		session.dispose();
+		await session.dispose();
 	});
 });

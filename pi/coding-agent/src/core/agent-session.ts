@@ -198,6 +198,10 @@ export interface AgentSessionConfig {
 	modelRegistry: ModelRegistry;
 	/** Initial active built-in tool names. Default: [read, bash, edit, write] */
 	initialActiveToolNames?: string[];
+	/** Auto-activate newly loaded Package and user MCP tools. */
+	autoActivateLoadedTools?: boolean;
+	/** Auto-activate newly loaded repository-default HCP tools. */
+	autoActivateDefaultTools?: boolean;
 	/** Optional allowlist of tool names. When provided, only these tool names are exposed. */
 	allowedToolNames?: string[];
 	/** Optional denylist of tool names. When provided, these tool names are not exposed. */
@@ -341,10 +345,12 @@ export class AgentSession {
 
 	private _resourceLoader: ResourceLoader;
 	private _customTools: ToolDefinition[];
-	private _baseToolDefinitions: Map<string, ToolDefinition> = new Map();
+	private _baseToolDefinitions: Map<string, ToolDefinitionEntry> = new Map();
 	private _cwd: string;
 	private _extensionRunnerRef?: { current?: ExtensionRunner };
 	private _initialActiveToolNames?: string[];
+	private _autoActivateLoadedTools: boolean;
+	private _autoActivateDefaultTools: boolean;
 	private _allowedToolNames?: Set<string>;
 	private _excludedToolNames?: Set<string>;
 	private _baseToolsOverride?: Record<string, AgentTool>;
@@ -393,6 +399,8 @@ export class AgentSession {
 		this._modelRegistry = config.modelRegistry;
 		this._extensionRunnerRef = config.extensionRunnerRef;
 		this._initialActiveToolNames = config.initialActiveToolNames;
+		this._autoActivateLoadedTools = config.autoActivateLoadedTools ?? config.initialActiveToolNames === undefined;
+		this._autoActivateDefaultTools = config.autoActivateDefaultTools ?? this._autoActivateLoadedTools;
 		this._allowedToolNames = config.allowedToolNames ? new Set(config.allowedToolNames) : undefined;
 		this._excludedToolNames = config.excludedToolNames ? new Set(config.excludedToolNames) : undefined;
 		this._baseToolsOverride = config.baseToolsOverride;
@@ -874,7 +882,8 @@ export class AgentSession {
 	 * Remove all listeners and disconnect from agent.
 	 * Call this when completely done with the session.
 	 */
-	dispose(): void {
+	async dispose(): Promise<void> {
+		let resourceDisposal = Promise.resolve();
 		try {
 			this.abortRetry();
 			this.abortCompaction();
@@ -884,7 +893,7 @@ export class AgentSession {
 			this._subAgents.shutdown();
 			this._peerMessages.shutdown();
 			this._backgroundEvents.dispose();
-			this._resourceLoader.dispose?.();
+			resourceDisposal = Promise.resolve(this._resourceLoader.dispose?.());
 			this.agent.abort();
 		} catch {
 			// Dispose must succeed even if an abort hook throws.
@@ -896,6 +905,11 @@ export class AgentSession {
 		this._disconnectFromAgent();
 		this._eventListeners = [];
 		cleanupSessionResources(this.sessionId);
+		try {
+			await resourceDisposal;
+		} catch {
+			// Dispose must remain best-effort even when an external transport fails to close.
+		}
 	}
 
 	// =========================================================================
@@ -2637,27 +2651,6 @@ export class AgentSession {
 		const registeredTools = this._extensionRunner.getAllRegisteredTools();
 		const allCustomTools = [
 			...registeredTools,
-			...this._resourceLoader.getTrunkTools().tools.map((tool) => ({
-				definition: createToolDefinitionFromAgentTool(tool),
-				sourceInfo: createSyntheticSourceInfo(`<harness-trunk:${tool.name}>`, {
-					source: "harness-trunk",
-					origin: "top-level",
-				}),
-			})),
-			...this._resourceLoader.getPackageTools().tools.map((tool) => ({
-				definition: createToolDefinitionFromAgentTool(tool),
-				sourceInfo: createSyntheticSourceInfo(`<harness-package:${tool.name}>`, {
-					source: "harness-package",
-					origin: "package",
-				}),
-			})),
-			...this._resourceLoader.getUserMcpTools().tools.map((tool) => ({
-				definition: createToolDefinitionFromAgentTool(tool),
-				sourceInfo: createSyntheticSourceInfo(`<user-mcp:${tool.name}>`, {
-					source: "user-mcp",
-					origin: "top-level",
-				}),
-			})),
 			...this._customTools.map((definition) => ({
 				definition,
 				sourceInfo: createSyntheticSourceInfo(`<sdk:${definition.name}>`, { source: "sdk" }),
@@ -2666,13 +2659,7 @@ export class AgentSession {
 		const definitionRegistry = new Map<string, ToolDefinitionEntry>(
 			Array.from(this._baseToolDefinitions.entries())
 				.filter(([name]) => isAllowedTool(name))
-				.map(([name, definition]) => [
-					name,
-					{
-						definition,
-						sourceInfo: createSyntheticSourceInfo(`<builtin:${name}>`, { source: "builtin" }),
-					},
-				]),
+				.map(([name, entry]) => [name, entry]),
 		);
 		for (const tool of allCustomTools) {
 			definitionRegistry.set(tool.definition.name, {
@@ -2699,23 +2686,12 @@ export class AgentSession {
 		);
 		const runner = this._extensionRunner;
 		const wrappedExtensionTools = wrapRegisteredTools(allCustomTools, runner);
-		// Harness trunk tools (web-search, web-fetch) are folded into allCustomTools
-		// so they land in the registry, but they behave like built-ins: on by
-		// default via defaultActiveToolNames, and disabled by noTools. They must
-		// not be force-activated through the includeAllExtensionTools path below,
-		// otherwise noTools:"builtin" would still surface them.
-		const trunkToolNames = new Set(this._resourceLoader.getTrunkTools().tools.map((tool) => tool.name));
-		const wrappedBuiltInTools = wrapRegisteredTools(
-			Array.from(this._baseToolDefinitions.values())
-				.filter((definition) => isAllowedTool(definition.name))
-				.map((definition) => ({
-					definition,
-					sourceInfo: createSyntheticSourceInfo(`<builtin:${definition.name}>`, { source: "builtin" }),
-				})),
+		const wrappedBaseTools = wrapRegisteredTools(
+			Array.from(this._baseToolDefinitions.values()).filter(({ definition }) => isAllowedTool(definition.name)),
 			runner,
 		);
 
-		const toolRegistry = new Map(wrappedBuiltInTools.map((tool) => [tool.name, tool]));
+		const toolRegistry = new Map(wrappedBaseTools.map((tool) => [tool.name, tool]));
 		for (const tool of wrappedExtensionTools as AgentTool[]) {
 			toolRegistry.set(tool.name, tool);
 		}
@@ -2733,7 +2709,6 @@ export class AgentSession {
 			}
 		} else if (options?.includeAllExtensionTools) {
 			for (const tool of wrappedExtensionTools) {
-				if (trunkToolNames.has(tool.name)) continue;
 				nextActiveToolNames.push(tool.name);
 			}
 		} else if (!options?.activeToolNames) {
@@ -2752,44 +2727,62 @@ export class AgentSession {
 		flagValues?: Map<string, boolean | string>;
 		includeAllExtensionTools?: boolean;
 	}): void {
-		// Phase 2 (HCP unification): resolve built-in tools from the session HCP
+		// Resolve repository and Package tools from the one session HCP
 		// instead of local construction. Build tool magnets with per-runtime options
 		// (SSH ops, shell path, auto-resize) and register into the session HCP, then
 		// resolve back through the magnet chain. Satisfies INV-1 (all content via HCP)
 		// while preserving pi's per-runtime option injection lifecycle. Falls back to
 		// local construction when no session HCP is available (e.g. custom loaders).
 		const sessionHcp = this._resourceLoader.getSessionHcp?.();
-		const baseToolDefinitions: Record<string, ToolDefinition> = this._baseToolsOverride
+		const baseToolDefinitions: Record<string, ToolDefinitionEntry> = this._baseToolsOverride
 			? Object.fromEntries(
 					Object.entries(this._baseToolsOverride).map(([name, tool]) => [
 						name,
-						createToolDefinitionFromAgentTool(tool),
+						{
+							definition: createToolDefinitionFromAgentTool(tool),
+							sourceInfo: createSyntheticSourceInfo(`<sdk:${name}>`, { source: "sdk" }),
+						},
 					]),
 				)
 			: sessionHcp
-				? this._resolveBuiltInToolsFromHcp(sessionHcp)
-				: (createAllToolDefinitions(this._cwd, {
-						read: {
-							autoResizeImages: this.settingsManager.getImageAutoResize(),
-							operations: this._sshOperations?.read,
-						},
-						bash: {
-							commandPrefix: this.settingsManager.getShellCommandPrefix(),
-							shellPath: this.settingsManager.getShellPath(),
-							operations: this._sshOperations?.bash,
-						},
-						write: { operations: this._sshOperations?.write },
-						edit: { operations: this._sshOperations?.edit },
-					}) as Record<string, ToolDefinition>);
+				? this._resolveToolsFromHcp(sessionHcp)
+				: Object.fromEntries(
+						Object.entries(
+							createAllToolDefinitions(this._cwd, {
+								read: {
+									autoResizeImages: this.settingsManager.getImageAutoResize(),
+									operations: this._sshOperations?.read,
+								},
+								bash: {
+									commandPrefix: this.settingsManager.getShellCommandPrefix(),
+									shellPath: this.settingsManager.getShellPath(),
+									operations: this._sshOperations?.bash,
+								},
+								write: { operations: this._sshOperations?.write },
+								edit: { operations: this._sshOperations?.edit },
+							}),
+						).map(([name, definition]) => [
+							name,
+							{
+								definition,
+								sourceInfo: createSyntheticSourceInfo(`<pi:${name}>`, { source: "pi" }),
+							},
+						]),
+					);
 		if (!this._baseToolsOverride) {
-			baseToolDefinitions.bg_shell = this._backgroundShell.createToolDefinition() as ToolDefinition;
-			baseToolDefinitions.sub_agent = this._subAgents.createToolDefinition() as ToolDefinition;
-			baseToolDefinitions.send_message = this._peerMessages.createToolDefinition() as ToolDefinition;
+			for (const [name, definition] of Object.entries({
+				bg_shell: this._backgroundShell.createToolDefinition() as ToolDefinition,
+				sub_agent: this._subAgents.createToolDefinition() as ToolDefinition,
+				send_message: this._peerMessages.createToolDefinition() as ToolDefinition,
+			})) {
+				baseToolDefinitions[name] = {
+					definition,
+					sourceInfo: createSyntheticSourceInfo(`<pi:${name}>`, { source: "pi" }),
+				};
+			}
 		}
 
-		this._baseToolDefinitions = new Map(
-			Object.entries(baseToolDefinitions).map(([name, tool]) => [name, tool as ToolDefinition]),
-		);
+		this._baseToolDefinitions = new Map(Object.entries(baseToolDefinitions));
 
 		const extensionsResult = this._resourceLoader.getExtensions();
 
@@ -2838,8 +2831,13 @@ export class AgentSession {
 					"write",
 					"bg_shell",
 					"sub_agent",
-					// Harness trunk tools (web-search, web-fetch) are on by default.
-					...this._resourceLoader.getTrunkTools().tools.map((tool) => tool.name),
+					...(this._autoActivateDefaultTools ? (this._resourceLoader.getDefaultToolNames?.() ?? []) : []),
+					...(this._autoActivateLoadedTools
+						? [
+								...this._resourceLoader.getPackageTools().tools.map((tool) => tool.name),
+								...this._resourceLoader.getUserMcpTools().tools.map((tool) => tool.name),
+							]
+						: []),
 				];
 		const baseActiveToolNames = options.activeToolNames ?? defaultActiveToolNames;
 		this._refreshToolRegistry({
@@ -2848,23 +2846,22 @@ export class AgentSession {
 		});
 	}
 
-	private _resolveBuiltInToolsFromHcp(sessionHcp: HcpClient): Record<string, ToolDefinition> {
+	private _resolveToolsFromHcp(sessionHcp: HcpClient): Record<string, ToolDefinitionEntry> {
 		// Tools were built once by the session assembler. Runtime code only resolves
 		// their addresses and adds pi-owned rendering metadata.
 		const canonical = createAllToolDefinitions(this._cwd) as Record<string, ToolDefinition>;
-		// Resolve through the module chain and convert to ToolDefinitions.
-		// resolveInstance supplies the in-module selector (the tool name) from the
-		// routing index, so each tools/<name>/HcpServer routes to its selected source.
-		const resolved: Record<string, ToolDefinition> = {};
-		const builtInNames = ["read", "bash", "edit", "write", "grep", "find", "ls", "show", "todo"];
-		for (const name of builtInNames) {
-			const tool = sessionHcp.resolveInstance<AgentTool>(`tool:${name}`);
+		const descriptions = new Map(sessionHcp.describeAll().map((description) => [description.target, description]));
+		const packageToolNames = new Set(this._resourceLoader.getPackageTools().tools.map((tool) => tool.name));
+		const userMcpToolNames = new Set(this._resourceLoader.getUserMcpTools().tools.map((tool) => tool.name));
+		const resolved: Record<string, ToolDefinitionEntry> = {};
+		for (const address of sessionHcp.addresses().filter((candidate) => candidate.startsWith("tool:"))) {
+			const tool = sessionHcp.resolveInstance<AgentTool>(address);
 			if (tool) {
 				const def = createToolDefinitionFromAgentTool(tool);
 				// Merge pi-canonical prompt/render metadata (promptSnippet, promptGuidelines,
 				// renderCall, renderResult) onto the HCP-resolved definition. HCP provides
 				// execute+schema+description; pi's canonical provides prompt/render metadata.
-				const canonicalDef = canonical[name];
+				const canonicalDef = canonical[tool.name];
 				if (canonicalDef) {
 					def.promptSnippet = canonicalDef.promptSnippet;
 					def.promptGuidelines = canonicalDef.promptGuidelines;
@@ -2872,7 +2869,28 @@ export class AgentSession {
 					def.renderCall = canonicalDef.renderCall;
 					def.renderResult = canonicalDef.renderResult;
 				}
-				resolved[name] = def;
+				const describedSource = descriptions.get(address)?.metadata?.source;
+				const source = packageToolNames.has(tool.name)
+					? "harness-package"
+					: userMcpToolNames.has(tool.name)
+						? "user-mcp"
+						: typeof describedSource === "string"
+							? describedSource
+							: "hcp";
+				resolved[tool.name] = {
+					definition: def,
+					sourceInfo: createSyntheticSourceInfo(
+						source === "harness-package"
+							? `<harness-package:${tool.name}>`
+							: source === "user-mcp"
+								? `<user-mcp:${tool.name}>`
+								: `<hcp:${source}:${tool.name}>`,
+						{
+							source,
+							origin: source === "harness-package" ? "package" : "top-level",
+						},
+					),
+				};
 			}
 		}
 		return resolved;
@@ -2880,6 +2898,8 @@ export class AgentSession {
 
 	async reload(options?: { beforeSessionStart?: () => void | Promise<void> }): Promise<void> {
 		const previousFlagValues = this._extensionRunner.getFlagValues();
+		const previousToolNames = new Set(this.getAllTools().map((tool) => tool.name));
+		const previousActiveToolNames = this.getActiveToolNames();
 		await emitSessionShutdownEvent(this._extensionRunner, { type: "session_shutdown", reason: "reload" });
 		await this.settingsManager.reload();
 		this.syncQueueModesFromSettings();
@@ -2900,8 +2920,17 @@ export class AgentSession {
 			});
 		}
 		this._packageLoad.finish();
+		const loadedToolNames = [
+			...(this._autoActivateDefaultTools ? (this._resourceLoader.getDefaultToolNames?.() ?? []) : []),
+			...(this._autoActivateLoadedTools
+				? [
+						...this._resourceLoader.getPackageTools().tools.map((tool) => tool.name),
+						...this._resourceLoader.getUserMcpTools().tools.map((tool) => tool.name),
+					]
+				: []),
+		].filter((name) => !previousToolNames.has(name));
 		this._buildRuntime({
-			activeToolNames: this.getActiveToolNames(),
+			activeToolNames: [...previousActiveToolNames, ...loadedToolNames],
 			flagValues: previousFlagValues,
 			includeAllExtensionTools: true,
 		});

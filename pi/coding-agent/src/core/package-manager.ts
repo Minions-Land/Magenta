@@ -58,6 +58,8 @@ export interface PathMetadata {
 	scope: SourceScope;
 	origin: "package" | "top-level";
 	baseDir?: string;
+	/** False keeps a resource explicitly addressable while omitting it from model context. */
+	includeInContext?: boolean;
 }
 
 export interface ResolvedResource {

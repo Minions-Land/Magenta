@@ -3,8 +3,8 @@ import { appendFile, mkdtemp, readFile, utimes, writeFile } from "node:fs/promis
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { type CreateMcpToolsOptions, discoverMcpTools } from "../.HCP/transport/mcp.ts";
-import { readMcpToolsCache, writeMcpToolsCache } from "../.HCP/transport/mcp-cache.ts";
+import { readMcpToolsCache, writeMcpToolsCache } from "../_magenta/mcp/cache.ts";
+import { type CreateMcpToolsOptions, discoverMcpTools } from "../_magenta/mcp/tool.ts";
 import { createManagedMcpSpawner } from "./mcp-test-utils.ts";
 
 /**

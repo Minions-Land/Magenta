@@ -79,6 +79,21 @@ Use this skill.
 		]);
 	});
 
+	it("accepts a source-owned skill without a central Source-name list", async () => {
+		const root = createTempDir();
+		const env = new NodeExecutionEnv({ cwd: root });
+		await env.createDir("skills/example/future-agent", { recursive: true });
+		await env.writeFile(
+			"skills/example/future-agent/SKILL.md",
+			"---\nname: example\ndescription: Future source\n---\nSource-owned content.",
+		);
+
+		const { skills, diagnostics } = await loadSkills(env, "skills");
+
+		expect(diagnostics).toEqual([]);
+		expect(skills.map((skill) => skill.name)).toEqual(["example"]);
+	});
+
 	it("attaches source info to diagnostics", async () => {
 		const root = createTempDir();
 		const env = new NodeExecutionEnv({ cwd: root });

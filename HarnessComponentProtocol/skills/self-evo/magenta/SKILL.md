@@ -1,40 +1,72 @@
 ---
 name: self-evo
-description: Development mode for evolving Magenta3's own harness. Load this skill when the user wants Magenta to extend itself — create a skill, absorb a Pi extension, pull in an external project, forge a package, or otherwise grow a new capability and wire it into the HCP address space with a Magnet. This is the engineering handbook for self-modification, not a normal task skill.
+description: Development mode for evolving Magenta3's own harness. Load this skill when the user wants Magenta to extend itself — create a skill, absorb a Pi extension, pull in an external project, forge a package, or otherwise add a component through the HcpClient/HcpServer/HcpMagnet path. This is the engineering handbook for self-modification, not a normal task skill.
 ---
 
 # Self-Evo — Magenta's Self-Evolution Mode
 
 Self-evo is the mode in which Magenta modifies its own harness. The single recurring action behind every self-evo task is the same:
 
-> **Take a capability from somewhere, translate it into one of the harness's four primitives, and hang it in the HCP address space with a Magnet so the loop can use it.**
+> **Inspect a behavior at its source, place it under the correct Module, and connect one HcpMagnet product to the single HcpClient assembly path.**
 
-Everything else — where the capability comes from, and whether it dissolves into the trunk or stays a self-contained package — is a routing decision on top of that one action.
+Everything else — where the behavior comes from, and whether it becomes a
+harness-owned component or stays in an independently managed Package — is a
+boundary decision on top of that one action.
 
 ---
 
-## The Mental Model: Four Primitives + HCP
+## The Mental Model: Three HCP Roles
 
-The harness is organized as **Module → capability → source**, and every component is exactly one of four **primitives**. Knowing which primitive you are building decides where the code goes, whether it needs a code builder, and how the Magnet binds it.
+The HCP entity tree has exactly three runtime roles:
 
-| Primitive | What it is | Model sees it? | Needs a code builder? | Magnet output |
-|---|---|---|---|---|
-| **Tool** | A callable function | Yes (in the tool list) | Yes (`execute` fn) | `toTool()` |
-| **Capability** | A loop-internal slot impl (memory, policy, compaction, runtime, …) | No | Yes (`build` fn) | `toCapability()` |
-| **Resource** | Content merged at assembly (system-prompt, **skill**, theme, brand, prompt) | Indirectly (as content) | **No** | `toResource()` |
-| **Prompt** | A named prompt template | On invocation | Yes | (prompt-template) |
+- `HcpClient` is the sole runtime Client and address-routing owner; all
+  assembly feeds that one Client path.
+- Each Module owns a real `HcpServer` for its distinctive behavior.
+- Each Source owns a thin `HcpMagnet` that constructs one product.
 
-**The one-of invariant:** a Magnet produces *at most one* of tool / capability / resource. Never build a hybrid. A tool never lands on the capability map; a content-only resource (system-prompt, skill) must never be routed through a capability code-builder — that misclassification is the classic `capability_factory_missing` failure.
+Module, Source, slot, product, and address are identities or data used by those
+roles. They are not additional HCP roles, services, or layers. In particular,
+Capability is not a fourth role: it is one legal Magnet product, selected for a
+slot and resolved through a `capability:*` address.
+
+An `HcpMagnet` can produce one of three product shapes:
+
+| Magnet product | What it is | Model sees it? | Magnet output |
+|---|---|---|---|
+| **Tool** | A callable function | Yes (in the tool list) | `toTool()` |
+| **Capability** | A loop-internal slot value (memory, policy, compaction, runtime, etc.) | No | `toCapability()` |
+| **Resource** | Content merged at assembly (for example, a skill) | Indirectly | `toResource()` |
+
+Prompt-template behavior belongs to the appropriate product; it is not a
+fourth product. The one-of invariant is strict: one declared Source Magnet
+produces exactly one Tool, Capability, or Resource. Preserve a legitimate
+product even when no current session selects it; unused is not the same as
+architecturally invalid.
 
 ### What "HCP" Actually Means
 
-HCP is **not** the loop's hot path. It is the assembly-time management and discovery layer:
+HCP is **not** the loop's hot path. Its static assembly chain is:
 
-- `HcpClient` routes URI-like target addresses by prefix: `tool:read`, `capability:compaction`, `capability:runtime:process`
-- A capability "becomes usable" only after: `implementation` → `HcpMagnet` (binds it into uniform interface) → registered in `harness.toml` (trunk) or `package.toml` (package) → `HcpClient` can resolve its target
-- The "HCP server" for a component is its endpoint in that address space
+```text
+TOML declarations
+  -> codegen produces HCP_SERVERS and HCP_MAGNETS
+  -> assembly calls the selected HcpMagnet.build(...)
+  -> HcpClient owns the resulting runtime address map
+```
 
-So "put the function under the right HCP server and give it a Magnet" precisely means: **pick the correct target address / primitive, write the Magnet that binds the implementation, and register it so `HcpClient` resolves it.**
+`HCP_SERVERS` contains the real Module Server classes. `HCP_MAGNETS` contains
+the declared Source Magnet rows and the data required to build them. They are
+generated projections, not new runtime entities. Do not create a parallel
+catalog, service, or selection mechanism around them.
+
+`HcpClient` resolves addresses such as `tool:read`, `capability:compaction`, or
+`capability:runtime:process`. The owning `HcpServer` remains the Module endpoint;
+the `HcpMagnet` only connects a Source and constructs its product.
+
+So "put the function under the right HCP Server and give it a Magnet" means:
+**choose the Module and product, write the thin Source Magnet, declare it in
+TOML, regenerate the two arrays, and let the one HcpClient assembly path use
+it.**
 
 ---
 
@@ -68,16 +100,19 @@ What are you building?
 ├─ 🏢 An external project / heavy package (whole harness, Python suite, multi-component)
 │   └─ → package-forge/SKILL.md
 │
-└─ ⚡ A one-off tool/capability (hand-written, no existing source)
+└─ ⚡ A one-off Tool or Capability product (hand-written, no existing source)
     └─ Stay in this parent skill, follow the base procedure below
 ```
 
 Each sub-skill is a chapter with its own specialized guidance. Read the relevant one when you reach that branch.
 
-### Dissolve vs. Encapsulate (The Core Judgment)
+### Harness-Owned vs. Independently Managed (The Core Judgment)
 
-- **Dissolve** (Pi path → trunk): Lightweight, single-primitive extension *dissolves* into the trunk (`pi-extension-integration`, `source = "pi"`)
-- **Encapsulate** (package-forge): Systemic, heavy, or independently-shippable body of work is *encapsulated* as a package (origin-tagged)
+- **Harness-owned** (Pi path): a lightweight, single-product extension is
+  integrated directly under `HarnessComponentProtocol/` with its origin Source
+  preserved (for example, `source = "pi"`).
+- **Independently managed** (package-forge): a systemic, heavy, or independently
+  shippable body stays as a Package in `MagentaPackages`.
 
 ---
 
@@ -87,7 +122,9 @@ All sub-skills are chapters of this handbook, marked `disable-model-invocation: 
 
 - **`skill-creator/SKILL.md`** — Create and iteratively improve Magenta skills. Full Claude-style workflow: capture intent, draft, test, evaluate with sub-agents, iterate, optimize description.
 
-- **`pi-extension-integration/SKILL.md`** — Integrate a single Pi extension. Covers both intake (acquire, vet, inventory) and conversion (translate injection points, wire Magnets) as one end-to-end flow.
+- **`pi-extension-integration/SKILL.md`** — Integrate a single Pi extension.
+  Covers both intake (acquire, vet, enumerate injection points) and conversion
+  (translate behavior, wire roles) as one end-to-end flow.
 
 - **`package-forge/SKILL.md`** — Wrap an external project or heavy capability
   set as an independently managed package in `MagentaPackages`, following
@@ -97,16 +134,19 @@ All sub-skills are chapters of this handbook, marked `disable-model-invocation: 
 
 ## The Landing Procedure (Applies to Every Self-Evo Change)
 
-Trunk components land through the HCP chain below. Domain packages remain in
+Harness-owned components land through the HCP chain below. Domain Packages remain in
 `MagentaPackages` and use the compatible package manifest described by
-`package-forge`; Magenta3 must not hardcode their repository path. Full rules in
+`package-forge`. Magenta3 retains `packages/` as its generic Package boundary,
+schema, template, and API, but no concrete domain Package lives there.
+Integration receives an explicit `packagesRoot`; it must not hardcode the
+`MagentaPackages` sibling path. Full rules are in
 `HarnessComponentProtocol/docs/DEVELOPING.md` and
 `HarnessComponentProtocol/docs/governance/contract.md`. The short version:
 
 ### 1. Create the Directory
 
-Under the correct primitive and source:
-- Trunk: `HarnessComponentProtocol/tools/<name>/<source>/` or `HarnessComponentProtocol/skills/<name>/<source>/`
+Under the correct Module and Source:
+- Harness-owned: `HarnessComponentProtocol/tools/<name>/<source>/` or `HarnessComponentProtocol/skills/<name>/<source>/`
 - Domain package: `MagentaPackages/<Name>/tools/<tool>/` or
   `MagentaPackages/<Name>/skills/<skill>/` (repository-relative notation)
 
@@ -114,36 +154,44 @@ Under the correct primitive and source:
 
 ### 2. Write the Descriptor
 
-`<name>.toml` with `kind`, `name`, `description`, and primitive-specific fields:
+`<name>.toml` with `kind`, `product`, `name`, `source`, `description`, and
+product-specific fields:
 
 **Tool descriptor:**
 ```toml
 kind = "tool"
+product = "tool"
 name = "tool-name"
+source = "pi"
 description = "What it does"
-
-[exports]
-module = "tools/tool-name/<source>/tool-name.ts"
-factory = "createToolNameMagnet"
 ```
 
-**Capability descriptor** (must include `[assumption]`):
+**Capability descriptor** (example policy slot; must include `[assumption]`):
 ```toml
-kind = "capability"
-name = "capability-name"
+kind = "policy"
+product = "capability"
+name = "policy"
+source = "magenta"
+slot = "policy"
 description = "What it compensates for"
 
 [assumption]
-model_limitation = "what limitation this addresses"
-review_trigger = "model_version_change"  # or "never" for safety boundaries
+compensates = "What model limitation makes this loop-internal value necessary."
+rationale = "stated"
+calibrated_for = ["any"]
+review_trigger = "model-change" # or "never" for safety boundaries
+load_bearing = "unmeasured"
+eval_scenarios = []
 ```
 
-**Resource descriptor** (no code builder):
+**Resource descriptor:**
 ```toml
-kind = "resource"
+kind = "skill"
+product = "resource"
 name = "skill-name"
+source = "magenta"
+autoload = true
 description = "When to load and what it provides"
-content_path = "skills/skill-name/<source>/SKILL.md"
 ```
 
 See `scripts/templates/module/module-name.toml` for base shapes.
@@ -152,16 +200,21 @@ See `scripts/templates/module/module-name.toml` for base shapes.
 
 - **Tool** → source-local `<module>/<source>/HcpMagnet.ts` with `toTool()`
 - **Capability** → source-local `HcpMagnet` with `toCapability()` plus the real module `HcpServer.ts`
-- **Resource** → Give it a `content_path`. No code builder. Never add to `CAPABILITY_KINDS`.
+- **Resource** → source-local `HcpMagnet` with `toResource()` plus the real
+  Module `HcpServer.ts`; the product points to or contains its content.
 
 Keep Magnets thin: bind one source and produce exactly one product. Never add
 `toHcpServer()`; management behavior belongs to the real module Server.
 
-### 4. Register
+### 4. Declare
 
 `[[components]]` entry in:
-- Trunk: `HarnessComponentProtocol/harness.toml`
+- Harness-owned: `HarnessComponentProtocol/harness.toml`
 - Domain package: `MagentaPackages/<Name>/package.toml`
+
+For harness-owned components, run codegen after the TOML change. Package
+manifests enter through the same product and assembly semantics via an explicit
+`packagesRoot`; they do not create another HCP role or another assembly path.
 
 ### 5. Verification Gate (Run Before Any Change Lands)
 
@@ -173,10 +226,11 @@ npm run check:structure  # enforces module/source layout rules
 npm run check:assumptions # enforces [assumption] placement (capabilities only)
 npm run build            # tsc + asset copy — must be green
 npm test                 # vitest — no regression
-npm run inspect          # resolves registry + packages; check diagnostics
+npm run inspect          # reports generated HCP declarations + Package diagnostics
 ```
 
-`npm run inspect` is the fastest confirmation that a new component resolves. It surfaces misclassification diagnostics like `capability_factory_missing`.
+`npm run inspect` is a quick structural view. The build and tests remain the
+proof that the selected Magnet product assembles and resolves correctly.
 
 If a step fails twice, stop and diagnose the root cause instead of patching incrementally.
 
@@ -184,11 +238,13 @@ If a step fails twice, stop and diagnose the root cause instead of patching incr
 
 ## Guardrails Specific to Self-Evo
 
-- **Never fabricate the source's interface.** Read the extension/project before translating it. Confirm every event it hooks and every tool it registers.
-- **No second selection registry.** Your Magnet only *binds*; which source wins a slot is decided once by the HcpClient / package overlay.
+- **Never fabricate the source API.** Read the extension/project before translating it. Confirm every event it hooks and every tool it declares.
+- **One selection path.** Your Magnet only binds and builds. Which Source wins a
+  slot is decided once by HcpClient assembly, with Package input supplied
+  through the generic overlay API.
 - **Preserve provenance.** The artifact's `source` is its origin agent, not `magenta`.
 - **Prefer reuse over new modules.** If a slot already exists, add a source; do not spawn a parallel module.
-- **Iterate in steps.** Land one primitive, pass the gate, then extend. Do not batch-convert an entire extension bundle in one unverified pass.
+- **Iterate in steps.** Land one product, pass the gate, then extend. Do not batch-convert an entire extension bundle in one unverified pass.
 
 ---
 
@@ -206,7 +262,7 @@ If a step fails twice, stop and diagnose the root cause instead of patching incr
 7. User reviews outputs
 8. Iterates based on feedback
 9. Optimizes description
-10. Registers in harness.toml
+10. Declares the component in `harness.toml` and regenerates the HCP arrays
 ```
 
 ### Scenario 2: User says "Add the Pi 'github-search' extension"
@@ -218,12 +274,12 @@ If a step fails twice, stop and diagnose the root cause instead of patching incr
 4. Reads entry module, enumerates: pi.registerTool({ name: "github_search", ... })
 5. Maps dependencies (all TypeScript, light)
 6. Security review (makes HTTP requests — OK with user control)
-7. Decides: dissolve (single clean tool)
+7. Decides: integrate directly (single clean tool)
 8. Converts: strips ExtensionAPI, rebinds to harness context
 9. Places: HarnessComponentProtocol/tools/github-search/pi/github-search.ts
 10. Writes github-search.toml
 11. Adds the real tool HcpServer and source-local HcpMagnet
-12. Registers in harness.toml
+12. Declares it in `harness.toml` and regenerates the HCP arrays
 13. Gates: npm run build && test && check:structure && inspect
 ```
 
@@ -233,7 +289,7 @@ If a step fails twice, stop and diagnose the root cause instead of patching incr
 1. self-evo loads
 2. Routes to package-forge
 3. Audits: complete Python + pixi tool suite, many components
-4. Decides: encapsulate (heavy, independent environment)
+4. Decides: keep independent (heavy, separately managed environment)
 5. Creates the package in the independently managed `MagentaPackages` repository
 6. Writes package.toml
 7. Copies pixi.toml + pixi.lock
@@ -247,9 +303,11 @@ If a step fails twice, stop and diagnose the root cause instead of patching incr
 ## Summary
 
 Self-evo is Magenta's **self-modification engine**:
-- **Architecture layer**: Four primitives, HCP address space, Magnets, source discipline
+- **Architecture**: only HcpClient, HcpServer, and HcpMagnet roles; products and
+  addresses are data owned by those roles
 - **Three specialized paths**: skill-creator, pi-extension-integration, package-forge
-- **Single landing chain**: descriptor → real Server + source Magnet → HcpClient → gate
+- **Single landing chain**: TOML declaration → generated `HCP_SERVERS` and
+  `HCP_MAGNETS` → assembly → HcpClient → gate
 - **Principle**: Read first, translate precisely, preserve provenance, iterate in steps
 
 Read the relevant sub-skill when you reach its branch. Each is a complete, self-contained guide for that path.

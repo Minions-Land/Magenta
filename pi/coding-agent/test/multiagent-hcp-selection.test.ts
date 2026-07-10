@@ -114,7 +114,7 @@ describe("AgentSession multiagent HCP selection", () => {
 				expect.any(AbortSignal),
 			);
 		} finally {
-			session.dispose();
+			await session.dispose();
 		}
 	});
 });

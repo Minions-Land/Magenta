@@ -626,6 +626,9 @@ export async function main(args: string[], options?: MainOptions) {
 	const resolvedSkillPaths = resolveCliPaths(cwd, parsed.skills);
 	const resolvedPromptTemplatePaths = resolveCliPaths(cwd, parsed.promptTemplates);
 	const resolvedThemePaths = resolveCliPaths(cwd, parsed.themes);
+	const resolvedHarnessPackagesRoot = parsed.harnessPackagesRoot
+		? resolvePath(parsed.harnessPackagesRoot, cwd)
+		: undefined;
 	const authStorage = AuthStorage.create();
 	const createRuntime: CreateAgentSessionRuntimeFactory = async ({
 		cwd,
@@ -682,6 +685,7 @@ export async function main(args: string[], options?: MainOptions) {
 				additionalPromptTemplatePaths: resolvedPromptTemplatePaths,
 				additionalThemePaths: resolvedThemePaths,
 				harnessPackages: parsed.harnessPackages,
+				harnessPackagesRoot: resolvedHarnessPackagesRoot,
 				noExtensions: parsed.noExtensions,
 				noSkills: parsed.noSkills,
 				noPromptTemplates: parsed.noPromptTemplates,
@@ -705,7 +709,6 @@ export async function main(args: string[], options?: MainOptions) {
 				message: `Failed to load extension "${path}": ${error}`,
 			})),
 			...resourceLoader.getPackageTools().diagnostics.map(toRuntimeDiagnostic),
-			...resourceLoader.getTrunkTools().diagnostics.map(toRuntimeDiagnostic),
 			...resourceLoader.getUserMcpTools().diagnostics.map(toRuntimeDiagnostic),
 		];
 

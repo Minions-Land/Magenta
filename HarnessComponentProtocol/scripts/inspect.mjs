@@ -1,12 +1,11 @@
 import { existsSync, readdirSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
-import { harnessRoot, isInside, pathLabel, readJson, readToml, repoRoot } from "./lib/files.mjs";
+import { collectHcpSources } from "./generate-hcp-sources.mjs";
+import { isInside, pathLabel, readToml, repoRoot } from "./lib/files.mjs";
 
 const args = process.argv.slice(2);
 const jsonOutput = args.includes("--json");
 const scriptRuntimeNames = new Set(["shell", "python", "node", "r", "julia"]);
-const implementationSourceNames = new Set(["pi", "codex", "jcode", "claude-code", "magenta"]);
-const coreExceptionModuleIds = new Set(["assembly/hcp", "assembly/magnet"]);
 
 function asArray(value) {
 	return Array.isArray(value) ? value : [];
@@ -30,144 +29,49 @@ function resolvePath(baseDir, ref) {
 	return isAbsolute(ref) ? resolve(ref) : resolve(baseDir, ref);
 }
 
-function loadRegistryInspect() {
-	const indexPath = join(harnessRoot, "harness.toml");
-	const index = readToml(indexPath);
-	const componentRefs = asArray(index.components);
-	const catalogRefs = asArray(index.catalogs);
-	const diagnostics = [];
-
-	const componentRecords = componentRefs.map((ref) => {
-		const componentPath = resolvePath(harnessRoot, ref.path);
-		let spec = {};
-		if (!componentPath || !existsSync(componentPath)) {
-			diagnostics.push({ type: "error", message: `missing component file for ${ref.kind}:${ref.name}`, path: componentPath });
-		} else {
-			spec = readToml(componentPath);
-		}
-		return {
-			kind: spec.kind ?? ref.kind,
-			name: spec.name ?? ref.name,
-			description: spec.description ?? ref.description,
-			path: componentPath ? pathLabel(componentPath) : undefined,
-			absPath: componentPath,
-			source: spec.source,
-		};
-	});
-	const components = componentRecords.map(({ absPath, ...component }) => component);
-
-	const catalogs = catalogRefs.map((ref) => {
-		const catalogPath = resolvePath(harnessRoot, ref.path);
-		if (!catalogPath || !existsSync(catalogPath)) {
-			diagnostics.push({ type: "error", message: `missing catalog file for ${ref.name}`, path: catalogPath });
-			return { name: ref.name, path: catalogPath ? pathLabel(catalogPath) : undefined };
-		}
-
-		const spec = readToml(catalogPath);
-		const catalogDir = dirname(catalogPath);
-		const inventoryPath = resolvePath(catalogDir, spec.inventory?.path);
-		const integrationPath = resolvePath(catalogDir, spec.integration?.path);
-		const inventory = inventoryPath && existsSync(inventoryPath) ? readJson(inventoryPath) : undefined;
-		const integration = integrationPath && existsSync(integrationPath) ? readJson(integrationPath) : undefined;
-		if (!inventory) diagnostics.push({ type: "error", message: `missing catalog inventory for ${ref.name}`, path: inventoryPath });
-
-		const integrationEntries = Object.values(integration?.entries ?? {});
-		const inventoryComponents = flattenInventoryComponents(inventory);
-		return {
-			name: spec.name ?? ref.name,
-			description: spec.description ?? ref.description,
-			path: pathLabel(catalogPath),
-			inventory: inventoryPath
-				? {
-						path: pathLabel(inventoryPath),
-						componentCount: inventory?.summary?.component_count ?? inventoryComponents.length,
-						moduleCount: inventory?.summary?.module_count ?? Object.keys(inventory?.modules ?? {}).length,
-						byKind: inventory?.summary?.by_kind ?? countBy(inventoryComponents, (component) => component.kind),
-					}
-				: undefined,
-			integration: integrationPath
-				? {
-						path: pathLabel(integrationPath),
-						entryCount: integrationEntries.length,
-						byState: countBy(integrationEntries, (entry) => entry.state),
-					}
-				: undefined,
-		};
-	});
+function loadHcpInspect() {
+	const collected = collectHcpSources();
+	const harness = readToml(collected.harnessTomlPath);
+	const components = collected.entries.map((entry) => ({
+		module: entry.module,
+		kind: entry.kind,
+		name: entry.name,
+		product: entry.product,
+		source: entry.source,
+		selected: entry.selected,
+		autoload: entry.autoload,
+		hotSwappable: entry.hotSwappable,
+		descriptorPath: entry.descriptorPath,
+		...(entry.slot === undefined ? {} : { slot: entry.slot }),
+		requires: entry.requires,
+		HcpMagnet: pathLabel(entry.path),
+	}));
+	const componentsByModule = new Map();
+	for (const component of components) {
+		const moduleComponents = componentsByModule.get(component.module) ?? [];
+		moduleComponents.push(component);
+		componentsByModule.set(component.module, moduleComponents);
+	}
+	const modules = collected.servers.map((server) => ({
+		name: server.module,
+		HcpServer: pathLabel(server.path),
+		components: componentsByModule.get(server.module) ?? [],
+	}));
 
 	return {
-		name: index.name,
-		description: index.description,
+		name: harness.name,
+		description: harness.description,
+		harnessToml: pathLabel(collected.harnessTomlPath),
+		HcpServerCount: collected.servers.length,
+		HcpMagnetClassCount: collected.magnets.length,
 		componentCount: components.length,
+		selectedComponentCount: components.filter((component) => component.selected).length,
 		componentsByKind: countBy(components, (component) => component.kind),
+		componentsByProduct: countBy(components, (component) => component.product),
+		componentsBySource: countBy(components, (component) => component.source),
 		components,
-		modules: componentRecords.map((component) => toModuleInspect(component)),
-		modulesByStatus: countBy(componentRecords.map((component) => toModuleInspect(component)), (module) => module.status),
-		catalogs,
-		diagnostics,
+		modules,
 	};
-}
-
-function toModuleInspect(component) {
-	const id = `${component.kind}/${component.name}`;
-	const implementations = listComponentImplementations(component);
-	const coreException = coreExceptionModuleIds.has(id);
-	const status = coreException
-		? "core-exception"
-		: implementations.some((implementation) => implementation.status === "ready")
-			? "ready"
-			: component.kind === "contract"
-				? "inspect-only"
-				: "registered";
-	return {
-		id,
-		kind: component.kind,
-		name: component.name,
-		description: component.description,
-		path: component.path,
-		capability: id,
-		status,
-		coreException,
-		implementations,
-	};
-}
-
-function listComponentImplementations(component) {
-	const implementations = [];
-	const componentDir = component.absPath ? dirname(component.absPath) : undefined;
-	if (componentDir && existsSync(componentDir)) {
-		for (const entry of readdirSync(componentDir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
-			if (!entry.isDirectory() || !implementationSourceNames.has(entry.name)) continue;
-			implementations.push({
-				source: entry.name,
-				status: "ready",
-				path: pathLabel(resolve(componentDir, entry.name)),
-			});
-		}
-	}
-
-	if (typeof component.source === "string" && !implementations.some((implementation) => implementation.source === component.source)) {
-		implementations.push({
-			source: component.source,
-			status: "declared",
-			notes: "Declared in component TOML; no implementation source directory is present.",
-		});
-	}
-
-	if (implementations.length === 0) {
-		implementations.push({
-			source: "registry",
-			status: "inspect-only",
-			notes: "No mature-agent implementation source directory is present.",
-		});
-	}
-	return implementations;
-}
-
-function flattenInventoryComponents(inventory) {
-	const modules = asObject(inventory?.modules);
-	if (!modules) return [];
-	return Object.values(modules).flatMap((module) => asArray(module.components));
 }
 
 function parseComponents(table) {
@@ -412,23 +316,17 @@ function formatCounts(counts) {
 }
 
 function printHuman(report) {
-	console.log(`Harness inspect: ${report.registry.name ?? "unnamed"}`);
-	console.log(`Components: ${report.registry.componentCount} (${formatCounts(report.registry.componentsByKind)})`);
-	console.log(`Modules: ${report.registry.modules.length} (${formatCounts(report.registry.modulesByStatus)})`);
-	for (const module of report.registry.modules) {
-		const implementations = module.implementations.map((implementation) => `${implementation.source}:${implementation.status}`).join(", ");
-		console.log(`  - ${module.id}: ${module.status}; implementations ${implementations}`);
-	}
-	if (report.registry.catalogs.length > 0) {
-		console.log("Catalogs:");
-		for (const catalog of report.registry.catalogs) {
-			const inventory = catalog.inventory;
-			const integration = catalog.integration;
-			console.log(
-				`  - ${catalog.name}: ${inventory?.componentCount ?? 0} entries, ${inventory?.moduleCount ?? 0} modules` +
-					(integration ? `; migration ${formatCounts(integration.byState)}` : ""),
-			);
-		}
+	console.log(`Harness inspect: ${report.hcp.name ?? "unnamed"}`);
+	console.log(`HcpServers: ${report.hcp.HcpServerCount}`);
+	console.log(`HcpMagnet classes: ${report.hcp.HcpMagnetClassCount}`);
+	console.log(
+		`Components: ${report.hcp.componentCount} (${formatCounts(report.hcp.componentsByKind)}); ` +
+			`${report.hcp.selectedComponentCount} selected`,
+	);
+	console.log("Modules:");
+	for (const module of report.hcp.modules) {
+		const sources = [...new Set(module.components.map((component) => component.source))].join(", ") || "none";
+		console.log(`  - ${module.name}: ${module.components.length} component rows; Sources ${sources}; HcpServer ${module.HcpServer}`);
 	}
 
 	console.log(`Packages root: ${report.packages.root}`);
@@ -450,7 +348,7 @@ function printHuman(report) {
 		}
 	}
 
-	const diagnostics = [...report.registry.diagnostics, ...report.packages.diagnostics];
+	const diagnostics = report.packages.diagnostics;
 	if (diagnostics.length > 0) {
 		console.log("Diagnostics:");
 		for (const diagnostic of diagnostics) {
@@ -460,7 +358,7 @@ function printHuman(report) {
 }
 
 const report = {
-	registry: loadRegistryInspect(),
+	hcp: loadHcpInspect(),
 	packages: loadPackagesInspect(),
 };
 

@@ -5,7 +5,7 @@ import { HcpClientcapabilityprefix, type HcpServerDescription, type HcpServerReq
  * 任何具有这些方法的对象都可以作为 HcpServer 使用。
  */
 type HcpServerShape = {
-	readonly moduleName?: string;
+	readonly moduleName: string;
 	readonly description?: string;
 	readonly metadata?: Record<string, unknown>;
 	describe(): HcpServerDescription;
@@ -23,6 +23,7 @@ type HcpMagnetShape = {
 	toTool?(): unknown;
 	toCapability?(): unknown;
 	toResource?(): unknown;
+	dispose?(): void | Promise<void>;
 };
 
 type HcpClientserver = {
@@ -37,6 +38,7 @@ type HcpClientserver = {
 type HcpClientstate = {
 	server: HcpClientserver;
 	slots: Map<string, HcpMagnetShape>;
+	addressesBySlot: Map<string, Set<string>>;
 };
 
 /**
@@ -65,7 +67,7 @@ export function HcpClienttargetname(target: string): string {
  * (`"compaction"`, `"runtime:process"`) and the client resolves it to the owning
  * module server, which routes to the selected source's implementation. This is
  * the ONE place source selection is consumed; there is no second selection
- * registry.
+ * state.
  *
  * Strict Model B resolution chain (NO facade objects, NO per-magnet server from
  * resolve()):
@@ -83,6 +85,21 @@ export function HcpClienttargetname(target: string): string {
 export class HcpClient {
 	private readonly byModule = new Map<string, HcpClientstate>();
 	private readonly addrToModule = new Map<string, { module: string; selector: string }>();
+	private readonly retiredMagnets = new WeakSet<HcpMagnetShape>();
+	private readonly pendingRetirements = new WeakSet<HcpMagnetShape>();
+	private readonly pendingDisposals = new Set<Promise<void>>();
+
+	/** Release source-owned resources and empty this Client's runtime state. */
+	async dispose(): Promise<void> {
+		const magnets = new Set<HcpMagnetShape>();
+		for (const state of this.byModule.values()) {
+			for (const magnet of state.slots.values()) magnets.add(magnet);
+		}
+		this.addrToModule.clear();
+		this.byModule.clear();
+		this.retireMagnets(magnets);
+		await Promise.all([...this.pendingDisposals]);
+	}
 
 	/**
 	 * Register a module HcpServer and index its slot addresses. Replacement mode
@@ -99,45 +116,178 @@ export class HcpClient {
 	registerModule(
 		server: HcpClientserver,
 		slots: Map<string, HcpMagnetShape>,
-		options: { merge?: boolean } = {},
+		options: { merge?: boolean; replace?: boolean; override?: boolean } = {},
 	): string[] {
-		const existingSlots = options.merge ? this.byModule.get(server.moduleName)?.slots : undefined;
-		const registeredSlots = existingSlots ? new Map([...existingSlots, ...slots]) : slots;
-		for (const [address, route] of this.addrToModule) {
-			if (
-				options.merge
-					? route.module === server.moduleName
-					: this.isModuleOrDescendant(route.module, server.moduleName)
-			) {
-				this.addrToModule.delete(address);
+		const existingState = options.merge ? this.byModule.get(server.moduleName) : undefined;
+		if (existingState && existingState.server !== server) {
+			throw new Error(`HcpClient(${server.moduleName}): merge must reuse the existing HcpServer instance`);
+		}
+		const preview: HcpClientstate = {
+			server,
+			slots,
+			addressesBySlot: new Map(),
+		};
+		const nextAddresses = new Map<string, Set<string>>();
+		const nextOwners = new Map<string, string>();
+		const replacedSelectors = new Set(slots.keys());
+		const retired: HcpMagnetShape[] = [];
+		for (const [selector, magnet] of slots) {
+			if (this.retiredMagnets.has(magnet)) {
+				throw new Error(`HcpClient(${server.moduleName}): cannot register retired magnet "${selector}"`);
+			}
+			const canonical = this.describeSource(preview, selector)?.target;
+			const addresses = [...(server.sourceAddresses?.(selector, magnet) ?? (canonical ? [canonical] : []))];
+			if (canonical && !addresses.includes(canonical)) addresses.unshift(canonical);
+			const uniqueAddresses = new Set(addresses);
+			for (const address of uniqueAddresses) {
+				const nextOwner = nextOwners.get(address);
+				if (nextOwner !== undefined && nextOwner !== selector) {
+					throw new Error(
+						`HcpClient address collision: "${address}" is produced by both "${nextOwner}" and "${selector}"`,
+					);
+				}
+				nextOwners.set(address, selector);
+				const current = this.addrToModule.get(address);
+				const replacedByThisCall = options.merge
+					? options.replace !== false &&
+						current?.module === server.moduleName &&
+						replacedSelectors.has(current.selector)
+					: current !== undefined && this.isModuleOrDescendant(current.module, server.moduleName);
+				if (current && !replacedByThisCall && options.override !== true) {
+					throw new Error(
+						`HcpClient address collision: "${address}" is already owned by ${current.module}:${current.selector}`,
+					);
+				}
+			}
+			nextAddresses.set(selector, uniqueAddresses);
+		}
+		if (!existingState) {
+			Object.assign(server, {
+				describe: () => this.describeModule(server.moduleName),
+				call: (call: HcpServerRequest) => this.callModule(server.moduleName, call),
+				instance: <T>(selector?: string) => this.instanceModule<T>(server.moduleName, selector),
+			});
+		}
+
+		let state = existingState;
+		if (options.override) {
+			for (const addresses of nextAddresses.values()) {
+				for (const address of addresses) {
+					this.evictOverriddenAddress(address, server.moduleName, replacedSelectors, retired);
+				}
 			}
 		}
-		for (const moduleName of this.byModule.keys()) {
-			if (
-				options.merge ? moduleName === server.moduleName : this.isModuleOrDescendant(moduleName, server.moduleName)
-			) {
+		if (!options.merge) {
+			for (const [address, route] of this.addrToModule) {
+				if (this.isModuleOrDescendant(route.module, server.moduleName)) this.addrToModule.delete(address);
+			}
+			for (const moduleName of this.byModule.keys()) {
+				if (!this.isModuleOrDescendant(moduleName, server.moduleName)) continue;
+				for (const magnet of this.byModule.get(moduleName)?.slots.values() ?? []) retired.push(magnet);
 				this.byModule.delete(moduleName);
 			}
 		}
-		const state = { server, slots: registeredSlots };
-		this.byModule.set(server.moduleName, state);
-		Object.assign(server, {
-			describe: () => this.describeModule(server.moduleName),
-			call: (call: HcpServerRequest) => this.callModule(server.moduleName, call),
-			instance: <T>(selector?: string) => this.instanceModule<T>(server.moduleName, selector),
-		});
+
+		if (state) {
+			for (const [selector, magnet] of slots) {
+				const previous = state.slots.get(selector);
+				if (previous) retired.push(previous);
+				for (const address of state.addressesBySlot.get(selector) ?? []) {
+					const route = this.addrToModule.get(address);
+					if (route?.module === server.moduleName && route.selector === selector) {
+						this.addrToModule.delete(address);
+					}
+				}
+				state.addressesBySlot.delete(selector);
+				state.slots.set(selector, magnet);
+			}
+		} else {
+			state = {
+				server,
+				slots: new Map(slots),
+				addressesBySlot: new Map(),
+			};
+			this.byModule.set(server.moduleName, state);
+		}
+
 		const registered: string[] = [];
-		for (const [selector] of registeredSlots) {
-			const canonical = this.describeSource(state, selector)?.target;
-			const addresses =
-				server.sourceAddresses?.(selector, registeredSlots.get(selector)!) ?? (canonical ? [canonical] : []);
-			if (canonical && !addresses.includes(canonical)) addresses.unshift(canonical);
-			for (const address of new Set(addresses)) {
+		for (const [selector] of slots) {
+			const uniqueAddresses = nextAddresses.get(selector)!;
+			state.addressesBySlot.set(selector, uniqueAddresses);
+			for (const address of uniqueAddresses) {
 				this.addrToModule.set(address, { module: server.moduleName, selector });
 				registered.push(address);
 			}
 		}
+		this.retireMagnets(retired);
 		return registered;
+	}
+
+	private evictOverriddenAddress(
+		address: string,
+		incomingModule: string,
+		incomingSelectors: ReadonlySet<string>,
+		retired: HcpMagnetShape[],
+	): void {
+		const current = this.addrToModule.get(address);
+		if (!current) return;
+		if (current.module === incomingModule && incomingSelectors.has(current.selector)) return;
+		const state = this.byModule.get(current.module);
+		if (!state) {
+			this.addrToModule.delete(address);
+			return;
+		}
+		const addresses = state.addressesBySlot.get(current.selector);
+		addresses?.delete(address);
+		this.addrToModule.delete(address);
+		if (addresses && addresses.size > 0) return;
+		const magnet = state.slots.get(current.selector);
+		if (magnet) retired.push(magnet);
+		state.slots.delete(current.selector);
+		state.addressesBySlot.delete(current.selector);
+		if (
+			current.module !== incomingModule &&
+			state.slots.size === 0 &&
+			this.directChildren(current.module).length === 0
+		) {
+			this.byModule.delete(current.module);
+		}
+	}
+
+	private retireMagnets(candidates: Iterable<HcpMagnetShape>): void {
+		for (const magnet of new Set(candidates)) {
+			if (
+				this.isMagnetLive(magnet) ||
+				this.retiredMagnets.has(magnet) ||
+				this.pendingRetirements.has(magnet) ||
+				typeof magnet.dispose !== "function"
+			) {
+				continue;
+			}
+			this.pendingRetirements.add(magnet);
+			const pending = Promise.resolve()
+				.then(async () => {
+					this.pendingRetirements.delete(magnet);
+					if (this.isMagnetLive(magnet) || this.retiredMagnets.has(magnet)) return;
+					this.retiredMagnets.add(magnet);
+					await magnet.dispose!();
+				})
+				.then(
+					() => undefined,
+					() => undefined,
+				);
+			this.pendingDisposals.add(pending);
+			void pending.then(() => this.pendingDisposals.delete(pending));
+		}
+	}
+
+	private isMagnetLive(candidate: HcpMagnetShape): boolean {
+		for (const state of this.byModule.values()) {
+			for (const magnet of state.slots.values()) {
+				if (magnet === candidate) return true;
+			}
+		}
+		return false;
 	}
 
 	/**
@@ -160,7 +310,7 @@ export class HcpClient {
 	 *   resolveInstance("capability:runtime:process") → runtime module .instance("runtime:process")
 	 *
 	 * For module-owned addresses the selector comes from the routing index (built
-	 * at registration), so the caller never spells it out. Leaf/prefix servers are
+	 * when the address is routed), so the caller never spells it out. Leaf/prefix servers are
 	 * single-product and are asked for `.instance()` directly.
 	 */
 	resolveInstance<T>(address: string): T | undefined {
@@ -192,7 +342,7 @@ export class HcpClient {
 
 	/** All registered module folder names. */
 	modules(): string[] {
-		return [...this.byModule.keys()];
+		return [...this.byModule.keys()].sort((left, right) => left.localeCompare(right));
 	}
 
 	/**
@@ -235,7 +385,7 @@ export class HcpClient {
 		);
 		if (products.length !== 1) {
 			throw new Error(
-				`HcpClient(${module.server.moduleName}): magnet "${selector}" must produce exactly one primitive`,
+				`HcpClient(${module.server.moduleName}): magnet "${selector}" must produce exactly one product`,
 			);
 		}
 		const product = products[0]!.call(magnet);
@@ -288,7 +438,9 @@ export class HcpClient {
 				kind?: unknown;
 				name?: unknown;
 				source?: unknown;
+				mergeMode?: unknown;
 				contentPath?: unknown;
+				metadata?: unknown;
 			};
 			if (typeof resource.kind !== "string" || typeof resource.name !== "string") {
 				throw new Error(`HcpClient(${module.server.moduleName}): resource magnet "${selector}" is invalid`);
@@ -299,13 +451,17 @@ export class HcpClient {
 				ops: ["describe", "resolve"],
 				description: module.server.description,
 				metadata: {
+					...(resource.metadata && typeof resource.metadata === "object"
+						? (resource.metadata as Record<string, unknown>)
+						: {}),
 					name: resource.name,
 					source: resource.source,
+					mergeMode: resource.mergeMode,
 					...(typeof resource.contentPath === "string" ? { contentPath: resource.contentPath } : {}),
 				},
 			};
 		}
-		throw new Error(`HcpClient(${module.server.moduleName}): magnet "${selector}" produces no primitive`);
+		throw new Error(`HcpClient(${module.server.moduleName}): magnet "${selector}" produces no product`);
 	}
 
 	private effectiveSelector(module: HcpClientstate, selector?: string): string | undefined {
@@ -354,7 +510,7 @@ export class HcpClient {
 			if (["resolve", "read", "get"].includes(call.op)) return this.sourceInstance(module, effective);
 			throw new Error(`HcpClient(${moduleName}): resource slot "${effective}" does not support op "${call.op}"`);
 		}
-		throw new Error(`HcpClient(${moduleName}): magnet "${effective}" produces no primitive`);
+		throw new Error(`HcpClient(${moduleName}): magnet "${effective}" produces no product`);
 	}
 
 	private selectorFromCall(call: HcpServerRequest): string | undefined {
@@ -398,24 +554,8 @@ export class HcpClient {
 		};
 	}
 
-	/**
-	 * Dispatch a management call to its resolved target. The `hcp:registry` target
-	 * is introspection; every other target resolves to a module/leaf/prefix server.
-	 */
+	/** Dispatch a management call to its resolved module Server. */
 	async dispatch(call: HcpServerRequest): Promise<unknown> {
-		if (call.target === "hcp:registry") {
-			switch (call.op) {
-				case "list":
-				case "discover":
-					return this.describeAll();
-				case "addresses":
-					return this.addresses();
-				case "modules":
-					return this.modules();
-				default:
-					throw new Error(`HCP registry: unsupported op "${call.op}"`);
-			}
-		}
 		const target = this.resolve(call.target);
 		if (!target) {
 			throw new Error(`HCP: no target registered for "${call.target}"`);

@@ -19,37 +19,33 @@ This is the engineering form of the recurring question in that body of work:
 
 ## Scope
 
-`[assumption]` is added to **capability modules only** — the parts of the
-harness that compensate for a model limitation and could, in principle, be
-pruned. Foundation code under `_magenta/` (`session`, `types`, `messages`,
+`[assumption]` is added only to components whose TOML declares
+`product = "capability"` — the live loop values that compensate for a model
+limitation and could, in principle, be pruned. Foundation code under
+`_magenta/` (`session`, `types`, `messages`,
 `env`, `utils`) is architectural bedrock, not a model-compensating assumption,
 and is **not** annotated. Protocol/type files and infrastructure under `.HCP/`
 are likewise out of scope; they are not Harness Modules.
-
-`tools-search` is a built-in capability with no registry TOML (it is not listed
-in `harness.toml`), so it has no `[assumption]` block; its rationale lives in the
-file header of `tools/tool-search/tool-search.ts`. If it is ever promoted to
-a registered component, add the block then.
 
 ### Decision matrix (the authoritative RULE)
 
 Uniformity here means a **consistent rule about where the block applies**, not
 the block being present on every TOML. The block is meaningful only where its
 semantics fit — "compensates for a model limitation; could become dead weight as
-the model improves." Apply it by primitive:
+the model improves." Apply it by product:
 
 | Component category | `[assumption]`? | Why |
 |---|---|---|
 | **Capability** module (compaction, context, memory, hooks, multiagent) | **Yes** | This is exactly what the block is for: a loop-internal slot that compensates for a model limitation. |
 | **Capability** that is a safety/trust boundary (policy, sandbox, runtime guards) | **Yes**, with `review_trigger = "never"` | Annotated for provenance, but never pruned on a model bump — a boundary must not rely on a model limitation. |
-| **Tool** (bash, edit, read, write, grep, find, ls, lsp, todo, web-search, web-fetch, show) | **No** | A tool is the model's hands, not a compensation. A smarter model still cannot read/write files or run commands without one, so a tool never becomes dead weight. Tools carry `[parameters]`/`[exports]`, not `[assumption]`. |
+| **Tool** (bash, edit, read, write, grep, find, ls, lsp, todo, tool-search, web-search, web-fetch, show) | **No** | A tool is the model's hands, not a compensation. A smarter model still cannot read/write files or run commands without one, so a tool never becomes dead weight. |
 | **Tool sub-implementation / alternate source** (`tools/edit/magenta/edit-hashline.toml`, `ast-grep.toml`, `read-url.toml`, …) | **No** | Not a distinct component — an alternate *source* of a tool that itself carries no `[assumption]`. |
 | **Resource** (skill, brand, theme, prompt content, `append-system-prompt`, a package's `SYSTEM.md`) | **No** | Inert content merged at assembly has no code provider. The capability that loads or constructs content is separate. |
 | **System prompt / prompt template code capability** | **Yes** | A source Magnet builds a live provider. Package prompt content remains a Resource and carries no block. |
 | **Config / data** (sandbox profile sub-files, `[[patterns]]` rows, env locks) | **No** | Parameters consumed by a component, not components themselves. |
-| **Transport / infra** (`HcpMagnetProcess`, `.HCP/transport`, overlay, registry) | **No** | Injectable/assembly plumbing, not a Module or model-compensating capability. Transport owns no Server and is never auto-assembled as one. |
+| **Transport / infrastructure** (`HcpMagnetProcess`, `.HCP/transport`, `_magenta/mcp`, `_magenta/packages`) | **No** | Injectable/assembly plumbing and generic support, not a Module or model-compensating capability. Transport owns no Server and is never auto-assembled as one. |
 | **Foundation code** (`_magenta/session`, `_magenta/types`, `_magenta/messages`, `_magenta/env`, `_magenta/utils`) | **No** | Architectural bedrock; exists regardless of model capability and is not a Harness Module. |
-| **Configured external package component** | **By primitive**, same rules | Once a package is explicitly integrated, a packaged capability → yes; a packaged tool/skill/system-prompt/runtime/env → no. Concrete domain packages remain owned by `MagentaPackages`, not this repository. |
+| **Configured external Package component** | **By product**, same rules | Once a Package is explicitly integrated, a Capability product → yes; a Tool or Resource product → no. Concrete domain Packages remain owned by `MagentaPackages`, not this repository. |
 
 Executable source of truth: a component carries `[assumption]` **iff its TOML
 declares `product = "capability"`**. That field already determines which product
@@ -58,11 +54,8 @@ table. Tools and Resources, sources, config, transport, and foundation code are
 out of scope by design.
 
 `scripts/audit-assumptions.mjs --check` enforces this rule mechanically
-(`npm run check:assumptions`) from the component TOML files. The parser it uses for
-the TOML blocks is a small purpose-built reader for the simple
-`key = value` / array / quoted-string forms these blocks use — it does not
-handle multiline (`"""`) or escaped-quote strings, so keep `[assumption]`
-values to single-line scalars and flat arrays.
+(`npm run check:assumptions`) from the component TOML files using the shared
+`smol-toml` parser.
 
 ### Two kinds of assumption
 
@@ -78,11 +71,9 @@ values to single-line scalars and flat arrays.
 
 ## Schema
 
-Added to each capability module's per-component TOML
-(`<module>/<module>.toml`). All fields are optional and additive; the
-registry loader preserves them under `ComponentDescriptor.spec.assumption`
-without any loader change, and `check-structure.mjs` does not reject unknown
-sections.
+Add the block to each repository component TOML whose `product` is
+`"capability"`. The fields are additive metadata consumed by the assumption
+audit; codegen and assembly ignore them except for structural validation.
 
 ```toml
 [assumption]

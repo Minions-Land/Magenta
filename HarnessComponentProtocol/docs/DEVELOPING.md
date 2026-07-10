@@ -5,46 +5,50 @@ tells you *what to create, where, and what rules to follow* for the four things
 you can build:
 
 1. **A tool** — a function the model can call (`bash`, `read`, a project-specific operation).
-2. **A capability source** — an implementation of a loop slot (`memory`, `policy`, `runtime`, …).
+2. **A Source for a capability slot** — an implementation of a loop slot
+   (`memory`, `policy`, `runtime`, …).
 3. **A resource** — content wired into assembly (`system-prompt`, `skill`, `prompt`, `theme`, `brand`).
 4. **A package** — an independently shipped bundle that follows the generic
    package contract; domain implementations are owned by `MagentaPackages`.
 
 For the *why* behind the architecture, read `governance/hcp-architecture.md`
-(the authoritative contract). For package integration plumbing, read
-`../.HCP/overlay/README.md`. This guide is the practical entry point.
+(the authoritative contract). For Package integration support, read
+`../_magenta/packages/README.md`. This guide is the practical entry point.
 
 ---
 
 ## The model in one paragraph
 
-The harness is organized as **Module → capability → source**. A *module* is a
-mechanism the loop needs (e.g. `memory`). A *capability* is a slot the module
-fills. A *source* is who implements it — always an **origin-agent name**
+The ownership chain is **HcpClient → Module HcpServer → Source HcpMagnet →
+product**. A *module* is a mechanism the loop needs (e.g. `memory`). A
+*capability* is one possible Magnet product and the address/slot semantic for a
+live loop value; it is not an HCP role or assembly layer. A *source* is who
+implements the product — always an **origin-agent name**
 (`pi`, `magenta`, `codex`, `claude-code`, …), never a programming language or a
 runtime protocol. Implementations are separated by source, not by tech:
 Rust/Python/MCP/process details live *inside* a source directory, they never
-become a source directory. Components self-describe via TOML and are discovered
-by the registry; the real module **HcpServer** owns management and routing while
-a thin source **HcpMagnet** produces one tool, capability, or resource. HCP is
-assembly-time only — the loop calls `tool.execute()` directly, off the HCP path.
+become a source directory. Repository components are declared in TOML and
+projected by codegen into `HCP_SERVERS` and `HCP_MAGNETS`; the real module
+**HcpServer** owns management and routing while a thin source **HcpMagnet**
+produces one tool, capability, or resource. HCP is assembly-time only — the
+loop calls `tool.execute()` directly, off the HCP path.
 
 ### Three Magnet products (know which one you are building)
 
-| Primitive | What it is | Model sees it? | Needs a code builder? |
+| Product | What it is | Model sees it? | Magnet output |
 |---|---|---|---|
-| **Tool** | A callable function | Yes (in the tool list) | Yes (execute fn) |
-| **Capability** | A loop-internal slot impl | No | Yes (build fn) |
-| **Resource** | Content merged at assembly | Indirectly (as content) | **No** |
+| **Tool** | A callable function | Yes (in the tool list) | `toTool()` |
+| **Capability** | A loop-internal slot value | No | `toCapability()` |
+| **Resource** | Content merged at assembly | Indirectly (as content) | `toResource()` |
 
 Prompt-template behavior belongs to the appropriate Capability or Resource
 path. It is not a fourth Magnet product or method.
 
-> **The one rule that bites people (spec §5.1):** a `system-prompt` (or `skill`,
-> `theme`, `brand`) is a **Resource**, not a Capability. It carries a
-> `content_path`, not a code provider. Never add it to `CAPABILITY_KINDS` and
-> never give it a capability builder — doing so makes assembly emit
-> `capability_factory_missing`. Content flows through the resource path.
+> **Product distinction:** package content such as a `system-prompt`, `skill`,
+> `theme`, or `brand` is a **Resource**, not a Capability. It carries a
+> `content_path`, not a code provider. A repository `system-prompt` Source may
+> separately provide live formatting behavior as a Capability; the two products
+> remain distinct.
 
 ---
 
@@ -54,16 +58,21 @@ path. It is not a fourth Magnet product or method.
 
 **All HCP-related names follow the entity-tree iron law** (complete rules: `governance/hcp-naming.md`):
 
-1. **Naming hierarchy = entity tree.** Every capital letter starts a new level and must have a real parent entity in code.
-2. **Level 2 is always a role:** `Client` / `Server` / `Magnet` (the only three). No fourth role.
+1. **Naming hierarchy = entity tree.** Every capital letter starts a new level
+   and must have a real parent entity in code.
+2. **Level 2 is always a role:** `Client` / `Server` / `Magnet` (the only
+   three). No fourth role.
 3. **Everything Hcp-related has the `Hcp` prefix.** No exceptions.
 
 **Quick checks when naming**:
-- Protocol data (requests/responses) → hang under `Server`: `HcpServerRequest`, `HcpServerResponse`
+- Protocol data (requests/responses) → hang under `Server`:
+  `HcpServerRequest`, `HcpServerResponse`
 - Magnet artifacts and transport data → hang under `Magnet`:
   `HcpMagnetResource`, `HcpMagnetBinding`, `HcpMagnetJsonlRequest`
-- Each capital = must have parent entity. Writing `HcpServerRequestValidator`? Then `HcpServerRequest` must exist as an entity.
-- If intermediate entity doesn't exist, keep modifiers lowercase: `HcpClientcapabilityprefix` (no `Capability` entity).
+- Each capital = must have parent entity. Writing `HcpServerRequestValidator`?
+  Then `HcpServerRequest` must exist as an entity.
+- If an intermediate entity does not exist, keep modifiers lowercase:
+  `HcpClientcapabilityprefix` (no `Capability` entity).
 
 **Examples**:
 - ✅ `HcpMagnetProcess` — concrete Magnet-side JSONL transport entity; an
@@ -79,33 +88,35 @@ See `governance/hcp-naming.md` for complete specification.
 
 1. **Source = origin agent, not tech.** Directories are `pi/`, `magenta/`,
    `codex/`, `claude-code/`. Put Rust/Python/process/MCP details *inside* the
-   owning source.
+   owning Source.
 2. **One-of invariant.** A source-local role class `HcpMagnet` produces exactly
    ONE of tool / capability / resource. Do not build a hybrid and do not add
    `toHcpServer()`. Magnet-side entities such as `HcpMagnetProcess` are
    injectable helpers, not source role classes or products.
-3. **No second selection registry (spec §8, §10.1).** Which source wins a slot
-   is decided once by the HcpClient / package overlay. Your magnet only *binds*;
-   it makes no selection decisions. Built-in entities are generated in
-   `.HCP/assembly/sources.generated.ts` from TOML: `HCP_SERVERS` is the Server
-   map and `HCP_MAGNETS` is the one Magnet list. Consumers filter
-   `HCP_MAGNETS`; never create derived tool, skill, capability, or resource
-   Magnet lists.
+3. **One selection path.** TOML declares available Sources and the
+   repository-default choice; explicit Package/assembly input may override that
+   choice before assembly. Your Magnet only *binds* and makes no selection
+   decisions. Codegen writes `.HCP/assembly/sources.generated.ts`:
+   `HCP_SERVERS` is the Server map and `HCP_MAGNETS` is the one Magnet list.
+   Consumers filter `HCP_MAGNETS`; never create product-specific Magnet lists.
 4. **Keep the Magnet thin.** It binds a source and produces its one product. The
-   real module `HcpServer.ts` owns management behavior; transport plumbing lives
-   under `.HCP/transport/` or the source implementation. Transport is not a
-   Module, owns no Server, and cannot register its own address.
-5. **Frozen by default (spec §9).** Capabilities are stateful and non-hot-swap
-   unless their component TOML explicitly sets `hot_swappable = true` for a
-   stateless provider. Codegen passes that node property into `HcpMagnet.build()`.
-6. **Host support is not a Module.** `_magenta/session`, `_magenta/env`,
-   `_magenta/messages`, `_magenta/types`, and `_magenta/utils` are private
-   host/shared support libraries. They own no HCP roles, appear in no generated
-   entity list, and do not form a contract layer. `.HCP/` is protocol and
-   assembly plumbing with the same non-Module boundary.
+   real Module `HcpServer.ts` owns management behavior. HCP JSONL plumbing lives
+   under `.HCP/transport/`; generic MCP/runtime support lives under `_magenta/`
+   or the Source implementation. Transport is not a Module and owns no Server
+   or address.
+5. **Frozen by default (spec §9).** Live Capability products are stateful and
+   non-hot-swap unless their component TOML explicitly sets
+   `hot_swappable = true` for a stateless provider. Codegen passes that node
+   property into `HcpMagnet.build()`.
+6. **Host support is not a Module.** `_magenta/packages`, `_magenta/mcp`,
+   `_magenta/session`, `_magenta/env`, `_magenta/messages`, `_magenta/types`,
+   and `_magenta/utils` are private host/shared support libraries. They own no
+   HCP roles, appear in no generated assembly, and do not form a contract layer.
+   `.HCP/` contains only Hcp-prefixed protocol, assembly, and explicit HCP
+   transport plumbing with the same non-Module boundary.
 7. **Package-level imports only.** Consumers import from `@magenta/harness`
    (the `index.ts` barrel), never deep-import internals, and never name a
-   specific source.
+   specific Source.
 8. **Every change passes the gate** (see the last section).
 
 ---
@@ -128,7 +139,9 @@ HarnessComponentProtocol/tools/my-tool/
 1. Write `my-tool.toml`:
    ```toml
    kind = "tool"
+   product = "tool"
    name = "my_tool"
+   source = "pi"
    description = "One clear sentence the model reads to decide when to call this."
 
    [parameters]
@@ -143,17 +156,18 @@ HarnessComponentProtocol/tools/my-tool/
    `class HcpMagnet` in `pi/HcpMagnet.ts` through `toTool()`.
 3. Add a bare `class HcpServer` in `HcpServer.ts` with
    `moduleName = "tools/my-tool"`.
-4. Register it in `HarnessComponentProtocol/harness.toml`, export its public product from
-   `HarnessComponentProtocol/index.ts`, and run `npm run generate:hcp-sources`.
+4. Declare it in `HarnessComponentProtocol/harness.toml`, export its public
+   product from `HarnessComponentProtocol/index.ts`, and run
+   `npm run generate:hcp-sources`.
 
 **In-process tools:** the source-local `HcpMagnet` creates the ordinary tool and
 returns it from `toTool()`. **Package process/Python/MCP tools:** descriptor
 metadata selects a `ProcessTool`, `PythonModuleTool`, or `McpTool` product
 adapter. Those adapters are not source roles and must stay under a real tool
 Module/Server and source `HcpMagnet`.
-**Out-of-process JSONL HCP:** an owning source Magnet may explicitly inject and use
-`.HCP/transport/hcp-process.ts::HcpMagnetProcess`. The transport is not a
-Module or source role, is never auto-assembled, and owns no Server. Default
+**Out-of-process JSONL HCP:** an owning Source Magnet may explicitly inject and
+use `.HCP/transport/hcp-process.ts::HcpMagnetProcess`. The transport is not a
+Module or Source role, is never auto-assembled, and owns no Server. Default
 production assembly does not instantiate or reference it.
 
 Sub-operations of an existing tool live under that tool's source dir (e.g.
@@ -161,7 +175,7 @@ Sub-operations of an existing tool live under that tool's source dir (e.g.
 
 ---
 
-## Task 2 — Add a capability source
+## Task 2 — Add a Source for a capability slot
 
 Pick this when you are implementing one of the loop slots: `compaction`,
 `context`, `hook`, `memory`, `policy`, `runtime`, `sandbox`. You are adding a
@@ -174,13 +188,13 @@ HarnessComponentProtocol/memory/
   magenta/            ← existing source
     HcpMagnet.ts
     ...impl
-  my-source/          ← your new source
+  codex/              ← your new Source
     HcpMagnet.ts      ← the binding
     ...impl
 ```
 
-1. Implement your provider in `HarnessComponentProtocol/memory/my-source/*.ts`.
-2. Bind it with `HarnessComponentProtocol/memory/my-source/HcpMagnet.ts`:
+1. Implement your provider in `HarnessComponentProtocol/memory/codex/*.ts`.
+2. Bind it with `HarnessComponentProtocol/memory/codex/HcpMagnet.ts`:
    ```typescript
    import type { HcpMagnetBinding } from "../../.HCP/HcpMagnetTypes.ts";
    import type { HcpMagnetBuildContext } from "../../.HCP/HcpMagnetTypes.ts";
@@ -189,8 +203,10 @@ HarnessComponentProtocol/memory/
    export class HcpMagnet {
      static readonly module = "memory";
      static readonly kind = "memory";
-     static readonly source = "my-source";
-     static readonly isDefault = false;
+     static readonly source = "codex";
+     static build(context: HcpMagnetBuildContext) {
+       return new HcpMagnet(context);
+     }
 
      readonly kind = "capability:memory";
      readonly hotSwappable: boolean;
@@ -201,11 +217,11 @@ HarnessComponentProtocol/memory/
        this.provider = new MyMemoryProvider({ workspaceRoot: context.repoRoot });
      }
 
-     toCapability(): HcpMagnetBinding<MyMemoryProvider> {
+     toCapability(): HcpMagnetBinding {
        return {
          kind: "memory",
          name: "memory",
-         source: "my-source",
+         source: "codex",
          instance: this.provider,
        };
      }
@@ -213,21 +229,25 @@ HarnessComponentProtocol/memory/
    ```
 3. Ensure the owning module has its real `memory/HcpServer.ts`. For a new module,
    add that class; for another source of `memory`, reuse the existing Server.
-4. Register the source in TOML and run `npm run generate:hcp-sources`. Do not
-   hand-edit `sources.generated.ts` or add a central builder literal.
+4. Declare the Source in the component TOML and run
+   `npm run generate:hcp-sources`. Do not hand-edit `sources.generated.ts` or
+   add a central builder literal.
 
-Which source is active for a slot is a selection decision made by the package
-overlay / HcpClient, never in your magnet.
+The component TOML declares available Sources and its default-selected Source.
+An explicit Package/assembly choice can replace it before the HcpClient assembles
+the slot. The Magnet never decides which Source is active.
 
 ---
 
 ## Task 3 — Add a resource
 
 Package resources such as `system-prompt`, `skill`, `prompt`, `theme`, and
-`brand` are content-only. They flow through the resource path and need **no
-code builder**. Their descriptors do not create package-local HCP Modules;
-package assembly attaches them to existing real ownership. Built-in skill
-Sources are still real source Magnets under
+`brand` are content-only. They need no Package-specific code builder. Package
+assembly converts each component into `HcpMagnetResourcebuildsettings` and sends
+it through the existing owning Module's `descriptor/HcpMagnet`; the resulting
+Resource is routed by that Module's real `HcpServer`. Package descriptors do not
+create package-local HCP Modules. Repository-declared skill Sources remain real
+Source Magnets under
 `skills/<skill>/<source>/`, with both the root `skills/HcpServer.ts` and each
 leaf `skills/<skill>/HcpServer.ts` present.
 
@@ -241,7 +261,9 @@ content_path = "SYSTEM.md"     # package-local markdown
 
 `HcpMagnetResourceMergeMode` is `replace` (default) or `append` — e.g.
 `append-system-prompt` appends to the base prompt rather than replacing it.
-Never route a resource through `CAPABILITY_KINDS` (spec §5.1).
+Append fragments must use distinct names because every Resource owns one stable
+`kind:name` address. Do not build content-only resources as live capability
+bindings or bypass HcpClient with a derived Package resource table.
 
 ---
 
@@ -259,6 +281,8 @@ Concrete domain expert packages are independently owned and versioned in the
 `MagentaPackages` repository. Do not vendor them into Magenta3 or hardcode the
 sibling repository's filesystem location. External discovery and release
 coordination must enter through an explicit integration boundary.
+`discoverHarnessPackages()` and `loadPackageOverlay()` accept an optional
+`packagesRoot` for this purpose.
 
 The generic package shape remains:
 
@@ -287,7 +311,7 @@ npm run generate:hcp-sources -- --check
 npm run check:structure  # enforces entity-tree and production role rules
 npm run build            # tsc + asset copy — must be green
 npm test                 # vitest — no regression vs the current baseline
-npm run inspect          # resolves the real registry + configured packages; check diagnostics
+npm run inspect          # checks generated declarations and configured packages
 ```
 
 When your change touches pi, also:
@@ -298,10 +322,9 @@ npx tsgo --noEmit
 npm test
 ```
 
-`npm run inspect` is the fastest way to confirm a new component resolves: it
-prints every module, its ready implementations, and configured package
-components, and surfaces diagnostics like
-`capability_factory_missing` if you misclassified a resource as a capability.
+`npm run inspect` is the fastest way to inspect declared Modules, generated
+Sources, and explicitly configured Package components. Treat any emitted
+diagnostic as a declaration, build, or ownership error to resolve at its source.
 
 If a step fails twice, stop and diagnose the root cause instead of patching
 incrementally.

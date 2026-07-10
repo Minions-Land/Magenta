@@ -3,7 +3,7 @@
 Harness tests are currently flat for compatibility with the existing Vitest
 configuration. Treat them as four ownership groups when adding coverage:
 
-- `assembly`: registry, catalog, HCP, Magnet, package tool assembly.
+- `assembly`: generated HCP rows, Client routing, Magnet products, and Package tools.
 - `runtime`: process runtime, script runtime, sandbox, policy, hooks.
 - `capabilities`: tools, skills, prompt templates, system prompt, context,
   memory, compaction.

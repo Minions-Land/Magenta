@@ -1,12 +1,12 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { afterEach, describe, expect, it } from "vitest";
 import { HcpClientbuildsession } from "../.HCP/assembly/session-hcp.ts";
-import { loadPackageOverlay } from "../.HCP/overlay/package-overlay.ts";
-import { discoverMcpTools, McpConnection, McpTool } from "../.HCP/transport/mcp.ts";
-import { McpStdioClient } from "../.HCP/transport/mcp-client.ts";
+import { McpStdioClient } from "../_magenta/mcp/client.ts";
+import { createMcpTools, discoverMcpTools, McpConnection, McpTool } from "../_magenta/mcp/tool.ts";
+import { loadPackageOverlay } from "../_magenta/packages/package-overlay.ts";
 import { createManagedMcpSpawner } from "./mcp-test-utils.ts";
 
 /**
@@ -69,6 +69,52 @@ async function writeMockServer(): Promise<string> {
 	temporaryRoots.push(dir);
 	const path = join(dir, "mock-server.cjs");
 	await writeFile(path, MOCK_MCP_SERVER, { mode: 0o755 });
+	return path;
+}
+
+async function writeFanoutServer(toolNames: string[], closeMarker?: string): Promise<string> {
+	const dir = await mkdtemp(join(tmpdir(), "magenta-mcp-fanout-"));
+	temporaryRoots.push(dir);
+	const path = join(dir, "fanout-server.cjs");
+	await writeFile(
+		path,
+		`const fs = require("node:fs");
+const readline = require("node:readline");
+const tools = ${JSON.stringify(toolNames)}.map((name) => ({ name, description: name, inputSchema: { type: "object" } }));
+const rl = readline.createInterface({ input: process.stdin });
+const send = (id, result) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id, result }) + "\\n");
+${closeMarker ? `process.on("SIGTERM", () => { fs.writeFileSync(${JSON.stringify(closeMarker)}, "closed"); process.exit(0); });` : ""}
+rl.on("line", (line) => {
+  const message = JSON.parse(line);
+  if (message.method === "initialize") send(message.id, { protocolVersion: "2024-11-05", capabilities: { tools: {} } });
+  if (message.method === "tools/list") send(message.id, { tools });
+  if (message.method === "tools/call") send(message.id, { content: [{ type: "text", text: "called " + message.params.name }] });
+});
+`,
+		{ mode: 0o755 },
+	);
+	return path;
+}
+
+async function writeMalformedToolsServer(closeMarker: string): Promise<string> {
+	const dir = await mkdtemp(join(tmpdir(), "magenta-mcp-malformed-"));
+	temporaryRoots.push(dir);
+	const path = join(dir, "malformed-server.cjs");
+	await writeFile(
+		path,
+		`const fs = require("node:fs");
+	const readline = require("node:readline");
+	const rl = readline.createInterface({ input: process.stdin });
+	const send = (id, result) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id, result }) + "\\n");
+	process.on("SIGTERM", () => { fs.writeFileSync(${JSON.stringify(closeMarker)}, "closed"); process.exit(0); });
+	rl.on("line", (line) => {
+	  const message = JSON.parse(line);
+	  if (message.method === "initialize") send(message.id, { protocolVersion: "2024-11-05", capabilities: { tools: {} } });
+	  if (message.method === "tools/list") send(message.id, { tools: [{}] });
+	});
+	`,
+		{ mode: 0o755 },
+	);
 	return path;
 }
 const spawnManagedMcp = createManagedMcpSpawner();
@@ -177,6 +223,84 @@ describe("MCP tools", () => {
 		expect(second.content[0]).toMatchObject({ text: "hello b" });
 		await connection.close();
 	});
+
+	it("reconnects after the MCP server exits unexpectedly", async () => {
+		const server = await writeMockServer();
+		let spawnCount = 0;
+		const connection = new McpConnection("mock", {
+			command: process.execPath,
+			args: [server],
+			spawnManaged: (input, signal) => {
+				spawnCount += 1;
+				return spawnManagedMcp(input, signal);
+			},
+		});
+		const schema = (await connection.listTools()).find((tool) => tool.name === "greet")!;
+		const product = new McpTool({ connection, tool: schema });
+		await product.toTool().execute("first", { name: "__close_after__" });
+		await new Promise((resolve) => setTimeout(resolve, 50));
+
+		await expect(product.toTool().execute("second", { name: "again" })).resolves.toMatchObject({
+			content: [{ type: "text", text: "hello again" }],
+		});
+		expect(spawnCount).toBe(2);
+		await product.close();
+		await connection.close();
+	});
+
+	it("allows a new tool lease after the previous lease released the idle client", async () => {
+		const server = await writeMockServer();
+		let spawnCount = 0;
+		const connection = new McpConnection("mock", {
+			command: process.execPath,
+			args: [server],
+			spawnManaged: (input, signal) => {
+				spawnCount += 1;
+				return spawnManagedMcp(input, signal);
+			},
+		});
+		const schema = (await connection.listTools()).find((tool) => tool.name === "greet")!;
+		const first = new McpTool({ connection, tool: schema });
+		await first.close();
+
+		const second = new McpTool({ connection, tool: schema });
+		await expect(second.toTool().execute("second-lease", { name: "lease" })).resolves.toMatchObject({
+			content: [{ type: "text", text: "hello lease" }],
+		});
+		expect(spawnCount).toBe(2);
+		await second.close();
+		await connection.close();
+	});
+
+	it("closes the public createMcpTools connection when discovery returns no tools", async () => {
+		const markerRoot = await mkdtemp(join(tmpdir(), "magenta-mcp-helper-zero-"));
+		temporaryRoots.push(markerRoot);
+		const marker = join(markerRoot, "closed.txt");
+		const server = await writeFanoutServer([], marker);
+
+		await expect(
+			createMcpTools({
+				serverName: "empty",
+				client: { command: process.execPath, args: [server], spawnManaged: spawnManagedMcp },
+			}),
+		).resolves.toEqual([]);
+		expect(await readFile(marker, "utf-8")).toBe("closed");
+	});
+
+	it("rejects malformed tools/list schemas and closes the connection", async () => {
+		const markerRoot = await mkdtemp(join(tmpdir(), "magenta-mcp-malformed-marker-"));
+		temporaryRoots.push(markerRoot);
+		const marker = join(markerRoot, "closed.txt");
+		const server = await writeMalformedToolsServer(marker);
+
+		await expect(
+			discoverMcpTools({
+				serverName: "malformed",
+				client: { command: process.execPath, args: [server], spawnManaged: spawnManagedMcp },
+			}),
+		).rejects.toThrow(/tool\[0\].*name/);
+		expect(await readFile(marker, "utf-8")).toBe("closed");
+	});
 });
 
 async function writeMcpPackage(descriptor: string): Promise<string> {
@@ -211,6 +335,77 @@ path = "tools/bio-api.toml"
 }
 
 describe("MCP package tool assembly", () => {
+	it("lets an explicit Package override a repository tool without dropping later fan-out tools", async () => {
+		const server = await writeFanoutServer(["web-search", "unique"]);
+		const repoRoot = await writeMcpPackage(
+			[
+				'kind = "tool"',
+				'name = "fanout"',
+				'runtime = "mcp"',
+				`command = ${JSON.stringify(process.execPath)}`,
+				`args = [${JSON.stringify(server)}]`,
+			].join("\n"),
+		);
+		const overlay = await loadPackageOverlay({ repoRoot, selections: ["MockPkg"] });
+		const assembled = await HcpClientbuildsession({ repoRoot, overlay });
+
+		expect(assembled.diagnostics).toEqual([]);
+		expect(assembled.packageToolAddresses).toEqual(["tool:web-search", "tool:unique"]);
+		const overridden = assembled.hcp.resolveInstance<AgentTool>("tool:web-search")!;
+		await expect(overridden.execute("web-search-1", {})).resolves.toMatchObject({
+			content: [{ type: "text", text: "called web-search" }],
+		});
+		const unique = assembled.hcp.resolveInstance<AgentTool>("tool:unique")!;
+		await expect(unique.execute("unique-1", {})).resolves.toMatchObject({
+			content: [{ type: "text", text: "called unique" }],
+		});
+		await assembled.hcp.dispose();
+	});
+
+	it("closes an MCP connection when discovery returns no tools", async () => {
+		const markerRoot = await mkdtemp(join(tmpdir(), "magenta-mcp-zero-marker-"));
+		temporaryRoots.push(markerRoot);
+		const marker = join(markerRoot, "closed.txt");
+		const server = await writeFanoutServer([], marker);
+		const repoRoot = await writeMcpPackage(
+			[
+				'kind = "tool"',
+				'name = "empty"',
+				'runtime = "mcp"',
+				`command = ${JSON.stringify(process.execPath)}`,
+				`args = [${JSON.stringify(server)}]`,
+			].join("\n"),
+		);
+		const overlay = await loadPackageOverlay({ repoRoot, selections: ["MockPkg"] });
+		const assembled = await HcpClientbuildsession({ repoRoot, overlay });
+
+		expect(assembled.packageToolAddresses).toEqual([]);
+		expect(await readFile(marker, "utf-8")).toBe("closed");
+		await assembled.hcp.dispose();
+	});
+
+	it("does not start MCP products owned by a disabled Module", async () => {
+		const markerRoot = await mkdtemp(join(tmpdir(), "magenta-mcp-disabled-marker-"));
+		temporaryRoots.push(markerRoot);
+		const marker = join(markerRoot, "closed.txt");
+		const server = await writeFanoutServer(["unique"], marker);
+		const repoRoot = await writeMcpPackage(
+			[
+				'kind = "tool"',
+				'name = "disabled"',
+				'runtime = "mcp"',
+				`command = ${JSON.stringify(process.execPath)}`,
+				`args = [${JSON.stringify(server)}]`,
+			].join("\n"),
+		);
+		const overlay = await loadPackageOverlay({ repoRoot, selections: ["MockPkg"] });
+		const assembled = await HcpClientbuildsession({ repoRoot, overlay, disabledModules: ["tools"] });
+
+		expect(assembled.packageToolAddresses).toEqual([]);
+		await expect(readFile(marker, "utf-8")).rejects.toMatchObject({ code: "ENOENT" });
+		await assembled.hcp.dispose();
+	});
+
 	it("expands one descriptor into N tools through the session HcpClient", async () => {
 		const server = await writeMockServer();
 		const repoRoot = await writeMcpPackage(

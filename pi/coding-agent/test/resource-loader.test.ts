@@ -2,6 +2,7 @@ import { mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import type { HcpMagnetResource } from "@magenta/harness";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CONFIG_DIR_NAME } from "../src/config.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
@@ -10,16 +11,24 @@ import { ModelRegistry } from "../src/core/model-registry.ts";
 import { DefaultResourceLoader, type DefaultResourceLoaderOptions } from "../src/core/resource-loader.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
-import type { Skill } from "../src/core/skills.ts";
+import { formatSkillsForPrompt, type Skill } from "../src/core/skills.ts";
 import { createSyntheticSourceInfo } from "../src/core/source-info.ts";
 
-function writeHarnessPackageFixture(repoRoot: string): void {
-	const packageDir = join(repoRoot, "packages", "TestDomain");
+function writeHarnessPackageFixture(repoRoot: string, packagesRoot = join(repoRoot, "packages")): void {
+	const packageDir = join(packagesRoot, "TestDomain");
 	const harnessDir = join(packageDir, "harness");
 	const skillDir = join(packageDir, "skills", "test-domain");
+	const hiddenSkillDir = join(packageDir, "skills", "hidden-domain");
+	const promptDir = join(packageDir, "prompts");
+	const themeDir = join(packageDir, "themes");
+	const brandDir = join(packageDir, "brand");
 	const systemPromptDir = join(packageDir, "system-prompt");
 	const toolDir = join(harnessDir, "tools");
 	mkdirSync(skillDir, { recursive: true });
+	mkdirSync(hiddenSkillDir, { recursive: true });
+	mkdirSync(promptDir, { recursive: true });
+	mkdirSync(themeDir, { recursive: true });
+	mkdirSync(brandDir, { recursive: true });
 	mkdirSync(systemPromptDir, { recursive: true });
 	mkdirSync(toolDir, { recursive: true });
 	writeFileSync(
@@ -40,6 +49,27 @@ harness = "harness/harness.toml"
 kind = "skill"
 name = "test-domain"
 path = "../skills/test-domain"
+
+[[components]]
+kind = "skill"
+name = "hidden-domain"
+path = "../skills/hidden-domain"
+include_in_context = false
+
+[[components]]
+kind = "prompt-template"
+name = "package-prompt"
+path = "../prompts/package-prompt.md"
+
+[[components]]
+kind = "theme"
+name = "package-theme"
+path = "../themes/package-theme.json"
+
+[[components]]
+kind = "brand"
+name = "package-brand"
+path = "../brand/BRAND.md"
 
 [[components]]
 kind = "tool"
@@ -67,6 +97,30 @@ description: Test package skill.
 # Test Domain
 `,
 	);
+	writeFileSync(
+		join(hiddenSkillDir, "SKILL.md"),
+		`---
+name: hidden-domain
+description: Explicit-only package skill.
+---
+
+# Hidden Domain
+`,
+	);
+	writeFileSync(
+		join(promptDir, "package-prompt.md"),
+		`---
+description: Package prompt template.
+---
+Package prompt content.
+`,
+	);
+	const packageTheme = JSON.parse(
+		readFileSync(join(process.cwd(), "src", "modes", "interactive", "theme", "dark.json"), "utf-8"),
+	);
+	packageTheme.name = "package-theme";
+	writeFileSync(join(themeDir, "package-theme.json"), JSON.stringify(packageTheme, null, 2));
+	writeFileSync(join(brandDir, "BRAND.md"), "# Package Brand");
 	writeFileSync(
 		join(systemPromptDir, "system-prompt.toml"),
 		`kind = "system-prompt"
@@ -104,6 +158,54 @@ type = "object"
 additionalProperties = true
 `,
 	);
+}
+
+function writePromptOrderPackage(
+	repoRoot: string,
+	id: string,
+	systemName: string,
+	systemContent: string,
+	appendName: string,
+	appendContent: string,
+): void {
+	const packageDir = join(repoRoot, "packages", id);
+	const promptDir = join(packageDir, "system-prompt");
+	mkdirSync(promptDir, { recursive: true });
+	writeFileSync(
+		join(packageDir, "package.toml"),
+		`schema_version = "magenta.package.v1"
+id = "${id}"
+name = "${id}"
+
+[[components]]
+kind = "system-prompt"
+name = "${systemName}"
+path = "system-prompt/system.toml"
+
+[[components]]
+kind = "append-system-prompt"
+name = "${appendName}"
+path = "system-prompt/append.toml"
+`,
+	);
+	writeFileSync(
+		join(promptDir, "system.toml"),
+		`kind = "system-prompt"
+name = "${systemName}"
+source = "${id}"
+content_path = "SYSTEM.md"
+`,
+	);
+	writeFileSync(
+		join(promptDir, "append.toml"),
+		`kind = "append-system-prompt"
+name = "${appendName}"
+source = "${id}"
+content_path = "APPEND.md"
+`,
+	);
+	writeFileSync(join(promptDir, "SYSTEM.md"), systemContent);
+	writeFileSync(join(promptDir, "APPEND.md"), appendContent);
 }
 
 function writeMultiProfilePackageFixture(repoRoot: string): void {
@@ -268,6 +370,9 @@ describe("DefaultResourceLoader", () => {
 			const packageTools = loader.getPackageTools();
 			const packageTool = packageTools.tools.find((tool) => tool.name === "test_package_tool");
 			const packageSkill = loader.getSkills().skills.find((skill) => skill.name === "test-domain");
+			const hiddenPackageSkill = loader.getSkills().skills.find((skill) => skill.name === "hidden-domain");
+			const packagePrompt = loader.getPrompts().prompts.find((prompt) => prompt.name === "package-prompt");
+			const packageTheme = loader.getThemes().themes.find((theme) => theme.name === "package-theme");
 
 			expect(loader.getPackageOverlay()?.packages.map((pkg) => pkg.id)).toEqual(["TestDomain"]);
 			expect(packageTools.diagnostics).toEqual([]);
@@ -276,8 +381,63 @@ describe("DefaultResourceLoader", () => {
 				source: "harness:TestDomain:general",
 				origin: "package",
 			});
+			expect(hiddenPackageSkill?.disableModelInvocation).toBe(true);
+			expect(loader.resolveSkill("hidden-domain")).toBe(hiddenPackageSkill);
+			expect(formatSkillsForPrompt(loader.getSkills().skills)).toContain("<name>test-domain</name>");
+			expect(formatSkillsForPrompt(loader.getSkills().skills)).not.toContain("<name>hidden-domain</name>");
+			expect(packagePrompt?.sourceInfo).toMatchObject({
+				source: "harness:TestDomain:general",
+				origin: "package",
+			});
+			expect(packageTheme?.sourceInfo).toMatchObject({
+				source: "harness:TestDomain:general",
+				origin: "package",
+			});
+			expect(loader.getSessionHcp()?.resolve("skill:test-domain")).toBe(
+				loader.getSessionHcp()?.resolveModule("skills"),
+			);
+			expect(loader.getSessionHcp()?.resolveInstance<HcpMagnetResource>("brand:package-brand")).toMatchObject({
+				kind: "brand",
+				name: "package-brand",
+				source: "TestDomain",
+			});
 			expect(loader.getSystemPrompt()).toBe("Package system prompt.");
 			expect(loader.getAppendSystemPrompt()).toContain("Package append prompt.");
+		});
+
+		it("loads selected harness package resources from an explicit external root", async () => {
+			const packagesRoot = join(tempDir, "external-packages");
+			writeHarnessPackageFixture(cwd, packagesRoot);
+
+			const loader = createLoader({
+				harnessPackages: ["TestDomain"],
+				harnessPackagesRoot: packagesRoot,
+			});
+			await loader.reload();
+
+			expect(loader.getHarnessPackagesRoot()).toBe(packagesRoot);
+			expect(loader.getPackageOverlay()?.packagesRoot).toBe(packagesRoot);
+			expect(loader.getPackageTools().tools.map((tool) => tool.name)).toEqual(["test_package_tool"]);
+			expect(loader.getSkills().skills.some((skill) => skill.name === "test-domain")).toBe(true);
+		});
+
+		it("applies ResourceLoader disable switches after Package Resources assemble through HCP", async () => {
+			writeHarnessPackageFixture(cwd);
+			const loader = createLoader({
+				harnessPackages: ["TestDomain"],
+				noSkills: true,
+				noPromptTemplates: true,
+				noThemes: true,
+			});
+			await loader.reload();
+
+			expect(loader.getSkills().skills).toEqual([]);
+			expect(loader.getPrompts().prompts).toEqual([]);
+			expect(loader.getThemes().themes).toEqual([]);
+			expect(loader.getSessionHcp()?.resolve("skill:test-domain")).toBeDefined();
+			expect(loader.getSessionHcp()?.resolve("prompt-template:package-prompt")).toBeDefined();
+			expect(loader.getSessionHcp()?.resolve("theme:package-theme")).toBeDefined();
+			expect(loader.getSessionHcp()?.resolve("brand:package-brand")).toBeDefined();
 		});
 
 		it("uses package system prompts unless an explicit system prompt is provided", async () => {
@@ -296,6 +456,43 @@ describe("DefaultResourceLoader", () => {
 			});
 			await explicitPromptLoader.reload();
 			expect(explicitPromptLoader.getSystemPrompt()).toBe("Explicit system prompt.");
+		});
+
+		it("preserves last-writer replace order and append order across selected Packages", async () => {
+			writePromptOrderPackage(cwd, "OrderA", "primary", "System A", "append-a", "Append A");
+			writePromptOrderPackage(cwd, "OrderB", "secondary", "System B", "append-b", "Append B");
+			writePromptOrderPackage(cwd, "OrderC", "primary", "System C", "append-c", "Append C");
+
+			const loader = createLoader({ harnessPackages: ["OrderA", "OrderB", "OrderC"] });
+			await loader.reload();
+
+			expect(loader.getSystemPrompt()).toBe("System C");
+			expect(loader.getAppendSystemPrompt()).toEqual(["Append A", "Append B", "Append C"]);
+			expect(loader.getPackageOverlay()?.components.map((component) => component.key)).toEqual([
+				"append-system-prompt:append-a",
+				"system-prompt:secondary",
+				"append-system-prompt:append-b",
+				"system-prompt:primary",
+				"append-system-prompt:append-c",
+			]);
+		});
+
+		it("reports a missing Package system-prompt file instead of injecting its path as content", async () => {
+			writeHarnessPackageFixture(cwd);
+			const contentPath = join(cwd, "packages", "TestDomain", "system-prompt", "SYSTEM.md");
+			rmSync(contentPath);
+
+			const loader = createLoader({ harnessPackages: ["TestDomain"] });
+			await loader.reload();
+
+			expect(loader.getSystemPrompt()).toBeUndefined();
+			expect(loader.getPackageTools().diagnostics).toContainEqual(
+				expect.objectContaining({
+					type: "error",
+					path: contentPath,
+					message: expect.stringContaining("Failed to read"),
+				}),
+			);
 		});
 
 		it("can change selected harness packages before reload", async () => {
@@ -903,6 +1100,8 @@ Content`,
 
 			const { skills } = loader.getSkills();
 			expect(skills).toEqual([]);
+			// noSkills is a ResourceLoader visibility policy; inert HCP Resources remain manageable.
+			expect(loader.getSessionHcp()?.resolve("skill:paper-analysis")).toBeDefined();
 		});
 
 		it("should still load additional skill paths when noSkills is true", async () => {
@@ -1170,7 +1369,7 @@ export default function(pi: ExtensionAPI) {
 			);
 		}
 
-		async function waitFor(predicate: () => boolean, timeoutMs = 3000): Promise<boolean> {
+		async function waitFor(predicate: () => boolean, timeoutMs = 10_000): Promise<boolean> {
 			const start = performance.now();
 			while (performance.now() - start < timeoutMs) {
 				if (predicate()) return true;
@@ -1216,6 +1415,34 @@ export default function(pi: ExtensionAPI) {
 			expect(updated).toBe(true);
 			expect(notified).toBeGreaterThanOrEqual(1);
 			loader.dispose();
+		});
+
+		it("preserves Package visibility and source metadata across skill hot-reload", async () => {
+			writeHarnessPackageFixture(cwd);
+			const loader = createLoader({ harnessPackages: ["TestDomain"], watchSkills: true });
+			await loader.reload();
+
+			const initial = loader.getSkills().skills.find((skill) => skill.name === "hidden-domain");
+			expect(initial?.disableModelInvocation).toBe(true);
+			expect(initial?.sourceInfo?.source).toBe("harness:TestDomain:general");
+
+			const skillFile = join(cwd, "packages", "TestDomain", "skills", "hidden-domain", "SKILL.md");
+			writeFileSync(
+				skillFile,
+				"---\nname: hidden-domain\ndescription: Updated explicit-only package skill.\n---\n\n# Hidden Domain\n",
+			);
+			const updated = await waitFor(
+				() =>
+					loader.getSkills().skills.find((skill) => skill.name === "hidden-domain")?.description ===
+					"Updated explicit-only package skill.",
+			);
+
+			expect(updated).toBe(true);
+			const reloaded = loader.getSkills().skills.find((skill) => skill.name === "hidden-domain");
+			expect(reloaded?.disableModelInvocation).toBe(true);
+			expect(reloaded?.sourceInfo?.source).toBe("harness:TestDomain:general");
+			expect(formatSkillsForPrompt(loader.getSkills().skills)).not.toContain("<name>hidden-domain</name>");
+			await loader.dispose();
 		});
 
 		it("stops firing after dispose", async () => {

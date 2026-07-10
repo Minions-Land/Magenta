@@ -14,11 +14,11 @@ import { initTheme } from "../../../src/modes/interactive/theme/theme.ts";
 import { createTestResourceLoader } from "../../utilities.ts";
 
 describe("regression #5596: missing configured theme export", () => {
-	const cleanups: Array<() => void> = [];
+	const cleanups: Array<() => Promise<void>> = [];
 
-	afterEach(() => {
+	afterEach(async () => {
 		while (cleanups.length > 0) {
-			cleanups.pop()?.();
+			await cleanups.pop()?.();
 		}
 		initTheme("dark");
 	});
@@ -70,8 +70,8 @@ describe("regression #5596: missing configured theme export", () => {
 			modelRegistry,
 			resourceLoader: createTestResourceLoader(),
 		});
-		cleanups.push(() => {
-			session.dispose();
+		cleanups.push(async () => {
+			await session.dispose();
 			faux.unregister();
 			if (existsSync(tempDir)) {
 				rmSync(tempDir, { recursive: true, force: true });

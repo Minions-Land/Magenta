@@ -91,8 +91,8 @@ export type ApprovalDecision = {
 };
 
 /**
- * Approval policy provider surface. Business logic only - HcpServer conversion
- * is handled by the unified capability-server adapter.
+ * Approval policy provider surface. Business logic only; the real module
+ * HcpServer above owns HCP routing.
  */
 export type ApprovalPolicyProvider = {
 	decide(input: unknown): ApprovalDecision;
@@ -132,8 +132,8 @@ export type ShellPolicyClassification = {
 };
 
 /**
- * Shell policy provider surface. Business logic only - HcpServer conversion
- * is handled by the unified capability-server adapter.
+ * Shell policy provider surface. Business logic only; the real module
+ * HcpServer above owns HCP routing.
  */
 export type ShellPolicyProvider = {
 	classify(input: unknown): ShellPolicyClassification;
@@ -145,8 +145,8 @@ export type ShellPolicyProvider = {
  * model tool; it is a selected provider bundle that runtime/hook code can call
  * directly after resolving `policy` through HCP.
  *
- * Note: This bundle contains two sub-providers (approval and shell).
- * HcpServer conversion is handled by the unified capability-server adapter.
+ * This bundle contains two sub-providers (approval and shell). The real module
+ * HcpServer above owns HCP routing.
  */
 export type PolicyProvider = {
 	approval: ApprovalPolicyProvider;

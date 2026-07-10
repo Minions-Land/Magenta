@@ -67,7 +67,7 @@ Only skills with `disableModelInvocation: false` (or undefined) are included in 
 - Hidden skills (internal/utility skills not meant for model invocation)
 - User-only skills (invocable via `/skill` command but not listed for model)
 
-## Registration
+## TOML Declaration
 
 ```toml
 [[components]]
@@ -76,9 +76,18 @@ name = "system-prompt"
 path = "system-prompt/system-prompt.toml"
 ```
 
+```toml
+kind = "system-prompt"
+product = "capability"
+slot = "system-prompt"
+autoload = true
+name = "system-prompt"
+source = "pi"
+```
+
 ## Dependencies
 
-- Types module (Skill interface)
+- Structural Skill type
 
 ## Architecture Notes
 

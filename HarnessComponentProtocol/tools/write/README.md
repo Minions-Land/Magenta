@@ -50,10 +50,10 @@ Returns `AgentToolResult` with:
 Override default filesystem operations for remote writing:
 
 ```typescript
-interface WriteOperations {
+type WriteOperations = {
   writeFile: (absolutePath: string, content: string) => Promise<void>;
   mkdir: (dir: string) => Promise<void>;
-}
+};
 ```
 
 Example for SSH-based writing:
@@ -71,9 +71,13 @@ const execute = createWriteExecute(cwd, {
 });
 ```
 
-## Registration
+## HCP Declaration
+
+`HarnessComponentProtocol/harness.toml` selects this component declaration for
+codegen:
 
 ```toml
+[[components]]
 kind = "tool"
 name = "write"
 path = "tools/write/write.toml"

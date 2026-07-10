@@ -162,7 +162,7 @@ function createRuntimeHost(options: { withAuth: boolean; responseDelayMs: number
 			} catch {
 				// ignore test cleanup failures
 			}
-			session.dispose();
+			await session.dispose();
 			if (existsSync(tempDir)) {
 				rmSync(tempDir, { recursive: true });
 			}

@@ -1,20 +1,21 @@
-// Re-export all harness capabilities
+// Re-export Harness components, products, and public support APIs.
 
 export * from "./.HCP/assembly/session-hcp.ts";
+export { HCP_MAGNETS, HCP_SERVERS } from "./.HCP/assembly/sources.generated.ts";
 // HCP layer (management + assembly, not the loop hot path):
 //   HarnessComponentProtocol/HcpClient.ts       — HcpClient router (agent-facing)
-//   HarnessComponentProtocol/.HCP/               — HCP data types, assembly, registry, overlay, and transports
+//   HarnessComponentProtocol/.HCP/               — HCP data, assembly, and injectable Magnet process transport
+//   HarnessComponentProtocol/_magenta/           — private Package, MCP, and host support
 export * from "./.HCP/HcpMagnetTypes.ts";
 export * from "./.HCP/HcpServerTypes.ts";
-export * from "./.HCP/overlay/package-overlay.ts";
-export * from "./.HCP/registry/registry.ts";
 export * from "./.HCP/transport/hcp-process.ts";
-export * from "./.HCP/transport/mcp.ts";
-export * from "./.HCP/transport/mcp-client.ts";
-export * from "./.HCP/transport/schema.ts";
 export * from "./_magenta/env/pi/nodejs.ts";
 export * from "./_magenta/env/ssh.ts";
+export * from "./_magenta/mcp/client.ts";
+export * from "./_magenta/mcp/schema.ts";
+export * from "./_magenta/mcp/tool.ts";
 export * from "./_magenta/messages/messages.ts";
+export * from "./_magenta/packages/package-overlay.ts";
 export * from "./_magenta/session/pi/repo-utils.ts";
 export * from "./_magenta/session/pi/session.ts";
 export { uuidv7 } from "./_magenta/session/pi/uuid.ts";

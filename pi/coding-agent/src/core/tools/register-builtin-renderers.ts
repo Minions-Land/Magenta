@@ -39,7 +39,7 @@ export function registerBuiltinRenderers(): void {
 	registerRenderer("directory-list", lsRenderer);
 	registerRenderer("file-preview", showRenderer);
 	registerRenderer("sub-agent-result", subAgentRenderer);
-	// Harness trunk web tools (web-search, web-fetch) declare these render kinds
+	// HCP web tools (web-search, web-fetch) declare these render kinds
 	// via their manifest render_kind; the renderers parse the Rust tools' text.
 	registerRenderer("search-results", searchResultsRenderer);
 	registerRenderer("web-content", webContentRenderer);

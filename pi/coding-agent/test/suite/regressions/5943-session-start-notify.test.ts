@@ -312,7 +312,7 @@ describe("regression #5943: session_start transient UI", () => {
 
 			expect(events).toEqual(["apply", "render", "subscribe", "bind", "notify:Hello Error"]);
 		} finally {
-			harness.cleanup();
+			await harness.cleanup();
 		}
 	});
 
@@ -367,7 +367,7 @@ describe("regression #5943: session_start transient UI", () => {
 				"message_end:custom:custom from start",
 			]);
 		} finally {
-			harness.cleanup();
+			await harness.cleanup();
 		}
 	});
 
@@ -417,7 +417,7 @@ describe("regression #5943: session_start transient UI", () => {
 			expect(events).toContain("message_end:user:user from start");
 			expect(events).toContain("message_end:assistant:assistant from start");
 		} finally {
-			harness.cleanup();
+			await harness.cleanup();
 		}
 	});
 
@@ -450,7 +450,7 @@ describe("regression #5943: session_start transient UI", () => {
 			expect(beforeSessionStart).toHaveBeenCalledTimes(1);
 			expect(events).toEqual(["render", "start:reload", "notify:reload"]);
 		} finally {
-			harness.cleanup();
+			await harness.cleanup();
 		}
 	});
 

@@ -1,18 +1,26 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import { createMcpTools, type HcpClient, type ProcessRuntimeProvider, type SandboxProvider } from "@magenta/harness";
+import {
+	discoverMcpTools,
+	HCP_MAGNETS,
+	type HcpClient,
+	HcpClientassemble,
+	type HcpClientcomponent,
+	McpTool,
+	type ProcessRuntimeProvider,
+	type SandboxProvider,
+} from "@magenta/harness";
 import { getAgentDir, getMcpServersPath } from "../config.ts";
 import type { ResourceDiagnostic } from "./diagnostics.ts";
 
 /**
  * User-facing MCP server config, read from `~/.magenta/agent/mcp-servers.json`.
  *
- * This is the general registration path for MCP servers: it mirrors the harness
- * "package" path (a `runtime = "mcp"` descriptor) but sources servers from a
- * user-owned config file instead of a shipped package. Each server is connected
- * via {@link createMcpTools} (the same transport entry point the package
- * path uses), and its remote tools are surfaced as AgentTools.
+ * This is the general configuration path for MCP servers: it mirrors the
+ * Package `runtime = "mcp"` descriptor path but sources servers from a
+ * user-owned config file. Each server uses the same MCP transport as Package
+ * tools, and its remote tools are surfaced as AgentTools.
  *
  * Schema:
  * ```json
@@ -57,12 +65,14 @@ export type McpServersFile = {
 
 export type LoadMcpToolsResult = {
 	tools: AgentTool[];
+	addresses: string[];
 	diagnostics: ResourceDiagnostic[];
 };
 
 export type LoadUserMcpToolsOptions = {
 	hcp: HcpClient;
 	cwd: string;
+	agentDir?: string;
 };
 
 function parseServersFile(raw: string): { servers: McpServerConfig[]; error?: string } {
@@ -89,26 +99,27 @@ function parseServersFile(raw: string): { servers: McpServerConfig[]; error?: st
  */
 export async function loadUserMcpTools(options: LoadUserMcpToolsOptions): Promise<LoadMcpToolsResult> {
 	const diagnostics: ResourceDiagnostic[] = [];
-	const path = getMcpServersPath();
+	const agentDir = options.agentDir ?? getAgentDir();
+	const path = options.agentDir ? join(options.agentDir, "mcp-servers.json") : getMcpServersPath();
 
 	let raw: string;
 	try {
 		raw = await readFile(path, "utf-8");
 	} catch (error) {
 		// Missing file is the normal case: no user MCP servers configured.
-		if ((error as NodeJS.ErrnoException).code === "ENOENT") return { tools: [], diagnostics };
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return { tools: [], addresses: [], diagnostics };
 		diagnostics.push({
 			type: "error",
 			message: `Failed to read ${path}: ${error instanceof Error ? error.message : String(error)}`,
 			path,
 		});
-		return { tools: [], diagnostics };
+		return { tools: [], addresses: [], diagnostics };
 	}
 
 	const { servers, error } = parseServersFile(raw);
 	if (error) {
 		diagnostics.push({ type: "error", message: error, path });
-		return { tools: [], diagnostics };
+		return { tools: [], addresses: [], diagnostics };
 	}
 	const processRuntime = options.hcp.resolveCapability<ProcessRuntimeProvider>("runtime:process");
 	const sandboxProvider = options.hcp.resolveCapability<SandboxProvider>("sandbox");
@@ -119,14 +130,25 @@ export async function loadUserMcpTools(options: LoadUserMcpToolsOptions): Promis
 				"User MCP requires selected HCP capabilities runtime:process and sandbox before servers can be started.",
 			path,
 		});
-		return { tools: [], diagnostics };
+		return { tools: [], addresses: [], diagnostics };
+	}
+	const descriptor = HCP_MAGNETS.find(
+		(component) => component.module === "tools" && component.source === "descriptor" && component.product === "tool",
+	) as HcpClientcomponent | undefined;
+	if (!descriptor) {
+		return {
+			tools: [],
+			addresses: [],
+			diagnostics: [{ type: "error", message: "User MCP requires the generated tools/descriptor HcpMagnet.", path }],
+		};
 	}
 
 	// Cache the tools/list result under the agent dir so a warm cache avoids
 	// spawning the server binary during assembly (mirrors the package path).
-	const cacheDir = join(getAgentDir(), "cache", "mcp");
-	const tools: AgentTool[] = [];
+	const cacheDir = join(agentDir, "cache", "mcp");
+	const components: HcpClientcomponent[] = [];
 	const seenNames = new Set<string>();
+	const seenToolNames = new Set<string>();
 
 	for (const server of servers) {
 		if (!server?.name || !server?.command) {
@@ -149,7 +171,7 @@ export async function loadUserMcpTools(options: LoadUserMcpToolsOptions): Promis
 
 		try {
 			const sandbox = sandboxProvider.resolve({ profile: server.sandbox ?? "trusted" });
-			const mcpTools = await createMcpTools({
+			const discovered = await discoverMcpTools({
 				serverName: server.name,
 				namePrefix: server.name_prefix ?? server.name,
 				client: {
@@ -181,7 +203,36 @@ export async function loadUserMcpTools(options: LoadUserMcpToolsOptions): Promis
 				},
 				cache: { dir: cacheDir, descriptorEnv: server.env },
 			});
-			for (const mcpTool of mcpTools) tools.push(mcpTool.toTool());
+			if (discovered.tools.length === 0) await discovered.connection.close();
+			const products = discovered.tools.map((tool) => {
+				const product = new McpTool({
+					connection: discovered.connection,
+					tool,
+					namePrefix: server.name_prefix ?? server.name,
+				});
+				return { product, toolName: product.toTool().name };
+			});
+			for (const { product, toolName } of products) {
+				if (seenToolNames.has(toolName)) {
+					await product.close();
+					diagnostics.push({
+						type: "warning",
+						message: `Duplicate user MCP tool name "${toolName}"; skipping the later tool.`,
+						path,
+					});
+					continue;
+				}
+				seenToolNames.add(toolName);
+				components.push({
+					...descriptor,
+					name: toolName,
+					selected: true,
+					autoload: false,
+					descriptorPath: path,
+					requires: [],
+					settings: product,
+				});
+			}
 		} catch (error) {
 			diagnostics.push({
 				type: "warning",
@@ -191,5 +242,24 @@ export async function loadUserMcpTools(options: LoadUserMcpToolsOptions): Promis
 		}
 	}
 
-	return { tools, diagnostics };
+	const assembled = await HcpClientassemble({
+		hcp: options.hcp,
+		repoRoot: options.cwd,
+		cwd: options.cwd,
+		includeAutoload: false,
+		replaceExisting: false,
+		components,
+	});
+	diagnostics.push(
+		...assembled.diagnostics.map((diagnostic) => ({
+			type: diagnostic.type,
+			message: diagnostic.message,
+			path,
+		})),
+	);
+	const addresses = assembled.addresses.filter((address) => address.startsWith("tool:"));
+	const tools = addresses
+		.map((address) => options.hcp.resolveInstance<AgentTool>(address))
+		.filter((tool): tool is AgentTool => tool !== undefined);
+	return { tools, addresses, diagnostics };
 }

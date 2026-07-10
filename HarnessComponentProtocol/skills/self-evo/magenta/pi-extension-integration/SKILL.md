@@ -6,20 +6,28 @@ disable-model-invocation: true
 # Sub-skill: Pi Extension Integration (End-to-End)
 
 > Chapter of `self-evo`. Not indexed, not independently invocable. Enter here
-> from the parent skill when the capability comes from a **single Pi extension**.
+> from the parent skill when the behavior comes from a **single Pi extension**.
 
 This sub-skill covers the complete process of integrating a Pi (Claude Code) extension into Magenta's harness. It's divided into two phases that flow together:
 
 1. **Intake** — Acquire and vet the extension source
-2. **Conversion** — Translate injection points to harness primitives and wire Magnets
+2. **Conversion** — Translate injection points to Magnet products and wire the HCP roles
 
 ---
 
 ## Overview: The Pi Path
 
-The Pi path is for **single, lightweight extensions** that dissolve into the trunk. If the extension is heavy (complex runtime, many components, should stay isolated), route back to the parent skill's `package-forge` path instead.
+The Pi path is for **single, lightweight extensions** that become harness-owned
+components under `HarnessComponentProtocol/`. If the extension is heavy
+(complex runtime, many components, independent lifecycle), route back to the
+parent skill's `package-forge` path instead.
 
 **Key principle:** Intake gets the real source in front of you and confirms what it actually does. Conversion translates without guessing.
+
+HCP still has only three runtime roles: `HcpClient`, `HcpServer`, and
+`HcpMagnet`. Tool, Capability, and Resource are Magnet products, not HCP roles.
+A Capability product is a value for a slot and `capability:*` address; preserve
+that ability even when it is not selected by the current session.
 
 ---
 
@@ -80,25 +88,27 @@ Read this function to enumerate all injection points.
 
 ### 3. Enumerate Injection Points
 
-Map every `ExtensionAPI` call to a candidate harness primitive:
+Map every `ExtensionAPI` call to a candidate Magnet product:
 
-| Pi injection point | Candidate harness primitive |
+| Pi injection point | Candidate Magnet product |
 |-------------------|----------------------------|
 | `pi.registerTool({ name, parameters, execute })` | **Tool** |
-| `pi.registerCommand(...)` | Usually not a primitive (Pi TUI surface) — re-express as Tool/Capability or drop |
+| `pi.registerCommand(...)` | Usually no direct product (Pi TUI surface) — re-express as Tool/Capability or drop |
 | `pi.on("tool_call", ...)` gating/mutation | **Capability** (policy) |
 | `pi.on("compact", ...)` summarization | **Capability** (compaction) |
 | `pi.on("session_start", ...)` context/memory | **Capability** (context/memory) |
-| System prompt / help / static text | **Resource** |
+| Static help/text with no runtime slot behavior | **Resource** |
 
-**One-of invariant reminder:** If the extension registers multiple tools + event hooks, that's **multiple components**, each needing its own Magnet.
+**One-of invariant reminder:** If the extension declares multiple tools and
+event hooks, that is **multiple components**, each needing its own Source
+Magnet and the appropriate real Module Server.
 
 ### 4. Map Dependencies
 
 List all imports and categorize:
 
 - **Native TypeScript/JavaScript** → Can run in harness directly
-- **Node built-ins** (`fs`, `path`, `child_process`) → OK, but watch for sandbox violations
+- **Node standard modules** (`fs`, `path`, `child_process`) → OK, but watch for sandbox violations
 - **External packages** → Check if they exist in harness's `package.json` or need to be added
 - **Binaries/native modules** → Flag for process boundary or package-forge path
 - **Heavy runtimes** (Python, Rust) → Route to package-forge
@@ -114,49 +124,52 @@ Flag anything that:
 
 Extensions that do these things aren't automatically rejected, but they must go through `runtime://process` sandbox + policy checks. Never bypass the shared process boundary.
 
-### 6. Decide: Dissolve vs. Encapsulate
+### 6. Decide: Harness-Owned vs. Independent Package
 
-**Dissolve (this path):**
-- Single clean primitive (one tool, one capability)
+**Harness-owned (this path):**
+- Single clean product (one Tool or one Capability)
 - Light dependencies (TypeScript + a few npm packages)
 - No special runtime
 - < 500 lines of code
 
-**Encapsulate (route to package-forge):**
+**Independent Package (route to package-forge):**
 - Multiple components that belong together
 - Heavy dependencies (Python + pixi, Rust crate, native binaries)
 - Wants its own environment boundary
 - Independent versioning/shipping
 
-If encapsulate, hand off to the parent skill's `package-forge` sub-skill.
+If it should remain an independent Package, hand off to the parent skill's
+`package-forge` sub-skill.
 
 ### 7. Record Provenance
 
 Before moving to conversion, record:
 - **Origin:** URL + pinned ref/version (e.g., `git:github.com/user/repo@abc123` or `npm:pkg@1.2.3`)
 - **License:** MIT, Apache-2.0, etc.
-- **Injection point inventory:** List of all `pi.registerTool`, `pi.on`, etc.
+- **Injection-point list:** Every `pi.registerTool`, `pi.on`, and related call
 - **Safety findings:** Any flagged security concerns
-- **Dissolve decision:** Confirmed this is a trunk integration
+- **Ownership decision:** Confirmed this should become a harness-owned component
 
 This travels with the artifact through conversion.
 
 ---
 
-# PART 2: CONVERSION (Translate to Harness Primitives)
+# PART 2: CONVERSION (Translate to Magnet Products)
 
-This is the heart of the Pi path: how we *connect* an extension and *convert* it. It assumes intake has already produced the injection-point inventory and the dissolve decision.
+This is the heart of the Pi path: how we connect an extension and convert it. It
+assumes intake has already produced the injection-point list and ownership
+decision.
 
 ## The Translation Table (Full Reference)
 
-| Pi injection point | Harness primitive | Magnet / wiring |
+| Pi injection point | Magnet product | HCP ownership / wiring |
 |---|---|---|
 | `pi.registerTool({ name, parameters, execute })` | **Tool** | Real tool `HcpServer.ts` plus source-local `HcpMagnet.toTool()` |
 | `pi.on("tool_call", ...)` gating/mutation | **Capability** (policy) | Source-local `policy/<source>/HcpMagnet.ts` plus `policy/HcpServer.ts` |
 | `pi.on("compact"/summarization)` | **Capability** (compaction) | Source-local compaction `HcpMagnet` |
 | `pi.on("session_start"/context)` | **Capability** (context/memory) | Matching capability slot |
-| System prompt / help / static text | **Resource** | Content-only, `content_path`, no code builder |
-| `pi.registerCommand(...)` | Usually **not a primitive** | Commands are Pi TUI surface; re-express as Tool/Capability or drop |
+| Static help/text with no runtime slot behavior | **Resource** | Source-local `HcpMagnet.toResource()` under the owning Server |
+| `pi.registerCommand(...)` | Usually **no direct product** | Commands are Pi TUI surface; re-express as Tool/Capability or drop |
 
 ## Conversion Steps
 
@@ -194,7 +207,8 @@ Pi's `execute` receives `(toolCallId, params, signal, onUpdate, ctx)` where `ctx
 **Harness tools** are pure functions based on `cwd` binding. Replace:
 - `ctx.cwd` → `context.cwd` (bound at Magnet creation)
 - `ctx.ui` prompts → Remove or redesign (harness loop has no interactive TUI hook on tool hot path)
-- `ctx.session` access → Use harness's capability system (memory, state management)
+- `ctx.session` access → Use the matching HcpClient-selected Capability slot
+  (for example, memory or state management); do not create another service layer
 
 **Example transformation:**
 ```typescript
@@ -232,7 +246,9 @@ HarnessComponentProtocol/tools/<name>/
 **For native tools (TypeScript):**
 ```toml
 kind = "tool"
+product = "tool"
 name = "my-tool"
+source = "pi"
 description = "What this tool does and when to use it"
 operation = "read"  # or "write" if it mutates state
 read_only = false
@@ -250,23 +266,45 @@ description = "What this parameter does"
 ```
 
 **For process tools (needs runtime):**
+
+The component TOML still declares a Tool product and points its Source to a
+source-local implementation manifest:
+
+```toml
+kind = "tool"
+product = "tool"
+name = "my-tool"
+source = "pi"
+description = "..."
+
+[source_config.pi]
+implementation_manifest = "pi/my-tool.toml"
+requires = ["runtime:process", "sandbox"]
+```
+
+The implementation manifest contains transport details without becoming an
+HCP role:
+
 ```toml
 kind = "process"
 name = "my-tool"
 description = "..."
-command = "tools/my-tool/runtime/my-tool"
+command = "runtime/my-tool"
 args = []
 operation = "read"
 # ... rest similar
 ```
 
 **For capabilities:**
-Add `[assumption]` blocks (see harness docs for details).
+Declare `product = "capability"`, its `slot`, and the required `[assumption]`
+block (see the harness docs for details). Capability is product/slot/address
+data owned by the three HCP roles, not another role.
 
 ### 5. Wire the Magnet
 
 **Native tool Magnet:**
 ```typescript
+import type { HcpMagnetBuildContext } from "../../../.HCP/HcpMagnetTypes.ts";
 import { createNativeTool } from "../../native-tool.ts";
 import { executeMyTool, myToolSchema } from "./my-tool.ts";
 
@@ -274,6 +312,9 @@ export class HcpMagnet {
   static readonly module = "tools/my-tool";
   static readonly kind = "tool";
   static readonly source = "pi";
+  static build(context: HcpMagnetBuildContext) {
+    return new HcpMagnet(context.cwd ?? context.repoRoot);
+  }
 
   readonly kind = "native";
   readonly source = "pi";
@@ -297,7 +338,7 @@ export class HcpMagnet {
 Keep the Magnet thin: source binding and one product only. All logic stays in
 the execute function; management stays in the real `tools/my-tool/HcpServer.ts`.
 
-### 6. Register in harness.toml
+### 6. Declare in TOML and Regenerate
 
 Add to `HarnessComponentProtocol/harness.toml`:
 
@@ -305,9 +346,21 @@ Add to `HarnessComponentProtocol/harness.toml`:
 [[components]]
 kind = "tool"
 name = "my-tool"
-source = "pi"  # NOT "magenta"
 path = "tools/my-tool/my-tool.toml"
 ```
+
+The component descriptor carries `source = "pi"`. Then run codegen. The chain
+must remain:
+
+```text
+TOML declarations
+  -> HCP_SERVERS and HCP_MAGNETS
+  -> assembly
+  -> HcpClient runtime addresses
+```
+
+The generated arrays are projections for HcpClient; do not add a second catalog
+or selection layer.
 
 ### 7. Gate
 
@@ -321,21 +374,23 @@ npm test                     # No regressions
 npm run inspect              # Confirm component resolves
 ```
 
-`inspect` output should list the tool with no `capability_factory_missing` warnings.
+`inspect` should list the generated component row. Build and tests confirm that
+the selected Magnet product assembles and resolves.
 
 ---
 
 ## Common Conversion Traps
 
 **Trap 1:** Treating a system-prompt contribution as a capability
-- **Wrong:** Give it a `build` function and register as capability
-- **Right:** It's a Resource; use `content_path`, no builder
+- **Wrong:** Classify content as a Capability merely to force it through a slot
+- **Right:** Choose Resource or Capability from the behavior actually required,
+  then make the Source Magnet produce exactly that product
 
 **Trap 2:** Porting `ctx.ui` prompts verbatim
 - **Problem:** Harness loop has no interactive TUI hook on tool hot path
 - **Solution:** Redesign the interaction (make it a parameter, return continuation prompt, or drop if non-essential)
 
-**Trap 3:** Making one built-in source Magnet produce multiple products
+**Trap 3:** Making one Source Magnet produce multiple products
 - **Problem:** Violates one-of invariant
 - **Solution:** Split them — one Magnet per tool
 
@@ -350,10 +405,10 @@ npm run inspect              # Confirm component resolves
 When moving from intake to conversion, you should have:
 
 - ✅ Pinned source location (URL + ref/version)
-- ✅ Injection point inventory with tentative primitive per point
+- ✅ Injection-point list with a tentative product per point
 - ✅ Dependency/runtime classification (native TS vs. needs process)
 - ✅ Safety findings
-- ✅ Dissolve decision confirmed
+- ✅ Harness-ownership decision confirmed
 
 With these in hand, proceed through conversion steps 1-7 above.
 
@@ -367,10 +422,10 @@ Let's say we're integrating a Pi extension called `markdown-to-slides` from npm:
 
 1. **Fetch:** `npm pack markdown-to-slides@1.0.0`, extract to `/tmp/markdown-to-slides/`
 2. **Read entry:** It registers one tool (`pi.registerTool({ name: "markdownToSlides", ... })`)
-3. **Injection points:** Single tool registration
-4. **Dependencies:** Node built-ins + `marked` package (already in harness)
+3. **Injection points:** One `pi.registerTool` call
+4. **Dependencies:** Node standard modules + `marked` package (already in harness)
 5. **Security:** Writes .pptx files to user's workspace (OK, within workspace)
-6. **Decision:** Dissolve (single clean primitive, light deps)
+6. **Decision:** Make it harness-owned (single clean product, light deps)
 7. **Provenance:** `npm:markdown-to-slides@1.0.0`, MIT license
 
 ### Conversion Phase
@@ -379,8 +434,9 @@ Let's say we're integrating a Pi extension called `markdown-to-slides` from npm:
 2. **Rebind context:** Replace `ctx.cwd` with `context.cwd`
 3. **Place:** `HarnessComponentProtocol/tools/markdown-to-slides/pi/`
 4. **Descriptor:** Write `markdown-to-slides.toml`
-5. **Magnet:** `createMarkdownToSlidesMagnet` wrapping the execute function
-6. **Register:** Add to `harness.toml` with `source = "pi"`
+5. **Magnet:** Source-local `HcpMagnet` wrapping the execute function
+6. **Declare:** Add the descriptor to `harness.toml`; keep `source = "pi"` in
+   the component TOML and regenerate the HCP arrays
 7. **Gate:** `npm run build && npm test && npm run check:structure`
 
 Done! The tool is now available to Magenta.
@@ -395,7 +451,9 @@ If during intake you discover:
 - Extension is actually a suite of related tools
 - Needs independent versioning/shipping
 
-**Stop the Pi path** and hand off to the parent skill's `package-forge` sub-skill. That path is designed for encapsulation rather than dissolution.
+**Stop the Pi path** and hand off to the parent skill's `package-forge`
+sub-skill. That path preserves independent Package ownership instead of moving
+the implementation into `HarnessComponentProtocol/`.
 
 ---
 
@@ -407,7 +465,7 @@ If during intake you discover:
 3. Enumerate injection points
 4. Map dependencies
 5. Security review
-6. Decide dissolve vs. encapsulate
+6. Decide harness ownership vs. independent Package ownership
 7. Record provenance
 
 **Conversion:**
@@ -416,7 +474,8 @@ If during intake you discover:
 3. Place in `HarnessComponentProtocol/<module>/pi/` (or `tools/<name>/pi/`)
 4. Write `.toml` descriptor
 5. Add the real module Server and source-local Magnet
-6. Register in `harness.toml` with `source = "pi"`
+6. Declare in `harness.toml` and regenerate `HCP_SERVERS` / `HCP_MAGNETS`
 7. Gate with codegen, structure, build, test, and inspect
 
-**Result:** The Pi extension is now a first-class harness primitive, fully integrated and ready to use.
+**Result:** The Pi extension is now a harness-owned Magnet product on the single
+HcpClient assembly path, ready when selected.
