@@ -146,9 +146,19 @@ describe("parseArgs", () => {
 			expect(result.export).toBe("session.jsonl");
 		});
 
-		test("parses --thinking", () => {
-			const result = parseArgs(["--thinking", "high"]);
-			expect(result.thinking).toBe("high");
+		test("parses max and rejects ultra for --thinking", () => {
+			const max = parseArgs(["--thinking", "max"]);
+			expect(max.thinking).toBe("max");
+			expect(max.diagnostics).toEqual([]);
+
+			const ultra = parseArgs(["--thinking", "ultra"]);
+			expect(ultra.thinking).toBeUndefined();
+			expect(ultra.diagnostics).toEqual([
+				{
+					type: "warning",
+					message: 'Invalid thinking level "ultra". Valid values: off, minimal, low, medium, high, xhigh, max',
+				},
+			]);
 		});
 
 		test("parses --models as comma-separated list", () => {

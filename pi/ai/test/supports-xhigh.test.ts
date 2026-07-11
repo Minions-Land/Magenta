@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getModel, getSupportedThinkingLevels } from "../src/compat.ts";
+import { clampThinkingLevel, getModel, getSupportedThinkingLevels } from "../src/compat.ts";
 
 describe("getSupportedThinkingLevels", () => {
 	it("includes xhigh for Anthropic Opus 4.6 on anthropic-messages API", () => {
@@ -37,6 +37,29 @@ describe("getSupportedThinkingLevels", () => {
 		const model = getModel("openai-codex", modelId);
 		expect(model).toBeDefined();
 		expect(getSupportedThinkingLevels(model!)).toContain("xhigh");
+	});
+
+	it.each(["gpt-5.6", "gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra"] as const)(
+		"exposes source-declared reasoning levels through max for OpenAI %s",
+		(modelId) => {
+			const model = getModel("openai", modelId);
+			expect(model).toBeDefined();
+			expect(getSupportedThinkingLevels(model!)).toEqual(["off", "low", "medium", "high", "xhigh", "max"]);
+			expect(clampThinkingLevel(model!, "max")).toBe("max");
+			expect(clampThinkingLevel(model!, "minimal")).toBe("low");
+		},
+	);
+
+	it("propagates GPT-5.6 max support to the derived Azure catalog", () => {
+		const model = getModel("azure-openai-responses", "gpt-5.6-sol");
+		expect(model).toBeDefined();
+		expect(getSupportedThinkingLevels(model!)).toEqual(["off", "low", "medium", "high", "xhigh", "max"]);
+	});
+
+	it("uses OpenRouter's own GPT-5.6 max metadata", () => {
+		const model = getModel("openrouter", "openai/gpt-5.6-sol");
+		expect(model).toBeDefined();
+		expect(getSupportedThinkingLevels(model!)).toEqual(["off", "low", "medium", "high", "xhigh", "max"]);
 	});
 
 	it("includes only medium/high/xhigh for OpenAI GPT-5.5 Pro", () => {

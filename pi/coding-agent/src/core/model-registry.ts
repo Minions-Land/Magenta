@@ -95,6 +95,7 @@ const ThinkingLevelMapSchema = Type.Object({
 	medium: Type.Optional(ThinkingLevelMapValueSchema),
 	high: Type.Optional(ThinkingLevelMapValueSchema),
 	xhigh: Type.Optional(ThinkingLevelMapValueSchema),
+	max: Type.Optional(ThinkingLevelMapValueSchema),
 });
 
 const ChatTemplateKwargScalarSchema = Type.Union([Type.String(), Type.Number(), Type.Boolean(), Type.Null()]);
@@ -383,6 +384,17 @@ function inferThinkingLevelMap(
 
 	// OpenAI models
 	if (api === "openai-completions" || api === "openai-responses") {
+		if (id.includes("gpt-5.6")) {
+			return {
+				off: "none",
+				minimal: null,
+				low: "low",
+				medium: "medium",
+				high: "high",
+				xhigh: "xhigh",
+				max: "max",
+			};
+		}
 		// GPT-5.2+ supports xhigh
 		if (id.includes("gpt-5.2") || id.includes("gpt-5.3") || id.includes("gpt-5.4") || id.includes("gpt-5.5")) {
 			return { off: null, minimal: "low", low: "low", medium: "medium", high: "high", xhigh: "xhigh" };

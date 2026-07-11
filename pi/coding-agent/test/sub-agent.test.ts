@@ -319,7 +319,7 @@ describe("built-in sub_agent tool", () => {
 				defaultWaitTimeoutSeconds: 2,
 				defaultReturnToMain: true,
 				defaultReturnDelivery: "nextTurn",
-				defaultThinking: "high",
+				defaultThinking: "max",
 			},
 			undefined,
 			undefined,
@@ -330,7 +330,7 @@ describe("built-in sub_agent tool", () => {
 		expect(textOf(result)).toContain("defaultWaitTimeoutSeconds: 2");
 		expect(textOf(result)).toContain("defaultReturnToMain: true");
 		expect(textOf(result)).toContain("defaultReturnDelivery: nextTurn");
-		expect(textOf(result)).toContain("defaultThinking: high");
+		expect(textOf(result)).toContain("defaultThinking: max");
 	});
 
 	it("runs a workflow as one background event and returns a structured tree", async () => {

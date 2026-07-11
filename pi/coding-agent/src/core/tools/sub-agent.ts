@@ -27,10 +27,11 @@ const TERM_GRACE_MS = 3000;
 const MAX_START_MANY = 8;
 const DEFAULT_TOOLS = ["read", "grep", "find", "ls"];
 const DEFAULT_THINKING = "medium";
+const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
 type AgentStatus = "running" | "exited" | "failed" | "timed_out" | "cancelled";
 type Action = "start" | "status" | "wait" | "cancel" | "config";
-type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+type ThinkingLevel = (typeof THINKING_LEVELS)[number];
 type ReturnDelivery = "steer" | "followUp" | "nextTurn";
 
 type SubAgentConfig = {
@@ -152,7 +153,7 @@ const TaskSchema = Type.Object({
 	),
 	model: Type.Optional(Type.String({ description: `Optional ${APP_NAME} model pattern or provider/model id.` })),
 	provider: Type.Optional(Type.String({ description: `Optional ${APP_NAME} provider name.` })),
-	thinking: Type.Optional(StringEnum(["off", "minimal", "low", "medium", "high", "xhigh"] as const)),
+	thinking: Type.Optional(StringEnum(THINKING_LEVELS)),
 	timeoutSeconds: Type.Optional(
 		Type.Number({ description: "Optional maximum runtime before the sub-agent is terminated." }),
 	),
@@ -175,7 +176,7 @@ const WorkflowSlotSchema = Type.Object({
 	tools: Type.Optional(
 		Type.Array(Type.String(), { description: `Tool whitelist for this worker. Defaults to read-only.` }),
 	),
-	thinking: Type.Optional(StringEnum(["off", "minimal", "low", "medium", "high", "xhigh"] as const)),
+	thinking: Type.Optional(StringEnum(THINKING_LEVELS)),
 	timeoutSeconds: Type.Optional(Type.Number({ description: "Per-worker wall-clock timeout in seconds." })),
 });
 
@@ -236,7 +237,7 @@ const subAgentSchema = Type.Object({
 	),
 	model: Type.Optional(Type.String({ description: "Optional model for action=start." })),
 	provider: Type.Optional(Type.String({ description: "Optional provider for action=start." })),
-	thinking: Type.Optional(StringEnum(["off", "minimal", "low", "medium", "high", "xhigh"] as const)),
+	thinking: Type.Optional(StringEnum(THINKING_LEVELS)),
 	timeoutSeconds: Type.Optional(Type.Number({ description: "Maximum runtime for action=start." })),
 	tasks: Type.Optional(
 		Type.Array(TaskSchema, {
@@ -289,7 +290,7 @@ const subAgentSchema = Type.Object({
 		}),
 	),
 	defaultThinking: Type.Optional(
-		StringEnum(["off", "minimal", "low", "medium", "high", "xhigh"] as const, {
+		StringEnum(THINKING_LEVELS, {
 			description: "For action=config: default sub-agent thinking level.",
 		}),
 	),

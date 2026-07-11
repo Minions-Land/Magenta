@@ -421,6 +421,7 @@ describe("ModelRegistry", () => {
 							thinkingLevelMap: {
 								minimal: null,
 								high: "max",
+								max: "max",
 							},
 							compat: {
 								supportsStrictMode: false,
@@ -436,9 +437,41 @@ describe("ModelRegistry", () => {
 			const compat = model?.compat as OpenAICompletionsCompat | undefined;
 
 			expect(registry.getError()).toBeUndefined();
-			expect(model?.thinkingLevelMap).toEqual({ minimal: null, high: "max" });
+			expect(model?.thinkingLevelMap).toEqual({ minimal: null, high: "max", max: "max" });
 			expect(compat?.supportsStrictMode).toBe(false);
 			expect(compat?.cacheControlFormat).toBe("anthropic");
+		});
+
+		test("infers all GPT-5.6 reasoning levels through max for custom OpenAI Responses models", () => {
+			writeRawModelsJson({
+				demo: {
+					baseUrl: "https://api.openai.com/v1",
+					apiKey: "DEMO_KEY",
+					api: "openai-responses",
+					models: [
+						{
+							id: "gpt-5.6-sol",
+							reasoning: true,
+							input: ["text"],
+							cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+							contextWindow: 1050000,
+							maxTokens: 128000,
+						},
+					],
+				},
+			});
+
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+			expect(registry.getError()).toBeUndefined();
+			expect(registry.find("demo", "gpt-5.6-sol")?.thinkingLevelMap).toEqual({
+				off: "none",
+				minimal: null,
+				low: "low",
+				medium: "medium",
+				high: "high",
+				xhigh: "xhigh",
+				max: "max",
+			});
 		});
 
 		test("compat schema accepts chat template thinking configuration", () => {

@@ -20,6 +20,10 @@ interface ModelsDevModel {
 	name: string;
 	tool_call?: boolean;
 	reasoning?: boolean;
+	reasoning_options?: Array<{
+		type?: string;
+		values?: string[];
+	}>;
 	limit?: {
 		context?: number;
 		output?: number;
@@ -236,6 +240,45 @@ const OPENAI_XHIGH_THINKING_LEVEL_MAP = {
 	xhigh: "xhigh",
 } as const;
 
+const MODEL_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+
+function getModelsDevEffortThinkingLevelMap(
+	model: ModelsDevModel,
+): NonNullable<Model<Api>["thinkingLevelMap"]> | undefined {
+	const effort = model.reasoning_options?.find((option) => option.type === "effort");
+	if (!effort) return undefined;
+
+	const map: NonNullable<Model<Api>["thinkingLevelMap"]> = Object.fromEntries(
+		MODEL_THINKING_LEVELS.map((level) => [level, null]),
+	);
+	for (const value of effort.values ?? []) {
+		if (value === "none") {
+			map.off = "none";
+		} else if (MODEL_THINKING_LEVELS.includes(value as (typeof MODEL_THINKING_LEVELS)[number])) {
+			map[value as (typeof MODEL_THINKING_LEVELS)[number]] = value;
+		}
+	}
+	return map;
+}
+
+const MODELS_DEV_EFFORT_MAPS = new Map<
+	string,
+	Map<string, NonNullable<Model<Api>["thinkingLevelMap"]>>
+>();
+
+function setModelsDevEffortMap(
+	provider: string,
+	modelId: string,
+	map: NonNullable<Model<Api>["thinkingLevelMap"]>,
+): void {
+	let providerMaps = MODELS_DEV_EFFORT_MAPS.get(provider);
+	if (!providerMaps) {
+		providerMaps = new Map();
+		MODELS_DEV_EFFORT_MAPS.set(provider, providerMaps);
+	}
+	providerMaps.set(modelId, map);
+}
+
 const OPENAI_RESPONSES_NONE_REASONING_MODELS = new Set([
 	"gpt-5.1",
 	"gpt-5.2",
@@ -244,6 +287,10 @@ const OPENAI_RESPONSES_NONE_REASONING_MODELS = new Set([
 	"gpt-5.4-mini",
 	"gpt-5.4-nano",
 	"gpt-5.5",
+	"gpt-5.6",
+	"gpt-5.6-luna",
+	"gpt-5.6-sol",
+	"gpt-5.6-terra",
 ]);
 
 const OPENCODE_OPENAI_COMPLETIONS_LONG_CACHE_RETENTION_UNSUPPORTED_MODELS = new Set([
@@ -291,7 +338,8 @@ function supportsOpenAiXhigh(modelId: string): boolean {
 		modelId.includes("gpt-5.2") ||
 		modelId.includes("gpt-5.3") ||
 		modelId.includes("gpt-5.4") ||
-		modelId.includes("gpt-5.5")
+		modelId.includes("gpt-5.5") ||
+		modelId.includes("gpt-5.6")
 	);
 }
 
@@ -520,7 +568,11 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 	}
 	// OpenAI reasoning models: systematic thinkingLevelMap configuration
 	if ((model.api === "openai-completions" || model.api === "openai-responses") && model.reasoning) {
-		if (model.provider === "openai" || model.provider === "openai-codex" || model.provider === "azure-openai-responses") {
+		if (
+			model.provider === "openai" ||
+				model.provider === "openai-codex" ||
+				model.provider === "azure-openai-responses"
+		) {
 			if (supportsOpenAiXhigh(model.id)) {
 				// GPT-5.2+ supports xhigh
 				mergeThinkingLevelMap(model, OPENAI_XHIGH_THINKING_LEVEL_MAP);
@@ -546,6 +598,11 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 	}
 	if (model.id.includes("gpt-5.5-pro")) {
 		mergeThinkingLevelMap(model, { off: null, minimal: null, low: null });
+	}
+	const metadataProvider = model.provider === "azure-openai-responses" ? "openai" : model.provider;
+	const declaredMap = MODELS_DEV_EFFORT_MAPS.get(metadataProvider)?.get(model.id);
+	if (declaredMap?.max === "max") {
+		model.thinkingLevelMap = { ...declaredMap };
 	}
 
 	// Anthropic models: systematic thinkingLevelMap configuration
@@ -814,6 +871,14 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 
 		const models: Model<any>[] = [];
 		const nvidiaNimModelIds = data.nvidia?.models ? await fetchNvidiaNimModelIds() : new Map<string, string>();
+		if (data.openrouter?.models) {
+			for (const [modelId, model] of Object.entries(data.openrouter.models)) {
+				const declaredThinkingLevelMap = getModelsDevEffortThinkingLevelMap(model as ModelsDevModel);
+				if (modelId.startsWith("openai/gpt-5.6") && declaredThinkingLevelMap) {
+					setModelsDevEffortMap("openrouter", modelId, declaredThinkingLevelMap);
+				}
+			}
+		}
 
 		// Process Amazon Bedrock models
 		if (data["amazon-bedrock"]?.models) {
@@ -958,6 +1023,10 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			for (const [modelId, model] of Object.entries(data.openai.models)) {
 				const m = model as ModelsDevModel;
 				if (m.tool_call !== true) continue;
+				const declaredThinkingLevelMap = getModelsDevEffortThinkingLevelMap(m);
+				if (declaredThinkingLevelMap) {
+					setModelsDevEffortMap("openai", modelId, declaredThinkingLevelMap);
+				}
 
 				models.push({
 					id: modelId,
