@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Existing release tag to build and publish'
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -12,10 +18,14 @@ jobs:
   build:
     name: Build release binaries
     runs-on: macos-14  # arm64 runner
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
     
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ env.RELEASE_TAG }}
       
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -58,8 +68,7 @@ jobs:
       - name: Extract release notes
         id: release_notes
         run: |
-          # Extract version from tag
-          VERSION="${GITHUB_REF#refs/tags/}"
+          VERSION="${RELEASE_TAG}"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           
           # Extract release notes from CHANGELOG
@@ -76,6 +85,8 @@ jobs:
         with:
           repository: Minions-Land/Magenta-CLI
           token: ${{ secrets.MAGENTA_CLI_RELEASE_TOKEN }}
+          tag_name: ${{ env.RELEASE_TAG }}
+          target_commitish: main
           files: |
             pi/coding-agent/dist/release/magenta-macos-arm64
             pi/coding-agent/dist/release/magenta-macos-x64
