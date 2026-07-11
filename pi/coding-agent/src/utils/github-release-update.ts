@@ -8,7 +8,7 @@
  * Unlike magenta-update.ts (git-based), this works with distributed binaries.
  */
 
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createWriteStream, existsSync } from "node:fs";
 import { chmod, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { arch, homedir, platform } from "node:os";
@@ -368,7 +368,7 @@ export async function installUpdate(): Promise<UpdateInstallResult> {
 			fileStream.on("error", reject);
 		});
 
-		// Make it executable
+		// Make it executable (Unix only, no-op on Windows)
 		await chmod(tempPath, 0o755);
 
 		// Test that the new binary works
@@ -382,13 +382,16 @@ export async function installUpdate(): Promise<UpdateInstallResult> {
 			throw new Error("Downloaded binary failed verification");
 		}
 
-		// Backup current version
+		// Windows: cannot rename a running .exe. Generate a batch script to do it after exit.
+		if (platform() === "win32") {
+			return await installUpdateWindows(tempPath, currentBinary, backupPath, checkResult);
+		}
+
+		// Unix: atomic rename (backup old → install new)
 		if (existsSync(backupPath)) {
 			await unlink(backupPath);
 		}
 		await rename(currentBinary, backupPath);
-
-		// Install new version
 		await rename(tempPath, currentBinary);
 
 		console.log(`✅ 已更新到 v${checkResult.latestVersion}`);
@@ -407,5 +410,81 @@ export async function installUpdate(): Promise<UpdateInstallResult> {
 			success: false,
 			error: error instanceof Error ? error.message : String(error),
 		};
+	}
+}
+
+/**
+ * Windows-specific update installer.
+ * 
+ * Windows cannot rename a running .exe, so we:
+ *  1. Write the new binary to a temp location
+ *  2. Generate a batch script to replace the exe after magenta exits
+ *  3. Launch the batch script in detached mode
+ *  4. Instruct the user to exit magenta
+ */
+async function installUpdateWindows(
+	tempPath: string,
+	currentBinary: string,
+	backupPath: string,
+	checkResult: UpdateCheckResult,
+): Promise<UpdateInstallResult> {
+	const batchScript = `${currentBinary}.update.bat`;
+
+	// Generate a batch script that:
+	//  - Waits for magenta.exe to exit (loop checking process list)
+	//  - Backs up the old exe
+	//  - Copies new exe into place
+	//  - Cleans up temp files
+	const batchContent = `@echo off
+echo Waiting for Magenta to exit...
+:wait
+tasklist /FI "IMAGENAME eq ${basename(currentBinary)}" 2>NUL | find /I /N "${basename(currentBinary)}">NUL
+if "%ERRORLEVEL%"=="0" (
+  timeout /t 1 /nobreak >NUL
+  goto wait
+)
+
+echo Updating Magenta to v${checkResult.latestVersion}...
+if exist "${backupPath}" del /f "${backupPath}"
+if exist "${currentBinary}" ren "${currentBinary}" "${basename(backupPath)}"
+move /y "${tempPath}" "${currentBinary}" >NUL
+if exist "${tempPath}" del /f "${tempPath}"
+
+echo Update complete. You can restart magenta.exe now.
+timeout /t 3 /nobreak >NUL
+del /f "%~f0"
+`;
+
+	try {
+		await writeFile(batchScript, batchContent, "utf8");
+
+		// Launch the batch script in detached mode so it survives magenta's exit
+		const child = spawn("cmd.exe", ["/c", batchScript], {
+			detached: true,
+			stdio: "ignore",
+		});
+		// Unref so the parent (magenta) can exit without waiting for the updater
+		child.unref();
+
+		console.log(`✅ 已下载 Magenta v${checkResult.latestVersion}`);
+		if (checkResult.releaseNotes) {
+			console.log(`\n更新内容:\n${checkResult.releaseNotes}\n`);
+		}
+		console.log(
+			`⚠️  Windows 更新需要退出当前进程。\n` +
+				`   更新脚本已在后台启动，请关闭此窗口或按 Ctrl+C 退出。\n` +
+				`   退出后，更新将自动完成（旧版本备份为 ${basename(backupPath)}）。`,
+		);
+
+		return {
+			success: true,
+			newVersion: checkResult.latestVersion,
+		};
+	} catch (error) {
+		// Clean up batch script if spawn failed
+		if (existsSync(batchScript)) {
+			await unlink(batchScript);
+		}
+		throw error;
 	}
 }
