@@ -5,8 +5,8 @@ set -e
 # 用法: curl -fsSL https://your-server.com/install.sh | bash
 #   或: bash <(curl -fsSL https://your-server.com/install.sh)
 
-GITHUB_REPO="${MAGENTA_GITHUB_REPO:-your-org/magenta3}"
-GITHUB_TOKEN="${MAGENTA_GITHUB_TOKEN:-ghp_xxxxxxxxxxxx}"  # 这里填你的 token
+GITHUB_REPO="${MAGENTA_GITHUB_REPO:-Minions-Land/Magenta}"
+GITHUB_TOKEN="${MAGENTA_GITHUB_TOKEN:-***REMOVED***}"  # 这里填你的 token
 INSTALL_DIR="${HOME}/.local/bin"
 
 echo "📦 安装 Magenta..."
