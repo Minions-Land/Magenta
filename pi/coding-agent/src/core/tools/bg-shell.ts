@@ -113,7 +113,8 @@ const bgShellSchema = Type.Object({
 	),
 	eventId: Type.Optional(
 		Type.String({
-			description: "Background event identifier for action=status/wait/cancel. Parameter name is 'eventId' (not 'id'). Omit for action=status to list all events.",
+			description:
+				"Background event identifier for action=status/wait/cancel. Parameter name is 'eventId' (not 'id'). Omit for action=status to list all events.",
 		}),
 	),
 	waitTimeoutSeconds: Type.Optional(
@@ -182,7 +183,7 @@ function appendTail(event: BackgroundShellEvent, data: Buffer): void {
  * present, otherwise a time-based estimate when `expectedSeconds` was given and
  * the event is still running. Returns undefined when nothing is known.
  */
-function effectiveProgress(event: BackgroundShellEvent): ShellProgress | undefined {
+function effectiveProgress(event: BackgroundShellEvent | BackgroundShellEventSnapshot): ShellProgress | undefined {
 	if (event.progress) return event.progress;
 	if (event.status !== "running" || event.expectedSeconds === undefined) return undefined;
 	const value = timeProgressFraction(Date.now() - event.startedAt, event.expectedSeconds);
@@ -225,9 +226,33 @@ function finishEvent(
 	for (const resolveWaiter of waiters) resolveWaiter();
 }
 
-function summarizeEvent(event: BackgroundShellEvent, includeOutput = true, collapsed = false): string {
+function summarizeEvent(
+	event: BackgroundShellEvent | BackgroundShellEventSnapshot,
+	includeOutput = true,
+	collapsed = false,
+): string {
 	const elapsedUntil = event.endedAt ?? Date.now();
 	const output = truncateTail(event.tail.trimEnd());
+	if (collapsed) {
+		const head = `Background job ${event.id}${event.label ? ` (${event.label})` : ""}: ${event.status} (${formatDuration(elapsedUntil - event.startedAt)})`;
+		const lines = [head];
+		if (event.status === "running") {
+			const progress = effectiveProgress(event);
+			if (progress) lines.push(`Progress: ${renderProgressBar(progress)}`);
+		}
+		if (event.error) lines.push(`Error: ${event.error}`);
+		if (includeOutput) {
+			if (output.text) {
+				const outputLineCount = output.text.split("\n").length;
+				lines.push(
+					`... ${outputLineCount} output ${outputLineCount === 1 ? "line" : "lines"} hidden (ctrl+o to expand)`,
+				);
+			} else {
+				lines.push("(no output)");
+			}
+		}
+		return lines.join("\n");
+	}
 	const lines = [
 		`Event: ${event.id}${event.label ? ` (${event.label})` : ""}`,
 		`Status: ${event.status}`,
@@ -244,29 +269,20 @@ function summarizeEvent(event: BackgroundShellEvent, includeOutput = true, colla
 	}
 	if (event.error) lines.push(`Error: ${event.error}`);
 	if (includeOutput) {
-		if (collapsed && output.text) {
-			// Collapsed mode: show count of output lines with expand hint
-			const outputLineCount = output.text.split("\n").length;
-			lines.push(
-				"",
-				`... ${outputLineCount} output ${outputLineCount === 1 ? "line" : "lines"} hidden (ctrl+o to expand)`,
-			);
-		} else {
-			lines.push(
-				"",
-				output.truncated ? `[Output truncated to last ${RESULT_LIMIT_BYTES} bytes]` : "Output:",
-				output.text || "(no output yet)",
-			);
-		}
+		lines.push(
+			"",
+			output.truncated ? `[Output truncated to last ${RESULT_LIMIT_BYTES} bytes]` : "Output:",
+			output.text || "(no output yet)",
+		);
 	}
 	return lines.join("\n");
 }
 
-export function summarizeEventCollapsed(event: BackgroundShellEvent): string {
+export function summarizeEventCollapsed(event: BackgroundShellEvent | BackgroundShellEventSnapshot): string {
 	return summarizeEvent(event, true, true);
 }
 
-export function summarizeEventExpanded(event: BackgroundShellEvent): string {
+export function summarizeEventExpanded(event: BackgroundShellEvent | BackgroundShellEventSnapshot): string {
 	return summarizeEvent(event, true, false);
 }
 
@@ -436,16 +452,20 @@ export class BackgroundShellController {
 		if (this.shuttingDown) return;
 		const defaultInstruction =
 			"Background shell event has completed. Read this returned result, use it to continue the original task, and do not ask the user to manually inspect the event id unless more information is needed.";
+		const resolvedInstruction = instruction?.trim() || defaultInstruction;
 		void this.sendMessage(
 			{
 				customType: "bg-shell-return",
-				content: `${instruction?.trim() || defaultInstruction}\n\n${summarizeEventCollapsed(event)}`,
+				// Keep the full result in model context. The TUI renderer regenerates a
+				// short default view from eventData and expands this with ctrl+o.
+				content: `${resolvedInstruction}\n\n${summarizeEventExpanded(event)}`,
 				display: true,
 				details: {
 					id: event.id,
 					status: event.status,
 					exitCode: event.exitCode,
 					logPath: event.logPath,
+					instruction: resolvedInstruction,
 					// A plain-data snapshot only — the live event holds a ChildProcess,
 					// WriteStream, Timer, and waiter callbacks that cannot be structured-cloned
 					// when this message is delivered to the main agent.

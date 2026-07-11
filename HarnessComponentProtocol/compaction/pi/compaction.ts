@@ -497,6 +497,146 @@ async function completeSummarization(
 	return stream.result();
 }
 
+const SUMMARY_CONTEXT_SAFETY_RATIO = 0.05;
+const MIN_SUMMARY_SAFETY_TOKENS = 64;
+
+function summaryInputByteBudget(model: Model<any>, maxTokens: number): number {
+	if (!(model.contextWindow > 0)) return Number.POSITIVE_INFINITY;
+	const safetyTokens = Math.max(
+		MIN_SUMMARY_SAFETY_TOKENS,
+		Math.floor(model.contextWindow * SUMMARY_CONTEXT_SAFETY_RATIO),
+	);
+	// UTF-8 bytes are a deliberately conservative proxy for tokens. Keeping the
+	// byte count below the token allowance also covers CJK, JSON, and signatures,
+	// where the usual chars/4 heuristic can undercount badly.
+	return Math.max(1, model.contextWindow - maxTokens - safetyTokens);
+}
+
+function takeUtf8Prefix(text: string, maxBytes: number): { chunk: string; rest: string } {
+	if (!Number.isFinite(maxBytes) || Buffer.byteLength(text, "utf8") <= maxBytes) {
+		return { chunk: text, rest: "" };
+	}
+
+	let bytes = 0;
+	let index = 0;
+	let lastParagraphBoundary = 0;
+	for (const character of text) {
+		const characterBytes = Buffer.byteLength(character, "utf8");
+		if (bytes + characterBytes > maxBytes) break;
+		bytes += characterBytes;
+		index += character.length;
+		if (character === "\n") lastParagraphBoundary = index;
+	}
+
+	// Prefer a recent paragraph boundary, but do not throw away more than half of
+	// the available chunk just to find one.
+	const cutIndex = lastParagraphBoundary >= Math.floor(index / 2) ? lastParagraphBoundary : index;
+	return { chunk: text.slice(0, cutIndex), rest: text.slice(cutIndex) };
+}
+
+function buildSummaryPrompt(conversationText: string, instructions: string, previousSummary?: string): string {
+	let promptText = `<conversation>\n${conversationText}\n</conversation>\n\n`;
+	if (previousSummary !== undefined) {
+		promptText += `<previous-summary>\n${previousSummary}\n</previous-summary>\n\n`;
+	}
+	return promptText + instructions;
+}
+
+type IncrementalSummaryOptions = {
+	conversationText: string;
+	models: Models;
+	model: Model<any>;
+	maxTokens: number;
+	initialInstructions: string;
+	updateInstructions: string;
+	previousSummary?: string;
+	signal?: AbortSignal;
+	thinkingLevel?: ThinkingLevel;
+	streamFn?: StreamFn;
+	errorPrefix: string;
+};
+
+async function generateIncrementalSummary(
+	options: IncrementalSummaryOptions,
+): Promise<Result<string, CompactionError>> {
+	let remaining = options.conversationText;
+	let rollingSummary = options.previousSummary;
+	let hasSummary = options.previousSummary !== undefined;
+	let completedChunks = 0;
+	const inputBudget = summaryInputByteBudget(options.model, options.maxTokens);
+
+	do {
+		const instructions = hasSummary ? options.updateInstructions : options.initialInstructions;
+		const promptWithoutConversation = buildSummaryPrompt("", instructions, hasSummary ? rollingSummary : undefined);
+		const fixedBytes =
+			Buffer.byteLength(SUMMARIZATION_SYSTEM_PROMPT, "utf8") + Buffer.byteLength(promptWithoutConversation, "utf8");
+		const conversationBudget = inputBudget - fixedBytes;
+		if (conversationBudget <= 0) {
+			return err(
+				new CompactionError(
+					"summarization_failed",
+					`${options.errorPrefix} failed: summary instructions and prior summary exceed the model context window`,
+				),
+			);
+		}
+
+		const { chunk, rest } = takeUtf8Prefix(remaining, conversationBudget);
+		if (remaining.length > 0 && chunk.length === 0) {
+			return err(
+				new CompactionError(
+					"summarization_failed",
+					`${options.errorPrefix} failed: unable to fit conversation content in the model context window`,
+				),
+			);
+		}
+
+		const promptText = buildSummaryPrompt(chunk, instructions, hasSummary ? rollingSummary : undefined);
+		const summarizationMessages = [
+			{
+				role: "user" as const,
+				content: [{ type: "text" as const, text: promptText }],
+				timestamp: Date.now(),
+			},
+		];
+		const completionOptions =
+			options.model.reasoning && options.thinkingLevel && options.thinkingLevel !== "off"
+				? {
+						maxTokens: options.maxTokens,
+						signal: options.signal,
+						reasoning: options.thinkingLevel,
+					}
+				: { maxTokens: options.maxTokens, signal: options.signal };
+		const response = await completeSummarization(
+			options.models,
+			options.model,
+			{ systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages },
+			completionOptions,
+			options.streamFn,
+		);
+		if (response.stopReason === "aborted") {
+			return err(new CompactionError("aborted", response.errorMessage || `${options.errorPrefix} aborted`));
+		}
+		if (response.stopReason === "error") {
+			return err(
+				new CompactionError(
+					"summarization_failed",
+					`${options.errorPrefix} failed: ${response.errorMessage || "Unknown error"}`,
+				),
+			);
+		}
+
+		rollingSummary = response.content
+			.filter((content): content is { type: "text"; text: string } => content.type === "text")
+			.map((content) => content.text)
+			.join("\n");
+		hasSummary = true;
+		remaining = rest;
+		completedChunks++;
+	} while (remaining.length > 0 || completedChunks === 0);
+
+	return ok(rollingSummary ?? "");
+}
+
 /** Generate or update a conversation summary for compaction. */
 export async function generateSummary(
 	currentMessages: AgentMessage[],
@@ -519,50 +659,22 @@ export async function generateSummary(
 	}
 	const llmMessages = convertToLlm(currentMessages);
 	const conversationText = serializeConversation(llmMessages);
-	let promptText = `<conversation>\n${conversationText}\n</conversation>\n\n`;
-	if (previousSummary) {
-		promptText += `<previous-summary>\n${previousSummary}\n</previous-summary>\n\n`;
-	}
-	promptText += basePrompt;
-
-	const summarizationMessages = [
-		{
-			role: "user" as const,
-			content: [{ type: "text" as const, text: promptText }],
-			timestamp: Date.now(),
-		},
-	];
-
-	const completionOptions =
-		model.reasoning && thinkingLevel && thinkingLevel !== "off"
-			? { maxTokens, signal, reasoning: thinkingLevel }
-			: { maxTokens, signal };
-
-	const response = await completeSummarization(
+	const updatePrompt = customInstructions
+		? `${UPDATE_SUMMARIZATION_PROMPT}\n\nAdditional focus: ${customInstructions}`
+		: UPDATE_SUMMARIZATION_PROMPT;
+	return generateIncrementalSummary({
+		conversationText,
 		models,
 		model,
-		{ systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages },
-		completionOptions,
+		maxTokens,
+		initialInstructions: basePrompt,
+		updateInstructions: updatePrompt,
+		previousSummary,
+		signal,
+		thinkingLevel,
 		streamFn,
-	);
-	if (response.stopReason === "aborted") {
-		return err(new CompactionError("aborted", response.errorMessage || "Summarization aborted"));
-	}
-	if (response.stopReason === "error") {
-		return err(
-			new CompactionError(
-				"summarization_failed",
-				`Summarization failed: ${response.errorMessage || "Unknown error"}`,
-			),
-		);
-	}
-
-	const textContent = response.content
-		.filter((c): c is { type: "text"; text: string } => c.type === "text")
-		.map((c) => c.text)
-		.join("\n");
-
-	return ok(textContent);
+		errorPrefix: "Summarization",
+	});
 }
 
 /** Prepared inputs for a compaction run. */
@@ -674,6 +786,22 @@ Summarize the prefix to provide context for the retained suffix:
 
 Be concise. Focus on what's needed to understand the kept suffix.`;
 
+const UPDATE_TURN_PREFIX_SUMMARIZATION_PROMPT = `The conversation contains another chunk from the same split-turn prefix.
+Update the existing turn-prefix summary in <previous-summary> with the new information.
+
+Keep this exact format:
+
+## Original Request
+[What did the user ask for in this turn?]
+
+## Early Progress
+- [Key decisions and work done in the prefix]
+
+## Context for Suffix
+- [Information needed to understand the kept suffix]
+
+Preserve important file paths, decisions, errors, and unfinished work. Be concise.`;
+
 export { serializeConversation } from "./utils.ts";
 
 /** Generate compaction summary data from prepared session history. */
@@ -772,40 +900,16 @@ async function generateTurnPrefixSummary(
 	);
 	const llmMessages = convertToLlm(messages);
 	const conversationText = serializeConversation(llmMessages);
-	const promptText = `<conversation>\n${conversationText}\n</conversation>\n\n${TURN_PREFIX_SUMMARIZATION_PROMPT}`;
-	const summarizationMessages = [
-		{
-			role: "user" as const,
-			content: [{ type: "text" as const, text: promptText }],
-			timestamp: Date.now(),
-		},
-	];
-
-	const response = await completeSummarization(
+	return generateIncrementalSummary({
+		conversationText,
 		models,
 		model,
-		{ systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages },
-		model.reasoning && thinkingLevel && thinkingLevel !== "off"
-			? { maxTokens, signal, reasoning: thinkingLevel }
-			: { maxTokens, signal },
+		maxTokens,
+		initialInstructions: TURN_PREFIX_SUMMARIZATION_PROMPT,
+		updateInstructions: UPDATE_TURN_PREFIX_SUMMARIZATION_PROMPT,
+		signal,
+		thinkingLevel,
 		streamFn,
-	);
-	if (response.stopReason === "aborted") {
-		return err(new CompactionError("aborted", response.errorMessage || "Turn prefix summarization aborted"));
-	}
-	if (response.stopReason === "error") {
-		return err(
-			new CompactionError(
-				"summarization_failed",
-				`Turn prefix summarization failed: ${response.errorMessage || "Unknown error"}`,
-			),
-		);
-	}
-
-	return ok(
-		response.content
-			.filter((c): c is { type: "text"; text: string } => c.type === "text")
-			.map((c) => c.text)
-			.join("\n"),
-	);
+		errorPrefix: "Turn prefix summarization",
+	});
 }

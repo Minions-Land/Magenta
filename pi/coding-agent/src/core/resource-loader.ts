@@ -17,6 +17,7 @@ import {
 	HcpClientbuildsession,
 	HcpClientpackageinputfromoverlay,
 	type HcpMagnetResource,
+	initProcessToolsBinary,
 	loadPackageOverlay,
 	type PackageAssemblyProgress,
 	type PackageDiagnostic,
@@ -623,6 +624,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 
 		// reload() preserves SettingsManager.projectTrusted and reloads settings for that trust state.
 		await this.settingsManager.reload();
+		initProcessToolsBinary();
 		const resolvedPaths = await this.packageManager.resolve();
 		const HcpClientcandidate = await this.HcpClientbuildcandidate(options?.onPackageAssemblyProgress);
 		const previousResourceState = {

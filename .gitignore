@@ -6,6 +6,10 @@ harness/**/*.js
 harness/**/*.js.map
 harness/**/*.d.ts
 harness/**/*.d.ts.map
+HarnessComponentProtocol/**/*.js
+HarnessComponentProtocol/**/*.js.map
+HarnessComponentProtocol/**/*.d.ts
+HarnessComponentProtocol/**/*.d.ts.map
 .DS_Store
 *.tsbuildinfo
 __pycache__/

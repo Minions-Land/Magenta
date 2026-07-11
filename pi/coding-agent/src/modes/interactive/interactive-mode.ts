@@ -109,13 +109,13 @@ import { getChangelogPath, getNewEntries, normalizeChangelogLinks, parseChangelo
 import { copyToClipboard } from "../../utils/clipboard.ts";
 import { extensionForImageMimeType, readClipboardImage } from "../../utils/clipboard-image.ts";
 import { parseGitUrl } from "../../utils/git.ts";
-import { checkForMagentaUpdate, recompileMagenta, runMagentaUpdate } from "../../utils/magenta-update.ts";
-import { checkForAnyUpdate } from "../../utils/unified-update-check.ts";
 import type { UpdateCheckResult } from "../../utils/github-release-update.ts";
+import { type checkForMagentaUpdate, recompileMagenta, runMagentaUpdate } from "../../utils/magenta-update.ts";
 import { getCwdRelativePath } from "../../utils/paths.ts";
 import { getPiUserAgent } from "../../utils/pi-user-agent.ts";
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
 import { ensureTool } from "../../utils/tools-manager.ts";
+import { checkForAnyUpdate } from "../../utils/unified-update-check.ts";
 // Pi's pi.dev version check is disabled for Magenta (see run()); the type is
 // retained for the dormant showNewVersionNotification method.
 // import { checkForNewPiVersion } from "../../utils/version-check.ts";
@@ -220,6 +220,14 @@ type CompactionQueuedMessage = {
 	text: string;
 	mode: "steer" | "followUp";
 };
+
+/**
+ * Magenta feature: an activation is anything that drives the main interactive
+ * loop to advance. A `user_input` carries text to prompt; a `peer_wake` means
+ * an idle peer-message wake already appended its payload to session state and
+ * the loop should run one turn to consume it (via runExternalActivation).
+ */
+type Activation = { type: "user_input"; text: string } | { type: "peer_wake" };
 
 const DEAD_TERMINAL_ERROR_CODES = new Set(["EIO", "EPIPE", "ENOTCONN"]);
 
@@ -363,6 +371,14 @@ export class InteractiveMode {
 	private isInitialized = false;
 	private onInputCallback?: (text: string) => void;
 	private pendingUserInputs: string[] = [];
+	// Magenta feature: unified activation queue. The main loop consumes
+	// Activations from a single source; producers are the keyboard (user_input)
+	// and idle peer wake (peer_wake). This keeps one turn-runner and lets future
+	// push-style triggers (timers, file watches, webhooks) add producers without
+	// touching the loop.
+	private activationQueue: Activation[] = [];
+	private onActivationCallback?: (activation: Activation) => void;
+	private releaseExternalTurnRunner?: () => void;
 	private loadingAnimation: Loader | undefined = undefined;
 	private workingMessage: string | undefined = undefined;
 	private workingVisible = true;
@@ -928,11 +944,19 @@ export class InteractiveMode {
 			}
 		}
 
-		// Main interactive loop
+		// Main interactive loop. Consumes a single activation queue fed by two
+		// producers: keyboard input and idle peer wake. Running every activation
+		// through one loop keeps a single turn-runner, so a wake turn never races
+		// the input prompt.
 		while (true) {
-			const userInput = await this.getUserInput();
+			const activation = await this.getNextActivation();
 			try {
-				await this.session.prompt(userInput);
+				if (activation.type === "user_input") {
+					await this.session.prompt(activation.text);
+				} else {
+					// peer_wake: the payload is already in session state; run one turn.
+					await this.session.runExternalActivation();
+				}
 			} catch (error: unknown) {
 				const errorMessage = error instanceof Error ? error.message : "Unknown error occurred";
 				this.showError(errorMessage);
@@ -2965,6 +2989,10 @@ export class InteractiveMode {
 		this.unsubscribe = this.session.subscribe(async (event) => {
 			await this.handleEvent(event);
 		});
+		// Magenta feature: claim the turn-runner so idle peer wakes are delivered as
+		// external_activation events for our main loop to run, instead of the session
+		// self-running the turn and racing the input prompt.
+		this.releaseExternalTurnRunner = this.session.claimExternalTurnRunner();
 	}
 
 	private async handleEvent(event: AgentSessionEvent): Promise<void> {
@@ -3016,6 +3044,13 @@ export class InteractiveMode {
 			case "thinking_level_changed":
 				this.footer.invalidate();
 				this.updateEditorBorderColor();
+				break;
+
+			case "external_activation":
+				// Magenta feature: an idle peer wake appended its payload to session
+				// state and handed the turn to us. Enqueue an activation so the main
+				// loop runs exactly one turn through the single turn-runner.
+				this.pushActivation({ type: "peer_wake" });
 				break;
 
 			case "message_start":
@@ -3586,6 +3621,54 @@ export class InteractiveMode {
 		});
 	}
 
+	/**
+	 * Magenta feature: pull the next activation for the main loop. Drains any
+	 * queued activation first (peer wakes queued while busy, or input queued
+	 * before the loop was ready), otherwise blocks until either producer fires:
+	 * keyboard submit (user_input) or an idle peer wake (peer_wake).
+	 */
+	async getNextActivation(): Promise<Activation> {
+		// Drain queued activations first (FIFO). Keyboard input queued before the
+		// loop was ready lives in pendingUserInputs; fold it in as a user_input.
+		const queuedInput = this.pendingUserInputs.shift();
+		if (queuedInput !== undefined) {
+			return { type: "user_input", text: queuedInput };
+		}
+		const queued = this.activationQueue.shift();
+		if (queued !== undefined) {
+			return queued;
+		}
+
+		return new Promise((resolve) => {
+			// Keyboard producer: reuse the existing onInputCallback contract so the
+			// submit handler and the startup-input test keep working unchanged.
+			this.onInputCallback = (text: string) => {
+				this.onInputCallback = undefined;
+				this.onActivationCallback = undefined;
+				resolve({ type: "user_input", text });
+			};
+			// Peer-wake producer: pushActivation resolves through this.
+			this.onActivationCallback = (activation: Activation) => {
+				this.onInputCallback = undefined;
+				this.onActivationCallback = undefined;
+				resolve(activation);
+			};
+		});
+	}
+
+	/**
+	 * Magenta feature: enqueue an activation from a non-keyboard producer (idle
+	 * peer wake). If the main loop is blocked waiting, resolve it immediately;
+	 * otherwise queue it so the next getNextActivation() picks it up.
+	 */
+	private pushActivation(activation: Activation): void {
+		if (this.onActivationCallback) {
+			this.onActivationCallback(activation);
+		} else {
+			this.activationQueue.push(activation);
+		}
+	}
+
 	private rebuildChatFromMessages(): void {
 		this.chatContainer.clear();
 		const context = this.sessionManager.buildSessionContext();
@@ -4142,9 +4225,7 @@ export class InteractiveMode {
 		}
 
 		if (!status.clean || !status.fastForwardable) {
-			this.setMagentaUpdateStatus(
-				status.clean ? "Auto-update: skipped (diverged)" : "Auto-update: skipped (dirty)",
-			);
+			this.setMagentaUpdateStatus(status.clean ? "Auto-update: skipped (diverged)" : "Auto-update: skipped (dirty)");
 			this.showMagentaUpdateBanner(
 				`${APP_NAME} is ${status.behind} commit(s) behind ${status.remoteSha}.`,
 				status.clean
@@ -4163,7 +4244,10 @@ export class InteractiveMode {
 		if (result.ok) {
 			const newSha = result.newSha ?? status.remoteSha;
 			this.setMagentaUpdateStatus(`Auto-update: updated (${newSha})`);
-			this.showMagentaUpdateBanner(`${APP_NAME} updated to ${newSha}.`, `Restart ${APP_NAME} to run the new version.`);
+			this.showMagentaUpdateBanner(
+				`${APP_NAME} updated to ${newSha}.`,
+				`Restart ${APP_NAME} to run the new version.`,
+			);
 		} else {
 			this.setMagentaUpdateStatus("Auto-update: failed");
 			this.showMagentaUpdateBanner(
@@ -4933,7 +5017,7 @@ export class InteractiveMode {
 	private async openCommandDock(filter = ""): Promise<void> {
 		const requestId = ++this.commandDockRequestId;
 		if (this.commandDockHandle && !this.commandDockHandle.isHidden() && this.commandDockBody) {
-			this.commandDockBody.setFilter(filter);
+			this.applyCommandDockFilter(filter);
 			return;
 		}
 
@@ -4950,7 +5034,35 @@ export class InteractiveMode {
 			},
 			COMMAND_DOCK_OVERLAY,
 		);
-		this.commandDockBody?.setFilter(filter);
+		this.applyCommandDockFilter(filter);
+	}
+
+	/**
+	 * Apply the editor's slash-filter to the command dock. `/skill:` (and
+	 * `/skill:<partial>`) auto-drills into the Skills submenu and filters within
+	 * it, so typing the qualified prefix jumps straight to the skill list. Any
+	 * other filter is applied at the root as before.
+	 */
+	private applyCommandDockFilter(filter: string): void {
+		const body = this.commandDockBody;
+		if (!body) return;
+		const skillPrefix = "skill:";
+		if (filter === "skill" || filter.startsWith(skillPrefix)) {
+			const childFilter = filter.startsWith(skillPrefix) ? filter.slice(skillPrefix.length) : "";
+			// Only drill in once; if already inside a submenu just refine the filter.
+			if (body.submenuDepth === 0 && body.openChildByValue("command:skill", childFilter)) {
+				return;
+			}
+			if (body.submenuDepth > 0) {
+				body.setFilter(childFilter);
+				return;
+			}
+		}
+		// User backspaced out of `/skill:` (now at `/sk` or less) — pop back to root.
+		if (body.submenuDepth > 0) {
+			body.resetToRoot();
+		}
+		body.setFilter(filter);
 	}
 
 	private closeCommandDock(): void {
@@ -4979,6 +5091,11 @@ export class InteractiveMode {
 				description: "Tools, compaction, skills, hooks, memory",
 				children: (await this.harnessMenuItems()).children,
 			},
+			// Magenta feature: top-level Skills entry so `/skill:` drills straight
+			// into the skill list. Selecting a skill backfills `/skill:<name> ` so
+			// the user keeps typing their request; on submit `_expandSkillCommand`
+			// inlines the skill markdown as the first turn payload.
+			...this.skillDockParentItem(),
 			{ value: "slash:settings", label: "Settings", aliases: ["settings"], description: "/settings" },
 			{
 				value: "command:mcp",
@@ -5045,6 +5162,45 @@ export class InteractiveMode {
 		return items;
 	}
 
+	/**
+	 * Magenta feature: the Skills parent entry for the command dock. Returns an
+	 * empty array when skill slash commands are disabled or no skills are loaded,
+	 * so the spread in commandDockItems() adds nothing. Reuses the same
+	 * parent/children shape as the Model and Harness entries.
+	 */
+	private skillDockParentItem(): FloatingMenuItem[] {
+		if (!this.settingsManager.getEnableSkillCommands()) return [];
+		const children = this.skillMenuItems();
+		if (children.length === 0) return [];
+		return [
+			{
+				value: "command:skill",
+				label: "Skills",
+				aliases: ["skill", "skills"],
+				description: `${children.length} loaded · /skill:<name>`,
+				children,
+			},
+		];
+	}
+
+	/**
+	 * Magenta feature: one dock leaf per loaded skill. Selecting a leaf backfills
+	 * `/skill:<name> ` into the editor (via the `insert-skill:` value handled in
+	 * handleCommandDockItem) so the user continues typing their request.
+	 */
+	private skillMenuItems(): FloatingMenuItem[] {
+		return this.session.resourceLoader
+			.getSkills()
+			.skills.slice()
+			.sort((left, right) => left.name.localeCompare(right.name))
+			.map((skill) => ({
+				value: `insert-skill:${skill.name}`,
+				label: `skill:${skill.name}`,
+				aliases: [skill.name, `skill:${skill.name}`],
+				description: this.prefixAutocompleteDescription(skill.description, skill.sourceInfo),
+			}));
+	}
+
 	private handleCommandDockItem(item: FloatingMenuItem): void {
 		if (item.value.startsWith("model:")) {
 			const [, rawProvider, rawId] = item.value.split(":");
@@ -5089,6 +5245,15 @@ export class InteractiveMode {
 		}
 		if (item.value.startsWith("insert-command:")) {
 			this.setEditorTextWithoutCommandDockSync(`/${item.value.slice("insert-command:".length)} `);
+			this.closeCommandDock();
+			this.ui.setFocus(this.editor);
+			this.ui.requestRender();
+		}
+		if (item.value.startsWith("insert-skill:")) {
+			// Backfill `/skill:<name> ` and leave the cursor after it so the user can
+			// keep typing their request. The trailing space also drops us out of the
+			// dock (syncCommandDockFromEditorText closes on whitespace).
+			this.setEditorTextWithoutCommandDockSync(`/skill:${item.value.slice("insert-skill:".length)} `);
 			this.closeCommandDock();
 			this.ui.setFocus(this.editor);
 			this.ui.requestRender();
@@ -7582,6 +7747,8 @@ export class InteractiveMode {
 		if (this.unsubscribe) {
 			this.unsubscribe();
 		}
+		this.releaseExternalTurnRunner?.();
+		this.releaseExternalTurnRunner = undefined;
 		this.unsubscribeSkillsReloaded?.();
 		this.unsubscribeSkillsReloaded = undefined;
 		if (this.isInitialized) {

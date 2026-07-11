@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { Agent } from "@earendil-works/pi-agent-core";
 import { type AssistantMessage, createAssistantMessageEventStream, fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { getModel } from "@earendil-works/pi-ai/compat";
+import { Type } from "typebox";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AgentSession } from "../src/core/agent-session.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
@@ -131,6 +132,82 @@ describe("AgentSession auto-compaction queue resume", () => {
 		await expect(runAutoCompaction("threshold", false)).resolves.toBe(true);
 
 		expect(continueSpy).not.toHaveBeenCalled();
+	});
+
+	it("compacts between tool turns using provider usage plus the new tool result, then resumes", async () => {
+		const model = session.model!;
+		session.agent.state.tools = [
+			{
+				name: "large_result",
+				label: "large_result",
+				description: "Return a large result",
+				parameters: Type.Object({}),
+				execute: async () => ({
+					content: [{ type: "text" as const, text: "x".repeat(20_000) }],
+					details: {},
+				}),
+			},
+		];
+
+		let providerCalls = 0;
+		session.agent.streamFn = () => {
+			const stream = createAssistantMessageEventStream();
+			providerCalls++;
+			queueMicrotask(() => {
+				const message: AssistantMessage =
+					providerCalls === 1
+						? {
+								role: "assistant",
+								content: [{ type: "toolCall", id: "call-large", name: "large_result", arguments: {} }],
+								api: model.api,
+								provider: model.provider,
+								model: model.id,
+								usage: {
+									// Below the 983,616 threshold by itself; the 5,000-token
+									// tool result pushes the next request over it.
+									input: 980_000,
+									output: 0,
+									cacheRead: 0,
+									cacheWrite: 0,
+									totalTokens: 980_000,
+									cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+								},
+								stopReason: "toolUse",
+								timestamp: Date.now(),
+							}
+						: {
+								...fauxAssistantMessage("continued after compaction"),
+								api: model.api,
+								provider: model.provider,
+								model: model.id,
+							};
+				const reason = providerCalls === 1 ? "toolUse" : "stop";
+				stream.push({ type: "done", reason, message });
+			});
+			return stream;
+		};
+
+		const runAutoCompactionSpy = vi
+			.spyOn(
+				session as unknown as {
+					_runAutoCompaction: (reason: "overflow" | "threshold", willRetry: boolean) => Promise<boolean>;
+				},
+				"_runAutoCompaction",
+			)
+			.mockImplementation(async () => {
+				// Real compaction rebuilds agent state and removes the high-usage
+				// history. Preserve only the tool-result tail so continue() resumes
+				// from the same valid boundary without retriggering on stale usage.
+				const lastMessage = session.agent.state.messages.at(-1);
+				if (lastMessage) session.agent.state.messages = [lastMessage];
+				return true;
+			});
+
+		await session.prompt("start the long tool loop");
+
+		expect(runAutoCompactionSpy).toHaveBeenCalledWith("threshold", true);
+		expect(providerCalls).toBe(2);
+		expect(session.messages.at(-1)).toMatchObject({ role: "assistant", stopReason: "stop" });
 	});
 
 	it("should not compact repeatedly after overflow recovery already attempted", async () => {

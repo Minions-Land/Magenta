@@ -167,7 +167,20 @@ export type AgentSessionEvent =
 			errorMessage?: string;
 	  }
 	| { type: "auto_retry_start"; attempt: number; maxAttempts: number; delayMs: number; errorMessage: string }
-	| { type: "auto_retry_end"; success: boolean; attempt: number; finalError?: string };
+	| { type: "auto_retry_end"; success: boolean; attempt: number; finalError?: string }
+	| {
+			/**
+			 * Magenta feature: an external, non-user source (currently an idle peer
+			 * wake) wants to start a fresh turn while the session sits idle. The
+			 * activation payload messages are already appended to session state; a
+			 * host that owns the turn-runner (e.g. the interactive TUI loop) should
+			 * run one turn to consume them. When no host claims the turn-runner, the
+			 * session runs the turn itself (headless / sub-agent fallback).
+			 */
+			type: "external_activation";
+			source: "peer_wake";
+			messages: AgentMessage[];
+	  };
 
 /** Listener function for agent session events */
 export type AgentSessionEventListener = (event: AgentSessionEvent) => void;
@@ -312,9 +325,26 @@ export class AgentSession {
 	/** Messages queued to be included with the next user prompt as context ("asides"). */
 	private _pendingNextTurnMessages: CustomMessage[] = [];
 
+	/**
+	 * Magenta feature: when true, a host (e.g. the interactive TUI loop) has
+	 * claimed the turn-runner, so external activations (idle peer wake) are
+	 * delivered as `external_activation` events for the host to run, instead of
+	 * the session starting the turn itself. Defaults to false so headless and
+	 * sub-agent sessions keep their self-running fallback.
+	 */
+	private _externalTurnRunnerClaimed = false;
+	/** A host activation has been emitted for peer payload already appended to state. */
+	private _externalActivationPending = false;
+
 	// Compaction state
 	private _compactionAbortController: AbortController | undefined = undefined;
 	private _autoCompactionAbortController: AbortController | undefined = undefined;
+	/**
+	 * Estimated context size captured when a long tool loop is stopped between
+	 * turns for threshold compaction. Presence also means the loop should resume
+	 * from its retained tool result after compaction succeeds.
+	 */
+	private _pendingMidLoopCompactionTokens: number | undefined = undefined;
 	private _overflowRecoveryAttempted = false;
 
 	// Branch summarization state
@@ -557,6 +587,39 @@ export class AgentSession {
 	 * happens here instead of in wrappers.
 	 */
 	private _installAgentToolHooks(): void {
+		const existingShouldStopAfterTurn = this.agent.shouldStopAfterTurn;
+		this.agent.shouldStopAfterTurn = async (context, signal) => {
+			if (existingShouldStopAfterTurn && (await existingShouldStopAfterTurn(context, signal))) {
+				return true;
+			}
+
+			// A normal final assistant response already ends the loop and is checked
+			// by _handlePostAgentRun. Intervene only when the tool batch would issue
+			// another provider request; this preserves explicit tool termination.
+			if (!context.hasMoreToolCalls) return false;
+			const settings = this.settingsManager.getCompactionSettings();
+			if (!settings.enabled || context.message.stopReason === "error" || context.message.stopReason === "aborted") {
+				return false;
+			}
+			const model = this.model;
+			if (
+				!model ||
+				model.contextWindow <= 0 ||
+				context.message.provider !== model.provider ||
+				context.message.model !== model.id
+			) {
+				return false;
+			}
+
+			// Provider usage describes the completed assistant request. The estimate
+			// adds tool results produced afterwards, which are part of the next input
+			// and were the missing term in long tool-call loops.
+			const contextTokens = estimateContextTokens(context.context.messages).tokens;
+			if (!shouldCompact(contextTokens, model.contextWindow, settings)) return false;
+			this._pendingMidLoopCompactionTokens = contextTokens;
+			return true;
+		};
+
 		this.agent.beforeToolCall = async ({ toolCall, args }) => {
 			const runner = this._extensionRunner;
 			if (!runner.hasHandlers("tool_call")) {
@@ -761,6 +824,10 @@ export class AgentSession {
 	/** Emit extension events based on agent events */
 	private async _emitExtensionEvent(event: AgentEvent): Promise<void> {
 		if (event.type === "agent_start") {
+			// Any agent run consumes all custom peer payloads already appended to
+			// state. Clear a queued host activation so a user prompt that won the race
+			// cannot be followed by a redundant continuation.
+			this._externalActivationPending = false;
 			this._turnIndex = 0;
 			// Magenta feature: this session is now looping. Record presence so peers
 			// see it as active and know a message will be picked up soon.
@@ -860,6 +927,45 @@ export class AgentSession {
 				this._eventListeners.splice(index, 1);
 			}
 		};
+	}
+
+	/**
+	 * Magenta feature: claim ownership of the turn-runner.
+	 *
+	 * A host with its own activation loop (the interactive TUI) calls this so
+	 * that external activations (idle peer wake) are surfaced as
+	 * `external_activation` events for the host to run as one turn, instead of
+	 * the session self-running the turn. Returns a release function that restores
+	 * the self-running fallback. Headless / sub-agent sessions never claim it and
+	 * keep running wake turns themselves.
+	 */
+	claimExternalTurnRunner(): () => void {
+		this._externalTurnRunnerClaimed = true;
+		return () => {
+			this._externalTurnRunnerClaimed = false;
+		};
+	}
+
+	/**
+	 * Magenta feature: run one turn for an `external_activation` whose payload
+	 * messages are already appended to session state (by `_wakeForPeerMessages`).
+	 * The host's activation loop calls this so the wake turn runs through the same
+	 * single turn-runner as user prompts. No new message is appended — the
+	 * continuation runs on the already-present payload. No-op while streaming.
+	 */
+	async runExternalActivation(): Promise<void> {
+		if (this.isStreaming || !this._externalActivationPending) return;
+		this._externalActivationPending = false;
+		try {
+			// The wake payload is already the last message in state, so a continuation
+			// runs a turn on it without appending anything new.
+			await this.agent.continue();
+			while (await this._handlePostAgentRun()) {
+				await this.agent.continue();
+			}
+		} finally {
+			this._flushPendingBashMessages();
+		}
 	}
 
 	/**
@@ -1135,6 +1241,8 @@ export class AgentSession {
 	private async _handlePostAgentRun(): Promise<boolean> {
 		const msg = this._lastAssistantMessage;
 		this._lastAssistantMessage = undefined;
+		const midLoopCompactionTokens = this._pendingMidLoopCompactionTokens;
+		this._pendingMidLoopCompactionTokens = undefined;
 		if (!msg) {
 			return false;
 		}
@@ -1153,7 +1261,7 @@ export class AgentSession {
 			this._retryAttempt = 0;
 		}
 
-		if (await this._checkCompaction(msg)) {
+		if (await this._checkCompaction(msg, true, midLoopCompactionTokens)) {
 			return true;
 		}
 
@@ -1533,10 +1641,17 @@ export class AgentSession {
 	 * Magenta feature: wake this session to drain pending peer messages. Fired
 	 * when a peer signals this (idle) process after sending an urgent message.
 	 * If the session is already streaming, the next turn_start drains anyway, so
-	 * this is a no-op. Otherwise it drains the mailbox and injects the messages as
-	 * a custom message that triggers a fresh turn — the peer content itself is the
-	 * turn payload, so no empty prompt is sent to the model. Failures requeue the
-	 * messages and never crash the process.
+	 * this is a no-op. Otherwise it drains the mailbox and turns the messages into
+	 * a turn payload.
+	 *
+	 * Delivery depends on who owns the turn-runner:
+	 *  - Host-claimed (interactive TUI): emit an `external_activation` event
+	 *    carrying the payload so the host runs it through its own activation loop.
+	 *    This keeps a single turn-runner and avoids racing the host's input loop.
+	 *  - Unclaimed (headless / sub-agent): self-run the turn immediately — the
+	 *    peer content itself is the turn payload, so no empty prompt is sent.
+	 *
+	 * Failures requeue the messages and never crash the process.
 	 */
 	private _wakeForPeerMessages(): void {
 		if (this.isStreaming) return;
@@ -1545,16 +1660,57 @@ export class AgentSession {
 			drained = this._peerMessages.drainForInjection();
 			if (drained.length === 0) return;
 			const ids = drained.map((m) => m.id);
-			// Cold wake: inject all pending messages as one turn-triggering custom
-			// message. Priority ordering is already applied by the drain, and since we
-			// are not looping the steer/followUp distinction does not apply — the turn
-			// starts immediately regardless.
+			const payload = {
+				role: "custom" as const,
+				customType: PEER_MESSAGE_CUSTOM_TYPE,
+				content: formatPeerMessages(drained),
+				display: true,
+				details: { count: drained.length, ids, wake: true },
+				timestamp: Date.now(),
+			} satisfies CustomMessage;
+
+			if (this._externalTurnRunnerClaimed) {
+				// Host owns the turn-runner: append the payload to state and hand the
+				// turn off via an event. The host's activation loop runs exactly one
+				// turn to consume it, so we never race the host's input loop.
+				try {
+					this.agent.state.messages.push(payload);
+					this.sessionManager.appendCustomMessageEntry(
+						payload.customType,
+						payload.content,
+						payload.display,
+						payload.details,
+					);
+					this._emit({ type: "message_start", message: payload });
+					this._emit({ type: "message_end", message: payload });
+					// Several signals can arrive before the host starts the turn. Their
+					// payloads are all already in state, so one continuation consumes them
+					// together; emitting one activation per signal would create empty turns.
+					if (!this._externalActivationPending) {
+						this._externalActivationPending = true;
+						this._emit({ type: "external_activation", source: "peer_wake", messages: [payload] });
+					}
+					this._peerMessages.confirmDelivered(ids);
+				} catch {
+					try {
+						this._peerMessages.requeue(ids);
+					} catch {
+						// Best-effort; a stuck `pending` row is reclaimed by staleness later.
+					}
+				}
+				return;
+			}
+
+			// Cold wake, self-run: inject all pending messages as one turn-triggering
+			// custom message. Priority ordering is already applied by the drain, and
+			// since we are not looping the steer/followUp distinction does not apply —
+			// the turn starts immediately regardless.
 			void this.sendCustomMessage(
 				{
 					customType: PEER_MESSAGE_CUSTOM_TYPE,
-					content: formatPeerMessages(drained),
+					content: payload.content,
 					display: true,
-					details: { count: drained.length, ids, wake: true },
+					details: payload.details,
 				},
 				{ triggerTurn: true },
 			)
@@ -2128,7 +2284,11 @@ export class AgentSession {
 	 * @param assistantMessage The assistant message to check
 	 * @param skipAbortedCheck If false, include aborted messages (for pre-prompt check). Default: true
 	 */
-	private async _checkCompaction(assistantMessage: AssistantMessage, skipAbortedCheck = true): Promise<boolean> {
+	private async _checkCompaction(
+		assistantMessage: AssistantMessage,
+		skipAbortedCheck = true,
+		midLoopContextTokens?: number,
+	): Promise<boolean> {
 		const settings = this.settingsManager.getCompactionSettings();
 		if (!settings.enabled) return false;
 
@@ -2211,10 +2371,10 @@ export class AgentSession {
 			}
 			contextTokens = estimate.tokens;
 		} else {
-			contextTokens = directContextTokens;
+			contextTokens = Math.max(directContextTokens, midLoopContextTokens ?? 0);
 		}
 		if (shouldCompact(contextTokens, contextWindow, settings)) {
-			return await this._runAutoCompaction("threshold", false);
+			return await this._runAutoCompaction("threshold", midLoopContextTokens !== undefined);
 		}
 		return false;
 	}

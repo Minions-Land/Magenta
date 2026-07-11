@@ -4,15 +4,11 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { HcpClient } from "../../HcpClient.ts";
 import type { HcpMagnetBinding, HcpMagnetBuildContext, HcpMagnetResource } from "../HcpMagnetTypes.ts";
 import { HCP_MAGNETS, HCP_SERVERS } from "./sources.generated.ts";
-import { initProcessToolsBinary } from "./embedded-binaries.ts";
 
 // Detect Bun compiled binary: import.meta.url becomes a virtual path like file:///$bunfs/root/...
 // In this case, resolve HCP_ROOT from the executable's directory instead.
-const HCP_IS_BUN_BINARY =
-	typeof (globalThis as any).Bun !== "undefined" && import.meta.url.includes("/$bunfs/root/");
-const HCP_ROOT = HCP_IS_BUN_BINARY
-	? dirname(process.execPath)
-	: fileURLToPath(new URL("../..", import.meta.url));
+const HCP_IS_BUN_BINARY = typeof (globalThis as any).Bun !== "undefined" && import.meta.url.includes("/$bunfs/root/");
+const HCP_ROOT = HCP_IS_BUN_BINARY ? dirname(process.execPath) : fileURLToPath(new URL("../..", import.meta.url));
 
 type HcpMagnetproduct = {
 	readonly kind: string;
@@ -533,9 +529,6 @@ export type HcpClientbuildsessionresult = HcpClientassembleresult & {
 export async function HcpClientbuildsession(
 	options: HcpClientbuildsessionoptions = {},
 ): Promise<HcpClientbuildsessionresult> {
-	// Initialize embedded process-tools binary before assembling HCP
-	initProcessToolsBinary(HCP_ROOT);
-	
 	const repoRoot = options.repoRoot ?? process.cwd();
 	const hcp = new HcpClient();
 	let HcpClientresultpublished = false;

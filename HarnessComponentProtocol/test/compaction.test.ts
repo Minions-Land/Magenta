@@ -34,6 +34,7 @@ import {
 	generateSummary,
 	getLastAssistantUsage,
 	prepareCompaction,
+	SUMMARIZATION_SYSTEM_PROMPT,
 	serializeConversation,
 	shouldCompact,
 } from "../compaction/pi/compaction.ts";
@@ -126,14 +127,18 @@ function createModelChangeEntry(provider: string, modelId: string, parentId: str
 const models = createModels();
 let fauxCount = 0;
 
-function createFauxModel(reasoning: boolean, maxTokens = 8192): { faux: FauxProviderHandle; model: Model<string> } {
+function createFauxModel(
+	reasoning: boolean,
+	maxTokens = 8192,
+	contextWindow = 200000,
+): { faux: FauxProviderHandle; model: Model<string> } {
 	const faux = fauxProvider({
 		provider: `faux-${++fauxCount}`,
 		models: [
 			{
 				id: reasoning ? "reasoning-model" : "non-reasoning-model",
 				reasoning,
-				contextWindow: 200000,
+				contextWindow,
 				maxTokens,
 			},
 		],
@@ -511,6 +516,31 @@ describe("harness compaction", () => {
 		expect(summary).toContain("Test summary");
 		expect(promptText).toContain("<previous-summary>\nold summary\n</previous-summary>");
 		expect(promptText).toContain("Additional focus: focus");
+	});
+
+	it("summarizes oversized histories in bounded incremental chunks", async () => {
+		const messages: AgentMessage[] = [createUserMessage("history-line\n".repeat(2_000))];
+		const prompts: string[] = [];
+		const { faux, model } = createFauxModel(false, 128, 4_000);
+		faux.setResponses(
+			Array.from({ length: 20 }, (_, index) => (context: { messages: Message[] }) => {
+				const message = context.messages[0];
+				const content = message?.role === "user" ? message.content : [];
+				prompts.push(Array.isArray(content) && content[0]?.type === "text" ? content[0].text : "");
+				return fauxAssistantMessage(`summary-${index}`);
+			}),
+		);
+
+		const summary = getOrThrow(await generateSummary(messages, models, model, 160));
+
+		expect(prompts.length).toBeGreaterThan(1);
+		for (const prompt of prompts) {
+			expect(
+				Buffer.byteLength(prompt, "utf8") + Buffer.byteLength(SUMMARIZATION_SYSTEM_PROMPT, "utf8"),
+			).toBeLessThan(model.contextWindow);
+		}
+		expect(prompts[1]).toContain("<previous-summary>\nsummary-0\n</previous-summary>");
+		expect(summary).toBe(`summary-${prompts.length - 1}`);
 	});
 
 	it("returns error results for failed or aborted summary generations", async () => {

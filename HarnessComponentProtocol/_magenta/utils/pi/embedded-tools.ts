@@ -1,25 +1,31 @@
 /**
  * Embedded fd/rg binaries manager
- * 
+ *
  * 与 process-tools 类似，Bun 编译时将 fd 和 rg 的 4 个平台二进制嵌入。
  * 首次运行时解压到 ~/.magenta/cache/{fd,rg}/
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync, chmodSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import { createHash } from "node:crypto";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const PLATFORM = process.platform;
 const ARCH = process.arch;
 
 type ToolName = "fd" | "rg";
 
+function getHarnessRoot(): string {
+	const isBunBinary = typeof (globalThis as any).Bun !== "undefined" && import.meta.url.includes("/$bunfs/root/");
+	return isBunBinary ? dirname(process.execPath) : fileURLToPath(new URL("../../..", import.meta.url));
+}
+
 // 确定当前平台的二进制文件名
 function getEmbeddedBinaryName(tool: ToolName): string {
 	const isWindows = PLATFORM === "win32";
 	const ext = isWindows ? ".exe" : "";
-	
+
 	if (PLATFORM === "darwin") {
 		const archSuffix = ARCH === "arm64" ? "macos-arm64" : "macos-x64";
 		return `${tool}-${archSuffix}${ext}`;
@@ -35,22 +41,22 @@ function getEmbeddedBinaryName(tool: ToolName): string {
 function getEmbeddedBinaryPath(tool: ToolName): string | null {
 	try {
 		if (PLATFORM === "darwin" && ARCH === "arm64") {
-			if (tool === "fd") return require("../../_magenta/fd/prebuilt/fd-macos-arm64");
-			if (tool === "rg") return require("../../_magenta/rg/prebuilt/rg-macos-arm64");
+			if (tool === "fd") return require("../../fd/prebuilt/fd-macos-arm64");
+			if (tool === "rg") return require("../../rg/prebuilt/rg-macos-arm64");
 		} else if (PLATFORM === "darwin" && ARCH === "x64") {
-			if (tool === "fd") return require("../../_magenta/fd/prebuilt/fd-macos-x64");
-			if (tool === "rg") return require("../../_magenta/rg/prebuilt/rg-macos-x64");
+			if (tool === "fd") return require("../../fd/prebuilt/fd-macos-x64");
+			if (tool === "rg") return require("../../rg/prebuilt/rg-macos-x64");
 		} else if (PLATFORM === "linux" && ARCH === "x64") {
-			if (tool === "fd") return require("../../_magenta/fd/prebuilt/fd-linux-x64");
-			if (tool === "rg") return require("../../_magenta/rg/prebuilt/rg-linux-x64");
+			if (tool === "fd") return require("../../fd/prebuilt/fd-linux-x64");
+			if (tool === "rg") return require("../../rg/prebuilt/rg-linux-x64");
 		} else if (PLATFORM === "win32" && ARCH === "x64") {
-			if (tool === "fd") return require("../../_magenta/fd/prebuilt/fd-windows-x64.exe");
-			if (tool === "rg") return require("../../_magenta/rg/prebuilt/rg-windows-x64.exe");
+			if (tool === "fd") return require("../../fd/prebuilt/fd-windows-x64.exe");
+			if (tool === "rg") return require("../../rg/prebuilt/rg-windows-x64.exe");
 		}
 	} catch {
 		return null;
 	}
-	
+
 	return null;
 }
 
@@ -67,31 +73,27 @@ function getCacheBinaryPath(tool: ToolName): string {
 
 /**
  * 获取工具的真实文件路径
- * 
+ *
  * 如果是 Bun 编译的二进制：
  * 1. 检查缓存目录是否已有有效二进制
  * 2. 如果没有，从嵌入的虚拟路径读取并写入缓存
  * 3. 返回缓存路径
- * 
+ *
  * 如果是开发环境：
  * 返回相对于当前目录的预编译二进制路径
  */
 export function getEmbeddedToolPath(tool: ToolName): string | null {
 	const embeddedPath = getEmbeddedBinaryPath(tool);
-	
+
 	// 开发环境或非嵌入场景
 	if (!embeddedPath) {
-		const devPath = join(
-			process.cwd(),
-			`HarnessComponentProtocol/_magenta/${tool}/prebuilt`,
-			getEmbeddedBinaryName(tool)
-		);
+		const devPath = join(getHarnessRoot(), `_magenta/${tool}/prebuilt`, getEmbeddedBinaryName(tool));
 		if (existsSync(devPath)) {
 			return devPath;
 		}
 		return null;
 	}
-	
+
 	// 嵌入场景：检查缓存
 	const cachePath = getCacheBinaryPath(tool);
 	if (existsSync(cachePath)) {
@@ -99,10 +101,10 @@ export function getEmbeddedToolPath(tool: ToolName): string | null {
 		try {
 			const embeddedContent = readFileSync(embeddedPath);
 			const cachedContent = readFileSync(cachePath);
-			
+
 			const embeddedHash = createHash("sha256").update(embeddedContent).digest("hex");
 			const cachedHash = createHash("sha256").update(cachedContent).digest("hex");
-			
+
 			if (embeddedHash === cachedHash) {
 				return cachePath;
 			}
@@ -110,15 +112,15 @@ export function getEmbeddedToolPath(tool: ToolName): string | null {
 			// 缓存文件损坏，重新提取
 		}
 	}
-	
+
 	// 提取嵌入的二进制到缓存
 	const cacheDir = getCacheDir(tool);
 	mkdirSync(cacheDir, { recursive: true });
-	
+
 	const embeddedContent = readFileSync(embeddedPath);
 	writeFileSync(cachePath, embeddedContent);
 	chmodSync(cachePath, 0o755);
-	
+
 	return cachePath;
 }
 

@@ -6,21 +6,23 @@
 import { Box, Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
 import type { MessageRenderer } from "../../../core/extensions/types.ts";
 import type { CustomMessage } from "../../../core/messages.ts";
-import { summarizeEventCollapsed, summarizeEventExpanded } from "../../../core/tools/bg-shell.ts";
+import {
+	type BackgroundShellEventSnapshot,
+	summarizeEventCollapsed,
+	summarizeEventExpanded,
+} from "../../../core/tools/bg-shell.ts";
+import { getMarkdownTheme } from "../theme/theme.ts";
 
-interface BgShellReturnDetails {
+export interface BgShellReturnDetails {
 	id: string;
 	status: string;
 	exitCode: number | null;
 	logPath: string;
-	eventData?: any;
+	instruction?: string;
+	eventData?: BackgroundShellEventSnapshot;
 }
 
-export const bgShellReturnRenderer: MessageRenderer<BgShellReturnDetails> = (
-	message: CustomMessage<BgShellReturnDetails>,
-	options,
-	theme,
-) => {
+export const bgShellReturnRenderer = ((message: CustomMessage<BgShellReturnDetails>, options, theme) => {
 	const container = new Container();
 	container.addChild(new Spacer(1));
 
@@ -46,19 +48,17 @@ export const bgShellReturnRenderer: MessageRenderer<BgShellReturnDetails> = (
 	// If we have event data and expanded state, regenerate with proper formatting
 	const eventData = message.details?.eventData;
 	if (eventData && options.expanded !== undefined) {
-		// Split instruction from event summary
-		const parts = content.split("\n\n");
-		const instruction = parts[0] || "";
+		const instruction = message.details?.instruction ?? "";
 		const summary = options.expanded ? summarizeEventExpanded(eventData) : summarizeEventCollapsed(eventData);
 		content = instruction ? `${instruction}\n\n${summary}` : summary;
 	}
 
 	// Render content as markdown
 	box.addChild(
-		new Markdown(content, 0, 0, undefined as any, {
+		new Markdown(content, 0, 0, getMarkdownTheme(), {
 			color: (text: string) => theme.fg("customMessageText", text),
 		}),
 	);
 
 	return container;
-};
+}) satisfies MessageRenderer<BgShellReturnDetails>;

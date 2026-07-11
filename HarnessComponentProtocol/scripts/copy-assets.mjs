@@ -36,6 +36,8 @@ function extensionOf(name) {
 }
 
 function shouldCopyFile(relativeDir, name) {
+	const normalizedDir = relativeDir.replaceAll("\\", "/");
+	if (/^_magenta\/(?:fd|rg|process-tools)\/prebuilt$/u.test(normalizedDir)) return true;
 	return copiedFileNames.has(name) || copiedExtensions.has(extensionOf(name));
 }
 
@@ -62,6 +64,9 @@ async function copySelectedTree(relativeDir) {
 			await copySelectedTree(child);
 		} else if (entry.isFile() && shouldCopyFile(relativeDir, entry.name)) {
 			await copyRelativeFile(child);
+			if (relativeDir.replaceAll("\\", "/").endsWith("/prebuilt") && !entry.name.endsWith(".exe")) {
+				await chmod(join(distRoot, child), 0o755);
+			}
 		}
 	}
 }
