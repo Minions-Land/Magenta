@@ -4,5 +4,5 @@
  * Active brand: magenta
  */
 
-export const BRAND_VERSION = "0.0.3";
+export const BRAND_VERSION = "0.0.7";
 export const BRAND_NAME = "Magenta";
