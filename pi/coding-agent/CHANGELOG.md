@@ -4,6 +4,24 @@ All notable changes to Magenta CLI are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.0.8] - 2026-07-12
+
+### Added
+- Sub-agents can be granted Harness package selectors, including shared defaults and per-task overrides
+- The `/skill:` command dock now opens the loaded Skills menu directly, filters as the user types, and backfills the selected skill for additional instructions
+
+### Changed
+- Sub-agent and background-shell returns now show a compact status by default and reveal full metadata and output with `Ctrl+O`
+- Embedded `process-tools`, `fd`, and `rg` runtime support now lives under the host-owned `_magenta` boundary instead of the closed HCP protocol layer
+
+### Fixed
+- Automatic compaction now checks context usage between tool turns using provider usage plus newly produced tool results
+- Context overflow responses containing `Context window is full` now trigger compact-and-retry recovery
+- Manual and automatic compaction split oversized histories into bounded incremental summaries instead of sending an overlong summarization prompt
+- Repeated idle Send Message wakes are coalesced into one agent turn while preserving every persisted message
+- Embedded helper lookup no longer depends on the current working directory, and upgrades replace stale `process-tools` binaries by content hash
+- Unified Magenta update tests now exercise the current Git/release dispatch path
+
 ## [0.0.7] - 2026-07-11
 
 ### Major Improvements
