@@ -74,6 +74,7 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          repository: Minions-Land/Magenta-CLI
           files: |
             pi/coding-agent/dist/release/magenta-macos-arm64
             pi/coding-agent/dist/release/magenta-macos-x64
@@ -86,7 +87,7 @@ jobs:
           prerelease: false
           generate_release_notes: true
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.MAGENTA_CLI_RELEASE_TOKEN }}
       
       - name: Trigger Magenta-CLI release update
         if: success()
