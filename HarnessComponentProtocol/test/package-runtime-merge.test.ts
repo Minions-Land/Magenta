@@ -3,6 +3,7 @@ import { HcpClientbuildsession } from "../.HCP/assembly/session-hcp.ts";
 import type { PackageOverlay, PackageResolvedComponent } from "../_magenta/packages/package-overlay.ts";
 import { ProcessRuntimeProvider } from "../runtime/magenta/process-runtime.ts";
 import { ScriptRuntimeProvider } from "../runtime/magenta/script-runtime.ts";
+import { SandboxProvider } from "../sandbox/magenta/sandbox.ts";
 
 const RUNTIME_PROCESS_COMPONENT: PackageResolvedComponent = {
 	kind: "runtime",
@@ -22,6 +23,20 @@ const SCRIPT_RUNTIMES_COMPONENT: PackageResolvedComponent = {
 	name: "script-runtimes",
 	key: "runtime:script-runtimes",
 	sourcePath: "/repo/packages/RuntimeFixture/runtime/script-runtimes.toml",
+};
+
+const BROKEN_SANDBOX_COMPONENT: PackageResolvedComponent = {
+	kind: "sandbox",
+	name: "sandbox",
+	source: "magenta",
+	packageId: "RuntimeFixture",
+	packageDir: "/repo/packages/RuntimeFixture",
+	key: "sandbox:sandbox",
+	baseDir: "/repo/packages/RuntimeFixture",
+	path: "/repo/packages/RuntimeFixture/sandbox/missing.toml",
+	sourcePath: "/repo/packages/RuntimeFixture/sandbox/sandbox.toml",
+	bundles: [],
+	raw: {},
 };
 
 function runtimeOverlay(component = RUNTIME_PROCESS_COMPONENT): PackageOverlay {
@@ -82,5 +97,39 @@ describe("package capability slot merging", () => {
 			}),
 		);
 		expect(assembly.hcp.resolveCapability("runtime:process")).toBeInstanceOf(ProcessRuntimeProvider);
+	});
+
+	it("fills default capability slots when package sandbox and runtime overrides are broken", async () => {
+		const unavailableRuntime = {
+			...RUNTIME_PROCESS_COMPONENT,
+			source: "missing",
+		};
+		const components = [BROKEN_SANDBOX_COMPONENT, unavailableRuntime];
+		const assembly = await HcpClientbuildsession({
+			repoRoot: "/repo",
+			overlay: {
+				...runtimeOverlay(),
+				components,
+				componentMap: new Map(components.map((component) => [component.key, component])),
+			},
+		});
+
+		expect(assembly.diagnostics).toContainEqual(
+			expect.objectContaining({
+				code: "component_build_failed",
+				module: "sandbox",
+				message: expect.stringContaining("missing.toml"),
+			}),
+		);
+		expect(assembly.diagnostics).toContainEqual(
+			expect.objectContaining({
+				code: "package_component_invalid",
+				message: expect.stringContaining("selects unavailable source missing"),
+			}),
+		);
+		expect(assembly.hcp.resolveCapability("sandbox")).toBeInstanceOf(SandboxProvider);
+		expect(assembly.hcp.resolveCapability("runtime:process")).toBeInstanceOf(ProcessRuntimeProvider);
+		expect(assembly.hcp.resolveCapability("runtime:script-runtimes")).toBeInstanceOf(ScriptRuntimeProvider);
+		expect(assembly.hcp.resolveCapability("hook")).toBeDefined();
 	});
 });

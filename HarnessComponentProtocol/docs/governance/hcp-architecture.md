@@ -145,10 +145,13 @@ Tool/Resource registries. Package tools and inert Resources are converted to
 generic descriptor build settings, then routed through the same generated
 HcpServer/HcpMagnet assembly as repository components.
 Magenta3's root `packages/` retains the generic contract and templates;
-concrete domain packages are independently managed in `MagentaPackages`.
+concrete domain packages are independently published from GitHub repositories.
+A later acquisition layer will download, verify, and cache them; it is outside
+HCP and outside this change.
 `discoverHarnessPackages()` and `loadPackageOverlay()` accept an optional
-explicit `packagesRoot`; integration must not hardcode that sibling repository's
-path. The overlay API returns `source`/`sources`, but transport adapters such as
+explicit `packagesRoot` containing already-downloaded packages; integration
+must not infer a sibling repository path. The overlay API returns
+`source`/`sources`, but transport adapters such as
 `ProcessTool` and `McpTool` are products, not Source roles; they must remain
 owned by a real Module/Server and Source `HcpMagnet`.
 

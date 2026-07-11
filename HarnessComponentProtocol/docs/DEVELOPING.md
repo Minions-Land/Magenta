@@ -9,7 +9,7 @@ you can build:
    (`memory`, `policy`, `runtime`, …).
 3. **A resource** — content wired into assembly (`system-prompt`, `skill`, `prompt`, `theme`, `brand`).
 4. **A package** — an independently shipped bundle that follows the generic
-   package contract; domain implementations are owned by `MagentaPackages`.
+   package contract and is published from its own GitHub repository.
 
 For the *why* behind the architecture, read `governance/hcp-architecture.md`
 (the authoritative contract). For Package integration support, read
@@ -283,10 +283,12 @@ packages/
   templates/harness-package/
 ```
 
-Concrete domain expert packages are independently owned and versioned in the
-`MagentaPackages` repository. Do not vendor them into Magenta3 or hardcode the
-sibling repository's filesystem location. External discovery and release
-coordination must enter through an explicit integration boundary.
+Concrete domain expert packages are independently published from GitHub
+repositories. Do not vendor them into Magenta3 or infer a sibling checkout. A
+future acquisition layer will own download, version selection, verification,
+and caching; it is intentionally out of scope here. For now, tests and callers
+provide an arbitrary local directory containing packages that have already been
+downloaded.
 `discoverHarnessPackages()` and `loadPackageOverlay()` accept an optional
 `packagesRoot` for this purpose.
 

@@ -1,8 +1,8 @@
 # Harness Package Interface
 
 This directory documents the generic package shape. It is intentionally
-README-only; concrete domain packages belong in the independently managed
-MagentaPackages repository.
+README-only; concrete domain packages belong in independently published GitHub
+repositories and enter Magenta3 only after they have been downloaded locally.
 
 ```text
 <package-root>/

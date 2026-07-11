@@ -179,10 +179,22 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 
 	const settingsManager = options.settingsManager ?? SettingsManager.create(cwd, agentDir);
 	const sessionManager = options.sessionManager ?? SessionManager.create(cwd, getDefaultSessionDir(cwd, agentDir));
+	let HcpClientprepared = false;
 
 	if (!resourceLoader) {
 		resourceLoader = new DefaultResourceLoader({ cwd, agentDir, settingsManager });
-		await resourceLoader.reload();
+		await resourceLoader.reload({
+			HcpClientprepare: async (hcp) => {
+				await HcpClientassembletools({
+					hcp,
+					cwd,
+					settingsManager,
+					sessionManager,
+					sshTarget: options.sshTarget,
+				});
+				HcpClientprepared = true;
+			},
+		});
 		time("resourceLoader.reload");
 	}
 
@@ -246,14 +258,19 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 
 	const defaultActiveToolNames: string[] = ["read", "bash", "edit", "write", "bg_shell", "sub_agent"];
 	const sessionHcp = resourceLoader.HcpClientgetsession?.();
-	if (sessionHcp) {
-		await HcpClientassembletools({
-			hcp: sessionHcp,
-			cwd,
-			settingsManager,
-			sessionManager,
-			sshTarget: options.sshTarget,
-		});
+	if (sessionHcp && !HcpClientprepared) {
+		try {
+			await HcpClientassembletools({
+				hcp: sessionHcp,
+				cwd,
+				settingsManager,
+				sessionManager,
+				sshTarget: options.sshTarget,
+			});
+		} catch (error) {
+			await sessionHcp.dispose();
+			throw error;
+		}
 	}
 	const allowedToolNames = options.tools ?? (options.noTools === "all" ? [] : undefined);
 	const excludedToolNames = options.excludeTools;

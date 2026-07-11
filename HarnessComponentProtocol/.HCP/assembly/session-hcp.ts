@@ -524,105 +524,174 @@ export async function HcpClientbuildsession(
 	const repoRoot = options.repoRoot ?? process.cwd();
 	const packagesRoot = options.packagesRoot ?? options.overlay?.packagesRoot ?? getHarnessPackagesRoot(repoRoot);
 	const hcp = new HcpClient();
-	const packageDiagnostics: PackageDiagnostic[] = [];
-	const packageToolDiagnostics: PackageToolDiagnostic[] = [];
-	const packageComponentTemplates = options.overlay
-		? HcpClientpackagecomponents(options.overlay, packageDiagnostics, packageToolDiagnostics)
-		: [];
-	for (const [index, component] of (options.overlay?.components ?? []).entries()) {
-		options.onPackageAssemblyProgress?.({
-			phase: "start",
-			index,
-			total: options.overlay!.components.length,
-			component,
-		});
-	}
-	const toolOptions = options.toolOptions ?? {};
-	const disabledModules = new Set(options.disabledModules ?? []);
-	const baseAssembled = await HcpClientassemble({
-		hcp,
-		repoRoot,
-		packagesRoot,
-		cwd: options.cwd ?? repoRoot,
-		disabledModules: options.disabledModules,
-		modules: options.modules,
-		components: packageComponentTemplates.filter((component) => component.product !== "tool"),
-		settings: toolOptions,
-		descriptions: toolOptions.descriptions as Readonly<Record<string, string | undefined>> | undefined,
-	});
 	const packageToolComponents: HcpClientcomponent[] = [];
-	for (const template of packageComponentTemplates.filter(
-		(component) => component.product === "tool" && !HcpClientmoduledisabled(component.module, disabledModules),
-	)) {
-		const settings = template.settings as PackageToolBuildSettings;
-		const expanded = await expandPackageToolBuildSettings(settings, {
+	let HcpClientresultpublished = false;
+	try {
+		const packageDiagnostics: PackageDiagnostic[] = [];
+		const packageToolDiagnostics: PackageToolDiagnostic[] = [];
+		const packageComponentTemplates = options.overlay
+			? HcpClientpackagecomponents(options.overlay, packageDiagnostics, packageToolDiagnostics)
+			: [];
+		for (const [index, component] of (options.overlay?.components ?? []).entries()) {
+			options.onPackageAssemblyProgress?.({
+				phase: "start",
+				index,
+				total: options.overlay!.components.length,
+				component,
+			});
+		}
+		const toolOptions = options.toolOptions ?? {};
+		const disabledModules = new Set(options.disabledModules ?? []);
+		const HcpClientbaseassembled = await HcpClientassemble({
+			hcp,
 			repoRoot,
-			components: settings.components,
-			componentMap: settings.componentMap,
-			resolveCapability: hcp.resolveCapability.bind(hcp),
+			packagesRoot,
+			cwd: options.cwd ?? repoRoot,
+			disabledModules: options.disabledModules,
+			modules: options.modules,
+			components: packageComponentTemplates.filter((component) => component.product !== "tool"),
+			settings: toolOptions,
+			descriptions: toolOptions.descriptions as Readonly<Record<string, string | undefined>> | undefined,
 		});
-		packageToolComponents.push(
-			...expanded.map((expandedSettings) => ({
-				...template,
-				name: expandedSettings.toolName ?? template.name,
-				settings: expandedSettings,
-			})),
+		const HcpClientdefaultfillassembled: HcpClientassembleresult = options.overlay
+			? await HcpClientassemble({
+					hcp,
+					repoRoot,
+					packagesRoot,
+					cwd: options.cwd ?? repoRoot,
+					includeAutoload: true,
+					disabledModules: options.disabledModules,
+					skipOccupied: true,
+					settings: toolOptions,
+					descriptions: toolOptions.descriptions as Readonly<Record<string, string | undefined>> | undefined,
+				})
+			: { hcp, addresses: [], builtComponents: [], diagnostics: [] };
+		for (const template of packageComponentTemplates.filter(
+			(component) => component.product === "tool" && !HcpClientmoduledisabled(component.module, disabledModules),
+		)) {
+			const settings = template.settings as PackageToolBuildSettings;
+			const expanded = await expandPackageToolBuildSettings(settings, {
+				repoRoot,
+				components: settings.components,
+				componentMap: settings.componentMap,
+				resolveCapability: hcp.resolveCapability.bind(hcp),
+			});
+			packageToolComponents.push(
+				...expanded.map((expandedSettings) => ({
+					...template,
+					name: expandedSettings.toolName ?? template.name,
+					settings: expandedSettings,
+				})),
+			);
+		}
+		const HcpClientpackageassembled = await HcpClientassemble({
+			hcp,
+			repoRoot,
+			packagesRoot,
+			cwd: options.cwd ?? repoRoot,
+			includeAutoload: false,
+			disabledModules: options.disabledModules,
+			components: packageToolComponents,
+		});
+		const builtPackageToolComponents = new Set(
+			HcpClientpackageassembled.builtComponents.map(({ component }) => component),
 		);
-	}
-	const packageAssembled = await HcpClientassemble({
-		hcp,
-		repoRoot,
-		packagesRoot,
-		cwd: options.cwd ?? repoRoot,
-		includeAutoload: false,
-		disabledModules: options.disabledModules,
-		components: packageToolComponents,
-	});
-	const builtPackageToolComponents = new Set(packageAssembled.builtComponents.map(({ component }) => component));
-	for (const component of packageToolComponents) {
-		if (builtPackageToolComponents.has(component)) continue;
-		const product = (component.settings as PackageToolBuildSettings | undefined)?.product;
-		await product?.close?.();
-	}
-	const assembled: HcpClientassembleresult = {
-		hcp,
-		addresses: [...new Set([...baseAssembled.addresses, ...packageAssembled.addresses])],
-		builtComponents: [...baseAssembled.builtComponents, ...packageAssembled.builtComponents],
-		diagnostics: [...baseAssembled.diagnostics, ...packageAssembled.diagnostics],
-	};
-	packageDiagnostics.push(...packageToolDiagnostics);
-	const diagnostics: Array<PackageDiagnostic | HcpClientassemblydiagnostic> = [
-		...packageDiagnostics,
-		...assembled.diagnostics,
-	];
-	const toolAddresses = assembled.addresses.filter((address) => address.startsWith("tool:"));
-	const packageComponentSet = new Set(packageToolComponents);
-	const packageToolAddresses = assembled.builtComponents
-		.filter(({ component }) => packageComponentSet.has(component))
-		.flatMap(({ addresses }) => addresses)
-		.filter((address) => address.startsWith("tool:"));
-	const packageResourceComponentSet = new Set(
-		packageComponentTemplates.filter((component) => component.product === "resource"),
-	);
-	const packageResourceAddresses = assembled.builtComponents
-		.filter(({ component }) => packageResourceComponentSet.has(component))
-		.flatMap(({ addresses }) => addresses);
-	for (const [index, component] of (options.overlay?.components ?? []).entries()) {
-		options.onPackageAssemblyProgress?.({
-			phase: "assembled",
-			index,
-			total: options.overlay!.components.length,
-			component,
-		});
-	}
+		const builtMcpConnections = new Set(
+			packageToolComponents
+				.filter((component) => builtPackageToolComponents.has(component))
+				.map((component) => (component.settings as PackageToolBuildSettings).mcp?.connection)
+				.filter((connection) => connection !== undefined),
+		);
+		const unbuiltMcpConnections = new Set(
+			packageToolComponents
+				.filter((component) => !builtPackageToolComponents.has(component))
+				.map((component) => (component.settings as PackageToolBuildSettings).mcp?.connection)
+				.filter((connection) => connection !== undefined),
+		);
+		for (const connection of unbuiltMcpConnections) {
+			if (builtMcpConnections.has(connection)) continue;
+			try {
+				await connection.close();
+			} catch {
+				// Assembly diagnostics are primary; connection cleanup is best-effort.
+			}
+		}
+		const HcpClientassembled: HcpClientassembleresult = {
+			hcp,
+			addresses: [
+				...new Set([
+					...HcpClientbaseassembled.addresses,
+					...HcpClientdefaultfillassembled.addresses,
+					...HcpClientpackageassembled.addresses,
+				]),
+			],
+			builtComponents: [
+				...HcpClientbaseassembled.builtComponents,
+				...HcpClientdefaultfillassembled.builtComponents,
+				...HcpClientpackageassembled.builtComponents,
+			],
+			diagnostics: [
+				...HcpClientbaseassembled.diagnostics,
+				...HcpClientdefaultfillassembled.diagnostics,
+				...HcpClientpackageassembled.diagnostics,
+			],
+		};
+		packageDiagnostics.push(...packageToolDiagnostics);
+		const diagnostics: Array<PackageDiagnostic | HcpClientassemblydiagnostic> = [
+			...packageDiagnostics,
+			...HcpClientassembled.diagnostics,
+		];
+		const toolAddresses = HcpClientassembled.addresses.filter((address) => address.startsWith("tool:"));
+		const packageComponentSet = new Set(packageToolComponents);
+		const packageToolAddresses = HcpClientassembled.builtComponents
+			.filter(({ component }) => packageComponentSet.has(component))
+			.flatMap(({ addresses }) => addresses)
+			.filter((address) => address.startsWith("tool:"));
+		const packageResourceComponentSet = new Set(
+			packageComponentTemplates.filter((component) => component.product === "resource"),
+		);
+		const packageResourceAddresses = HcpClientassembled.builtComponents
+			.filter(({ component }) => packageResourceComponentSet.has(component))
+			.flatMap(({ addresses }) => addresses);
+		for (const [index, component] of (options.overlay?.components ?? []).entries()) {
+			options.onPackageAssemblyProgress?.({
+				phase: "assembled",
+				index,
+				total: options.overlay!.components.length,
+				component,
+			});
+		}
 
-	return {
-		hcp,
-		diagnostics,
-		toolAddresses: [...new Set(toolAddresses)],
-		packageToolAddresses: [...new Set(packageToolAddresses)],
-		packageResourceAddresses: [...new Set(packageResourceAddresses)],
-	};
+		const result = {
+			hcp,
+			diagnostics,
+			toolAddresses: [...new Set(toolAddresses)],
+			packageToolAddresses: [...new Set(packageToolAddresses)],
+			packageResourceAddresses: [...new Set(packageResourceAddresses)],
+		};
+		HcpClientresultpublished = true;
+		return result;
+	} finally {
+		if (!HcpClientresultpublished) {
+			await hcp.dispose();
+			await HcpClientclosemcpconnections(packageToolComponents);
+		}
+	}
+}
+
+async function HcpClientclosemcpconnections(components: readonly HcpClientcomponent[]): Promise<void> {
+	const connections = new Set(
+		components
+			.map((component) => (component.settings as PackageToolBuildSettings | undefined)?.mcp?.connection)
+			.filter((connection) => connection !== undefined),
+	);
+	for (const connection of connections) {
+		try {
+			await connection.close();
+		} catch {
+			// Preserve the construction failure; cleanup is best-effort.
+		}
+	}
 }
 
 function HcpClientpackagecomponents(

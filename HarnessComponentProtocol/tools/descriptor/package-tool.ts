@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { parametersFromToml } from "../../_magenta/mcp/schema.ts";
-import { discoverMcpTools, McpTool, type McpToolOptions, mcpToolName } from "../../_magenta/mcp/tool.ts";
+import { discoverMcpTools, type McpToolOptions, mcpToolName } from "../../_magenta/mcp/tool.ts";
 import type { PackageToolDiagnostic } from "../../_magenta/packages/tool-diagnostic.ts";
 import { parseToml, type TomlTable } from "../../_magenta/utils/pi/toml.ts";
 import type { ProcessRuntimeProvider, ScriptRuntimeProvider } from "../../runtime/HcpServer.ts";
@@ -41,7 +41,6 @@ export type PackageToolContext = {
 export type CreatePackageToolProductOptions = {
 	component: PackageToolComponent;
 	context: PackageToolContext;
-	mcp?: McpToolOptions;
 };
 
 export type CreatePackageToolProductResult = {
@@ -62,7 +61,6 @@ export type PackageToolBuildSettings = {
 	componentMap: Map<string, PackageToolRuntimeComponent>;
 	diagnostics: PackageToolDiagnostic[];
 	mcp?: McpToolOptions;
-	product?: HcpMagnettoolproduct;
 	toolName?: string;
 };
 
@@ -136,14 +134,11 @@ export async function expandPackageToolBuildSettings(
 			await discovered.connection.close();
 			return [];
 		}
-		return discovered.tools.map((tool) => {
-			const product = new McpTool({ connection: discovered.connection, tool, namePrefix });
-			return {
-				...settings,
-				product,
-				toolName: mcpToolName(tool.name, namePrefix),
-			};
-		});
+		return discovered.tools.map((tool) => ({
+			...settings,
+			mcp: { connection: discovered.connection, tool, namePrefix },
+			toolName: mcpToolName(tool.name, namePrefix),
+		}));
 	} catch (error) {
 		const message = formatUnknownError(error);
 		const notStarted = /ENOENT|not found|no such file|spawn\b/i.test(message);
@@ -196,18 +191,15 @@ export async function createPackageToolProduct(
 	if (!sandbox) return { diagnostics };
 
 	if (runtime === "mcp") {
-		if (!options.mcp) {
-			diagnostics.push({
-				type: "error",
-				code: "package_tool_descriptor_invalid",
-				message: `Package ${component.packageId} MCP tool ${component.name} was not expanded before assembly.`,
-				path: component.path,
-				packageId: component.packageId,
-				profile: component.profile,
-			});
-			return { diagnostics };
-		}
-		return { diagnostics, product: new McpTool(options.mcp) };
+		diagnostics.push({
+			type: "error",
+			code: "package_tool_descriptor_invalid",
+			message: `Package ${component.packageId} MCP tool ${component.name} was not expanded before assembly.`,
+			path: component.path,
+			packageId: component.packageId,
+			profile: component.profile,
+		});
+		return { diagnostics };
 	}
 
 	if (runtime === "process") {

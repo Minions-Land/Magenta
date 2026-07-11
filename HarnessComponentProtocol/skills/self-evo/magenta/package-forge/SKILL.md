@@ -12,8 +12,7 @@ disable-model-invocation: true
 
 Where the Pi path integrates a small extension directly into the harness,
 package-forge preserves an independent ownership boundary. The output is a
-self-contained bundle in the independently managed `MagentaPackages`
-repository. It brings its
+self-contained bundle in its own independently managed GitHub repository. It brings its
 own components, environment, and process-backed tool descriptors where
 required. A Package does not invent another HCP role or assembly system. When
 explicitly integrated, its products still enter the one HcpClient path under
@@ -47,11 +46,13 @@ Key rules:
 
 - **Ownership is separate.** Magenta3's root `packages/` retains the generic
   Package boundary, schema, templates, and API. Concrete domain Packages live in
-  `MagentaPackages` and follow that repository's lifecycle. Do not vendor them
-  into Magenta3 or hardcode the sibling repository's absolute path.
+  their own GitHub repositories and follow those repositories' lifecycles. Do
+  not vendor them into Magenta3 or infer a sibling checkout.
 - **Integration is explicit.** `HarnessComponentProtocol/_magenta/packages` is
   the generic boundary for a Package root supplied as `packagesRoot`. It does not
   own, discover by fixed filesystem convention, or release domain packages.
+  A future acquisition layer will download, verify, and cache GitHub Packages;
+  today this API receives an already-downloaded local root.
   Use the existing API rather than adding a repository-specific loader:
 
   ```typescript
@@ -94,7 +95,7 @@ Heavy runtimes do not create another HCP role or infrastructure-owned Module:
 2. **Decide the boundary.** What stays in the package vs. what (if anything)
    becomes harness-owned. Default: keep the domain-specific body packaged;
    only genuinely generic pieces migrate into `HarnessComponentProtocol/`.
-3. **Scaffold the package in `MagentaPackages`.** Write `package.toml`
+3. **Scaffold the package in its own GitHub repository.** Write `package.toml`
    (`schema_version`, `id`, `name`, `kind`, `domain`, `[[components]]`). Use
    Magenta3's `packages/templates/harness-package/` only as the generic
    compatibility reference; do not create the domain package under Magenta3.
@@ -110,12 +111,12 @@ Heavy runtimes do not create another HCP role or infrastructure-owned Module:
 6. **Preserve provenance.** Record origin repository + commit in package
    metadata. The package's origin tag reflects the external source, not
    `magenta`.
-7. **Gate in the owning repository.** Run `MagentaPackages`' documented package
+7. **Gate in the owning repository.** Run that repository's documented package
    checks. Run Magenta3's HCP build/test/inspect gates only when an explicit
-   integration change is made here. Pass the selected external root explicitly
-   as `packagesRoot` to the generic discovery/overlay API. Tests should use a
-   temporary external root; production configuration must never infer the
-   `MagentaPackages` sibling path.
+   integration change is made here. Pass an already-downloaded local root
+   explicitly as `packagesRoot` to the generic discovery/overlay API. Tests
+   should use a temporary external root. GitHub download, version selection,
+   verification, and caching remain the future acquisition layer's job.
 
 ## Guardrails
 

@@ -298,9 +298,11 @@ Useful keys:
 
 A Magenta domain package is a separately shipped bundle of tools, skills,
 system prompts, brand assets, and runtime metadata. Magenta3 retains the generic
-overlay contract under `packages/`; concrete domain content is owned by the
-independent `MagentaPackages` repository. The production external-root
-connector is deferred and must not hardcode a sibling filesystem path.
+overlay contract under `packages/`; concrete domain packages are published from
+independent GitHub repositories. A future acquisition layer will download,
+verify, and cache them. Today the loader accepts only an explicitly supplied
+local root containing packages that have already been downloaded; it never
+infers a sibling checkout.
 
 ```mermaid
 flowchart LR

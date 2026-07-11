@@ -1,5 +1,6 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { HcpMagnetBuildContext } from "../../.HCP/HcpMagnetTypes.ts";
+import { McpTool, type McpToolOptions } from "../../_magenta/mcp/tool.ts";
 import { createPackageToolProduct, type PackageToolBuildSettings } from "./package-tool.ts";
 
 type HcpMagnettoolproduct = {
@@ -14,14 +15,12 @@ export class HcpMagnet {
 	static readonly kind = "tool";
 	static readonly source = "descriptor";
 	static async build(context: HcpMagnetBuildContext) {
-		if (HcpMagnetistoolproduct(context.settings)) return new HcpMagnet(context.settings);
-		if (HcpMagnetisprebuiltpackagesettings(context.settings)) return new HcpMagnet(context.settings.product);
+		if (HcpMagnetismcpsettings(context.settings)) return new HcpMagnet(new McpTool(context.settings.mcp));
 		if (!HcpMagnetispackagesettings(context.settings)) {
-			throw new Error("tools:descriptor requires a Tool product or one Package tool component setting");
+			throw new Error("tools:descriptor requires MCP discovery settings or one Package tool setting");
 		}
 		const result = await createPackageToolProduct({
 			component: context.settings.component,
-			mcp: context.settings.mcp,
 			context: {
 				repoRoot: context.repoRoot,
 				components: context.settings.components,
@@ -51,18 +50,16 @@ export class HcpMagnet {
 	}
 }
 
-function HcpMagnetisprebuiltpackagesettings(
-	value: unknown,
-): value is PackageToolBuildSettings & { product: HcpMagnettoolproduct } {
-	return HcpMagnetispackagesettings(value) && HcpMagnetistoolproduct(value.product);
-}
-
-function HcpMagnetistoolproduct(value: unknown): value is HcpMagnettoolproduct {
+function HcpMagnetismcpsettings(value: unknown): value is { mcp: McpToolOptions } {
+	if (value === null || typeof value !== "object") return false;
+	const mcp = (value as { mcp?: unknown }).mcp;
+	if (mcp === null || typeof mcp !== "object") return false;
+	const settings = mcp as Partial<McpToolOptions>;
 	return (
-		value !== null &&
-		typeof value === "object" &&
-		typeof (value as { kind?: unknown }).kind === "string" &&
-		typeof (value as { toTool?: unknown }).toTool === "function"
+		settings.connection !== undefined &&
+		typeof settings.connection.retainTool === "function" &&
+		settings.tool !== undefined &&
+		typeof settings.tool.name === "string"
 	);
 }
 

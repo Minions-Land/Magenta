@@ -2908,17 +2908,16 @@ export class AgentSession {
 		this._modelRegistry.refresh();
 		await this._resourceLoader.reload({
 			onPackageAssemblyProgress: this._packageLoad.onProgress,
+			HcpClientprepare: async (hcp) => {
+				await HcpClientassembletools({
+					hcp,
+					cwd: this._cwd,
+					settingsManager: this.settingsManager,
+					sessionManager: this.sessionManager,
+					sshOperations: this._sshOperations,
+				});
+			},
 		});
-		const sessionHcp = this._resourceLoader.HcpClientgetsession?.();
-		if (sessionHcp) {
-			await HcpClientassembletools({
-				hcp: sessionHcp,
-				cwd: this._cwd,
-				settingsManager: this.settingsManager,
-				sessionManager: this.sessionManager,
-				sshOperations: this._sshOperations,
-			});
-		}
 		this._packageLoad.finish();
 		const loadedToolNames = [
 			...(this._autoActivateDefaultTools ? (this._resourceLoader.getDefaultToolNames?.() ?? []) : []),

@@ -6,6 +6,7 @@ import { HcpClientbuildsession, type SshToolOperations } from "@magenta/harness"
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import { HcpClientassembletools } from "../src/core/HcpClienttools.ts";
+import { DefaultResourceLoader } from "../src/core/resource-loader.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 
@@ -113,5 +114,72 @@ describe("HcpClient host tool assembly", () => {
 		expect(hcp.resolveInstance("tool:read")).toBe(packageRead);
 		expect(hcp.resolveInstance("tool:bash")).toBeDefined();
 		await hcp.dispose();
+	});
+
+	it("assembles session-aware tools once after ResourceLoader creates the session Client", async () => {
+		const root = join(tmpdir(), `hcp-client-tools-loader-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+		const agentDir = join(root, "agent");
+		mkdirSync(agentDir, { recursive: true });
+		roots.push(root);
+
+		const settingsManager = SettingsManager.create(root, agentDir);
+		const loader = new DefaultResourceLoader({
+			cwd: root,
+			agentDir,
+			settingsManager,
+			includeBundledResources: false,
+		});
+		await loader.reload();
+		const hcp = loader.HcpClientgetsession()!;
+		expect(hcp.resolveInstance("tool:read")).toBeUndefined();
+
+		const sessionManager = SessionManager.inMemory(root);
+		sessionManager.appendMessage({
+			role: "toolResult",
+			toolCallId: "todo-history",
+			toolName: "todo",
+			content: [{ type: "text", text: "historical todo" }],
+			details: {
+				action: "add",
+				todos: [{ id: 9, text: "Restored after loader reload", done: false }],
+				nextId: 10,
+			},
+			isError: false,
+			timestamp: Date.now(),
+		});
+		const sshOperations: SshToolOperations = {
+			read: {
+				access: async () => {},
+				readFile: async () => Buffer.from("remote after reload"),
+			},
+			bash: {
+				exec: async (_command, _cwd, options) => {
+					options.onData(Buffer.from("remote shell after reload"));
+					return { exitCode: 0 };
+				},
+			},
+			edit: {
+				access: async () => {},
+				readFile: async () => Buffer.from("before"),
+				writeFile: async () => {},
+			},
+			write: {
+				mkdir: async () => {},
+				writeFile: async () => {},
+			},
+		};
+
+		await HcpClientassembletools({ hcp, cwd: root, settingsManager, sessionManager, sshOperations });
+
+		const read = hcp.resolveInstance<AgentTool>("tool:read")!;
+		await expect(read.execute("read-after-reload", { path: "remote.txt" })).resolves.toMatchObject({
+			content: [{ type: "text", text: "remote after reload" }],
+		});
+		const todo = hcp.resolveInstance<AgentTool>("tool:todo")!;
+		await expect(todo.execute("todo-after-reload", { action: "list" })).resolves.toMatchObject({
+			content: [{ type: "text", text: "9. [ ] Restored after loader reload" }],
+			details: { nextId: 10 },
+		});
+		await loader.dispose();
 	});
 });

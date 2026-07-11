@@ -111,12 +111,14 @@ packages/
   templates/harness-package/
 ```
 
-Concrete domain expert packages are independently managed and versioned outside
-this repository, including in `MagentaPackages`. The support API in
+Concrete domain expert packages are independently published from GitHub
+repositories. Acquisition will later download, verify, and cache them; the
+support API in
 `_magenta/packages/package-overlay.ts` parses Package manifests, profiles,
 resources, and tool descriptors. `discoverHarnessPackages()` and `loadPackageOverlay()`
-accept an optional `packagesRoot`, so an integration can supply an external root
-without hardcoding or implicitly scanning a sibling repository.
+accept an optional `packagesRoot`, so current integration can supply an
+already-downloaded local root without hardcoding or implicitly scanning a
+sibling repository.
 
 Package components join the same HcpClient assembly path. The Package overlay is
 not a Module, Source, product category, or second selection system. Package

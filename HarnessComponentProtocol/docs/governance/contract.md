@@ -46,9 +46,11 @@ package overlays, process runtimes, and UI selection keep evolving.
   runtime policy and sandbox enforcement; the helper itself is not a default
   process Module.
 - Repository-level `packages/` retains only the generic package contract and
-  templates. Concrete domain expert packages are independently owned and
-  versioned in `MagentaPackages`; Magenta3 must not vendor them or hardcode that
-  repository's filesystem location.
+  templates. Concrete domain expert packages are independently published from
+  GitHub repositories; Magenta3 must not vendor them or infer a sibling checkout.
+  Download, version selection, verification, and caching belong to a future
+  acquisition layer. Current integration accepts an explicitly supplied local
+  root containing already-downloaded packages.
   `HarnessComponentProtocol/_magenta/packages` is the generic integration
   boundary for explicitly supplied Package roots, not a second Package owner.
 - Harness implementation Source names are origin-agent names, not programming
@@ -135,8 +137,8 @@ Magenta3 has repository declarations in `harness.toml`, generated
   docs, and configured package inputs.
 - `harness scaffold` should create a module or tool with TOML, README, test
   stub, real role files, and its `harness.toml` declaration together. Package
-  templates remain generic; domain package scaffolding belongs to
-  `MagentaPackages`.
+  templates remain generic; domain package scaffolding belongs to the package's
+  own upstream GitHub repository.
 - `harness smoke` should verify a selected package/tool path through the same
   runtime boundary used by the app.
 

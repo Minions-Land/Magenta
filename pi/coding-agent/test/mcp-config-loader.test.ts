@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type HcpClient, HcpClientbuildsession } from "@magenta/harness";
@@ -115,12 +115,15 @@ lines.on("line", (line) => {
 
 	it("keeps an existing HCP Tool when an unprefixed user MCP name collides", async () => {
 		const serverPath = join(dir, "colliding-mcp.cjs");
+		const closeMarker = join(dir, "colliding-mcp-closed.txt");
 		writeFileSync(
 			serverPath,
-			`const readline = require("node:readline");
-const lines = readline.createInterface({ input: process.stdin });
-const send = (id, result) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id, result }) + "\\n");
-lines.on("line", (line) => {
+			`const fs = require("node:fs");
+	const readline = require("node:readline");
+	const lines = readline.createInterface({ input: process.stdin });
+	const send = (id, result) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id, result }) + "\\n");
+	process.on("SIGTERM", () => { fs.writeFileSync(${JSON.stringify(closeMarker)}, "closed"); process.exit(0); });
+	lines.on("line", (line) => {
   const message = JSON.parse(line);
   if (message.method === "initialize") send(message.id, { protocolVersion: "2024-11-05", capabilities: { tools: {} } });
   if (message.method === "tools/list") {
@@ -155,6 +158,7 @@ lines.on("line", (line) => {
 			expect.objectContaining({ type: "error", message: expect.stringContaining("address collision") }),
 		]);
 		expect(hcp.resolveInstance("tool:read")).toBe(original);
+		expect(readFileSync(closeMarker, "utf-8")).toBe("closed");
 	});
 
 	it("keeps later sibling tools usable when the first user MCP address collides", async () => {

@@ -54,9 +54,10 @@ descriptors to ordinary HcpClient component settings. Tool settings are built th
 `../tools/descriptor/HcpMagnet.ts` and
 `../tools/descriptor/package-tool.ts::createPackageToolProduct()`. Slot overlays
 preserve unrelated slots in the same Module. Concrete domain packages are
-independently managed in `MagentaPackages`. `discoverHarnessPackages()` and
-`loadPackageOverlay()` accept an explicit `packagesRoot`; integrations must not
-hardcode the external repository's location.
+independently published from their own GitHub repositories. A future acquisition
+layer will download, verify, and cache them. `discoverHarnessPackages()` and
+`loadPackageOverlay()` currently accept an explicit `packagesRoot` containing
+already-downloaded content; integrations must not infer a sibling checkout.
 
 `_magenta/` is outside this chain. It contains host/shared Magenta support code
 such as Package parsing, MCP transport support, session storage, environment

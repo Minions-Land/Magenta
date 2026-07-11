@@ -31,7 +31,6 @@ import {
 	loadExtensionsCached,
 } from "./extensions/loader.ts";
 import type { Extension, ExtensionFactory, ExtensionRuntime, LoadExtensionsResult } from "./extensions/types.ts";
-import { HcpClientassembletools } from "./HcpClienttools.ts";
 import { loadSkills } from "./harness-skills-adapter.ts";
 import { DefaultPackageManager, type PathMetadata, type ResolvedResource } from "./package-manager.ts";
 import type { PromptTemplate } from "./prompt-templates.ts";
@@ -48,6 +47,8 @@ export interface ResourceExtensionPaths {
 
 export interface ResourceLoaderReloadOptions {
 	resolveProjectTrust?: (input: { extensionsResult: LoadExtensionsResult }) => Promise<boolean>;
+	/** Prepare the candidate Client with host-owned settings before MCP discovery and publication. */
+	HcpClientprepare?: (hcp: HcpClient) => void | Promise<void>;
 	/**
 	 * Optional progress sink for the package-assembly phase. Wired by the session
 	 * to a {@link BackgroundEventManager} source so the TUI shows a live bar while
@@ -94,6 +95,20 @@ export interface ResourceLoader {
 	/** Release held resources (e.g. skill watchers and HCP Magnets). Optional and idempotent. */
 	dispose?(): void | Promise<void>;
 }
+
+type HcpClientsessioncandidate = {
+	hcp: HcpClient;
+	overlay?: PackageOverlay;
+	packageToolAddresses: string[];
+	defaultToolAddresses: string[];
+	packageResources: HcpMagnetResource[];
+	packageDiagnostics: ResourceDiagnostic[];
+};
+
+type HcpClientmcploadresult = {
+	addresses: string[];
+	diagnostics: ResourceDiagnostic[];
+};
 
 function resolvePromptInput(input: string | undefined, description: string): string | undefined {
 	if (!input) {
@@ -389,6 +404,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 	private lastPromptPaths: string[];
 	private lastThemePaths: string[];
 	private loaded: boolean;
+	private reloadTail: Promise<void>;
 
 	constructor(options: DefaultResourceLoaderOptions) {
 		this.cwd = resolvePath(options.cwd);
@@ -449,6 +465,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.lastPromptPaths = [];
 		this.lastThemePaths = [];
 		this.loaded = false;
+		this.reloadTail = Promise.resolve();
 	}
 
 	getExtensions(): LoadExtensionsResult {
@@ -586,6 +603,12 @@ export class DefaultResourceLoader implements ResourceLoader {
 	}
 
 	async reload(options?: ResourceLoaderReloadOptions): Promise<void> {
+		const reload = this.reloadTail.then(() => this.HcpClientreloadnow(options));
+		this.reloadTail = reload.catch(() => {});
+		return reload;
+	}
+
+	private async HcpClientreloadnow(options?: ResourceLoaderReloadOptions): Promise<void> {
 		if (this.loaded) {
 			clearExtensionCache();
 		}
@@ -600,185 +623,249 @@ export class DefaultResourceLoader implements ResourceLoader {
 		// reload() preserves SettingsManager.projectTrusted and reloads settings for that trust state.
 		await this.settingsManager.reload();
 		const resolvedPaths = await this.packageManager.resolve();
-		const packageResources = await this.loadHarnessPackageResources(options?.onPackageAssemblyProgress);
-		await this.loadUserMcpTools();
-		const packageSystemPrompts = this.resolvePackageSystemPrompts(packageResources);
-		const cliExtensionPaths = await this.packageManager.resolveExtensionSources(this.additionalExtensionPaths, {
-			temporary: true,
-		});
-		const metadataByPath = new Map<string, PathMetadata>();
+		const HcpClientcandidate = await this.HcpClientbuildcandidate(options?.onPackageAssemblyProgress);
+		const previousResourceState = {
+			extensionsResult: this.extensionsResult,
+			skills: this.skills,
+			skillDiagnostics: this.skillDiagnostics,
+			shadowedSkills: this.shadowedSkills,
+			prompts: this.prompts,
+			promptDiagnostics: this.promptDiagnostics,
+			themes: this.themes,
+			themeDiagnostics: this.themeDiagnostics,
+			agentsFiles: this.agentsFiles,
+			systemPrompt: this.systemPrompt,
+			appendSystemPrompt: this.appendSystemPrompt,
+			lastSkillPaths: this.lastSkillPaths,
+			lastSkillMetadataByPath: this.lastSkillMetadataByPath,
+			lastPromptPaths: this.lastPromptPaths,
+			lastThemePaths: this.lastThemePaths,
+			extensionSkillSourceInfos: this.extensionSkillSourceInfos,
+			extensionPromptSourceInfos: this.extensionPromptSourceInfos,
+			extensionThemeSourceInfos: this.extensionThemeSourceInfos,
+			loaded: this.loaded,
+		};
+		let HcpClientcandidatepublished = false;
+		try {
+			const packageResources = HcpClientcandidate.packageResources;
+			await options?.HcpClientprepare?.(HcpClientcandidate.hcp);
+			const HcpClientmcp = await this.HcpClientloadusermcp(HcpClientcandidate.hcp);
+			const packageSystemPrompts = this.resolvePackageSystemPrompts(
+				packageResources,
+				HcpClientcandidate.packageDiagnostics,
+			);
+			const cliExtensionPaths = await this.packageManager.resolveExtensionSources(this.additionalExtensionPaths, {
+				temporary: true,
+			});
+			const metadataByPath = new Map<string, PathMetadata>();
 
-		this.extensionSkillSourceInfos = new Map();
-		this.extensionPromptSourceInfos = new Map();
-		this.extensionThemeSourceInfos = new Map();
+			this.extensionSkillSourceInfos = new Map();
+			this.extensionPromptSourceInfos = new Map();
+			this.extensionThemeSourceInfos = new Map();
 
-		// Helper to extract enabled paths and store metadata
-		const getEnabledResources = (resources: ResolvedResource[]): ResolvedResource[] => {
-			for (const r of resources) {
+			// Helper to extract enabled paths and store metadata
+			const getEnabledResources = (resources: ResolvedResource[]): ResolvedResource[] => {
+				for (const r of resources) {
+					if (!metadataByPath.has(r.path)) {
+						metadataByPath.set(r.path, r.metadata);
+					}
+				}
+				return resources.filter((r) => r.enabled);
+			};
+
+			const getEnabledPaths = (resources: ResolvedResource[]): string[] =>
+				getEnabledResources(resources).map((r) => r.path);
+			const enabledExtensions = getEnabledPaths(resolvedPaths.extensions);
+			const enabledSkillResources = getEnabledResources(resolvedPaths.skills);
+			const enabledPrompts = getEnabledPaths(resolvedPaths.prompts);
+			const enabledThemes = getEnabledPaths(resolvedPaths.themes);
+
+			const enabledSkills = enabledSkillResources.map((resource) => this.mapSkillPath(resource, metadataByPath));
+			const packageSkillResources = packagePathResources(packageResources, "skill");
+			const packagePromptResources = packagePathResources(packageResources, "prompt-template");
+			const packageThemeResources = packagePathResources(packageResources, "theme");
+
+			// Add CLI paths metadata
+			for (const r of cliExtensionPaths.extensions) {
+				if (!metadataByPath.has(r.path)) {
+					metadataByPath.set(r.path, { source: "cli", scope: "temporary", origin: "top-level" });
+				}
+			}
+			for (const r of cliExtensionPaths.skills) {
+				if (!metadataByPath.has(r.path)) {
+					metadataByPath.set(r.path, { source: "cli", scope: "temporary", origin: "top-level" });
+				}
+			}
+			for (const resource of [...packageSkillResources, ...packagePromptResources, ...packageThemeResources]) {
+				if (!metadataByPath.has(resource.path)) {
+					metadataByPath.set(resource.path, resource.metadata);
+				}
+			}
+
+			const cliEnabledExtensions = getEnabledPaths(cliExtensionPaths.extensions);
+			const cliEnabledSkills = getEnabledPaths(cliExtensionPaths.skills);
+			const cliEnabledPrompts = getEnabledPaths(cliExtensionPaths.prompts);
+			const cliEnabledThemes = getEnabledPaths(cliExtensionPaths.themes);
+			const bundledExtensionResources = this.noExtensions ? [] : this.getBundledExtensionResources();
+			const harnessSkillResources = this.noSkills ? [] : this.HcpClientgetskillresources(HcpClientcandidate.hcp);
+			for (const r of [...bundledExtensionResources, ...harnessSkillResources]) {
 				if (!metadataByPath.has(r.path)) {
 					metadataByPath.set(r.path, r.metadata);
 				}
 			}
-			return resources.filter((r) => r.enabled);
-		};
+			const bundledExtensions = bundledExtensionResources.map((r) => r.path);
+			const harnessSkills = harnessSkillResources.map((r) => this.mapSkillPath(r, metadataByPath));
 
-		const getEnabledPaths = (resources: ResolvedResource[]): string[] =>
-			getEnabledResources(resources).map((r) => r.path);
-		const enabledExtensions = getEnabledPaths(resolvedPaths.extensions);
-		const enabledSkillResources = getEnabledResources(resolvedPaths.skills);
-		const enabledPrompts = getEnabledPaths(resolvedPaths.prompts);
-		const enabledThemes = getEnabledPaths(resolvedPaths.themes);
+			const extensionPaths = this.noExtensions
+				? cliEnabledExtensions
+				: this.mergePaths([...cliEnabledExtensions, ...bundledExtensions], enabledExtensions);
 
-		const enabledSkills = enabledSkillResources.map((resource) => this.mapSkillPath(resource, metadataByPath));
-		const packageSkillResources = packagePathResources(packageResources, "skill");
-		const packagePromptResources = packagePathResources(packageResources, "prompt-template");
-		const packageThemeResources = packagePathResources(packageResources, "theme");
-
-		// Add CLI paths metadata
-		for (const r of cliExtensionPaths.extensions) {
-			if (!metadataByPath.has(r.path)) {
-				metadataByPath.set(r.path, { source: "cli", scope: "temporary", origin: "top-level" });
-			}
-		}
-		for (const r of cliExtensionPaths.skills) {
-			if (!metadataByPath.has(r.path)) {
-				metadataByPath.set(r.path, { source: "cli", scope: "temporary", origin: "top-level" });
-			}
-		}
-		for (const resource of [...packageSkillResources, ...packagePromptResources, ...packageThemeResources]) {
-			if (!metadataByPath.has(resource.path)) {
-				metadataByPath.set(resource.path, resource.metadata);
-			}
-		}
-
-		const cliEnabledExtensions = getEnabledPaths(cliExtensionPaths.extensions);
-		const cliEnabledSkills = getEnabledPaths(cliExtensionPaths.skills);
-		const cliEnabledPrompts = getEnabledPaths(cliExtensionPaths.prompts);
-		const cliEnabledThemes = getEnabledPaths(cliExtensionPaths.themes);
-		const bundledExtensionResources = this.noExtensions ? [] : this.getBundledExtensionResources();
-		const harnessSkillResources = this.noSkills ? [] : this.getHarnessSkillResources();
-		for (const r of [...bundledExtensionResources, ...harnessSkillResources]) {
-			if (!metadataByPath.has(r.path)) {
-				metadataByPath.set(r.path, r.metadata);
-			}
-		}
-		const bundledExtensions = bundledExtensionResources.map((r) => r.path);
-		const harnessSkills = harnessSkillResources.map((r) => this.mapSkillPath(r, metadataByPath));
-
-		const extensionPaths = this.noExtensions
-			? cliEnabledExtensions
-			: this.mergePaths([...cliEnabledExtensions, ...bundledExtensions], enabledExtensions);
-
-		const extensionsResult = await this.loadFinalExtensionSet(extensionPaths, preTrustExtensions);
-		for (const p of this.additionalExtensionPaths) {
-			if (isLocalPath(p)) {
-				const resolved = this.resolveResourcePath(p);
-				if (!existsSync(resolved)) {
-					extensionsResult.errors.push({ path: resolved, error: `Extension path does not exist: ${resolved}` });
+			const extensionsResult = await this.loadFinalExtensionSet(extensionPaths, preTrustExtensions);
+			for (const p of this.additionalExtensionPaths) {
+				if (isLocalPath(p)) {
+					const resolved = this.resolveResourcePath(p);
+					if (!existsSync(resolved)) {
+						extensionsResult.errors.push({ path: resolved, error: `Extension path does not exist: ${resolved}` });
+					}
 				}
 			}
-		}
-		this.extensionsResult = this.extensionsOverride ? this.extensionsOverride(extensionsResult) : extensionsResult;
-		this.applyExtensionSourceInfo(this.extensionsResult.extensions, metadataByPath);
+			this.extensionsResult = this.extensionsOverride ? this.extensionsOverride(extensionsResult) : extensionsResult;
+			this.applyExtensionSourceInfo(this.extensionsResult.extensions, metadataByPath);
 
-		const skillPaths = this.noSkills
-			? this.mergePaths(cliEnabledSkills, this.additionalSkillPaths)
-			: this.mergePaths(
-					[
-						...cliEnabledSkills,
-						...packageSkillResources.map((resource) => this.mapSkillPath(resource, metadataByPath)),
-						...harnessSkills,
-						...enabledSkills,
-					],
-					this.additionalSkillPaths,
-				);
+			const skillPaths = this.noSkills
+				? this.mergePaths(cliEnabledSkills, this.additionalSkillPaths)
+				: this.mergePaths(
+						[
+							...cliEnabledSkills,
+							...packageSkillResources.map((resource) => this.mapSkillPath(resource, metadataByPath)),
+							...harnessSkills,
+							...enabledSkills,
+						],
+						this.additionalSkillPaths,
+					);
 
-		this.lastSkillPaths = skillPaths;
-		this.lastSkillMetadataByPath = new Map(metadataByPath);
-		await this.updateSkillsFromPaths(skillPaths, this.lastSkillMetadataByPath);
-		for (const p of this.additionalSkillPaths) {
-			if (isLocalPath(p)) {
-				const resolved = this.resolveResourcePath(p);
-				if (!existsSync(resolved) && !this.skillDiagnostics.some((d) => d.path === resolved)) {
-					this.skillDiagnostics.push({ type: "error", message: "Skill path does not exist", path: resolved });
+			this.lastSkillPaths = skillPaths;
+			this.lastSkillMetadataByPath = new Map(metadataByPath);
+			await this.updateSkillsFromPaths(skillPaths, this.lastSkillMetadataByPath);
+			for (const p of this.additionalSkillPaths) {
+				if (isLocalPath(p)) {
+					const resolved = this.resolveResourcePath(p);
+					if (!existsSync(resolved) && !this.skillDiagnostics.some((d) => d.path === resolved)) {
+						this.skillDiagnostics.push({ type: "error", message: "Skill path does not exist", path: resolved });
+					}
 				}
 			}
-		}
 
-		const promptPaths = this.noPromptTemplates
-			? this.mergePaths(cliEnabledPrompts, this.additionalPromptTemplatePaths)
-			: this.mergePaths(
-					[...cliEnabledPrompts, ...packagePromptResources.map((resource) => resource.path), ...enabledPrompts],
-					this.additionalPromptTemplatePaths,
-				);
+			const promptPaths = this.noPromptTemplates
+				? this.mergePaths(cliEnabledPrompts, this.additionalPromptTemplatePaths)
+				: this.mergePaths(
+						[...cliEnabledPrompts, ...packagePromptResources.map((resource) => resource.path), ...enabledPrompts],
+						this.additionalPromptTemplatePaths,
+					);
 
-		this.lastPromptPaths = promptPaths;
-		await this.updatePromptsFromPaths(promptPaths, metadataByPath);
-		for (const p of this.additionalPromptTemplatePaths) {
-			if (isLocalPath(p)) {
-				const resolved = this.resolveResourcePath(p);
-				if (!existsSync(resolved) && !this.promptDiagnostics.some((d) => d.path === resolved)) {
-					this.promptDiagnostics.push({
-						type: "error",
-						message: "Prompt template path does not exist",
-						path: resolved,
-					});
+			this.lastPromptPaths = promptPaths;
+			await this.updatePromptsFromPaths(promptPaths, metadataByPath);
+			for (const p of this.additionalPromptTemplatePaths) {
+				if (isLocalPath(p)) {
+					const resolved = this.resolveResourcePath(p);
+					if (!existsSync(resolved) && !this.promptDiagnostics.some((d) => d.path === resolved)) {
+						this.promptDiagnostics.push({
+							type: "error",
+							message: "Prompt template path does not exist",
+							path: resolved,
+						});
+					}
 				}
 			}
-		}
 
-		const themePaths = this.noThemes
-			? this.mergePaths(cliEnabledThemes, this.additionalThemePaths)
-			: this.mergePaths(
-					[...cliEnabledThemes, ...packageThemeResources.map((resource) => resource.path), ...enabledThemes],
-					this.additionalThemePaths,
-				);
+			const themePaths = this.noThemes
+				? this.mergePaths(cliEnabledThemes, this.additionalThemePaths)
+				: this.mergePaths(
+						[...cliEnabledThemes, ...packageThemeResources.map((resource) => resource.path), ...enabledThemes],
+						this.additionalThemePaths,
+					);
 
-		this.lastThemePaths = themePaths;
-		this.updateThemesFromPaths(themePaths, metadataByPath);
-		for (const p of this.additionalThemePaths) {
-			const resolved = this.resolveResourcePath(p);
-			if (!existsSync(resolved) && !this.themeDiagnostics.some((d) => d.path === resolved)) {
-				this.themeDiagnostics.push({ type: "error", message: "Theme path does not exist", path: resolved });
+			this.lastThemePaths = themePaths;
+			this.updateThemesFromPaths(themePaths, metadataByPath);
+			for (const p of this.additionalThemePaths) {
+				const resolved = this.resolveResourcePath(p);
+				if (!existsSync(resolved) && !this.themeDiagnostics.some((d) => d.path === resolved)) {
+					this.themeDiagnostics.push({ type: "error", message: "Theme path does not exist", path: resolved });
+				}
+			}
+
+			const agentsFiles = {
+				agentsFiles: this.noContextFiles
+					? []
+					: loadProjectContextFiles({
+							cwd: this.cwd,
+							agentDir: this.agentDir,
+						}),
+			};
+			const resolvedAgentsFiles = this.agentsFilesOverride ? this.agentsFilesOverride(agentsFiles) : agentsFiles;
+			this.agentsFiles = resolvedAgentsFiles.agentsFiles;
+
+			const packageSystemPrompt = packageSystemPrompts.systemPrompts.at(-1);
+			const baseSystemPrompt =
+				this.systemPromptSource !== undefined
+					? resolvePromptInput(this.systemPromptSource, "system prompt")
+					: (packageSystemPrompt ?? resolvePromptInput(this.discoverSystemPromptFile(), "system prompt"));
+			this.systemPrompt = this.systemPromptOverride ? this.systemPromptOverride(baseSystemPrompt) : baseSystemPrompt;
+
+			const discoveredAppendSystemPrompt = this.discoverAppendSystemPromptFile();
+			const baseAppend = this.appendSystemPromptSource
+				? this.appendSystemPromptSource
+						.map((source) => resolvePromptInput(source, "append system prompt"))
+						.filter((source): source is string => source !== undefined)
+				: [
+						...(discoveredAppendSystemPrompt
+							? [resolvePromptInput(discoveredAppendSystemPrompt, "append system prompt")]
+							: []),
+						...packageSystemPrompts.appendSystemPrompts,
+					].filter((source): source is string => source !== undefined);
+			if (this.includeBundledResources) {
+				baseAppend.unshift(BUILTIN_BACKGROUND_WORK_PROMPT);
+			}
+			this.appendSystemPrompt = this.appendSystemPromptOverride
+				? this.appendSystemPromptOverride(baseAppend)
+				: baseAppend;
+
+			const previousSessionHcp = this.sessionHcp;
+			this.sessionHcp = HcpClientcandidate.hcp;
+			this.packageOverlay = HcpClientcandidate.overlay;
+			this.packageToolAddresses = HcpClientcandidate.packageToolAddresses;
+			this.defaultToolAddresses = HcpClientcandidate.defaultToolAddresses;
+			this.packageDiagnostics = HcpClientcandidate.packageDiagnostics;
+			this.userMcpToolAddresses = HcpClientmcp.addresses;
+			this.userMcpDiagnostics = HcpClientmcp.diagnostics;
+			this.loaded = true;
+			HcpClientcandidatepublished = true;
+			await previousSessionHcp?.dispose();
+		} finally {
+			if (!HcpClientcandidatepublished) {
+				this.extensionsResult = previousResourceState.extensionsResult;
+				this.skills = previousResourceState.skills;
+				this.skillDiagnostics = previousResourceState.skillDiagnostics;
+				this.shadowedSkills = previousResourceState.shadowedSkills;
+				this.prompts = previousResourceState.prompts;
+				this.promptDiagnostics = previousResourceState.promptDiagnostics;
+				this.themes = previousResourceState.themes;
+				this.themeDiagnostics = previousResourceState.themeDiagnostics;
+				this.agentsFiles = previousResourceState.agentsFiles;
+				this.systemPrompt = previousResourceState.systemPrompt;
+				this.appendSystemPrompt = previousResourceState.appendSystemPrompt;
+				this.lastSkillPaths = previousResourceState.lastSkillPaths;
+				this.lastSkillMetadataByPath = previousResourceState.lastSkillMetadataByPath;
+				this.lastPromptPaths = previousResourceState.lastPromptPaths;
+				this.lastThemePaths = previousResourceState.lastThemePaths;
+				this.extensionSkillSourceInfos = previousResourceState.extensionSkillSourceInfos;
+				this.extensionPromptSourceInfos = previousResourceState.extensionPromptSourceInfos;
+				this.extensionThemeSourceInfos = previousResourceState.extensionThemeSourceInfos;
+				this.loaded = previousResourceState.loaded;
+				if (this.watchSkills) this.syncSkillWatchers();
+				await HcpClientcandidate.hcp.dispose();
 			}
 		}
-
-		const agentsFiles = {
-			agentsFiles: this.noContextFiles
-				? []
-				: loadProjectContextFiles({
-						cwd: this.cwd,
-						agentDir: this.agentDir,
-					}),
-		};
-		const resolvedAgentsFiles = this.agentsFilesOverride ? this.agentsFilesOverride(agentsFiles) : agentsFiles;
-		this.agentsFiles = resolvedAgentsFiles.agentsFiles;
-
-		const packageSystemPrompt = packageSystemPrompts.systemPrompts.at(-1);
-		const baseSystemPrompt =
-			this.systemPromptSource !== undefined
-				? resolvePromptInput(this.systemPromptSource, "system prompt")
-				: (packageSystemPrompt ?? resolvePromptInput(this.discoverSystemPromptFile(), "system prompt"));
-		this.systemPrompt = this.systemPromptOverride ? this.systemPromptOverride(baseSystemPrompt) : baseSystemPrompt;
-
-		const discoveredAppendSystemPrompt = this.discoverAppendSystemPromptFile();
-		const baseAppend = this.appendSystemPromptSource
-			? this.appendSystemPromptSource
-					.map((source) => resolvePromptInput(source, "append system prompt"))
-					.filter((source): source is string => source !== undefined)
-			: [
-					...(discoveredAppendSystemPrompt
-						? [resolvePromptInput(discoveredAppendSystemPrompt, "append system prompt")]
-						: []),
-					...packageSystemPrompts.appendSystemPrompts,
-				].filter((source): source is string => source !== undefined);
-		if (this.includeBundledResources) {
-			baseAppend.unshift(BUILTIN_BACKGROUND_WORK_PROMPT);
-		}
-		this.appendSystemPrompt = this.appendSystemPromptOverride
-			? this.appendSystemPromptOverride(baseAppend)
-			: baseAppend;
-		this.loaded = true;
 	}
 
 	private async loadCurrentExtensionSet(options: { includeInlineFactories: boolean }): Promise<LoadExtensionsResult> {
@@ -873,16 +960,16 @@ export class DefaultResourceLoader implements ResourceLoader {
 		return [];
 	}
 
-	private getHarnessSkillResources(): ResolvedResource[] {
-		if (!this.includeBundledResources || !this.sessionHcp) {
+	private HcpClientgetskillresources(hcp: HcpClient): ResolvedResource[] {
+		if (!this.includeBundledResources) {
 			return [];
 		}
 
-		return this.sessionHcp
+		return hcp
 			.addresses()
 			.filter((address) => address.startsWith("skill:"))
 			.flatMap((address): ResolvedResource[] => {
-				const resource = this.sessionHcp?.resolveInstance<HcpMagnetResource>(address);
+				const resource = hcp.resolveInstance<HcpMagnetResource>(address);
 				if (
 					resource?.kind !== "skill" ||
 					resource.metadata?.origin === "package" ||
@@ -910,111 +997,85 @@ export class DefaultResourceLoader implements ResourceLoader {
 			.sort((left, right) => left.path.localeCompare(right.path));
 	}
 
-	private async loadUserMcpTools(): Promise<void> {
-		this.userMcpToolAddresses = [];
-		this.userMcpDiagnostics = [];
+	private async HcpClientloadusermcp(hcp: HcpClient): Promise<HcpClientmcploadresult> {
 		try {
-			if (!this.sessionHcp) return;
-			const result = await loadUserMcpTools({ hcp: this.sessionHcp, cwd: this.cwd, agentDir: this.agentDir });
-			this.userMcpToolAddresses = result.addresses;
-			this.userMcpDiagnostics = result.diagnostics;
+			const result = await loadUserMcpTools({ hcp, cwd: this.cwd, agentDir: this.agentDir });
+			return { addresses: result.addresses, diagnostics: result.diagnostics };
 		} catch (error) {
-			this.userMcpDiagnostics.push({
-				type: "error",
-				message: `Failed to load user MCP servers: ${error instanceof Error ? error.message : String(error)}`,
-			});
+			return {
+				addresses: [],
+				diagnostics: [
+					{
+						type: "error",
+						message: `Failed to load user MCP servers: ${error instanceof Error ? error.message : String(error)}`,
+					},
+				],
+			};
 		}
 	}
 
-	private async loadHarnessPackageResources(
+	private async HcpClientbuildcandidate(
 		onAssemblyProgress?: (progress: PackageAssemblyProgress) => void,
-	): Promise<HcpMagnetResource[]> {
-		const previousSessionHcp = this.sessionHcp;
-		this.packageOverlay = undefined;
-		this.packageToolAddresses = [];
-		this.defaultToolAddresses = [];
-		this.userMcpToolAddresses = [];
-		this.sessionHcp = undefined;
-		this.packageDiagnostics = [];
-		await previousSessionHcp?.dispose();
-
-		if (this.harnessPackages.length === 0) {
-			// No package selected, but default capability sources (compaction, ...)
-			// still apply. Build a session HCP with only those so consumers resolve
-			// capabilities by name uniformly whether or not a package is present.
-			let candidateHcp: HcpClient | undefined;
-			try {
-				const sessionAssembly = await HcpClientbuildsession({
-					repoRoot: this.cwd,
-					packagesRoot: this.harnessPackagesRoot,
-				});
-				candidateHcp = sessionAssembly.hcp;
-				await HcpClientassembletools({
-					hcp: sessionAssembly.hcp,
-					cwd: this.cwd,
-					settingsManager: this.settingsManager,
-				});
-				this.sessionHcp = candidateHcp;
-				candidateHcp = undefined;
-				this.packageToolAddresses = sessionAssembly.packageToolAddresses;
-				const packageAddresses = new Set(sessionAssembly.packageToolAddresses);
-				this.defaultToolAddresses = sessionAssembly.toolAddresses.filter(
-					(address) => !packageAddresses.has(address),
-				);
-				this.packageDiagnostics.push(...sessionAssembly.diagnostics.map(packageDiagnosticToResourceDiagnostic));
-			} catch (error) {
-				await candidateHcp?.dispose();
-				this.packageDiagnostics.push({
-					type: "error",
-					message: error instanceof Error ? error.message : String(error),
-				});
-			}
-			return [];
-		}
-
+	): Promise<HcpClientsessioncandidate> {
+		const packageDiagnostics: ResourceDiagnostic[] = [];
 		let candidateHcp: HcpClient | undefined;
 		try {
-			const overlay = await loadPackageOverlay({
-				repoRoot: this.cwd,
-				packagesRoot: this.harnessPackagesRoot,
-				selections: this.harnessPackages,
-			});
-			this.packageOverlay = overlay;
-			this.packageDiagnostics.push(...overlay.diagnostics.map(packageDiagnosticToResourceDiagnostic));
+			const overlay =
+				this.harnessPackages.length === 0
+					? undefined
+					: await loadPackageOverlay({
+							repoRoot: this.cwd,
+							packagesRoot: this.harnessPackagesRoot,
+							selections: this.harnessPackages,
+						});
+			if (overlay) packageDiagnostics.push(...overlay.diagnostics.map(packageDiagnosticToResourceDiagnostic));
 
 			const sessionAssembly = await HcpClientbuildsession({
 				repoRoot: this.cwd,
 				packagesRoot: this.harnessPackagesRoot,
 				overlay,
-				onPackageAssemblyProgress: onAssemblyProgress,
+				onPackageAssemblyProgress: overlay ? onAssemblyProgress : undefined,
 			});
 			candidateHcp = sessionAssembly.hcp;
-			await HcpClientassembletools({
-				hcp: sessionAssembly.hcp,
-				cwd: this.cwd,
-				settingsManager: this.settingsManager,
-			});
-			this.sessionHcp = candidateHcp;
-			candidateHcp = undefined;
-			this.packageDiagnostics.push(...sessionAssembly.diagnostics.map(packageDiagnosticToResourceDiagnostic));
-			this.packageToolAddresses = sessionAssembly.packageToolAddresses;
+			packageDiagnostics.push(...sessionAssembly.diagnostics.map(packageDiagnosticToResourceDiagnostic));
 			const packageAddresses = new Set(sessionAssembly.packageToolAddresses);
-			this.defaultToolAddresses = sessionAssembly.toolAddresses.filter((address) => !packageAddresses.has(address));
-
-			return sessionAssembly.packageResourceAddresses
+			const packageResources = sessionAssembly.packageResourceAddresses
 				.map((address) => sessionAssembly.hcp.resolveInstance<HcpMagnetResource>(address))
 				.filter((resource): resource is HcpMagnetResource => resource !== undefined);
+			candidateHcp = undefined;
+			return {
+				hcp: sessionAssembly.hcp,
+				overlay,
+				packageToolAddresses: sessionAssembly.packageToolAddresses,
+				defaultToolAddresses: sessionAssembly.toolAddresses.filter((address) => !packageAddresses.has(address)),
+				packageResources,
+				packageDiagnostics,
+			};
 		} catch (error) {
 			await candidateHcp?.dispose();
-			this.packageDiagnostics.push({
+			packageDiagnostics.push({
 				type: "error",
 				message: error instanceof Error ? error.message : String(error),
 			});
-			return [];
+			const fallback = await HcpClientbuildsession({
+				repoRoot: this.cwd,
+				packagesRoot: this.harnessPackagesRoot,
+			});
+			packageDiagnostics.push(...fallback.diagnostics.map(packageDiagnosticToResourceDiagnostic));
+			return {
+				hcp: fallback.hcp,
+				packageToolAddresses: [],
+				defaultToolAddresses: fallback.toolAddresses,
+				packageResources: [],
+				packageDiagnostics,
+			};
 		}
 	}
 
-	private resolvePackageSystemPrompts(packageResources: HcpMagnetResource[]): {
+	private resolvePackageSystemPrompts(
+		packageResources: HcpMagnetResource[],
+		diagnostics: ResourceDiagnostic[],
+	): {
 		systemPrompts: string[];
 		appendSystemPrompts: string[];
 	} {
@@ -1023,7 +1084,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		for (const resource of packageResources) {
 			if (resource.kind !== "system-prompt") continue;
 			const resolved = readResourceContent(resource, `${resource.name} system prompt`);
-			if (resolved.diagnostic) this.packageDiagnostics.push(resolved.diagnostic);
+			if (resolved.diagnostic) diagnostics.push(resolved.diagnostic);
 			if (resolved.content === undefined) continue;
 			if (resource.mergeMode === "append") appendSystemPrompts.push(resolved.content);
 			else systemPrompts.push(resolved.content);
@@ -1208,6 +1269,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 
 	/** Stop all skill watchers and cancel any pending reload. Idempotent. */
 	async dispose(): Promise<void> {
+		await this.reloadTail;
 		if (this.skillReloadTimer) {
 			clearTimeout(this.skillReloadTimer);
 			this.skillReloadTimer = null;

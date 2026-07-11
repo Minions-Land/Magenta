@@ -8,13 +8,15 @@ Packages.
 This directory is not part of `.HCP/`, is not a Harness Module, owns no
 `HcpServer`, and is not a Package content root. Magenta3's root `packages/`
 contains only the generic contract and templates. Concrete domain Packages are
-independently managed and versioned in `MagentaPackages`.
+independently published from GitHub repositories.
 
 This infrastructure owns parsing, profile expansion, component precedence, and
 package-local resource paths. `discoverHarnessPackages()` and
 `loadPackageOverlay()` accept an optional explicit `packagesRoot`; production
 integration with external content must supply that boundary and must not
-hardcode or implicitly scan a sibling repository. This layer does not own TUI
+hardcode or implicitly scan a sibling repository. Download, version selection,
+verification, and caching belong to a future acquisition layer; this support
+code only consumes packages already present in the supplied root. This layer does not own TUI
 selection, CLI flags, or language/runtime adapter selection. Package `tool`
 descriptors are adapted through the repository-declared
 `tools/descriptor/HcpMagnet.ts`; transport products never become a new Module or
@@ -31,10 +33,10 @@ packages/
     harness-package/
 ```
 
-Domain package content belongs in `MagentaPackages`, under that repository's
-own lifecycle. Production integration accepts an explicit package root instead
-of relying on a fixed sibling path. Manifest references remain package-local
-relative references only.
+Domain package content belongs in its own upstream GitHub repository and follows
+that repository's lifecycle. Current integration accepts an explicit local
+package root after acquisition instead of relying on a fixed sibling path.
+Manifest references remain package-local relative references only.
 
 ## Manifest
 
@@ -186,8 +188,9 @@ Currently implemented product adapters:
 
 - `runtime = "process"` creates a `ProcessTool` for command-line tools and binaries.
 - `runtime = "<name>"` plus a matching `python-runtime:<name>` component creates a `PythonModuleTool` using `python -m <module>`.
-- `runtime = "mcp"` uses `discoverMcpTools()` and fans one server descriptor out
-  into single-product `McpTool` siblings before HCP assembly.
+- `runtime = "mcp"` uses `discoverMcpTools()` to fan one server descriptor into
+  per-tool connection/schema settings. The real `tools/descriptor/HcpMagnet.ts`
+  constructs each single-product `McpTool` during HCP assembly.
 - `runtime = "shell"`, `"python"`, `"node"`, `"r"`, or `"julia"` creates a script-backed `ProcessTool`. The descriptor must provide inline `code`/`script` or a package-local `script_path`; tool-call parameters are passed to the script runtime as stdin JSON and still drive `runtime://process` policy checks.
 
 Declarative-only tools can set `execution = "declarative"`. They stay in the overlay for documentation and later integrations but are not converted into loop-ready `AgentTool`s.

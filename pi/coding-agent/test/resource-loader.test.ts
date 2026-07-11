@@ -554,6 +554,131 @@ describe("DefaultResourceLoader", () => {
 			expect(loader.getPackageTools().tools.map((tool) => tool.name)).toEqual(["test_package_tool"]);
 		});
 
+		it("keeps the previous Client and resources when a late reload step fails", async () => {
+			let failSkills = false;
+			const loader = createLoader({
+				skillsOverride: (base) => {
+					if (failSkills) throw new Error("late skill failure");
+					return base;
+				},
+			});
+			await loader.reload();
+			const previousHcp = loader.HcpClientgetsession();
+			const previousSkills = loader.getSkills().skills;
+			expect(previousHcp?.resolveCapability("compaction")).toBeDefined();
+
+			failSkills = true;
+			await expect(loader.reload()).rejects.toThrow("late skill failure");
+
+			expect(loader.HcpClientgetsession()).toBe(previousHcp);
+			expect(loader.getSkills().skills).toBe(previousSkills);
+			expect(previousHcp?.resolveCapability("compaction")).toBeDefined();
+			await loader.dispose();
+		});
+
+		it("prepares a candidate Client before publication and rolls it back on failure", async () => {
+			const loader = createLoader();
+			await loader.reload();
+			const previousHcp = loader.HcpClientgetsession();
+			expect(previousHcp?.resolveCapability("compaction")).toBeDefined();
+			const candidates: Array<NonNullable<typeof previousHcp>> = [];
+
+			await expect(
+				loader.reload({
+					HcpClientprepare: (candidate) => {
+						candidates.push(candidate);
+						expect(candidate).not.toBe(previousHcp);
+						expect(loader.HcpClientgetsession()).toBe(previousHcp);
+						throw new Error("host tool preparation failed");
+					},
+				}),
+			).rejects.toThrow("host tool preparation failed");
+
+			expect(candidates).toHaveLength(1);
+			expect(candidates[0]?.addresses()).toEqual([]);
+			expect(loader.HcpClientgetsession()).toBe(previousHcp);
+			expect(previousHcp?.resolveCapability("compaction")).toBeDefined();
+			await loader.dispose();
+		});
+
+		it("disposes user MCP products when a late reload step rejects the candidate", async () => {
+			let failSkills = false;
+			const loader = createLoader({
+				skillsOverride: (base) => {
+					if (failSkills) throw new Error("reject MCP candidate");
+					return base;
+				},
+			});
+			await loader.reload();
+			const previousHcp = loader.HcpClientgetsession();
+			const serverPath = join(agentDir, "rollback-mcp.cjs");
+			const closeMarker = join(agentDir, "rollback-mcp-closed.txt");
+			writeFileSync(
+				serverPath,
+				`const fs = require("node:fs");
+const readline = require("node:readline");
+const lines = readline.createInterface({ input: process.stdin });
+const send = (id, result) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id, result }) + "\\n");
+process.on("SIGTERM", () => { fs.writeFileSync(${JSON.stringify(closeMarker)}, "closed"); process.exit(0); });
+lines.on("line", (line) => {
+  const message = JSON.parse(line);
+  if (message.method === "initialize") send(message.id, { protocolVersion: "2024-11-05", capabilities: { tools: {} } });
+  if (message.method === "tools/list") send(message.id, { tools: [{ name: "rollback", inputSchema: { type: "object" } }] });
+});
+`,
+			);
+			writeFileSync(
+				join(agentDir, "mcp-servers.json"),
+				JSON.stringify({
+					servers: [{ name: "rollback", command: process.execPath, args: [serverPath], name_prefix: "candidate" }],
+				}),
+			);
+
+			failSkills = true;
+			await expect(loader.reload()).rejects.toThrow("reject MCP candidate");
+
+			expect(loader.HcpClientgetsession()).toBe(previousHcp);
+			expect(loader.getUserMcpTools().tools).toEqual([]);
+			expect(readFileSync(closeMarker, "utf8")).toBe("closed");
+			await loader.dispose();
+		});
+
+		it("serializes concurrent reloads", async () => {
+			const loader = createLoader();
+			const order: string[] = [];
+			let releaseFirst!: () => void;
+			let markFirstEntered!: () => void;
+			const firstGate = new Promise<void>((resolve) => {
+				releaseFirst = resolve;
+			});
+			const firstEntered = new Promise<void>((resolve) => {
+				markFirstEntered = resolve;
+			});
+			const first = loader.reload({
+				resolveProjectTrust: async () => {
+					order.push("first:start");
+					markFirstEntered();
+					await firstGate;
+					order.push("first:end");
+					return true;
+				},
+			});
+			await firstEntered;
+			const second = loader.reload({
+				resolveProjectTrust: async () => {
+					order.push("second");
+					return true;
+				},
+			});
+			await new Promise((resolve) => setTimeout(resolve, 10));
+			expect(order).toEqual(["first:start"]);
+
+			releaseFirst();
+			await Promise.all([first, second]);
+			expect(order).toEqual(["first:start", "first:end", "second"]);
+			await loader.dispose();
+		});
+
 		it("loads multiple per-profile selectors for one package additively", async () => {
 			writeMultiProfilePackageFixture(cwd);
 

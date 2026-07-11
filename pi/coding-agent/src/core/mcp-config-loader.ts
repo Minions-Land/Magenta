@@ -7,7 +7,7 @@ import {
 	type HcpClient,
 	HcpClientassemble,
 	type HcpClientcomponent,
-	McpTool,
+	mcpToolName,
 	type ProcessRuntimeProvider,
 	type SandboxProvider,
 } from "@magenta/harness";
@@ -147,6 +147,10 @@ export async function loadUserMcpTools(options: LoadUserMcpToolsOptions): Promis
 	// spawning the server binary during assembly (mirrors the package path).
 	const cacheDir = join(agentDir, "cache", "mcp");
 	const components: HcpClientcomponent[] = [];
+	const componentsByConnection = new Map<
+		Awaited<ReturnType<typeof discoverMcpTools>>["connection"],
+		HcpClientcomponent[]
+	>();
 	const seenNames = new Set<string>();
 	const seenToolNames = new Set<string>();
 
@@ -203,18 +207,15 @@ export async function loadUserMcpTools(options: LoadUserMcpToolsOptions): Promis
 				},
 				cache: { dir: cacheDir, descriptorEnv: server.env },
 			});
-			if (discovered.tools.length === 0) await discovered.connection.close();
-			const products = discovered.tools.map((tool) => {
-				const product = new McpTool({
-					connection: discovered.connection,
-					tool,
-					namePrefix: server.name_prefix ?? server.name,
-				});
-				return { product, toolName: product.toTool().name };
-			});
-			for (const { product, toolName } of products) {
+			if (discovered.tools.length === 0) {
+				await discovered.connection.close();
+				continue;
+			}
+			const serverComponents: HcpClientcomponent[] = [];
+			for (const tool of discovered.tools) {
+				const namePrefix = server.name_prefix ?? server.name;
+				const toolName = mcpToolName(tool.name, namePrefix);
 				if (seenToolNames.has(toolName)) {
-					await product.close();
 					diagnostics.push({
 						type: "warning",
 						message: `Duplicate user MCP tool name "${toolName}"; skipping the later tool.`,
@@ -223,15 +224,22 @@ export async function loadUserMcpTools(options: LoadUserMcpToolsOptions): Promis
 					continue;
 				}
 				seenToolNames.add(toolName);
-				components.push({
+				serverComponents.push({
 					...descriptor,
 					name: toolName,
 					selected: true,
 					autoload: false,
 					descriptorPath: path,
 					requires: [],
-					settings: product,
+					settings: {
+						mcp: { connection: discovered.connection, tool, namePrefix },
+					},
 				});
+			}
+			if (serverComponents.length === 0) await discovered.connection.close();
+			else {
+				components.push(...serverComponents);
+				componentsByConnection.set(discovered.connection, serverComponents);
 			}
 		} catch (error) {
 			diagnostics.push({
@@ -250,6 +258,15 @@ export async function loadUserMcpTools(options: LoadUserMcpToolsOptions): Promis
 		replaceExisting: false,
 		components,
 	});
+	const builtComponents = new Set(assembled.builtComponents.map(({ component }) => component));
+	for (const [connection, connectionComponents] of componentsByConnection) {
+		if (connectionComponents.some((component) => builtComponents.has(component))) continue;
+		try {
+			await connection.close();
+		} catch {
+			// Registration diagnostics are primary; connection cleanup is best-effort.
+		}
+	}
 	diagnostics.push(
 		...assembled.diagnostics.map((diagnostic) => ({
 			type: diagnostic.type,

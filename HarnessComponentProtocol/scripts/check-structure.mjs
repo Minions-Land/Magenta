@@ -313,7 +313,9 @@ function checkPackageBoundary() {
 	if (!existsSync(packagesRoot)) return;
 	for (const entry of readdirSync(packagesRoot, { withFileTypes: true })) {
 		if (entry.name !== "README.md" && entry.name !== "templates") {
-			fail(`concrete domain packages belong in MagentaPackages: ${pathLabel(join(packagesRoot, entry.name))}`);
+			fail(
+				`concrete domain packages belong in independently published GitHub repositories: ${pathLabel(join(packagesRoot, entry.name))}`,
+			);
 		}
 	}
 }

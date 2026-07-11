@@ -76,7 +76,7 @@ This skill and its sub-skills live under `skills/self-evo/magenta/` — their so
 
 **The artifacts you produce carry the source of *their* origin:**
 - A converted Pi extension is tagged `source = "pi"`
-- A package managed in `MagentaPackages` carries its original project's origin
+- A package published from its own GitHub repository carries its original project's origin
 - Never mislabel the product's provenance with `magenta` just because Magenta did the integration
 
 **Source = original agent name** (`pi`, `magenta`, `codex`, `claude-code`), never a language or protocol.
@@ -112,7 +112,7 @@ Each sub-skill is a chapter with its own specialized guidance. Read the relevant
   integrated directly under `HarnessComponentProtocol/` with its origin Source
   preserved (for example, `source = "pi"`).
 - **Independently managed** (package-forge): a systemic, heavy, or independently
-  shippable body stays as a Package in `MagentaPackages`.
+  shippable body stays as a Package in its own GitHub repository.
 
 ---
 
@@ -127,19 +127,20 @@ All sub-skills are chapters of this handbook, marked `disable-model-invocation: 
   (translate behavior, wire roles) as one end-to-end flow.
 
 - **`package-forge/SKILL.md`** — Wrap an external project or heavy capability
-  set as an independently managed package in `MagentaPackages`, following
+  set as an independently published GitHub package, following
   Magenta3's generic package contract.
 
 ---
 
 ## The Landing Procedure (Applies to Every Self-Evo Change)
 
-Harness-owned components land through the HCP chain below. Domain Packages remain in
-`MagentaPackages` and use the compatible package manifest described by
-`package-forge`. Magenta3 retains `packages/` as its generic Package boundary,
-schema, template, and API, but no concrete domain Package lives there.
-Integration receives an explicit `packagesRoot`; it must not hardcode the
-`MagentaPackages` sibling path. Full rules are in
+Harness-owned components land through the HCP chain below. Domain Packages are
+published from their own GitHub repositories and use the compatible package
+manifest described by `package-forge`. Magenta3 retains `packages/` as its
+generic Package boundary, schema, template, and API, but no concrete domain
+Package lives there. A future acquisition layer will download and verify
+packages. Current integration receives an explicit `packagesRoot` containing
+already-downloaded content and must not infer a sibling path. Full rules are in
 `HarnessComponentProtocol/docs/DEVELOPING.md` and
 `HarnessComponentProtocol/docs/governance/contract.md`. The short version:
 
@@ -147,8 +148,8 @@ Integration receives an explicit `packagesRoot`; it must not hardcode the
 
 Under the correct Module and Source:
 - Harness-owned: `HarnessComponentProtocol/tools/<name>/<source>/` or `HarnessComponentProtocol/skills/<name>/<source>/`
-- Domain package: `MagentaPackages/<Name>/tools/<tool>/` or
-  `MagentaPackages/<Name>/skills/<skill>/` (repository-relative notation)
+- Domain package: `<package-repository>/tools/<tool>/` or
+  `<package-repository>/skills/<skill>/`
 
 **Source = origin agent name** (`pi`, `magenta`, `codex`), not a language.
 
@@ -210,7 +211,7 @@ Keep Magnets thin: bind one source and produce exactly one product. Never add
 
 `[[components]]` entry in:
 - Harness-owned: `HarnessComponentProtocol/harness.toml`
-- Domain package: `MagentaPackages/<Name>/package.toml`
+- Domain package: `<package-repository>/package.toml`
 
 For harness-owned components, run codegen after the TOML change. Package
 manifests enter through the same product and assembly semantics via an explicit
@@ -290,12 +291,12 @@ If a step fails twice, stop and diagnose the root cause instead of patching incr
 2. Routes to package-forge
 3. Audits: complete Python + pixi tool suite, many components
 4. Decides: keep independent (heavy, separately managed environment)
-5. Creates the package in the independently managed `MagentaPackages` repository
+5. Creates the package in its own independently managed GitHub repository
 6. Writes package.toml
 7. Copies pixi.toml + pixi.lock
 8. Declares tools with process/runtime metadata
-9. Runs the package repository's own gates
-10. Changes Magenta3 only when an explicit integration contract is requested
+9. Runs the package repository's own gates and records its GitHub origin/ref
+10. Tests Magenta3 with an explicit already-downloaded local `packagesRoot`
 ```
 
 ---

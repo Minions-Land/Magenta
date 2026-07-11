@@ -227,10 +227,11 @@ export type DiscoverMcpToolsResult = {
 };
 
 /**
- * Connect to an MCP server, discover its tools, and produce one
- * {@link McpTool} per remote tool sharing a single connection. This is the
- * fan-out entry point the package-tool factory calls for a `runtime = "mcp"`
- * component.
+ * Connect to an MCP server and discover its tool schemas while retaining the
+ * shared connection. HCP descriptor assembly passes this connection/schema
+ * pair to `tools/descriptor/HcpMagnet.ts`, which is the only Package/user MCP
+ * product construction path. The lower-level `createMcpTools()` convenience
+ * remains for transport-focused callers and is not used by HCP assembly.
  *
  * When a cache is supplied and warm, discovery is served from disk and no
  * process is spawned until a tool is actually called.
