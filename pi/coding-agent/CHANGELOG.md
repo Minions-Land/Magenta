@@ -4,6 +4,28 @@ All notable changes to Magenta CLI are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.0.7] - 2026-07-11
+
+### Major Improvements
+- **TUI update notifications for all users**: binary installation users now see update banners with release notes
+- **100% English localization**: all remaining Chinese strings translated
+
+### Added
+- Created `unified-update-check.ts` to support both Git checkout and binary installation update detection
+- TUI now shows update banners for binary users with release notes preview and instructions
+- Added `handleReleaseUpdateStatus()` to display GitHub Release updates in TUI
+
+### Changed
+- Enhanced tool parameter descriptions to prevent LLM confusion:
+  - `show` tool: explicitly states parameter name is `url` (not `path`)
+  - `send_message` tool: clarified parameter is `content` (not `message`)
+  - `bg_shell`/`sub_agent`: clarified parameter is `eventId` (not `id`)
+- Split `checkAndAutoUpdateMagenta()` into specialized handlers for Git vs Release updates
+
+### Fixed
+- Binary users no longer see "Auto-update: unavailable" - now shows actual update status
+- Translated remaining Chinese strings in `github-release-update.ts` and `main.ts --update`
+
 ## [0.0.6] - 2026-07-11
 
 ### Major Improvements
