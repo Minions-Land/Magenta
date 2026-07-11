@@ -65,20 +65,13 @@ magenta --update
 
 ---
 
-## 🔒 隐私与安全
-
-### 源码私有，二进制公开
-
-- **源码仓库**：`Minions-Land/Magenta`（私有，只有团队可访问）
-- **发布仓库**：`Minions-Land/Magenta-CLI`（公开，只包含编译后的二进制）
-
-**用户只能下载二进制文件，看不到源代码。**
+## 🔒 安全
 
 ### 无凭证泄露
 
 - 二进制里**没有内嵌任何 GitHub Token**
-- 更新下载是匿名的（公开仓库 releases）
-- 无法通过二进制逆向获得源码访问权限
+- 下载和更新都是匿名的（公开仓库 releases）
+- 不需要用户提供或保管任何凭证
 
 ---
 
@@ -91,36 +84,14 @@ magenta --update
 GitHub 的公开仓库 releases 可以匿名下载：
 ```bash
 # 任何人都可以这样下载，无需认证
-curl -L https://github.com/公开仓库/releases/latest/download/文件名
+curl -L https://github.com/Minions-Land/Magenta-CLI/releases/latest/download/magenta-macos
 ```
 
-### 源码如何保护？
+### 安装与更新都很简单
 
-源码在**私有仓库** `Minions-Land/Magenta`，访问需要权限。
-
-发布仓库 `Magenta-CLI` 只有：
-- ✅ Release assets（二进制文件）
-- ❌ 没有源码
-- ❌ 没有 .git 历史
-- ❌ 没有任何可以追溯到私有仓库的信息
-
-### 二进制能被逆向吗？
-
-所有编译后的二进制理论上都能被逆向，但：
-- 困难度高（没有符号表，代码被混淆）
-- 成本远高于从头实现相似功能
-- 核心业务逻辑可以用更强的保护措施（代码混淆、关键逻辑服务端化等）
-
-这是业界标准做法：VS Code、Claude CLI、GitHub CLI 等都是这样发布的。
-
----
-
-## 🎯 与之前方案的对比
-
-| 方案 | 用户体验 | 安全性 | 源码保护 |
-|------|---------|--------|---------|
-| **旧方案：私有仓库 + 内嵌 token** | 😕 需要 token | ⚠️ token 可提取 | ❌ token 能读源码 |
-| **新方案：公开二进制仓库** | 😍 完全匿名 | ✅ 无凭证泄露 | ✅ 完全隔离 |
+- 安装：一行 `curl` 命令下载二进制
+- 更新：`magenta --update` 从同一个公开仓库匿名拉取最新版本
+- 无任何需要配置的凭证
 
 ---
 
@@ -129,7 +100,6 @@ curl -L https://github.com/公开仓库/releases/latest/download/文件名
 **现在的方案是：**
 - ✅ 用户无需 GitHub Token
 - ✅ 用户无需安装任何工具
-- ✅ 用户看不到源代码
 - ✅ 一行命令完成安装和更新
 - ✅ 无任何凭证泄露风险
 

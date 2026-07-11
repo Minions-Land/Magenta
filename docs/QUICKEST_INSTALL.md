@@ -56,10 +56,7 @@ magenta --update
 
 这个命令直接从公开仓库 `Minions-Land/Magenta-CLI` 的最新 release 下载对应平台的二进制。
 
-- **源码仓库** `Minions-Land/Magenta`：私有，只有团队可访问
-- **发布仓库** `Minions-Land/Magenta-CLI`：公开，只包含编译后的二进制
-
-GitHub 公开仓库的 release assets 可以匿名下载（`releases/latest/download/<文件名>`），所以整条命令不需要任何认证。用户拿到的只是二进制，看不到源码。
+GitHub 公开仓库的 release assets 可以匿名下载（`releases/latest/download/<文件名>`），所以整条命令不需要任何认证。
 
 ---
 
