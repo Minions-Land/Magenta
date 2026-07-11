@@ -1,43 +1,20 @@
 # ⚡ Magenta 极简安装
 
-## 🎯 一行命令安装
+## 🎯 一行命令安装（无需 Token）
 
-**步骤 1：获取你的 GitHub Token**
-- 访问：https://github.com/settings/tokens/new
-- 勾选 `repo` 权限
-- 生成并复制 token
-
-**步骤 2：复制下面的命令，替换 `YOUR_TOKEN_HERE`，粘贴到终端运行**
+二进制发布在公开仓库，直接匿名下载即可。
 
 ### macOS
 ```bash
-TOKEN="YOUR_TOKEN_HERE" bash << 'INSTALL_SCRIPT'
-ASSET_ID=$(curl -fsSL -H "Authorization: Bearer $TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/Minions-Land/Magenta/releases/latest" | grep -B5 '"name": "magenta-macos"' | grep '"id":' | head -1 | grep -o '[0-9]\+') && \
-mkdir -p ~/.local/bin && \
-echo "📥 下载中 (~73MB)..." && \
-curl -fsSL -H "Authorization: Bearer $TOKEN" -H "Accept: application/octet-stream" -o ~/.local/bin/magenta "https://api.github.com/repos/Minions-Land/Magenta/releases/assets/$ASSET_ID" && \
-chmod +x ~/.local/bin/magenta && \
-echo "✅ 安装完成！版本: $(~/.local/bin/magenta --version)" && \
-echo "" && \
-echo "运行: ~/.local/bin/magenta 或添加到 PATH:" && \
-echo "  echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.zshrc && source ~/.zshrc"
-INSTALL_SCRIPT
+curl -fsSL https://github.com/Minions-Land/Magenta-CLI/releases/latest/download/magenta-macos -o ~/.local/bin/magenta && chmod +x ~/.local/bin/magenta && ~/.local/bin/magenta --version
 ```
 
 ### Linux
 ```bash
-TOKEN="YOUR_TOKEN_HERE" bash << 'INSTALL_SCRIPT'
-ASSET_ID=$(curl -fsSL -H "Authorization: Bearer $TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/Minions-Land/Magenta/releases/latest" | grep -B5 '"name": "magenta-linux"' | grep '"id":' | head -1 | grep -o '[0-9]\+') && \
-mkdir -p ~/.local/bin && \
-echo "📥 下载中 (~73MB)..." && \
-curl -fsSL -H "Authorization: Bearer $TOKEN" -H "Accept: application/octet-stream" -o ~/.local/bin/magenta "https://api.github.com/repos/Minions-Land/Magenta/releases/assets/$ASSET_ID" && \
-chmod +x ~/.local/bin/magenta && \
-echo "✅ 安装完成！版本: $(~/.local/bin/magenta --version)" && \
-echo "" && \
-echo "运行: ~/.local/bin/magenta 或添加到 PATH:" && \
-echo "  echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.bashrc && source ~/.bashrc"
-INSTALL_SCRIPT
+curl -fsSL https://github.com/Minions-Land/Magenta-CLI/releases/latest/download/magenta-linux -o ~/.local/bin/magenta && chmod +x ~/.local/bin/magenta && ~/.local/bin/magenta --version
 ```
+
+> 提示：如果 `~/.local/bin` 目录不存在，先运行 `mkdir -p ~/.local/bin`。
 
 ---
 
@@ -61,6 +38,7 @@ magenta --update
 
 ## 💡 这就是你要的"一键安装"
 
+✅ **不需要 GitHub Token**
 ✅ **不需要下载脚本文件**
 ✅ **不需要克隆仓库**
 ✅ **不需要安装 Node.js**
@@ -68,8 +46,7 @@ magenta --update
 
 只需要：
 1. 复制命令
-2. 替换 token
-3. 粘贴运行
+2. 粘贴运行
 
 搞定！🚀
 
@@ -77,26 +54,12 @@ magenta --update
 
 ## 📝 技术说明
 
-这个单行命令做了：
-1. 调用 GitHub API 获取最新 release
-2. 提取 `magenta-macos` 的 asset ID
-3. 下载二进制到 `~/.local/bin/magenta`
-4. 设置可执行权限
-5. 显示版本
+这个命令直接从公开仓库 `Minions-Land/Magenta-CLI` 的最新 release 下载对应平台的二进制。
 
-**为什么不能更简单（比如 curl script.sh | bash）？**
+- **源码仓库** `Minions-Land/Magenta`：私有，只有团队可访问
+- **发布仓库** `Minions-Land/Magenta-CLI`：公开，只包含编译后的二进制
 
-因为 Magenta 是私有仓库：
-- `raw.githubusercontent.com` 无法直接访问私有仓库文件（返回 404）
-- 必须通过 GitHub API + Token 认证才能下载任何内容
-- 所以命令本身要包含认证逻辑，不能只是"下载并运行一个脚本"
-
-如果未来仓库改成公开，就能简化成：
-```bash
-curl -fsSL https://install.magenta.dev | bash
-```
-
-但现在这已经是私有仓库能做到的**最简方案**——一段命令，复制粘贴，完成。
+GitHub 公开仓库的 release assets 可以匿名下载（`releases/latest/download/<文件名>`），所以整条命令不需要任何认证。用户拿到的只是二进制，看不到源码。
 
 ---
 
@@ -106,3 +69,5 @@ curl -fsSL https://install.magenta.dev | bash
 ```bash
 magenta --update
 ```
+
+（自更新会从同一个公开仓库匿名拉取最新版本，同样无需 token。）

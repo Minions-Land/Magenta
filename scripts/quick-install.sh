@@ -1,17 +1,10 @@
 #!/usr/bin/env bash
-# Magenta 极简安装脚本 - 真正的一键安装
-# 用法：curl -fsSL https://raw.githubusercontent.com/Minions-Land/Magenta/main/scripts/quick-install.sh | MAGENTA_GITHUB_TOKEN=your_token bash
+# Magenta 极简安装脚本 - 从公开仓库匿名下载，无需 GitHub Token
+# 用法：curl -fsSL https://raw.githubusercontent.com/Minions-Land/Magenta-CLI/main/quick-install.sh | bash
 
 set -e
 
-TOKEN="${MAGENTA_GITHUB_TOKEN:-}"
-if [ -z "$TOKEN" ]; then
-  echo "❌ 需要 GitHub Token"
-  echo ""
-  echo "用法："
-  echo "  curl -fsSL https://raw.githubusercontent.com/Minions-Land/Magenta/main/scripts/quick-install.sh | MAGENTA_GITHUB_TOKEN=your_token bash"
-  exit 1
-fi
+DIST_REPO="${MAGENTA_DIST_REPO:-Minions-Land/Magenta-CLI}"
 
 echo "📦 Magenta 快速安装..."
 
@@ -19,36 +12,17 @@ echo "📦 Magenta 快速安装..."
 OS=$(uname -s | tr '[:upper:]' '[:lower:]')
 case "$OS" in
   darwin) BINARY="magenta-macos" ;;
-  linux) BINARY="magenta-linux" ;;
+  linux)  BINARY="magenta-linux" ;;
   *) echo "❌ 不支持的系统: $OS"; exit 1 ;;
 esac
 
-# 获取最新版本的 asset ID
-echo "🔍 获取最新版本..."
-ASSET_ID=$(curl -fsSL \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Accept: application/vnd.github+json" \
-  "https://api.github.com/repos/Minions-Land/Magenta/releases/latest" \
-  | grep -A3 "\"name\": \"$BINARY\"" \
-  | grep '"id":' \
-  | head -1 \
-  | sed -E 's/.*"id": *([0-9]+).*/\1/')
-
-if [ -z "$ASSET_ID" ]; then
-  echo "❌ 获取失败，请检查 token 或网络"
-  exit 1
-fi
-
-# 下载到 ~/.local/bin
 INSTALL_DIR="$HOME/.local/bin"
 mkdir -p "$INSTALL_DIR"
 
 echo "📥 下载中 (~73MB)..."
 curl -fsSL \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Accept: application/octet-stream" \
   -o "$INSTALL_DIR/magenta" \
-  "https://api.github.com/repos/Minions-Land/Magenta/releases/assets/$ASSET_ID"
+  "https://github.com/${DIST_REPO}/releases/latest/download/${BINARY}"
 
 chmod +x "$INSTALL_DIR/magenta"
 
