@@ -260,7 +260,7 @@ const subAgentSchema = Type.Object({
 			description: "Optional instruction prepended to the automatic return message for the parent agent.",
 		}),
 	),
-	eventId: Type.Optional(Type.String({ description: "Single sub-agent id for status/wait/cancel." })),
+	eventId: Type.Optional(Type.String({ description: "Sub-agent identifier for status/wait/cancel. Parameter name is 'eventId' (not 'id')." })),
 	eventIds: Type.Optional(
 		Type.Array(Type.String(), {
 			description: "Multiple sub-agent ids for status/wait/cancel. Omit eventId/eventIds to target all events.",

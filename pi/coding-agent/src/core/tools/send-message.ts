@@ -47,7 +47,7 @@ const sendMessageSchema = Type.Object({
 			"Recipient session id (the identity of the agent to message). Use the session id shown for the teammate you want to reach.",
 	}),
 	content: Type.String({
-		description: "The message body to deliver to the recipient agent.",
+		description: "Message content to send (the text body of the message).",
 	}),
 	urgent: Type.Optional(
 		Type.Boolean({

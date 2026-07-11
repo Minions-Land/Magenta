@@ -790,9 +790,9 @@ export const OPENROUTER_MODELS = {
 		thinkingLevelMap: {"minimal":null,"low":null,"medium":null,"high":"high","xhigh":"xhigh"},
 		input: ["text"],
 		cost: {
-			input: 0.435,
-			output: 0.87,
-			cacheRead: 0.003625,
+			input: 0.348,
+			output: 0.696,
+			cacheRead: 0.029,
 			cacheWrite: 0,
 		},
 		contextWindow: 1048576,
@@ -1872,8 +1872,8 @@ export const OPENROUTER_MODELS = {
 		input: ["text", "image"],
 		cost: {
 			input: 0.72,
-			output: 3.49,
-			cacheRead: 0.159,
+			output: 3.5,
+			cacheRead: 0.15,
 			cacheWrite: 0,
 		},
 		contextWindow: 262144,

@@ -5,7 +5,7 @@ import { type Static, Type } from "typebox";
 
 export const showSchema = Type.Object({
 	url: Type.Union([Type.String(), Type.Array(Type.String())], {
-		description: "URL or file path (or an array of URLs and paths) to display.",
+		description: "URL or file path to display. Parameter name is 'url' for both URLs and local file paths. Can be a single path/URL or an array.",
 	}),
 });
 
