@@ -260,7 +260,7 @@ export async function backgroundUpdateNotification(): Promise<void> {
 	try {
 		const result = await checkForUpdate();
 		if (result.updateAvailable && result.latestVersion) {
-			console.log(`\n💡 新版本 v${result.latestVersion} 可用，运行 'magenta --update' 升级\n`);
+			console.log(`\n💡 New version v${result.latestVersion} available. Run 'magenta --update' to upgrade.\n`);
 		}
 	} catch {
 		// Silent failure - don't interrupt the user
@@ -280,7 +280,7 @@ export async function installUpdate(): Promise<UpdateInstallResult> {
 		return {
 			success: false,
 			error:
-				"自更新仅适用于编译后的 Magenta 二进制文件。当前通过 Node.js 运行，跳过自更新以避免覆盖 Node.js。",
+				"Self-update only works for compiled Magenta binaries. Currently running via Node.js; skipping self-update to avoid overwriting Node.js.",
 		};
 	}
 

@@ -29,19 +29,29 @@ function getEmbeddedBinaryName(tool) {
 // 动态导入嵌入的二进制
 function getEmbeddedBinaryPath(tool) {
     try {
-        const basePath = `../../_magenta/${tool}/prebuilt/`;
-        const ext = PLATFORM === "win32" ? ".exe" : "";
         if (PLATFORM === "darwin" && ARCH === "arm64") {
-            return require(basePath + `${tool}-macos-arm64${ext}`);
+            if (tool === "fd")
+                return require("../../_magenta/fd/prebuilt/fd-macos-arm64");
+            if (tool === "rg")
+                return require("../../_magenta/rg/prebuilt/rg-macos-arm64");
         }
         else if (PLATFORM === "darwin" && ARCH === "x64") {
-            return require(basePath + `${tool}-macos-x64${ext}`);
+            if (tool === "fd")
+                return require("../../_magenta/fd/prebuilt/fd-macos-x64");
+            if (tool === "rg")
+                return require("../../_magenta/rg/prebuilt/rg-macos-x64");
         }
         else if (PLATFORM === "linux" && ARCH === "x64") {
-            return require(basePath + `${tool}-linux-x64${ext}`);
+            if (tool === "fd")
+                return require("../../_magenta/fd/prebuilt/fd-linux-x64");
+            if (tool === "rg")
+                return require("../../_magenta/rg/prebuilt/rg-linux-x64");
         }
         else if (PLATFORM === "win32" && ARCH === "x64") {
-            return require(basePath + `${tool}-windows-x64.exe`);
+            if (tool === "fd")
+                return require("../../_magenta/fd/prebuilt/fd-windows-x64.exe");
+            if (tool === "rg")
+                return require("../../_magenta/rg/prebuilt/rg-windows-x64.exe");
         }
     }
     catch {

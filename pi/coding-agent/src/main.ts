@@ -520,35 +520,35 @@ export async function main(args: string[], options?: MainOptions) {
 
 	if (parsed.update) {
 		// Handle --update flag
-		console.log("🔍 检查更新...");
+		console.log("🔍 Checking for updates...");
 		const result = await checkForUpdate({ force: true });
 		
 		if (result.error) {
-			console.error(chalk.red(`检查更新失败: ${result.error}`));
+			console.error(chalk.red(`Update check failed: ${result.error}`));
 			process.exit(1);
 		}
 		
 		if (!result.updateAvailable) {
-			console.log(chalk.green(`✓ 当前已是最新版本 (${result.currentVersion})`));
+			console.log(chalk.green(`✓ Already on latest version (${result.currentVersion})`));
 			process.exit(0);
 		}
 		
-		console.log(chalk.cyan(`\n📦 发现新版本: ${result.latestVersion}`));
+		console.log(chalk.cyan(`\n📦 New version available: ${result.latestVersion}`));
 		if (result.releaseNotes) {
-			console.log(chalk.dim("\n更新内容:"));
+			console.log(chalk.dim("\nRelease notes:"));
 			console.log(result.releaseNotes.split("\n").slice(0, 10).join("\n"));
 		}
 		
-		console.log(chalk.cyan("\n开始下载并安装..."));
+		console.log(chalk.cyan("\nDownloading and installing..."));
 		const installResult = await installUpdate();
 		
 		if (!installResult.success) {
-			console.error(chalk.red(`\n✗ 更新失败: ${installResult.error}`));
+			console.error(chalk.red(`\n✗ Update failed: ${installResult.error}`));
 			process.exit(1);
 		}
 		
-		console.log(chalk.green(`\n✓ 已更新到 v${installResult.newVersion}`));
-		console.log(chalk.dim("请重新启动 magenta 使用新版本"));
+		console.log(chalk.green(`\n✓ Updated to v${installResult.newVersion}`));
+		console.log(chalk.dim("Please restart magenta to use the new version"));
 		process.exit(0);
 	}
 	
