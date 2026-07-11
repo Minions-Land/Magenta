@@ -2,17 +2,13 @@
 
 本文档面向 **Magenta 维护者**，说明如何发布新版本，以及自动更新的工作原理。用户安装文档见 [USER_INSTALL.md](./USER_INSTALL.md)。
 
-## 架构：源码私有，二进制公开
+## 分发架构
 
-| 仓库 | 可见性 | 内容 |
-|------|--------|------|
-| `Minions-Land/Magenta` | 🔒 私有 | 全部源代码，在这里开发和构建 |
-| `Minions-Land/Magenta-CLI` | 🌐 公开 | 只存放编译后的二进制，用户匿名下载 |
+二进制发布在公开仓库 `Minions-Land/Magenta-CLI`，用户匿名下载。
 
 **关键点：**
 - 二进制里**不内嵌任何 GitHub Token**
 - 用户下载和 `magenta --update` 都是匿名的（公开仓库 release）
-- 用户拿到的只有二进制，看不到源码
 
 ---
 
@@ -55,7 +51,7 @@
 const GITHUB_REPO = process.env.MAGENTA_GITHUB_REPO || "Minions-Land/Magenta-CLI";
 
 // token 默认为空；公开仓库匿名下载即可
-// 仅当使用私有仓库时才需要设置 MAGENTA_GITHUB_TOKEN
+// 仅当发布仓库为私有时才需要设置 MAGENTA_GITHUB_TOKEN
 const GITHUB_TOKEN = process.env.MAGENTA_GITHUB_TOKEN || "";
 ```
 
