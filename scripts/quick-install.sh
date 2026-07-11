@@ -38,6 +38,10 @@ curl -fsSL \
 
 chmod +x "$INSTALL_DIR/magenta"
 
+echo "📥 下载运行时资源 (~4MB)..."
+curl -fsSL "https://github.com/${DIST_REPO}/releases/latest/download/magenta-resources.tar.gz" | \
+  tar -xz -C "$INSTALL_DIR/"
+
 echo "✅ 安装完成！"
 echo ""
 
