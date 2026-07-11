@@ -1,5 +1,9 @@
 # HCP Unification — Status & Handoff (2026-07-08 16:44 UTC)
 
+> **Historical phase snapshot.** Paths, roles, and completion claims below
+> describe the pre-consolidation implementation. See
+> [`../README.md`](../README.md) before using this record.
+
 ## Executive Summary
 
 **ALL PHASES COMPLETE** (Phases 0-6): All harness/pi content routes through the session HCP. Test coverage: harness 353/353, pi 1636/1636 green. Zero behavioral changes (INV-5.2 byte-identity preserved). Runtime A packagesRoot bug fixed. Live HCP inspect view added to /dock menu.

@@ -270,12 +270,12 @@ ${chalk.bold("Options:")}
   --name, -n <name>              Set session display name
   --models <patterns>            Comma-separated model patterns for Ctrl+P cycling
                                  Supports globs (anthropic/*, *sonnet*) and fuzzy matching
-  --no-tools, -nt                Disable all tools by default (built-in and extension)
-  --no-builtin-tools, -nbt       Disable built-in tools by default but keep extension/custom tools enabled
+  --no-tools, -nt                Disable all tools by default
+  --no-builtin-tools, -nbt       Disable app/HCP defaults; keep explicit Package, MCP, and extension tools
   --tools, -t <tools>            Comma-separated allowlist of tool names to enable
-                                 Applies to built-in, extension, and custom tools
+                                 Applies to every configured tool source
   --exclude-tools, -xt <tools>   Comma-separated denylist of tool names to disable
-                                 Applies to built-in, extension, and custom tools
+                                 Applies to every configured tool source
   --thinking <level>             Set thinking level: off, minimal, low, medium, high, xhigh, max
   --extension, -e <path>         Load an extension file (can be used multiple times)
   --no-extensions, -ne           Disable extension discovery (explicit -e paths still work)
@@ -405,15 +405,19 @@ ${chalk.bold("Environment Variables:")}
   PI_TELEMETRY                     - Override install telemetry when set to 1/true/yes or 0/false/no
   PI_SHARE_VIEWER_URL              - Base URL for /share command (default: https://pi.dev/session/)
 
-${chalk.bold("Built-in Tool Names:")}
+${chalk.bold("Native Application Tool Names:")}
   read   - Read file contents
   bash   - Execute bash commands
   edit   - Edit files with find/replace
   write  - Write files (creates/overwrites)
   bg_shell  - Run long-running shell commands in the background
   sub_agent - Run parallel no-TUI agent subtasks
+  show   - Display local files or remote URLs (off by default)
   grep   - Search file contents (read-only, off by default)
   find   - Find files by glob pattern (read-only, off by default)
   ls     - List directory contents (read-only, off by default)
+
+Repository HCP, Package, user MCP, and extension tools may add more names.
+Use --harness-list to inspect repository HCP components.
 `);
 }

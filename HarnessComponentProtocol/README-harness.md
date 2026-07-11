@@ -122,22 +122,22 @@ packages/
   templates/harness-package/
 ```
 
-Concrete domain expert packages are independently published from GitHub
-repositories. Acquisition will later download, verify, and cache them; the
-download, version, cache, and verification layer is not implemented in this
+Concrete domain expert packages will be maintained and published in independent
+GitHub repositories. Acquisition will later download, verify, and cache them;
+the download, version, cache, and verification layer is not implemented in this
 change. The support API in
 `_magenta/packages/package-overlay.ts` parses Package manifests, profiles,
 resources, and tool descriptors. `discoverHarnessPackages()` and `loadPackageOverlay()`
-accept an optional `packagesRoot`, so current integration can supply an
-already-downloaded local root without hardcoding or implicitly scanning a
-sibling repository.
+accept an optional `packagesRoot`, so external integration can supply an
+already-downloaded local root. If omitted, the API falls back only to
+`<repoRoot>/packages`; it does not scan a sibling repository or submodule.
 
 `_magenta/packages/hcp-client-components.ts` maps the selected declarations from
-that arbitrary local root into the ordinary component inputs consumed by
+the resolved local root into the ordinary component inputs consumed by
 `HcpClientbuildsession()`. Package components then join the same HcpClient
 assembly path without adding a Package branch inside `.HCP/`. The Package
 overlay is not a Module, Source, product category, or second selection system.
-Package paths remain relative to the explicitly supplied Package root.
+Package paths remain relative to the resolved Package root.
 
 Magenta3's root `packages/` retains only the generic contract and templates. It
 does not contain concrete domain Packages and does not depend on a fixed sibling

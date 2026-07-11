@@ -1,541 +1,306 @@
 # Magenta3
 
-<p align="center">
-  <img alt="Magenta CLI" src="https://img.shields.io/badge/CLI-magenta-d946ef">
-  <img alt="Built on Pi" src="https://img.shields.io/badge/built%20on-Pi-8250df">
-  <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-3178c6?logo=typescript&logoColor=white">
-  <img alt="HCP Protocol" src="https://img.shields.io/badge/HCP-protocol-2da44e">
-  <img alt="License" src="https://img.shields.io/badge/license-MIT-blue">
-</p>
+Magenta3 is a terminal-native coding agent for sustained software work. It
+combines an interactive TUI, non-interactive CLI, model/provider selection,
+local and SSH workspaces, background jobs, sub-agents, peer messaging, and a
+component Harness assembled through HCP.
 
-<p align="center">
-  <a href="#what-magenta-is">What It Is</a> •
-  <a href="#quick-start">Quick Start</a> •
-  <a href="#feature-map">Features</a> •
-  <a href="#cli--tui">CLI & TUI</a> •
-  <a href="#architecture">Architecture</a> •
-  <a href="#development">Development</a>
-</p>
+Magenta3 builds on a vendored Pi foundation. Pi supplies the agent loop, model
+APIs, session machinery, and terminal UI; Magenta adds the Harness, branded
+command and storage, remote execution, multi-agent workflows, and product
+integration.
 
-Magenta3 is a terminal-native AI coding environment. It centers on a Harness
-layer for source-separated tools and capabilities, HCP for assembly, domain
-packages, remote SSH execution, headless sub-agents, peer messaging between
-sessions, and a Magenta-branded CLI that stores its state under `~/.magenta/`.
-The agent loop, terminal UI, session system, model providers, and tool-calling
-core are vendored from the upstream Pi project as a stable foundation.
+> The upstream Pi README is preserved at
+> [`pi/README-upstream.md`](./pi/README-upstream.md). This README describes the
+> Magenta3 repository as it exists now.
 
-The working command is:
+## Requirements
 
-```bash
-magenta
-```
+- Node.js `22.19.0` or newer
+- npm
+- Provider credentials for live model calls
+- A terminal with TTY support for the interactive UI
+- Optional: Bun for standalone binary builds
 
-In this repository, use:
+## Build And Run
 
-```bash
-./bin/magenta
-```
-
-> [!NOTE]
-> The distinctive Magenta layers — Harness components and HCP assembly, package
-> overlays, Magenta storage, peer messaging, remote execution, branding, update
-> flow, and the `magenta` command — sit on top of a vendored Pi foundation. The
-> upstream Pi README is preserved at
-> [`pi/README-upstream.md`](./pi/README-upstream.md).
-
----
-
-## What Magenta Is
-
-Magenta is built for real coding sessions: long-lived terminal work, fast
-repository navigation, controlled edits, background commands, delegated
-sub-agents, and model/provider switching without leaving the TUI.
-
-```mermaid
-flowchart TD
-    DEV["Developer"] --> CLI["magenta CLI / TUI"]
-    CLI --> SESSION["Agent session<br/>context, tools, events, model state"]
-
-    SESSION --> MODEL["LLM providers<br/>Anthropic · OpenAI · Gemini · OpenRouter<br/>Copilot · Bedrock · local/proxy providers"]
-    SESSION --> TOOLS["Built-in tools<br/>read · write · edit · bash · grep · find · ls · lsp · web-search · web-fetch"]
-    SESSION --> EVENTS["Background events<br/>long shell runs · sub-agents · progress"]
-    SESSION --> STORE["~/.magenta<br/>sessions · settings · packages · peer messages"]
-
-    TOOLS --> LOCAL["Local workspace"]
-    TOOLS --> SSH["Remote workspace<br/>SSH + headless PTY"]
-    EVENTS --> SUB["Headless sub-agents<br/>parallel review, research, verification"]
-    SUB --> PEER["Peer messages<br/>SQLite mailbox + presence"]
-    STORE --> CLI
-```
-
-Magenta aims to make a terminal agent feel like a working environment rather
-than a chat window:
-
-- A dense TUI with command palette, model selector, settings, events, session
-  management, export/share, and inline tool rendering.
-- A safe file workflow: read first, exact-match edit, write only when needed,
-  and tests/checks visible as tool output.
-- Remote coding over SSH, with file and shell operations executed in the remote
-  checkout rather than copied locally.
-- Sub-agents that run headlessly, inherit the parent model by default, and can
-  work in parallel while the main session keeps context.
-- Peer-to-peer agent messages, so independent sessions can coordinate through a
-  local mailbox.
-- A package overlay boundary for separately managed domain expert bundles;
-  Magenta3 keeps the contract and template, not concrete domain content.
-- A single Magenta storage root: `~/.magenta/`, replacing legacy `~/.pi/`
-  behavior for Magenta state.
-
----
-
-## Quick Start
+From the repository root:
 
 ```bash
 npm install
 npm run build
-
 ./bin/magenta
+```
+
+`./bin/magenta` starts the built Node.js CLI at
+`pi/coding-agent/dist/cli.js`. Rebuild after changing TypeScript source.
+
+Useful startup commands:
+
+```bash
+# Interactive TUI
+./bin/magenta
+
+# Interactive TUI with an initial request
+./bin/magenta "Review this repository"
+
+# One-shot text output
+./bin/magenta --print --no-session "Summarize package.json"
+
+# JSON event stream
+./bin/magenta --mode json --print --no-session "List changed files"
+
+# Select provider, model, and reasoning level
+./bin/magenta --provider openai --model gpt-5.6-sol --thinking max
+
+# Work against a remote checkout
+./bin/magenta --ssh user@host:/srv/project
+
+# Show every supported option
 ./bin/magenta --help
 ```
 
-Common first runs:
+Reasoning levels are model-dependent. The CLI accepts `off`, `minimal`, `low`,
+`medium`, `high`, `xhigh`, and `max`, then exposes only the levels supported by
+the selected model. `ultra` is not a Magenta reasoning level.
 
-```bash
-# Open the interactive TUI
-./bin/magenta
+## Authentication
 
-# Start with an initial prompt
-./bin/magenta "Review this repository and summarize the architecture"
-
-# One-shot mode for scripts
-./bin/magenta -p "List the files that define the SSH tool"
-
-# JSON output for automation
-./bin/magenta --mode json -p "Find failing tests and explain them"
-```
-
-Credentials are detected from existing environment variables, Codex auth, and
-Claude Code auth. Manual setup is still supported:
+The simplest setup is either an environment variable or `/login` in the TUI:
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
-./bin/magenta --provider anthropic --model "*sonnet*"
+# or
+export OPENAI_API_KEY=sk-...
+
+./bin/magenta
 ```
 
-See [`docs/AUTHENTICATION.md`](./docs/AUTHENTICATION.md) for the exact lookup
-order.
+Magenta also reads compatible Claude Code settings and Codex credentials.
+Stored login state lives at `~/.magenta/agent/auth.json`. See
+[`docs/AUTHENTICATION.md`](./docs/AUTHENTICATION.md) for the exact lookup order
+and supported paths.
 
----
+## What Is Included
 
-## Feature Map
-
-| Area | What Magenta Provides |
+| Area | Current behavior |
 |---|---|
-| Interactive coding | Full terminal UI, streaming tool calls, command palette, status/footer, model picker, settings, session browser |
-| File operations | `read`, `write`, `edit`, `grep`, `find`, `ls`, image/file attachment with `@path` |
-| Shell work | Foreground `bash`, background shell events, interrupt handling, collapsible output |
-| Remote workspace | `--ssh user@host:/path`, remote shell/file tools, headless PTY support through `node-pty` |
-| Model control | Provider/model selection, `--models` cycling patterns, thinking levels, scoped models, provider auth detection |
-| Sub-agents | `sub_agent` tool, parallel tasks, read-only defaults, parent-model inheritance, explicit provider/model override |
-| Peer messaging | `send_message` tool, shared local SQLite mailbox, active/idle/offline presence via pid probe, SIGUSR1 idle wake, urgent/normal priority delivery |
-| Packages | Install/list/update/remove package resources, local/project settings, package trust decisions |
-| Domain overlays | Harness package manifests with tools, skills, system prompts, brand, runtime |
-| Skills/resources | Built-in and package skills, namespacing, hot reload, source attribution |
-| Updates | `magenta update`, `magenta update --extensions`, `magenta update --all` |
-| Storage | `~/.magenta/agent` for settings/sessions, `~/.magenta/messages.db` for peer messages |
+| Coding workflow | Streaming TUI, session history, forks, compaction, exports, and model switching |
+| Workspace tools | Read, write, edit, bash, grep, find, list, show, LSP, web access, and tool discovery |
+| Background work | Long-running shell jobs, independent sub-agents, and event inspection |
+| Multi-agent work | Headless delegation, deterministic workflows, and cross-session peer messages |
+| Remote work | `--ssh` redirects supported file and shell operations to a remote checkout |
+| Model layer | OpenAI, Anthropic, Google, OpenRouter, Bedrock, and other providers exposed by `pi/ai` |
+| Harness | Repository and externally supplied components assembled through one HCP path |
+| Extensions | Pi-compatible extensions, skills, prompt templates, and themes |
+| State | Magenta-owned configuration and sessions under `~/.magenta/` |
 
-### Built-In Tools
+Common TUI commands include:
 
-| Tool | Purpose | Tool | Purpose |
-|---|---|---|---|
-| `read` | Read files, snippets, images | `write` | Create or overwrite files |
-| `edit` | Exact-match edits | `bash` | Run shell commands |
-| `grep` | Search file contents | `find` | Find paths by glob/name |
-| `ls` | List directories | `show` | Render or inspect content |
-| `lsp` | Language server queries | `web-search` | Web search when enabled |
-| `web-fetch` | Fetch a URL's contents | `todo` | Track task state |
-| `ssh` | Operate on a remote checkout | `sub_agent` | Delegate work to headless agents |
-| `send_message` | Message another live session | | |
+| Command | Purpose |
+|---|---|
+| `/model` | Select a model and supported reasoning level |
+| `/scoped-models` | Configure models used by `Ctrl+P` cycling |
+| `/harness` | Inspect and switch Harness-backed runtime selections |
+| `/mcp` | Manage user MCP server configuration |
+| `/settings` | Edit application settings |
+| `/events` | Inspect background work started by the main agent |
+| `/session`, `/resume`, `/fork`, `/tree` | Inspect or navigate session history |
+| `/compact` | Compact the active context |
+| `/login`, `/logout` | Manage stored provider authentication |
+| `/refresh` | Refresh extensions, skills, prompts, themes, and keybindings |
+| `/reload` | Recompile and restart while retaining the current session |
 
-The package contract can add tools without making package transport a new HCP
-role. Concrete domain bundles are managed independently from Magenta3.
+Type `/` in the TUI for the authoritative command list.
 
-### Sub-Agents And Peer Messaging
-
-Sub-agents are background Magenta processes launched by the main agent. They are
-useful for review, research, independent verification, and fan-out work. By
-default they are read-only and inherit the parent provider/model, which avoids
-accidentally falling back to a different model gateway.
-
-Sessions coordinate through a shared SQLite mailbox (`~/.magenta/messages.db`)
-plus a presence table. Liveness is probed directly from each agent's recorded
-pid (`kill(pid, 0)`) rather than a heartbeat, so a crashed agent reads as
-`offline` the instant its process is gone. The pid also lets a sender wake an
-`idle` recipient by signalling it (`SIGUSR1`), guarded against PID reuse by a
-per-process boot id. Messages carry a priority: `urgent` messages steer the
-recipient before its next tool-calling turn, `normal` messages arrive at the end
-of the loop.
-
-```mermaid
-sequenceDiagram
-    participant Main as Main Magenta session
-    participant SubA as Sub-agent A
-    participant DB as ~/.magenta/messages.db
-    participant SubB as Idle sub-agent B
-
-    Main->>SubA: sub_agent(start, task, inherited model)
-    SubA->>DB: send_message(result, priority)
-    Main->>DB: drain — urgent steers, normal follows up
-    DB-->>Main: messages + sender presence (pid-probed)
-    Main->>DB: send_message(to B)
-    DB->>SubB: SIGUSR1 wake (boot-id guarded)
-```
-
-> [!NOTE]
-> Magenta does not depend on MinionsOS2 at runtime. The peer-message SQLite
-> delivery kernel in `@magenta/harness` is a TypeScript port of MinionsOS2's
-> message semantics; Magenta adds the presence table, pid-based liveness and
-> idle wake, priority injection, TUI rendering, and the `send_message` tool.
-
-### Remote SSH Work
-
-Run the same Magenta session against a remote checkout:
+### Common CLI Workflows
 
 ```bash
-./bin/magenta --ssh user@host:/srv/project
-```
-
-When SSH mode is active, file and shell tools operate on the remote path. The
-SSH tool can allocate a headless PTY for terminal-oriented commands, which is
-why `node-pty` is included as an optional native dependency.
-
----
-
-## CLI & TUI
-
-### CLI Commands
-
-```bash
-# Interactive
-magenta
-magenta "Start by reading package.json"
-
-# Non-interactive
-magenta -p "Summarize the latest failing test output"
-magenta --mode json -p "Return changed files as JSON"
-
-# Provider and model
-magenta --provider anthropic --model "*opus*" --thinking high
-magenta --model openai/gpt-5.5-pro:high
-magenta --models "anthropic/*,*sonnet*,openrouter/*"
-
 # Sessions
-magenta --continue "What did we do last time?"
-magenta --resume
-magenta --session <id-or-path>
-magenta --fork <id-or-path>
-magenta --name "Refactor SSH tool"
-magenta --no-session "Quick answer only"
+./bin/magenta --continue
+./bin/magenta --resume
+./bin/magenta --session <path-or-id>
+./bin/magenta --fork <path-or-id>
+./bin/magenta --name "Review HCP"
 
-# Packages and updates
-magenta install <source>
-magenta remove <source>
-magenta list
-magenta config
-magenta update
-magenta update --extensions
-magenta update --all
+# Models
+./bin/magenta --list-models gpt-5.6
+./bin/magenta --models "openai/gpt-5.6-sol:max,anthropic/*opus*:high"
+
+# Pi-compatible extension resources
+./bin/magenta install npm:@scope/package
+./bin/magenta list
+./bin/magenta config
+./bin/magenta update --extensions
+./bin/magenta remove npm:@scope/package
+
+# Harness inspection
+./bin/magenta --harness-list
 ```
 
-During local development, replace `magenta` with `./bin/magenta`.
-
-### TUI Commands
-
-Type `/` in the TUI to open commands.
-
-| Command | What It Does |
-|---|---|
-| `/model` | Select model (opens selector UI) |
-| `/scoped-models` | Enable/disable models for `Ctrl+P` cycling |
-| `/harness` | Switch and inspect Harness-backed runtime features |
-| `/mcp` | Manage MCP (Model Context Protocol) servers |
-| `/settings` | Open settings menu |
-| `/events` | Show background shell runs and sub-agents |
-| `/session` | Show session info and stats |
-| `/resume` | Resume a different session |
-| `/new` | Start a new session |
-| `/fork` | Create a new fork from a previous user message |
-| `/clone` | Duplicate the current session at the current position |
-| `/tree` | Navigate the session tree (switch branches) |
-| `/compact` | Manually compact the session context |
-| `/export` | Export session (HTML default, or `.html`/`.jsonl` path) |
-| `/import` | Import and resume a session from a JSONL file |
-| `/share` | Share session as a secret GitHub gist |
-| `/copy` | Copy the last agent message to the clipboard |
-| `/name` | Set session display name |
-| `/side`, `/btw`, `/s` | Open a temporary no-tools side chat |
-| `/trust` | Save project trust decision for future sessions |
-| `/reload` | Reload keybindings, extensions, skills, prompts, and themes |
-| `/hotkeys` | Show all keyboard shortcuts |
-| `/changelog` | Show changelog entries |
-| `/login`, `/logout` | Configure or remove provider authentication |
-| `/exit`, `/quit` | Leave the TUI |
-
-Useful keys:
-
-| Key | Action |
-|---|---|
-| `Enter` | Send the prompt |
-| `Esc` | Interrupt/cancel the current turn |
-| `Ctrl+P` | Cycle configured models |
-| `Ctrl+D` | Exit when the editor is empty |
-| `Ctrl+Shift+R` | Restart Magenta |
-| `@path` | Attach a file or image to the next message |
-
----
-
-## Packages And Domains
-
-A Magenta domain package is a separately shipped bundle of tools, skills,
-system prompts, brand assets, and runtime metadata. Magenta3 retains the generic
-overlay contract under `packages/`; concrete domain packages are published from
-independent GitHub repositories. A future acquisition layer will download,
-verify, and cache them. Today the loader accepts only an explicitly supplied
-local root containing packages that have already been downloaded; it never
-infers a sibling checkout.
-
-```mermaid
-flowchart LR
-    subgraph PKG["External domain package"]
-        MAN["package.toml"]
-        TOOLS["tools/"]
-        SKILLS["skills/"]
-        PROMPT["system-prompt/"]
-        BRAND["brands/"]
-        RUNTIME["runtime metadata<br/>Node · Python · process · MCP"]
-    end
-
-    PKG --> CONNECTOR["Explicit package-root connector"]
-    CONNECTOR --> OVERLAY["Package overlay loader"]
-    OVERLAY --> HCP["HCP assembly"]
-    HCP --> SESSION["Agent session"]
-    SESSION --> TUI["Magenta TUI"]
-```
-
-See [`packages/README.md`](./packages/README.md) for the retained Magenta3-side
-interface and manifest template.
-
-Package commands:
-
-```bash
-magenta install npm:@scope/package
-magenta install git:github.com/user/repo
-magenta install ./local/package
-magenta list
-magenta update --extensions
-magenta remove <source>
-```
-
-Project-local package settings live under `.magenta/settings.json` in the
-project and require a trust decision before they are honored.
-
----
+Use `./bin/magenta install --help`, `remove --help`, `update --help`, or
+`list --help` before changing extension sources. `config` opens its interactive
+resource selector directly. Harness domain Package selection uses the separate
+explicit-root flags described under [Package Boundary](#package-boundary).
 
 ## Architecture
 
-Magenta3 has three main layers:
+The product composes two implementation layers:
 
-1. Pi foundation: the agent loop, terminal UI, session machinery, and model API.
-2. Harness: source-separated implementations of tools, capabilities, resources,
-   package overlays, MCP bridges, and HCP assembly.
-3. Magenta product layer: branded command, storage, update flow, peer messaging,
-   SSH workflow, package commands, and user-facing TUI integration.
-
-```mermaid
-graph TD
-    subgraph PI["Pi foundation"]
-        LOOP["Agent loop"]
-        TUI["Terminal UI"]
-        AI["Provider/model layer"]
-        SESS["Session manager"]
-    end
-
-    subgraph HARNESS["Magenta Harness"]
-        TOOLS["Tools"]
-        CAP["Capabilities<br/>context · memory · policy · runtime · sandbox"]
-        RES["Resources<br/>skills · prompts · brand"]
-        MCP["MCP bridge"]
-        PKG["Package overlay"]
-    end
-
-    subgraph PRODUCT["Magenta product layer"]
-        CLI["magenta command"]
-        UPDATE["update flow"]
-        SSH["SSH remote workspace"]
-        PEER["peer messages"]
-        STORE["~/.magenta"]
-    end
-
-    CLI --> TUI
-    TUI --> LOOP
-    LOOP --> AI
-    LOOP --> SESS
-    LOOP --> TOOLS
-    HARNESS --> HCP{{HCP assembly}}
-    HCP --> LOOP
-    PRODUCT --> LOOP
-    PEER --> STORE
-    SESS --> STORE
+```text
+pi/ai + pi/agent + pi/tui -----------+
+                                      +-> pi/coding-agent -> bin/magenta
+HarnessComponentProtocol/ -----------+
 ```
 
-### HCP In One Picture
+- `pi/` is the vendored foundation: provider APIs, the agent loop, the terminal
+  UI library, and the coding-agent application.
+- `HarnessComponentProtocol/` owns Harness modules and HCP assembly.
+- `pi/coding-agent/` composes the product and owns CLI/TUI integration.
+- `brands/` supplies build-time product metadata.
+- `packages/` retains only the domain Package integration contract and a
+  template. It does not contain concrete domain packages.
 
-HCP is the assembly layer. It is similar in spirit to MCP, but applies to every
-Harness primitive, not just tools. HCP resolves components before execution; the
-hot path calls the resolved implementation directly.
+### HCP In One Chain
 
-```mermaid
-flowchart LR
-    IMPL["Implementation<br/>tool · capability · resource"]
-    MAGNET["HcpMagnet<br/>bind one implementation"]
-    SERVER["HcpServer<br/>describe · call · instance"]
-    CLIENT["HcpClient<br/>registry + source selection"]
-    LOOP["Agent loop"]
+HCP has exactly three runtime roles:
 
-    IMPL --> MAGNET --> SERVER --> CLIENT --> LOOP
-    LOOP -.->|"direct runtime call"| IMPL
+```text
+HcpClient -> module HcpServer -> source HcpMagnet -> product
 ```
 
-Core roles:
+- `HcpClient` is the single session router and assembly owner.
+- Each real Module owns an `HcpServer`.
+- Each declared Source owns an `HcpMagnet` that produces one Tool, Capability,
+  or Resource.
 
-| Role | Responsibility |
-|---|---|
-| `HcpMagnet` | Thin adapter around one implementation |
-| `HcpServer` | Reachable component endpoint |
-| `HcpClient` | In-process registry and source resolver |
-| Package overlay | Adds package-declared tools/resources into assembly |
+Tool, Capability, and Resource describe Magnet products; they are not extra HCP
+roles. Similarly, configuration, generated arrays, Package loading, MCP, and
+transport support do not form parallel registries or additional HCP layers.
 
-### Repository Layout
+Repository declarations flow in one direction:
+
+```text
+harness.toml and component TOML
+  -> generated HCP_SERVERS and HCP_MAGNETS
+  -> session assembly
+  -> HcpClient
+```
+
+The generated values are rebuildable projections of TOML, not a separate
+inventory or registration architecture. The complete architecture and naming
+rules are authoritative in:
+
+- [`HarnessComponentProtocol/docs/governance/hcp-architecture.md`](./HarnessComponentProtocol/docs/governance/hcp-architecture.md)
+- [`HarnessComponentProtocol/docs/governance/hcp-naming.md`](./HarnessComponentProtocol/docs/governance/hcp-naming.md)
+
+See [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) for repository-level
+ownership and dependency details.
+
+## Package Boundary
+
+Two different mechanisms use the word "package" and must not be confused:
+
+1. `magenta install`, `remove`, `list`, and `config` manage Pi-compatible
+   extension resources.
+2. A Harness domain Package is an external bundle mapped into ordinary HCP
+   component inputs.
+
+Concrete domain Packages are managed outside this repository and will
+eventually be downloaded from GitHub. That acquisition, version selection,
+verification, and caching flow is not implemented yet. The current loader only
+consumes Packages already present on disk. An external cache should be passed
+explicitly:
+
+```bash
+./bin/magenta \
+  --harness-packages-root /absolute/path/to/packages \
+  --harness-package <selector>
+```
+
+Without `--harness-packages-root`, the compatibility fallback checks only
+`<current-workspace>/packages`. The root [`packages/`](./packages/) directory
+remains intentionally small: it documents the integration contract and
+supplies a template. No sibling checkout or Git submodule is scanned or
+assumed.
+
+## Repository Layout
 
 ```text
 Magenta3/
-├── bin/                    # magenta launchers
-├── brands/                 # brand registry
-├── docs/                   # project documentation
-├── HarnessComponentProtocol/ # Harness, HCP, MCP, tools, package overlay
-├── packages/               # domain package integration contract/template
-├── pi/                     # vendored Pi foundation
-│   ├── ai/                 # model/provider layer
-│   ├── agent/              # agent runtime
-│   ├── tui/                # terminal UI library
-│   └── coding-agent/       # CLI/TUI application
-├── scripts/                # release, checks, model generation, analysis
-└── tests/                  # browser/e2e tests
+  bin/                         local launchers
+  brands/                      build-time brand registry
+  docs/                        repository documentation
+  HarnessComponentProtocol/   Harness modules and HCP
+    .HCP/                      HCP protocol, assembly, and HCP transport
+    _magenta/                  host/shared support; not Harness Modules
+    tools/, skills/, ...       real Module and Source trees
+  packages/                    domain Package contract and template only
+  pi/
+    ai/                        model and provider layer
+    agent/                     core agent loop
+    tui/                       terminal UI library
+    coding-agent/              Magenta CLI/TUI application
+  scripts/                     build, release, and repository checks
+  tests/e2e/                   real CLI/TUI process tests
 ```
-
----
-
-## Storage And Configuration
-
-Magenta stores its user state under `~/.magenta/`.
-
-```mermaid
-flowchart TD
-    ROOT["~/.magenta/"]
-    ROOT --> AGENT["agent/"]
-    AGENT --> SETTINGS["settings.json"]
-    AGENT --> SESSIONS["sessions/"]
-    AGENT --> TRUST["trust.json"]
-    ROOT --> MESSAGES["messages.db<br/>peer-agent mailbox"]
-    PROJECT["project/.magenta/settings.json"] --> TRUST
-```
-
-Important paths:
-
-| Path | Purpose |
-|---|---|
-| `~/.magenta/agent/settings.json` | Global settings |
-| `~/.magenta/agent/sessions/` | Session history |
-| `~/.magenta/agent/trust.json` | Project trust decisions |
-| `~/.magenta/messages.db` | Cross-session peer message mailbox |
-| `<project>/.magenta/settings.json` | Project-local settings and packages |
-
-Environment overrides:
-
-| Variable | Purpose |
-|---|---|
-| `MAGENTA_CODING_AGENT_DIR` | Override `~/.magenta/agent` |
-| `MAGENTA_CODING_AGENT_SESSION_DIR` | Override session directory |
-
----
 
 ## Development
 
+Common repository commands:
+
 ```bash
-# Build everything
+# Build all required workspaces
 npm run build
 
-# Repo-wide checks
+# Run all workspace tests that define a test script
+npm test
+
+# Apply formatting and run repository static checks
 npm run check
 
-# Workspace tests
-npm test --workspaces --if-present
-
-# Build one workspace
-npm run build -w @earendil-works/pi-coding-agent
-
-# Run the local CLI
-./bin/magenta --help
-```
-
-Common focused commands:
-
-```bash
-# Harness
+# Focused workspace tests
 npm test -w @magenta/harness
-
-# AI provider/model tests
 npm test -w @earendil-works/pi-ai
-
-# Coding agent tests
 npm test -w @earendil-works/pi-coding-agent
-
-# TUI tests
 npm test -w @earendil-works/pi-tui
+
+# Verify generated HCP assembly and entity-tree structure
+npm run check:hcp-sources -w @magenta/harness
+npm run check:structure -w @magenta/harness
 ```
 
-Release/build helpers:
+`npm run check` invokes Biome with `--write`, so it can modify formatting.
+Review its diff before committing.
+
+End-to-end tests drive the built product:
 
 ```bash
-npm run release:local
-npm run shrinkwrap:coding-agent
-scripts/build-binaries.sh
-```
-
-The standard validation path before pushing is:
-
-```bash
-npm run check
-npm test --workspaces --if-present
 npm run build
+npx playwright test --project lazypi-tests
+npx playwright test --project tui-tests
+npx playwright test --project cli-conversation
 ```
 
----
+The TUI and conversation projects make real provider calls and require working
+credentials. See [`tests/README.md`](./tests/README.md).
+
+Before changing Harness structure, read the frozen naming rules and the live
+governance documents. Do not introduce a fourth HCP role, a parallel assembly
+path, or a hand-maintained list beside `HCP_SERVERS` and `HCP_MAGNETS`.
+
+The full contribution workflow is in
+[`docs/DEVELOPING.md`](./docs/DEVELOPING.md).
 
 ## Documentation
 
-- [`docs/README.md`](./docs/README.md) — documentation index
-- [`docs/AUTHENTICATION.md`](./docs/AUTHENTICATION.md) — credential lookup and setup
-- [`docs/BRANDING.md`](./docs/BRANDING.md) — brand system
-- [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) — layered package architecture
-- [`packages/README.md`](./packages/README.md) — domain package integration boundary
-- [`HarnessComponentProtocol/README.md`](./HarnessComponentProtocol/README.md) — Harness overview
-- [`HarnessComponentProtocol/.HCP/HCP-OVERVIEW.md`](./HarnessComponentProtocol/.HCP/HCP-OVERVIEW.md) — HCP walkthrough
-- [`HarnessComponentProtocol/docs/DEVELOPING.md`](./HarnessComponentProtocol/docs/DEVELOPING.md) — add tools, capabilities, resources, packages
+- [`docs/README.md`](./docs/README.md): documentation index
+- [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md): repository architecture
+- [`docs/DEVELOPING.md`](./docs/DEVELOPING.md): development and contribution
+- [`docs/AUTHENTICATION.md`](./docs/AUTHENTICATION.md): provider credentials
+- [`docs/BRANDING.md`](./docs/BRANDING.md): build-time brand registry
+- [`HarnessComponentProtocol/README.md`](./HarnessComponentProtocol/README.md): Harness overview
+- [`HarnessComponentProtocol/docs/DEVELOPING.md`](./HarnessComponentProtocol/docs/DEVELOPING.md): adding Harness components
+- [`packages/README.md`](./packages/README.md): domain Package boundary
 
----
-
-## License
-
-See individual package license files. The Pi foundation is vendored from the
-upstream [Pi](https://pi.dev) project.
+Licensing is declared by the individual workspace packages.

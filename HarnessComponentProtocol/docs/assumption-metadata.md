@@ -45,7 +45,7 @@ the model improves." Apply it by product:
 | **Config / data** (sandbox profile sub-files, `[[patterns]]` rows, env locks) | **No** | Parameters consumed by a component, not components themselves. |
 | **Transport / infrastructure** (`HcpMagnetProcess`, `.HCP/transport`, `_magenta/mcp`, `_magenta/packages`) | **No** | Injectable/assembly plumbing and generic support, not a Module or model-compensating capability. Transport owns no Server and is never auto-assembled as one. |
 | **Foundation code** (`_magenta/session`, `_magenta/types`, `_magenta/messages`, `_magenta/env`, `_magenta/utils`) | **No** | Architectural bedrock; exists regardless of model capability and is not a Harness Module. |
-| **Configured external Package component** | **By product**, same rules | Once an already-downloaded Package is explicitly integrated, a Capability product → yes; a Tool or Resource product → no. Concrete domain Packages remain independently published on GitHub, not owned by this repository. |
+| **Configured external Package component** | **By product**, same rules | Once an already-downloaded Package is explicitly integrated, a Capability product → yes; a Tool or Resource product → no. Concrete domain Packages will be independently published on GitHub, not owned by this repository. |
 
 Executable source of truth: a component carries `[assumption]` **iff its TOML
 declares `product = "capability"`**. That field already determines which product

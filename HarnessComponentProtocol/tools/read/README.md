@@ -1,57 +1,36 @@
 # Read Tool
 
-Read file contents with optional line offset and limit.
+The `read` Tool reads text or image files from the bound working directory.
 
-## Implementation
+## Sources
 
-- **Source**: pi (TypeScript)
-- **Location**: `read/pi/read.ts`
+`read.toml` declares `pi` and `magenta` Sources, with `pi` selected by default.
+The Pi Source builds the native Tool; the Magenta Source uses the shared process
+runtime and sandbox. Both route through `tools/read/HcpServer.ts`.
 
-## Usage
+## Public Execution API
 
 ```typescript
-import { createReadExecute, readSchema } from "@magenta/harness";
+import { createReadExecute } from "@magenta/harness";
 
 const execute = createReadExecute(cwd, {
-  maxOutputBytes: 500 * 1024,  // 500KB
-  maxOutputLines: 2000,
+  operations,       // optional filesystem/image operations
+  autoResizeImages: true,
 });
 
-const result = await execute("toolUseId", {
+const result = await execute("tool-call-id", {
   path: "src/index.ts",
-  offset: 0,     // optional: start line
-  limit: 100,    // optional: max lines to read
+  offset: 1, // optional, 1-indexed
+  limit: 100,
 });
 ```
 
-## Parameters
+- `path` is required and may be relative to `cwd` or absolute.
+- `offset` is optional and 1-indexed.
+- `limit` optionally caps returned text lines.
 
-- **path** (required): File path to read (relative to cwd or absolute)
-- **offset** (optional): Line number to start reading from (0-indexed)
-- **limit** (optional): Maximum number of lines to read
-
-## Output
-
-Returns file content with:
-- Line numbers (cat -n format)
-- Automatic truncation if file exceeds limits
-- Metadata: total lines, byte size, truncation info
-
-## Features
-
-- Supports text files, images (PNG, JPG, etc.), PDFs, Jupyter notebooks
-- Smart path resolution (resolves `~`, relative paths, symlinks)
-- Automatic encoding detection
-- Truncation preserves beginning of file (unlike bash which shows end)
-
-## HCP Declaration
-
-`HarnessComponentProtocol/harness.toml` selects this component declaration for
-codegen:
-
-```toml
-[[components]]
-kind = "tool"
-name = "read"
-path = "tools/read/read.toml"
-```
+Text is UTF-8 decoded and bounded by shared line/byte limits. Truncated results
+include a continuation offset. When the host injects image detection and resize
+operations, image files are returned as image content; the default local
+operations alone do not detect images. PDF and notebook parsing are not part of
+this Harness implementation.

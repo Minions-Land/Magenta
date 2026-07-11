@@ -1,74 +1,37 @@
-# show tool - 展示内容
+# Show Tool
 
-在 TUI 中展示可视化内容（图片、PDF、HTML、Markdown、代码等）。
+`show` validates local file paths or HTTP(S) URLs and returns typed content
+references for a host preview surface. It does not render a floating window
+itself; the coding-agent TUI interprets the returned `file-preview` details.
 
-## 用途
+## HCP Ownership
 
-当 AI 生成或处理了可视化内容时，使用 `show` 工具创建可点击的内容链接。用户点击后在浮动窗口中查看。
-
-## 特点
-
-- 📎 **简单 API** - 只需提供 URL/路径
-- 🎯 **自动识别** - 从文件扩展名自动识别内容类型
-- 🖱️ **点击查看** - 用户点击链接即可在浮动窗口中打开
-- 📚 **支持并行** - 一次展示多个内容，可翻页查看
-
-## 使用方式
-
-### 单个内容
-```javascript
-show({ url: "./output/diagram.png" })
+```text
+HcpClient -> tools/show/HcpServer -> tools/show/pi/HcpMagnet -> AgentTool
 ```
 
-用户看到：
-```
-📎 diagram.png [点击查看]
-```
+`show.toml` declares the Tool and selects the `pi` Source. The Source builds a
+normal native Tool through `createShowExecute(cwd)`.
 
-点击后打开浮动窗口显示图片。
+## Input
 
-### 多个内容（并行展示）
-```javascript
-show({ url: [
-  "./diagram.png",
-  "./design.md",
-  "./code.py"
-]})
+```typescript
+show({ url: "./output/diagram.png" });
+show({ url: ["./diagram.png", "./design.md", "https://example.com/report.pdf"] });
 ```
 
-用户看到：
-```
-📎 diagram.png
-📎 design.md
-📎 code.py
-```
+The tool accepts one string or an array. Local inputs are resolved from the
+bound working directory and must identify existing files. Remote inputs must be
+HTTP(S) URLs.
 
-点击任一个后，在浮动窗口中打开，可以用 ← → 翻页查看其他内容。
+## Result
 
-## 支持的内容类型
+Each returned `ContentItem` contains:
 
-- 📎 **图片** - PNG, JPEG, GIF, WebP, SVG
-- 📄 **PDF** - 多页文档
-- 🌐 **HTML** - 网页和原型
-- 📝 **Markdown** - 文档
-- 💻 **代码** - 各种编程语言
-- 📊 **图表** - SVG 等
+- `type`: `image`, `pdf`, `html`, `markdown`, `code`, `chart`, or `file`;
+- `url`: the absolute local path or original remote URL;
+- `filename`: the display name; and
+- an optional `mimeType` inferred from the extension.
 
-## 浮动窗口交互
-
-```
-┌────────────────────────────────┐
-│  diagram.png [1/3]             │
-├────────────────────────────────┤
-│                                │
-│   [内容显示区域]               │
-│                                │
-├────────────────────────────────┤
-│  ← → navigate · Esc close     │
-└────────────────────────────────┘
-```
-
-- **← →** - 在多个内容间翻页
-- **+ -** - 缩放（图片）
-- **↑ ↓** - 滚动
-- **Esc** - 关闭窗口
+The host may display these as links, inline content, or a preview overlay. That
+rendering behavior belongs to `pi/coding-agent`, not this Harness Tool.

@@ -7,21 +7,21 @@ Packages.
 
 This directory is not part of `.HCP/`, is not a Harness Module, owns no
 `HcpServer`, and is not a Package content root. Magenta3's root `packages/`
-contains only the generic contract and templates. Concrete domain Packages are
-independently published from GitHub repositories; this integration does not
-depend on a fixed sibling checkout.
+contains only the generic contract and templates. Concrete domain Packages will
+be maintained and published in independent GitHub repositories; this
+integration does not depend on a fixed sibling checkout.
 
 This infrastructure owns parsing, profile expansion, component precedence,
 package-local resource paths, and the conversion from selected Package
 declarations to ordinary HcpClient component inputs.
-`discoverHarnessPackages()` and
-`loadPackageOverlay()` accept an optional explicit `packagesRoot`; production
-integration with external content must supply that boundary and must not
-hardcode or implicitly scan a sibling repository. Download, version selection,
-verification, and caching belong to a future acquisition layer; this support
-code only consumes Packages already present in the supplied root. The future
-acquisition layer is not implemented here. This directory does not own TUI
-selection, CLI flags, or language/runtime adapter selection.
+`discoverHarnessPackages()` and `loadPackageOverlay()` accept an optional
+`packagesRoot`; production integration with external content should supply that
+boundary. When omitted, the API resolves only `<repoRoot>/packages`. It never
+hardcodes or scans a sibling repository, `MagentaPackages`, or a git submodule.
+Download, version selection, verification, and caching belong to a future
+acquisition layer; this support code only consumes Packages already present in
+the resolved root. This directory does not own TUI selection, CLI flags, or
+language/runtime adapter selection.
 
 `HcpClientpackageinputfromoverlay()` maps the selected declarations to ordinary
 component inputs and Source settings before they enter `.HCP/assembly/`. HCP
@@ -43,8 +43,9 @@ packages/
 ```
 
 Domain package content belongs in its own upstream GitHub repository and follows
-that repository's lifecycle. Current integration accepts an explicit local
-package root after acquisition instead of relying on a fixed sibling path.
+that repository's lifecycle. External integration supplies its local Package
+root after acquisition; the omitted-root fallback is only `<repoRoot>/packages`,
+not a fixed sibling path.
 Manifest references remain package-local relative references only.
 
 ## Manifest
@@ -163,7 +164,7 @@ The Package support directory itself does not become the owner.
 in `package.toml` are relative to the package root. Profile component `path`
 values are relative to the profile harness file that declares them. All
 references must stay inside the package directory. Absolute paths and `..`
-references that escape the explicitly supplied package root are invalid.
+references that escape the resolved Package root are invalid.
 
 Tool commands follow one portable rule set: absolute commands remain explicit,
 bare commands such as `node` or `pixi` use `PATH`, and relative commands that

@@ -5,6 +5,7 @@ export { loadSkills as loadSkillsFromHarness } from "@magenta/harness";
 export { type Args, parseArgs } from "./cli/args.ts";
 // Config paths
 export {
+	APP_BINARY_NAME,
 	CONFIG_DIR_NAME,
 	getAgentDir,
 	getDocsPath,

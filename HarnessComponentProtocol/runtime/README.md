@@ -1,9 +1,15 @@
 # Runtime Providers
 
-`runtime://process` is a TypeScript port of the portable guardrail portion of
-Magenta1 `general-harness/kernel/src/runtime_provider.rs`.
+The `runtime` Harness Module owns the `runtime:process` and
+`runtime:script-runtimes` capability slots. Its `magenta` Source provides
+`runtime://process` plus shell, Python, Node, R, and Julia wrappers compiled to
+that process boundary.
 
-It enforces the direct-exec gate, workspace cwd, environment allowlist, wall
-clock timeout, declared filesystem read/write checks, and network tag/allowlist
-checks. OS-level sandbox backends (`sandbox-exec`/`bwrap`) are intentionally not
-claimed here; that remains a separate hardening step.
+`runtime://process` is a TypeScript port of the portable guardrail portion of
+Magenta1 `general-harness/kernel/src/runtime_provider.rs`. It enforces the
+direct-exec gate, workspace cwd, environment allowlist, wall-clock timeout,
+declared filesystem read/write checks, and network tag/allowlist checks.
+
+The current policy report explicitly returns `os_enforced: false`. OS-level
+backends such as `sandbox-exec` and `bwrap` are not implemented, so portable
+guards must not be documented as equivalent to an operating-system sandbox.

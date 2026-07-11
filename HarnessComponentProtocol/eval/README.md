@@ -60,16 +60,17 @@ node eval/runner/run.mjs long-horizon-coherence --model claude-opus-4-5
 
 `--dry-run` prints the exact CLI invocations and the scoring plan and exits 0.
 It is the CI-safe smoke test that the eval plumbing is intact. A real run writes
-per-variant transcripts to `results/<scenario>-<timestamp>/` and prints the
-scored comparison.
+per-variant transcripts and `plan.json` to
+`results/<scenario>-<timestamp>/`, then prints instructions for applying the
+scenario's scoring method manually.
 
 ## Scoring
 
-Scoring reuses the harness's own `multiagent` verifier patterns
-(`adversarial_verify` / `tournament`) where a judgement call is needed, and
-plain signal checks (did the run complete, token count, did it wrap up early)
-where a mechanical check suffices. A scenario declares which method it uses in
-its `[scoring]` block.
+A scenario declares its intended method in the `[scoring]` block. The current
+runner records that plan but does not execute scoring automatically. Apply the
+Harness `multiagent` verifier patterns (`adversarial_verify` / `tournament`)
+where a judgement call is needed, and inspect plain signals such as completion,
+token count, or early wrap-up where a mechanical check suffices.
 
 ## Adding a scenario
 
@@ -84,4 +85,4 @@ its `[scoring]` block.
 This is a scaffold with one worked scenario. The runner's dry-run path is fully
 functional and CI-safe. The real-run path shells out to the built CLI; it is
 wired but should be exercised deliberately (it spends tokens and needs
-credentials configured per `bin/README.md`).
+credentials configured through the coding-agent authentication flow).

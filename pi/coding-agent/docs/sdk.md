@@ -1,8 +1,8 @@
-> pi can help you use the SDK. Ask it to build an integration for your use case.
+> Magenta can help you use the SDK. Ask it to build an integration for your use case.
 
 # SDK
 
-The SDK provides programmatic access to pi's agent capabilities. Use it to embed pi in other applications, build custom interfaces, or integrate with automated workflows.
+The SDK provides programmatic access to Magenta's agent capabilities. Use it to embed Magenta in other applications, build custom interfaces, or integrate with automated workflows.
 
 **Example use cases:**
 - Build a custom UI (web, desktop, mobile)
@@ -338,23 +338,23 @@ const { session } = await createAgentSession({
   cwd: process.cwd(), // default
   
   // Global config directory
-  agentDir: "~/.pi/agent", // default (expands ~)
+  agentDir: "~/.magenta/agent", // default (expands ~)
 });
 ```
 
 `cwd` is used by `DefaultResourceLoader` for:
-- Project extensions (`.pi/extensions/`)
+- Project extensions (`.magenta/extensions/`)
 - Project skills:
-  - `.pi/skills/`
+  - `.magenta/skills/`
   - `.agents/skills/` in `cwd` and ancestor directories (up to git repo root, or filesystem root when not in a repo)
-- Project prompts (`.pi/prompts/`)
+- Project prompts (`.magenta/prompts/`)
 - Context files (`AGENTS.md` walking up from cwd)
 - Session directory naming
 
 `agentDir` is used by `DefaultResourceLoader` for:
 - Global extensions (`extensions/`)
 - Global skills:
-  - `skills/` under `agentDir` (for example `~/.pi/agent/skills/`)
+  - `skills/` under `agentDir` (for example `~/.magenta/agent/skills/`)
   - `~/.agents/skills/`
 - Global prompts (`prompts/`)
 - Global context file (`AGENTS.md`)
@@ -368,22 +368,23 @@ When you pass a custom `ResourceLoader`, `cwd` and `agentDir` no longer control 
 ### Model
 
 ```typescript
-import { getModel } from "@earendil-works/pi-ai";
+import { getBuiltinModel } from "@earendil-works/pi-ai/providers/all";
 import { AuthStorage, ModelRegistry } from "@earendil-works/pi-coding-agent";
 
 const authStorage = AuthStorage.create();
 const modelRegistry = ModelRegistry.create(authStorage);
 
-// Find specific built-in model (doesn't check if API key exists)
-const opus = getModel("anthropic", "claude-opus-4-5");
-if (!opus) throw new Error("Model not found");
+// Read known built-in models (doesn't check if authentication is configured)
+const opus = getBuiltinModel("anthropic", "claude-opus-4-5");
+const haiku = getBuiltinModel("anthropic", "claude-haiku-4-5");
 
 // Find any model by provider/id, including custom models from models.json
 // (doesn't check if API key exists)
 const customModel = modelRegistry.find("my-provider", "my-model");
 
-// Get only models that have valid API keys configured
-const available = await modelRegistry.getAvailable();
+// Get models with authentication configured. This synchronous check does not
+// validate API keys or refresh OAuth tokens.
+const available = modelRegistry.getAvailable();
 
 const { session } = await createAgentSession({
   model: opus,
@@ -409,16 +410,16 @@ If no model is provided:
 
 ### API Keys and OAuth
 
-API key resolution priority (handled by AuthStorage):
+Request authentication resolution priority:
 1. Runtime overrides (via `setRuntimeApiKey`, not persisted)
 2. Stored credentials in `auth.json` (API keys or OAuth tokens)
-3. Environment variables (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, etc.)
+3. Process environment or supported Claude Code/Codex credential discovery
 4. Fallback resolver (for custom provider keys from `models.json`)
 
 ```typescript
 import { AuthStorage, ModelRegistry } from "@earendil-works/pi-coding-agent";
 
-// Default: uses ~/.pi/agent/auth.json and ~/.pi/agent/models.json
+// Default: uses ~/.magenta/agent/auth.json and ~/.magenta/agent/models.json
 const authStorage = AuthStorage.create();
 const modelRegistry = ModelRegistry.create(authStorage);
 
@@ -452,9 +453,11 @@ const simpleRegistry = ModelRegistry.inMemory(authStorage);
 Use a `ResourceLoader` to override the system prompt:
 
 ```typescript
-import { createAgentSession, DefaultResourceLoader } from "@earendil-works/pi-coding-agent";
+import { createAgentSession, DefaultResourceLoader, getAgentDir } from "@earendil-works/pi-coding-agent";
 
 const loader = new DefaultResourceLoader({
+  cwd: process.cwd(),
+  agentDir: getAgentDir(),
   systemPromptOverride: () => "You are a helpful assistant.",
 });
 await loader.reload();
@@ -466,15 +469,16 @@ const { session } = await createAgentSession({ resourceLoader: loader });
 
 ### Tools
 
-Specify which built-in tools to enable:
+Specify which tools to enable:
 
-- Built-in tool names: `read`, `bash`, `edit`, `write`, `grep`, `find`, `ls`
-- Default built-ins: `read`, `bash`, `edit`, `write`
+- Default active tools: `read`, `bash`, `edit`, `write`, `bg_shell`,
+  `sub_agent`, `web-search`, and `web-fetch`
+- Optional read-only tools: `grep`, `find`, and `ls`
 - `noTools: "all"` disables all tools
-- `noTools: "builtin"` disables default built-ins while keeping extension and custom tools enabled
+- `noTools: "builtin"` disables default application and HCP tools while keeping extension and custom tools enabled
 - `excludeTools` disables specific built-in, extension, or custom tool names after any `tools` allowlist is applied
 
-The `edit` tool returns `details.diff` for Pi's TUI display and `details.patch` as a standard unified patch for SDK consumers.
+The `edit` tool returns `details.diff` for Magenta's TUI display and `details.patch` as a standard unified patch for SDK consumers.
 
 ```typescript
 import { createAgentSession } from "@earendil-works/pi-coding-agent";
@@ -556,12 +560,14 @@ If you pass `tools`, include each custom or extension tool name you want enabled
 
 ### Extensions
 
-Extensions are loaded by the `ResourceLoader`. `DefaultResourceLoader` discovers extensions from `~/.pi/agent/extensions/`, `.pi/extensions/`, and settings.json extension sources.
+Extensions are loaded by the `ResourceLoader`. `DefaultResourceLoader` discovers extensions from `~/.magenta/agent/extensions/`, `.magenta/extensions/`, and settings.json extension sources.
 
 ```typescript
-import { createAgentSession, DefaultResourceLoader } from "@earendil-works/pi-coding-agent";
+import { createAgentSession, DefaultResourceLoader, getAgentDir } from "@earendil-works/pi-coding-agent";
 
 const loader = new DefaultResourceLoader({
+  cwd: process.cwd(),
+  agentDir: getAgentDir(),
   additionalExtensionPaths: ["/path/to/my-extension.ts"],
   extensionFactories: [
     (pi) => {
@@ -581,10 +587,12 @@ Extensions can register tools, subscribe to events, add commands, and more. See 
 **Event Bus:** Extensions can communicate via `pi.events`. Pass a shared `eventBus` to `DefaultResourceLoader` if you need to emit or listen from outside:
 
 ```typescript
-import { createEventBus, DefaultResourceLoader } from "@earendil-works/pi-coding-agent";
+import { createEventBus, DefaultResourceLoader, getAgentDir } from "@earendil-works/pi-coding-agent";
 
 const eventBus = createEventBus();
 const loader = new DefaultResourceLoader({
+  cwd: process.cwd(),
+  agentDir: getAgentDir(),
   eventBus,
 });
 await loader.reload();
@@ -599,19 +607,24 @@ eventBus.on("my-extension:status", (data) => console.log(data));
 ```typescript
 import {
   createAgentSession,
+  createSyntheticSourceInfo,
   DefaultResourceLoader,
+  getAgentDir,
   type Skill,
 } from "@earendil-works/pi-coding-agent";
 
 const customSkill: Skill = {
   name: "my-skill",
   description: "Custom instructions",
+  content: "Follow these custom instructions.",
   filePath: "/path/to/SKILL.md",
   baseDir: "/path/to",
-  source: "custom",
+  sourceInfo: createSyntheticSourceInfo("/path/to/SKILL.md", { source: "sdk" }),
 };
 
 const loader = new DefaultResourceLoader({
+  cwd: process.cwd(),
+  agentDir: getAgentDir(),
   skillsOverride: (current) => ({
     skills: [...current.skills, customSkill],
     diagnostics: current.diagnostics,
@@ -627,9 +640,11 @@ const { session } = await createAgentSession({ resourceLoader: loader });
 ### Context Files
 
 ```typescript
-import { createAgentSession, DefaultResourceLoader } from "@earendil-works/pi-coding-agent";
+import { createAgentSession, DefaultResourceLoader, getAgentDir } from "@earendil-works/pi-coding-agent";
 
 const loader = new DefaultResourceLoader({
+  cwd: process.cwd(),
+  agentDir: getAgentDir(),
   agentsFilesOverride: (current) => ({
     agentsFiles: [
       ...current.agentsFiles,
@@ -649,18 +664,24 @@ const { session } = await createAgentSession({ resourceLoader: loader });
 ```typescript
 import {
   createAgentSession,
+  createSyntheticSourceInfo,
   DefaultResourceLoader,
+  getAgentDir,
   type PromptTemplate,
 } from "@earendil-works/pi-coding-agent";
 
+const commandPath = "/virtual/prompts/deploy.md";
 const customCommand: PromptTemplate = {
   name: "deploy",
   description: "Deploy the application",
-  source: "(custom)",
+  filePath: commandPath,
+  sourceInfo: createSyntheticSourceInfo(commandPath, { source: "sdk" }),
   content: "# Deploy\n\n1. Build\n2. Test\n3. Deploy",
 };
 
 const loader = new DefaultResourceLoader({
+  cwd: process.cwd(),
+  agentDir: getAgentDir(),
   promptsOverride: (current) => ({
     prompts: [...current.prompts, customCommand],
     diagnostics: current.diagnostics,
@@ -814,8 +835,8 @@ const { session } = await createAgentSession({
 **Project-specific settings:**
 
 Settings load from two locations and merge:
-1. Global: `~/.pi/agent/settings.json`
-2. Project: `<cwd>/.pi/settings.json`
+1. Global: `~/.magenta/agent/settings.json`
+2. Project: `<cwd>/.magenta/settings.json`
 
 Project overrides global. Nested objects merge keys. Setters modify global settings by default.
 
@@ -877,7 +898,7 @@ interface LoadExtensionsResult {
 ## Complete Example
 
 ```typescript
-import { getModel } from "@earendil-works/pi-ai";
+import { getBuiltinModel } from "@earendil-works/pi-ai/providers/all";
 import { Type } from "typebox";
 import {
   AuthStorage,
@@ -912,8 +933,7 @@ const statusTool = defineTool({
   }),
 });
 
-const model = getModel("anthropic", "claude-opus-4-5");
-if (!model) throw new Error("Model not found");
+const model = getBuiltinModel("anthropic", "claude-opus-4-5");
 
 // In-memory settings with overrides
 const settingsManager = SettingsManager.inMemory({
@@ -1075,7 +1095,7 @@ See [RPC documentation](rpc.md) for the JSON protocol.
 For subprocess-based integration without building with the SDK, use the CLI directly:
 
 ```bash
-pi --mode rpc --no-session
+magenta --mode rpc --no-session
 ```
 
 See [RPC documentation](rpc.md) for the JSON protocol.

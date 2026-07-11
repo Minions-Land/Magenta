@@ -1,53 +1,37 @@
 # Magenta3 Documentation
 
-## Overview
+This directory contains repository-level documentation. Harness-specific
+architecture and naming rules live beside the Harness source so there is only
+one authoritative HCP specification.
 
-Magenta3 is a terminal-native AI coding environment built on a Harness
-execution layer, HCP assembly, a domain-package integration boundary, and a brand system. Its agent
-loop, TUI, session system, and model providers are vendored from the upstream
-Pi project.
+## Start Here
 
-## Documentation Structure
+- [`../README.md`](../README.md) - product overview, build, launch, and common commands
+- [`ARCHITECTURE.md`](./ARCHITECTURE.md) - package ownership, runtime flow, and integration boundaries
+- [`DEVELOPING.md`](./DEVELOPING.md) - contribution workflow and verification gates
+- [`AUTHENTICATION.md`](./AUTHENTICATION.md) - provider credential lookup and setup
+- [`BRANDING.md`](./BRANDING.md) - build-time brand registry and synchronization
 
-### Architecture
-- **[ARCHITECTURE.md](./ARCHITECTURE.md)** - Layered package architecture (pi-ai / agent-core / harness)
-- **[BRANDING.md](./BRANDING.md)** - Brand system and multi-brand support
-- **[../HarnessComponentProtocol/docs/DEVELOPING.md](../HarnessComponentProtocol/docs/DEVELOPING.md)** - Developer onboarding: how to add tools, capabilities, resources, and packages
+## Harness And HCP
 
-### Setup
-- **[AUTHENTICATION.md](./AUTHENTICATION.md)** - External auth (Claude Code / Codex credential auto-detect)
+- [`../HarnessComponentProtocol/README.md`](../HarnessComponentProtocol/README.md) - current Harness layout
+- [`../HarnessComponentProtocol/.HCP/HCP-OVERVIEW.md`](../HarnessComponentProtocol/.HCP/HCP-OVERVIEW.md) - HCP assembly walkthrough
+- [`../HarnessComponentProtocol/docs/DEVELOPING.md`](../HarnessComponentProtocol/docs/DEVELOPING.md) - task-oriented component development
+- [`../HarnessComponentProtocol/docs/governance/hcp-architecture.md`](../HarnessComponentProtocol/docs/governance/hcp-architecture.md) - authoritative HCP architecture
+- [`../HarnessComponentProtocol/docs/governance/hcp-naming.md`](../HarnessComponentProtocol/docs/governance/hcp-naming.md) - authoritative entity-tree naming rules
 
-### Packages
-- **[../packages/README.md](../packages/README.md)** - Generic domain-package integration contract and template
+## Other Boundaries
 
-### Project Information
-- **[../README.md](../README.md)** - Project overview and quick start
-- **[../HarnessComponentProtocol/README.md](../HarnessComponentProtocol/README.md)** - Harness architecture
-- **[../HarnessComponentProtocol/.HCP/HCP-OVERVIEW.md](../HarnessComponentProtocol/.HCP/HCP-OVERVIEW.md)** - Assembly layer (HCP/Magnet/Registry)
+- [`../packages/README.md`](../packages/README.md) - retained domain Package contract and template
+- [`../brands/README.md`](../brands/README.md) - brand registry implementation details
+- [`../tests/README.md`](../tests/README.md) - end-to-end test suite
+- [`../pi/README-upstream.md`](../pi/README-upstream.md) - preserved upstream Pi documentation
 
-## Key Concepts
+## Documentation Rules
 
-### Brand System
-Magenta uses a neutral brand registry allowing multiple brands (Magenta, Pi, custom) to coexist. See [BRANDING.md](./BRANDING.md).
-
-### Harness Architecture
-Modular component system with source separation by origin agent (`pi/`, `magenta/`, `codex/`, `claude-code/`) plus the Magenta memory package. See [HarnessComponentProtocol/README.md](../HarnessComponentProtocol/README.md).
-
-### Assembly Layer
-Component discovery, adaptation, and management at startup. See [HarnessComponentProtocol/.HCP/HCP-OVERVIEW.md](../HarnessComponentProtocol/.HCP/HCP-OVERVIEW.md).
-
-## Version Strategy
-
-Magenta uses **two-layer versioning**:
-- **Product layer** (Magenta-specific): v0.0.1
-- **Infrastructure layer** (Pi/harness): v0.80.2
-
-See [BRANDING.md](./BRANDING.md) for details.
-
-## Contributing
-
-When adding documentation:
-1. Place in the appropriate subdirectory
-2. Update this index
-3. Use clear headings and examples
-4. Link related documents
+1. Describe implemented behavior, not planned behavior, as current fact.
+2. Keep HCP naming rules in the Harness governance document and link to them
+   instead of creating another copy.
+3. Distinguish Pi extension packages from Harness domain Packages.
+4. Verify every command against the current root and workspace scripts.
+5. Update this index when adding a repository-level document.

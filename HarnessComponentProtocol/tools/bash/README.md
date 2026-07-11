@@ -1,64 +1,41 @@
 # Bash Tool
 
-Execute shell commands in the current working directory.
+The `bash` Tool executes a shell command in the bound working directory and
+returns combined command output plus execution details.
 
-## Implementation
+## Sources
 
-- **Source**: pi (TypeScript)
-- **Location**: `bash/pi/bash.ts`
+`bash.toml` declares both `pi` and `magenta` Sources, with `pi` selected by
+default:
 
-## Usage
+- `pi/HcpMagnet.ts` builds the host-native shell Tool from injected operations
+  and environment resolution;
+- `magenta/HcpMagnet.ts` builds the process-backed implementation through the
+  selected `runtime:process` and `sandbox` Capabilities.
 
-The bash tool provides a pure execution function that runs shell commands and captures output.
+Both remain Source implementations of the real `tools/bash` Module. Process and
+shell are mechanisms, not HCP roles.
+
+## Public Execution API
 
 ```typescript
-import { createBashExecute, bashSchema } from "@magenta/harness";
+import { createBashExecute } from "@magenta/harness";
 
 const execute = createBashExecute(cwd, {
-  maxOutputBytes: 1024 * 1024,  // 1MB
-  maxOutputLines: 10000,
+  operations,
+  resolveEnv,
 });
 
-const result = await execute("toolUseId", {
-  command: "ls -la",
-  timeout: 30000,  // 30 seconds
+const result = await execute("tool-call-id", {
+  command: "npm test",
+  timeout: 30, // seconds
 });
 ```
 
-## Parameters
+`command` is required. `timeout` is optional and measured in seconds. Output is
+bounded by the shared line and byte limits; when truncated, the implementation
+retains the complete output in a temporary file and reports its path.
 
-Defined in `bashSchema`:
-
-- **command** (required): Shell command to execute
-- **timeout** (optional): Timeout in milliseconds
-
-## Output
-
-Returns `AgentToolResult` with:
-- `content`: Command stdout/stderr (truncated if needed)
-- Truncation metadata if output exceeds limits
-- Exit code and execution time
-
-## Features
-
-- Respects `.gitignore` context for safer command execution
-- Automatic output truncation (last N lines/KB)
-- Saves full output to temp file if truncated
-- Configurable timeout
-- Streaming output accumulation
-
-## HCP Declaration
-
-`HarnessComponentProtocol/harness.toml` selects this component declaration for
-codegen:
-
-```toml
-[[components]]
-kind = "tool"
-name = "bash"
-path = "tools/bash/bash.toml"
-```
-
-## Security
-
-Commands run in the provided working directory with the user's shell environment. No sandboxing is applied — callers must validate commands before execution.
+The pure Harness execution factory does not decide approvals or trust. The
+coding-agent host supplies policy and native operations, while the Magenta
+process Source explicitly resolves runtime and sandbox providers.

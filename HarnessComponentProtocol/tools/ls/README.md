@@ -1,128 +1,29 @@
 # Ls Tool
 
-List directory entries with file metadata.
+The `ls` Tool lists the immediate children of a directory. It is non-recursive;
+use `find` for recursive file discovery.
 
-## Implementation
+## Sources
 
-- **Source**: pi (TypeScript)
-- **Location**: `ls/pi/ls.ts`
+`ls.toml` declares `pi` and `magenta` Sources, with `pi` selected by default.
+The Pi Source uses injectable filesystem operations. The Magenta Source builds
+a process-backed Tool through `runtime:process` and `sandbox`.
 
-## Usage
-
-The ls tool provides directory listing with file types and sizes.
-
-```typescript
-import { createLsExecute, lsSchema } from "@magenta/harness";
-
-const execute = createLsExecute(cwd, {
-  operations: defaultLsOperations  // or custom
-});
-
-const result = await execute("toolUseId", {
-  path: "src/",
-  limit: 100
-});
-```
-
-## Parameters
-
-Defined in `lsSchema`:
-
-- **path** (optional): Directory to list (default: current directory)
-- **limit** (optional): Maximum number of entries (default: 500)
-
-## Output
-
-Returns `AgentToolResult` with:
-- **content**: Formatted directory listing
-- **details**: `LsToolDetails` containing:
-  - `truncation`: Truncation metadata if output exceeds limits
-  - `entryLimitReached`: Number of entries if limit hit
-
-## Features
-
-- **File metadata**: Shows type (file/dir), size, permissions
-- **Sorted output**: Directories first, then files (alphabetically)
-- **Hidden files**: Includes dotfiles (`.hidden`)
-- **Symbolic links**: Detected and labeled
-- **Size formatting**: Human-readable sizes (KB, MB, GB)
-- **Output limits**: Truncates to 500 entries or 50KB (whichever hits first)
-- **Abort support**: Respects AbortSignal for cancellation
-
-## Output Format
-
-```
-src/
-  components/ (directory)
-  utils/ (directory)
-  index.ts (file, 1.2 KB)
-  types.ts (file, 856 B)
-  .gitignore (file, 42 B)
-```
-
-## Pluggable Operations
-
-Override for remote directory listing:
+## Public Execution API
 
 ```typescript
-type LsOperations = {
-  exists: (absolutePath: string) => Promise<boolean> | boolean;
-  stat: (absolutePath: string) => Promise<{ isDirectory: () => boolean }>;
-  readdir: (absolutePath: string) => Promise<string[]> | string[];
-};
+import { createLsExecute } from "@magenta/harness";
+
+const execute = createLsExecute(cwd, { operations: defaultLsOperations });
+const result = await execute("tool-call-id", { path: "src", limit: 100 });
 ```
 
-Example for SSH-based listing:
+- `path` defaults to the bound working directory.
+- `limit` defaults to 500 entries.
+- Results are sorted case-insensitively.
+- Directories receive a trailing `/`; files are emitted by name only.
+- Output is bounded by entry count and the shared byte limit.
 
-```typescript
-createLsExecute(cwd, {
-  operations: {
-    exists: (path) => sshClient.exists(path),
-    stat: async (path) => {
-      const info = await sshClient.stat(path);
-      return { isDirectory: () => info.type === 'directory' };
-    },
-    readdir: (path) => sshClient.readdir(path)
-  }
-});
-```
-
-## HCP Declaration
-
-`HarnessComponentProtocol/harness.toml` selects this component declaration for
-codegen:
-
-```toml
-[[components]]
-kind = "tool"
-name = "ls"
-path = "tools/ls/ls.toml"
-```
-
-## Dependencies
-
-- `truncate.ts` — Output truncation
-- `path-utils.ts` — Path resolution
-- Node.js `fs/promises` — File system operations
-
-## Error Handling
-
-Errors when:
-- Path doesn't exist
-- Path is not a directory
-- Permission denied
-- Operation aborted via signal
-
-## Use Cases
-
-1. **Directory exploration**: See what files are available
-2. **File discovery**: Find files before reading/editing
-3. **Structure understanding**: Learn codebase organization
-4. **Size estimation**: Check file sizes before reading
-
-## Comparison with find
-
-- **ls**: Lists **immediate children** of a directory (non-recursive)
-- **find**: Searches **recursively** for files matching a pattern
-
-Use `ls` for quick directory overview, `find` for deep file search.
+`LsOperations` exposes `exists`, `stat`, and `readdir`, allowing a host to supply
+local or remote filesystem behavior. The Tool does not report file sizes,
+permissions, or a recursive tree.

@@ -1,111 +1,114 @@
-# Brand Configuration System
+# Brand Registry
 
-**Purpose**: Centralized brand registry for agent identity, theming, and versioning. Supports multiple brands (Pi, Magenta, custom) with automatic synchronization.
+Magenta3 keeps product identity in `brands/` and applies it to package metadata
+with `scripts/sync-brand.mjs`. This is a build-time synchronization mechanism,
+not a runtime plugin or HCP role.
 
-## Quick Start
+## Layout
+
+```text
+brands/
+  registry.toml              active brand and registered config paths
+  brand.interface.ts         TypeScript shape of a brand config
+  magenta/magenta.brand.ts   Magenta values
+  pi/pi.brand.ts             Pi values
+  template/template.brand.ts starting point for another brand
+```
+
+`brands/registry.toml` currently selects:
+
+```toml
+active = "magenta"
+```
+
+The active Magenta configuration supplies, among other values:
+
+- product name: `Magenta`
+- CLI binary: `magenta`
+- config directory: `.magenta`
+- product version: `0.0.1`
+- Pi infrastructure version: `0.80.2`
+
+Treat source files and package manifests as authoritative for current values;
+do not copy version numbers into unrelated documents unless needed.
+
+## Synchronization
+
+Preview the active brand without writing files:
 
 ```bash
-# View current active brand
-cat brands/registry.toml
-
-# Sync all packages to active brand configuration
-npm run sync-brand
-
-# Preview changes without modifying files
 npm run sync-brand -- --dry-run
-
-# Temporarily switch to a different brand
-npm run sync-brand -- --brand=pi
-
-# Switch active brand permanently
-# 1. Edit brands/registry.toml: active = "yourbrand"
-# 2. npm run sync-brand
-# 3. npm install && npm run build
 ```
 
-## Architecture
+Apply it:
 
-All brand configurations live under `brands/`:
-
-```
-brands/
-  registry.toml              # Declares active brand
-  brand.interface.ts         # TypeScript interface for all brands
-  
-  magenta/
-    magenta.brand.ts         # Magenta brand configuration
-  
-  pi/
-    pi.brand.ts              # Pi (upstream) brand configuration
-  
-  template/
-    template.brand.ts        # Template for creating new brands
-  
-  README.md                  # Complete documentation
+```bash
+npm run sync-brand
+npm install
+npm run build
 ```
 
-**See `brands/README.md` for detailed documentation, including:**
-- Brand configuration interface
-- Creating new brands (6-step workflow)
-- Two-layer versioning strategy
-- Synchronization details
+Preview another registered brand without changing `registry.toml`:
 
-## Two-Layer Versioning
+```bash
+npm run sync-brand -- --brand=pi --dry-run
+```
 
-The system maintains separate versions for infrastructure and product:
+The script synchronizes:
 
-**Infrastructure Layer** (foundation packages)
-- `@earendil-works/pi-ai`, `pi-tui`, `pi-agent-core`, `pi-coding-agent` → **0.80.2**
-- `@magenta/harness` → **0.0.1**
-- Track upstream evolution, easier to pull updates
+- root and workspace package versions
+- `@magenta/harness` and `@magenta/memory` package names
+- Pi package names when `renamePiPackages` is enabled
+- workspace dependency versions
+- `pi/coding-agent/package.json` `piConfig` values
+- the coding-agent binary name
 
-**Product Layer** (brand-specific)
-- `@magenta/memory` and other Magenta-specific packages → **0.0.1**
-- Independent release cycle for product features
-- Currently minimal (most code is infrastructure)
+It does not currently rewrite TUI theme source, welcome text, documentation, or
+repository URLs. Fields present in `BrandConfig` are not necessarily wired into
+every runtime surface.
 
-This allows:
-- Magenta releases (0.0.1 → 0.1.0) without forcing infrastructure bumps
-- Pulling pi updates (0.80.2 → 0.81.0) without Magenta version changes
-- Clear separation: product identity vs. shared foundation
+## Version Layers
 
-## Available Brands
+The configuration distinguishes product and infrastructure versions:
 
-### Magenta (default)
-- **Version**: 0.0.1
-- **Theme**: Pink/Magenta (#E91E63) + Purple (#9C27B0)
-- **CLI**: `magenta`
-- **Scope**: `@magenta/*`
+| Layer | Current owner |
+|---|---|
+| Product | Root package, `@magenta/harness`, and `@magenta/memory` |
+| Infrastructure | Vendored `@earendil-works/pi-*` workspaces |
 
-### Pi
-- **Version**: 0.80.2 (matches infrastructure)
-- **Theme**: Blue (#2196F3)
-- **CLI**: `pi`
-- **Scope**: `@earendil-works/*`
+This lets the vendored Pi foundation track its upstream-compatible version
+while Magenta-owned workspaces evolve under the product version. The CLI
+`--version` value comes from the coding-agent package, so it currently reports
+the infrastructure package version rather than a composite product report.
 
-## Creating a New Brand
+## Adding A Brand
 
-1. Copy `brands/template/` to `brands/yourbrand/`
-2. Edit `yourbrand.brand.ts` (name, colors, URLs, CLI)
-3. Register in `brands/registry.toml`
-4. Run `npm run sync-brand`
-5. Build and verify
+1. Copy `brands/template/` to a new directory.
+2. Rename and fill the `*.brand.ts` file using `BrandConfig`.
+3. Add a matching `[[brands]]` entry to `brands/registry.toml`.
+4. Run a dry synchronization and review every proposed manifest change.
+5. Apply synchronization, update the lockfile with `npm install`, then build
+   and test.
 
-See `brands/README.md` for step-by-step guide with examples.
+Example registry entry:
 
-## Future Integration
+```toml
+[[brands]]
+name = "example"
+path = "example/example.brand.ts"
+description = "Example product brand"
+```
 
-The brand configuration system is currently used for:
-- ✅ Package versioning (via `npm run sync-brand`)
-- ✅ Package naming (product vs. infrastructure)
-- ✅ Workspace dependency management
+## Contribution Rules
 
-**Planned integrations**:
-- [ ] CLI config (`pi/coding-agent/src/config.ts` imports from active brand)
-- [ ] TUI theme (`pi/tui/src/theme.ts` uses brand colors)
-- [ ] CLI `--version` output (show both product and infrastructure versions)
-- [ ] Documentation generation (auto-interpolate brand name/URLs)
+- Do not hand-edit synchronized manifest fields without updating or accounting
+  for the brand source.
+- Run `git diff` after synchronization; it can touch several package manifests.
+- Keep provider/model behavior, Harness Sources, and runtime feature selection
+  out of the brand registry.
+- Do not treat brand names as HCP Source aliases unless an actual Source is
+  declared under the Harness entity tree.
+- Update placeholder URLs in a brand config before using it for distribution.
 
-## Migration Note
-
-Previously `magenta.config.ts` was at project root. It has been moved to `brands/magenta/magenta.brand.ts` as part of the multi-brand registry system.
+Implementation details and the full `BrandConfig` shape are documented in
+[`../brands/README.md`](../brands/README.md).

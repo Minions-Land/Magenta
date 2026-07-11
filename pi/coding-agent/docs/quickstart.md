@@ -1,91 +1,77 @@
 # Quickstart
 
-This page gets you from install to a useful first pi session.
+This page gets the `magenta` TUI running in a project.
 
 ## Install
 
-Pi is distributed as an npm package:
+Node.js 22.19.0 or newer is required.
 
 ```bash
 npm install -g --ignore-scripts @earendil-works/pi-coding-agent
 ```
 
-`--ignore-scripts` disables dependency lifecycle scripts during install. Pi does not require install scripts for normal npm installs.
+The npm package name retains its upstream compatibility name, but it installs the `magenta` executable.
 
-### Uninstall
-
-Use the package manager that installed pi. The curl installer uses npm globally, so curl and npm installs are removed with npm:
+To uninstall, use the same package manager that installed it:
 
 ```bash
-# curl installer or npm install -g
 npm uninstall -g @earendil-works/pi-coding-agent
-
-# pnpm
-pnpm remove -g @earendil-works/pi-coding-agent
-
-# Yarn
-yarn global remove @earendil-works/pi-coding-agent
-
-# Bun
-bun uninstall -g @earendil-works/pi-coding-agent
+# or: pnpm remove -g / yarn global remove / bun uninstall -g
 ```
 
-Uninstalling pi leaves settings, credentials, sessions, and installed pi packages in `~/.pi/agent/`.
+Uninstalling the package does not remove settings, credentials, sessions, or installed extension packages under `~/.magenta/agent/`.
 
-Then start pi in the project directory you want it to work on:
+To use the repository checkout instead:
 
 ```bash
-cd /path/to/project
-pi
+npm install
+npm run build
+node pi/coding-agent/dist/cli.js
 ```
 
 ## Authenticate
 
-Pi can use subscription providers through `/login`, or API-key providers through environment variables or the auth file.
+Start Magenta in the project it should work on:
 
-### Option 1: subscription login
-
-Start pi and run:
-
-```text
-/login
+```bash
+cd /path/to/project
+magenta
 ```
 
-Then select a provider. Built-in subscription logins include Claude Pro/Max, ChatGPT Plus/Pro (Codex), and GitHub Copilot.
+Then run `/login`. Choose either a subscription login or an API-key provider. Stored credentials are written to `~/.magenta/agent/auth.json`.
 
-### Option 2: API key
-
-Set an API key before launching pi:
+Environment variables also work:
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
-pi
+magenta
 ```
 
-You can also run `/login` and select an API-key provider to store the key in `~/.pi/agent/auth.json`.
+Magenta can reuse supported external configuration when its own credential is absent:
 
-See [Providers](providers.md) for all supported providers, environment variables, and cloud-provider setup.
+- `~/.claude/settings.json`: Anthropic token/key, endpoint, and model fields
+- `~/.codex/auth.json`: `OPENAI_API_KEY`
+- `~/.codex/config.toml`: the active Codex provider's endpoint and default model
 
-## First session
+See [Providers](providers.md) for exact precedence and provider-specific environment variables.
 
-Once pi starts, type a request and press Enter:
+## First Session
+
+Type a request and press Enter:
 
 ```text
-Summarize this repository and tell me how to run its checks.
+Summarize this repository and run its documented checks.
 ```
 
-By default, pi gives the model four tools:
+The default active tools are `read`, `bash`, `edit`, `write`, `bg_shell`,
+`sub_agent`, `web-search`, and `web-fetch`. The two web tools are autoloaded
+through HCP. `grep`, `find`, and `ls` are available as optional read-only tools.
+All tools and extensions run with the permissions of the Magenta process;
+project trust is not a sandbox.
 
-- `read` - read files
-- `write` - create or overwrite files
-- `edit` - patch files
-- `bash` - run shell commands
+## Project Instructions
 
-Additional built-in read-only tools (`grep`, `find`, `ls`) are available through tool options. Pi runs in your current working directory and can modify files there. Use git or another checkpointing workflow if you want easy rollback.
-
-## Give pi project instructions
-
-Pi loads context files at startup. Add an `AGENTS.md` file to tell it how to work in a project:
+Add an `AGENTS.md` file to the repository:
 
 ```markdown
 # Project Instructions
@@ -95,71 +81,56 @@ Pi loads context files at startup. Add an `AGENTS.md` file to tell it how to wor
 - Keep responses concise.
 ```
 
-Pi loads:
+Magenta loads:
 
-- `~/.pi/agent/AGENTS.md` for global instructions
-- `AGENTS.md` or `CLAUDE.md` from parent directories and the current directory
+- `~/.magenta/agent/AGENTS.md` for user-wide instructions
+- `AGENTS.md` or `CLAUDE.md` while walking from filesystem ancestors to the current directory
 
-Restart pi, or run `/reload`, after changing context files.
+Run `/refresh` after changing resources in an active session. Use `/reload` only when you need to recompile Magenta and restart the TUI while retaining the current session. Context files are read independently of project trust; executable project resources under `.magenta/` require trust.
 
-## Common things to try
+## Models And Reasoning
 
-### Reference files
+Use `/model` or Ctrl+L to select a configured model. Shift+Tab cycles only the reasoning levels supported by that model.
 
-Type `@` in the editor to fuzzy-search files, or pass files on the command line:
-
-```bash
-pi @README.md "Summarize this"
-pi @src/app.ts @src/app.test.ts "Review these together"
-```
-
-Images can be pasted with Ctrl+V (Alt+V on Windows) or dragged into supported terminals.
-
-### Run shell commands
-
-In interactive mode:
-
-```text
-!npm run lint
-```
-
-The command output is sent to the model. Use `!!command` to run a command without adding its output to the model context.
-
-### Switch models
-
-Use `/model` or Ctrl+L to choose a model. Use Shift+Tab to cycle thinking level. Use Ctrl+P / Shift+Ctrl+P to cycle through scoped models.
-
-### Continue later
-
-Sessions are saved automatically:
+Built-in GPT-5.6 entries for OpenAI, Azure OpenAI Responses, and OpenRouter support `off`, `low`, `medium`, `high`, `xhigh`, and `max`. They do not support `minimal` or `ultra`; `max` is their highest GPT-5.6 level.
 
 ```bash
-pi -c                  # Continue most recent session
-pi -r                  # Browse previous sessions
-pi --name "my task"    # Set session display name at startup
-pi --session <path|id> # Open a specific session
+magenta --model openai/gpt-5.6-sol:max
 ```
 
-Inside pi, use `/resume`, `/new`, `/tree`, `/fork`, and `/clone` to manage sessions.
+## Common Workflows
 
-### Non-interactive mode
-
-For one-shot prompts:
+Reference files with `@`:
 
 ```bash
-pi -p "Summarize this codebase"
-cat README.md | pi -p "Summarize this text"
-pi -p @screenshot.png "What's in this image?"
+magenta @README.md "Summarize this"
+magenta @src/app.ts @src/app.test.ts "Review these together"
 ```
 
-Use `--mode json` for JSON event output or `--mode rpc` for process integration.
+Run a one-shot prompt:
 
-## Next steps
+```bash
+magenta -p "Summarize this codebase"
+cat README.md | magenta -p "Summarize this text"
+magenta -p @screenshot.png "What is shown here?"
+```
 
-- [Using Pi](usage.md) - interactive mode, slash commands, sessions, context files, and CLI reference.
-- [Providers](providers.md) - authentication and model setup.
-- [Settings](settings.md) - global and project configuration.
-- [Keybindings](keybindings.md) - shortcuts and customization.
-- [Pi Packages](packages.md) - install shared extensions, skills, prompts, and themes.
+Continue work later:
 
-Platform notes: [Windows](windows.md), [Termux](termux.md), [tmux](tmux.md), [Terminal setup](terminal-setup.md), [Shell aliases](shell-aliases.md).
+```bash
+magenta -c                  # most recent session
+magenta -r                  # session picker
+magenta --name "my task"    # named session
+magenta --session <path|id> # exact file or matching ID
+```
+
+In the TUI, `/tree`, `/fork`, and `/clone` operate on session history. `/compact` summarizes older context without deleting the JSONL history.
+
+## Next Steps
+
+- [Using Magenta](usage.md)
+- [Providers](providers.md)
+- [Models](models.md)
+- [Settings](settings.md)
+- [Security](security.md)
+- [Sessions](sessions.md)

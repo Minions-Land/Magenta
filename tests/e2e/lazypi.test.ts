@@ -39,13 +39,16 @@ test.describe("Extension Retirement", () => {
 		const expectedPaths = [
 			"HarnessComponentProtocol/tools/todo/todo.toml",
 			"HarnessComponentProtocol/tools/todo/pi/todo.ts",
-			"HarnessComponentProtocol/tools/ssh/ssh.toml",
-			"HarnessComponentProtocol/tools/ssh/magenta/ssh.ts",
 		];
 
 		for (const relativePath of expectedPaths) {
 			expect(await pathExists(join(repoRoot, relativePath)), relativePath).toBe(true);
 		}
+	});
+
+	test("keeps SSH in the host adapter boundary instead of a synthetic Tool Module", async () => {
+		expect(await pathExists(join(repoRoot, "HarnessComponentProtocol/_magenta/env/ssh.ts"))).toBe(true);
+		expect(await pathExists(join(repoRoot, "HarnessComponentProtocol/tools/ssh"))).toBe(false);
 	});
 
 	test("does not keep retired built-in extensions in source", async () => {
@@ -60,7 +63,9 @@ test.describe("Extension Retirement", () => {
 		];
 
 		for (const name of retiredNames) {
-			const { stdout } = await execAsync(`find "${join(repoRoot, "harness")}" -path "*/extensions/*" -name "${name}" 2>/dev/null || true`);
+			const { stdout } = await execAsync(
+				`find "${join(repoRoot, "HarnessComponentProtocol")}" -path "*/extensions/*" -name "${name}" 2>/dev/null || true`,
+			);
 			expect(stdout.trim(), name).toBe("");
 		}
 	});

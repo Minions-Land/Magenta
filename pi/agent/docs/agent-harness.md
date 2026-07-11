@@ -1,8 +1,10 @@
 # AgentHarness lifecycle
 
+> **Historical design record.** The current `@earendil-works/pi-agent-core` package exports `Agent` and the low-level agent loop; it does not export the `AgentHarness` described here. Use [`../README.md`](../README.md) for the current public API. Harness Component Protocol runtime documentation lives under `HarnessComponentProtocol/` at the repository root.
+
 `AgentHarness` is the orchestration layer above the low-level agent loop. It owns session persistence, runtime configuration, resource resolution, operation locking, and extension-facing mutation semantics.
 
-This document describes the current direction and implemented behavior. Some extension/session-facade details are planned and called out explicitly.
+The remainder preserves the former lifecycle design and must not be read as current package behavior.
 
 ## Ultimate lifecycle goal
 

@@ -4,6 +4,8 @@ Unified LLM API with provider collections, automatic auth resolution, token and 
 
 **Note**: This library only includes models that support tool calling (function calling), as this is essential for agentic workflows.
 
+Requires Node.js 22.19.0 or newer.
+
 ## Table of Contents
 
 - [Supported Providers](#supported-providers)
@@ -712,6 +714,17 @@ console.log(model.output);  // ['image'] or ['image', 'text']
 
 Many models support thinking/reasoning capabilities where they can show their internal thought process. You can check if a model supports reasoning via the `reasoning` property. If you pass reasoning options to a non-reasoning model, they are silently ignored.
 
+`ThinkingLevel` is a shared vocabulary, not a promise that every model accepts every level. Use `getSupportedThinkingLevels(model)` to build a selector and `clampThinkingLevel(model, requested)` when accepting a generic preference. Model metadata in `thinkingLevelMap` is authoritative: a string maps the library level to the provider value, `null` hides it, and an omitted extended level is available only when the provider-specific defaults support it.
+
+```typescript
+import { clampThinkingLevel, getSupportedThinkingLevels } from '@earendil-works/pi-ai';
+
+const levels = getSupportedThinkingLevels(model);
+const effectiveLevel = clampThinkingLevel(model, 'max');
+```
+
+GPT-5.6 models on OpenAI, Azure OpenAI Responses, and OpenRouter expose `off`, `low`, `medium`, `high`, `xhigh`, and `max`. They do not expose `minimal`, and `ultra` is not part of the public `ThinkingLevel` type. For GPT-5.6, `max` is the highest supported request value.
+
 ### Unified Interface (streamSimple/completeSimple)
 
 ```typescript
@@ -730,7 +743,7 @@ if (model.reasoning) {
 const response = await models.completeSimple(model, {
   messages: [{ role: 'user', content: 'Solve: 2x + 5 = 13', timestamp: Date.now() }]
 }, {
-  reasoning: 'medium'  // 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+  reasoning: 'medium'  // choose from getSupportedThinkingLevels(model)
 });
 
 // Access thinking and text blocks
@@ -999,7 +1012,7 @@ Custom models can carry `headers` (e.g. proxies behind bot detection) and `compa
 
 Some OpenAI-compatible servers do not understand the `developer` role used for reasoning-capable models. For those providers, set `compat.supportsDeveloperRole` to `false` so the system prompt is sent as a `system` message instead. If the server also does not support `reasoning_effort`, set `compat.supportsReasoningEffort` to `false` too. This commonly applies to Ollama, vLLM, SGLang, and similar OpenAI-compatible servers.
 
-Use model-level `thinkingLevelMap` to describe model-specific thinking controls. Keys are pi thinking levels (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`). Missing keys use provider defaults, string values are sent to the provider, and `null` marks a level unsupported.
+Use model-level `thinkingLevelMap` to describe model-specific thinking controls. Keys are library thinking levels (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`). Missing keys use provider defaults, string values are sent to the provider, and `null` marks a level unsupported.
 
 ```typescript
 const ollamaReasoningModel: Model<'openai-completions'> = {
@@ -1544,7 +1557,7 @@ Update `README.md`:
 
 #### 7. Documentation
 
-Update `packages/ai/README.md`:
+Update `pi/ai/README.md`:
 
 - Add to the Supported Providers table
 - Document any provider-specific options or authentication requirements
@@ -1552,7 +1565,7 @@ Update `packages/ai/README.md`:
 
 #### 8. Changelog
 
-Add an entry to `packages/ai/CHANGELOG.md` under `## [Unreleased]`:
+Add an entry to `pi/ai/CHANGELOG.md` under `## [Unreleased]`:
 
 ```markdown
 ### Added

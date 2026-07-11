@@ -1,5 +1,7 @@
 # Models architecture
 
+> **Refactor design record.** This file preserves the design rationale and completion checklist for the provider refactor. The current supported API is documented in [`../../ai/README.md`](../../ai/README.md); current source paths begin with `pi/`, not the former `packages/` examples retained below.
+
 This document describes the target design for the next `pi-ai` model/provider refactor. It describes the desired shape, not the current implementation. It is intended to be complete enough to start implementing from a fresh session.
 
 Goals:

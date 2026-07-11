@@ -1,21 +1,20 @@
 # Session Support
 
-This private Magenta support library provides session management with multiple
-storage backends. It is host/shared code, not a selectable Harness Module, so it
-does not own HCP roles or appear in `harness.toml`.
+This private Magenta support library provides the session tree and storage
+primitives used by the host. It is not a selectable Harness Module, so it owns
+no HCP role and does not appear in `harness.toml` or generated assembly.
 
-## Implementation
+## Current Surface
 
-- **Source**: pi (TypeScript)
-- **Location**: `session/pi/`
+- `pi/session.ts`: `Session` and `buildSessionContext()`
+- `pi/jsonl-storage.ts`: `JsonlSessionStorage` and JSONL metadata loading
+- `pi/memory-storage.ts`: `InMemorySessionStorage` for tests and ephemeral use
+- `pi/repo-utils.ts`: storage-to-session helpers
+- `pi/uuid.ts`: UUIDv7 generation
 
-## Key Exports
-
-- `Session` — Session tree API with branching message history
-- `buildSessionContext()` — Build context from session path (messages, model, thinking level)
-- `JsonlSessionRepo` — JSONL file-based session storage
-- `InMemorySessionRepo` — In-memory session storage (for testing)
-- Session entry types (`MessageEntry`, `BranchSummaryEntry`, `CompactionEntry`, etc.)
+`Session`, `buildSessionContext()`, storage helpers, and common session types are
+exported from `@magenta/harness`. Concrete storage implementations remain
+host-internal and are used directly by Harness tests.
 
 ## Session Structure
 
@@ -29,17 +28,16 @@ Sessions maintain a **tree-structured message history** with:
 ## Usage
 
 ```typescript
-import { JsonlSessionRepo, buildSessionContext } from "@magenta/harness";
+import { Session } from "@magenta/harness";
 
-// Create a JSONL-backed session repository
-const repo = new JsonlSessionRepo(sessionsDir);
-const session = await repo.getOrCreate(sessionId);
+// A host supplies an object matching SessionStorage.
+const session = new Session(storage);
 
-// Build context from current path
-const context = buildSessionContext(session.getCurrentPath());
+// Reconstruct context from the currently selected branch.
+const context = await session.buildContext();
 console.log(context.messages);       // AgentMessage[]
 console.log(context.model);          // { provider, modelId }
-console.log(context.thinkingLevel);  // "off" | "low" | "medium" | "high"
+console.log(context.thinkingLevel);  // persisted string or undefined
 
 // Append a message
 await session.appendMessage(userMessage);
@@ -47,14 +45,13 @@ await session.appendMessage(userMessage);
 
 ## Storage Backends
 
-### JsonlSessionRepo
-- Stores each session as a `.jsonl` file (one entry per line)
-- Supports concurrent reads
-- Atomic appends via file locking
-- Efficient for streaming/incremental writes
+### JsonlSessionStorage
+- Stores one session as a `.jsonl` file with a versioned header
+- Appends tree entries incrementally through the injected `FileSystem`
+- Validates headers, entry shape, and selected leaf state while loading
 
-### InMemorySessionRepo
-- Stores sessions in memory (Map-based)
+### InMemorySessionStorage
+- Stores entries in memory with the same `SessionStorage` shape
 - Used for testing and ephemeral sessions
 - No persistence
 
@@ -84,10 +81,8 @@ await session.appendMessage(userMessage);
 - Types module (session types and storage contract)
 - Node.js `fs/promises` (for JSONL storage)
 
-## Architecture Notes
+## Boundary
 
-The session module provides **storage abstraction** — the agent loop works against the `Session` API without knowing the storage backend. This enables:
-- Local file storage (JSONL)
-- Database storage (future)
-- Cloud storage (future)
-- Memory-only (testing)
+The agent loop works against the `Session` and structural `SessionStorage`
+surfaces rather than an HCP address. Session persistence is host foundation
+code, not a Tool, Capability, Resource, Source, or fourth HCP role.

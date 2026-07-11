@@ -1,15 +1,25 @@
 # System Prompt Module
 
-The **system-prompt** module formats agent skills for inclusion in the system prompt.
+The `system-prompt` Module has two deliberately separate products:
+
+- the selected `pi` Source produces a live Capability for formatting skills and
+  loading system-prompt descriptors;
+- the repository-declared `descriptor` Source converts host- or Package-supplied
+  descriptors into file-backed Resources.
+
+This keeps executable behavior and inert prompt content distinct while routing
+both through the same real `system-prompt/HcpServer.ts`.
 
 ## Implementation
 
 - **Source**: pi (TypeScript)
 - **Location**: `system-prompt/pi/system-prompt.ts`
 
-## Key Export
+## Capability Surface
 
-- `formatSkillsForSystemPrompt()` — Format available skills into XML block for system prompt
+- `SystemPromptProvider` loads and validates descriptors.
+- `formatSkillsForSystemPrompt()` formats available skills as model context.
+- `loadSystemPromptDescriptor()` is the Source-independent descriptor loader.
 
 ## Usage
 
@@ -85,15 +95,26 @@ name = "system-prompt"
 source = "pi"
 ```
 
+Package prompt content is declared separately as a Resource descriptor:
+
+```toml
+kind = "system-prompt" # or append-system-prompt
+name = "domain-system-prompt"
+content_path = "SYSTEM.md"
+```
+
+`system-prompt` Resources replace by default; `append-system-prompt` Resources
+append and must use distinct names. Package content never becomes another live
+system-prompt Capability.
+
 ## Dependencies
 
 - Structural Skill type
 
 ## Architecture Notes
 
-This module is **pure formatting** — it doesn't load skills or construct the full system prompt. It only formats the skills block for inclusion.
-
-The full system prompt is assembled by the agent loop, which combines:
+The Module provides formatting and descriptor behavior; it does not own the
+application's final prompt composition. The agent loop combines:
 1. Base instructions
 2. Skills block (from this module)
 3. Tool definitions

@@ -2,6 +2,8 @@
 
 # Pi Observability Design Notes
 
+> **Unimplemented design record.** This document proposes an observability package and event model; it is not a description of exports available from the current `pi/ai` or `pi/agent` packages. Use the package READMEs for current behavior.
+
 ## Goal
 
 Make `packages/ai` and `packages/agent`/harness observable without depending on OpenTelemetry, Sentry, or any APM vendor.

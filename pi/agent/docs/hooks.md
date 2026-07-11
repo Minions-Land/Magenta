@@ -1,8 +1,10 @@
 # AgentHarness hooks design
 
+> **Historical design record.** The hook surface below is a proposal for the former `AgentHarness` design, not an exported API of the current package. See [`../README.md`](../README.md) for current events and tool hooks.
+
 <!-- Synced from jot 3utlzkxy. Edit this file in-repo going forward. -->
 
-Final design.
+Preserved proposal.
 
 ## Core model
 

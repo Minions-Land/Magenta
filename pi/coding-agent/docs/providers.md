@@ -1,11 +1,12 @@
 # Providers
 
-Pi supports subscription-based providers via OAuth and API key providers via environment variables or auth file. For each provider, pi knows all available models. The list is updated with every pi release.
+Magenta supports subscription providers through OAuth and API-key providers through environment variables, its auth file, and selected external tool configuration. Built-in model catalogs are updated with repository releases.
 
 ## Table of Contents
 
 - [Subscriptions](#subscriptions)
 - [API Keys](#api-keys)
+- [External Credentials](#external-credentials)
 - [Auth File](#auth-file)
 - [Cloud Providers](#cloud-providers)
 - [Custom Providers](#custom-providers)
@@ -19,7 +20,7 @@ Use `/login` in interactive mode, then select a provider:
 - Claude Pro/Max
 - GitHub Copilot
 
-Use `/logout` to clear credentials. Tokens are stored in `~/.pi/agent/auth.json` and auto-refresh when expired.
+Use `/logout` to clear credentials saved by `/login`. Tokens are stored in `~/.magenta/agent/auth.json` and auto-refresh when expired. `/logout` does not modify environment variables, Claude Code settings, or Codex settings.
 
 ### OpenAI Codex
 
@@ -43,18 +44,19 @@ Use `/login` in interactive mode and select a provider to store an API key in `a
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
-pi
+magenta
 ```
 
 | Provider | Environment Variable | `auth.json` key |
 |----------|----------------------|------------------|
-| Anthropic | `ANTHROPIC_API_KEY` | `anthropic` |
+| Anthropic | `ANTHROPIC_OAUTH_TOKEN`, `ANTHROPIC_AUTH_TOKEN`, or `ANTHROPIC_API_KEY` | `anthropic` |
 | Ant Ling | `ANT_LING_API_KEY` | `ant-ling` |
 | Azure OpenAI Responses | `AZURE_OPENAI_API_KEY` | `azure-openai-responses` |
 | OpenAI | `OPENAI_API_KEY` | `openai` |
 | DeepSeek | `DEEPSEEK_API_KEY` | `deepseek` |
 | NVIDIA NIM | `NVIDIA_API_KEY` | `nvidia` |
-| Google Gemini | `GEMINI_API_KEY` | `google` |
+| Google Gemini | `GEMINI_API_KEY` (`GOOGLE_API_KEY` is also recognized by Magenta's external loader) | `google` |
+| Google Vertex AI | `GOOGLE_CLOUD_API_KEY` or ADC (see below) | `google-vertex` |
 | Mistral | `MISTRAL_API_KEY` | `mistral` |
 | Groq | `GROQ_API_KEY` | `groq` |
 | Cerebras | `CEREBRAS_API_KEY` | `cerebras` |
@@ -73,16 +75,30 @@ pi
 | Kimi For Coding | `KIMI_API_KEY` | `kimi-coding` |
 | MiniMax | `MINIMAX_API_KEY` | `minimax` |
 | MiniMax (China) | `MINIMAX_CN_API_KEY` | `minimax-cn` |
+| Moonshot AI / Moonshot AI (China) | `MOONSHOT_API_KEY` | `moonshotai` / `moonshotai-cn` |
 | Xiaomi MiMo | `XIAOMI_API_KEY` | `xiaomi` |
 | Xiaomi MiMo Token Plan (China) | `XIAOMI_TOKEN_PLAN_CN_API_KEY` | `xiaomi-token-plan-cn` |
 | Xiaomi MiMo Token Plan (Amsterdam) | `XIAOMI_TOKEN_PLAN_AMS_API_KEY` | `xiaomi-token-plan-ams` |
 | Xiaomi MiMo Token Plan (Singapore) | `XIAOMI_TOKEN_PLAN_SGP_API_KEY` | `xiaomi-token-plan-sgp` |
 
-Reference for environment variables and `auth.json` keys: [`const envMap`](https://github.com/earendil-works/pi-mono/blob/main/packages/ai/src/env-api-keys.ts) in [`packages/ai/src/env-api-keys.ts`](https://github.com/earendil-works/pi-mono/blob/main/packages/ai/src/env-api-keys.ts).
+The code-level reference for built-in environment variables is [`pi/ai/src/env-api-keys.ts`](../../ai/src/env-api-keys.ts).
 
-#### Auth File
+## External Credentials
 
-Store credentials in `~/.pi/agent/auth.json`:
+When Magenta has no credential in its own auth file, it can reuse a limited set of local tool configuration:
+
+| Provider | Files and fields |
+|---|---|
+| Anthropic | `~/.claude/settings.json`, top-level `env.ANTHROPIC_AUTH_TOKEN` or `env.ANTHROPIC_API_KEY`; optional `ANTHROPIC_BASE_URL` and `ANTHROPIC_MODEL` |
+| OpenAI | `~/.codex/auth.json`, `OPENAI_API_KEY` (or legacy `openai.key`); optional active provider `base_url` and top-level `model` from `~/.codex/config.toml` |
+
+For Anthropic, OpenAI, and Google, process environment values are checked before those files. A Magenta credential saved in `~/.magenta/agent/auth.json` takes precedence over external files, and CLI `--api-key` is the highest-priority request override.
+
+The external loader does not copy credentials into Magenta's auth file. Malformed or missing external files are ignored.
+
+## Auth File
+
+Store credentials in `~/.magenta/agent/auth.json`:
 
 ```json
 {
@@ -120,7 +136,7 @@ API key credentials can also include provider-scoped environment values. These v
 }
 ```
 
-Use this when pi should use different provider settings than the project shell environment.
+Use this when Magenta should use different provider settings than the project shell environment.
 
 ### Key Resolution
 
@@ -188,14 +204,14 @@ export AWS_REGION=us-west-2
 Also supports ECS task roles (`AWS_CONTAINER_CREDENTIALS_*`) and IRSA (`AWS_WEB_IDENTITY_TOKEN_FILE`).
 
 ```bash
-pi --provider amazon-bedrock --model us.anthropic.claude-sonnet-4-20250514-v1:0
+magenta --provider amazon-bedrock --model us.anthropic.claude-sonnet-4-20250514-v1:0
 ```
 
 Prompt caching is enabled automatically for Claude models whose ID contains a recognizable model name (base models and system-defined inference profiles). For application inference profiles (whose ARNs don't contain the model name), set `AWS_BEDROCK_FORCE_CACHE=1` to enable cache points:
 
 ```bash
 export AWS_BEDROCK_FORCE_CACHE=1
-pi --provider amazon-bedrock --model arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/abc123
+magenta --provider amazon-bedrock --model arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/abc123
 ```
 
 If you are connecting to a Bedrock API proxy, the following environment variables can be used:
@@ -219,7 +235,7 @@ export AWS_BEDROCK_FORCE_HTTP1=1
 export CLOUDFLARE_API_KEY=...           # or use /login
 export CLOUDFLARE_ACCOUNT_ID=...
 export CLOUDFLARE_GATEWAY_ID=...        # create at dash.cloudflare.com → AI → AI Gateway
-pi --provider cloudflare-ai-gateway --model "claude-sonnet-4-5"
+magenta --provider cloudflare-ai-gateway --model "claude-sonnet-4-5"
 ```
 
 Routes to OpenAI, Anthropic, and Workers AI through Cloudflare AI Gateway. Workers AI uses the Unified API (`/compat`) and prefixed model IDs (`workers-ai/@cf/...`). OpenAI uses the OpenAI passthrough route (`/openai`) with native OpenAI model IDs such as `gpt-5.1`. Anthropic uses the Anthropic passthrough route (`/anthropic`) with native Anthropic model IDs such as `claude-sonnet-4-5`.
@@ -233,7 +249,7 @@ AI Gateway authentication uses `CLOUDFLARE_API_KEY` as `cf-aig-authorization`. U
 | Stored BYOK | Cloudflare token only | Cloudflare injects provider keys stored in the AI Gateway dashboard |
 | Inline BYOK | Cloudflare token plus upstream `Authorization` header | The request supplies the upstream provider key |
 
-For normal pi usage, prefer unified billing or stored BYOK. Inline BYOK requires configuring an additional upstream `Authorization` header for the Cloudflare AI Gateway provider, for example via a `models.json` provider/model override.
+For normal Magenta usage, prefer unified billing or stored BYOK. Inline BYOK requires configuring an additional upstream `Authorization` header for the Cloudflare AI Gateway provider, for example via a `models.json` provider/model override.
 
 ### Cloudflare Workers AI
 
@@ -242,10 +258,10 @@ For normal pi usage, prefer unified billing or stored BYOK. Inline BYOK requires
 ```bash
 export CLOUDFLARE_API_KEY=...           # or use /login
 export CLOUDFLARE_ACCOUNT_ID=...
-pi --provider cloudflare-workers-ai --model "@cf/moonshotai/kimi-k2.6"
+magenta --provider cloudflare-workers-ai --model "@cf/moonshotai/kimi-k2.6"
 ```
 
-Pi automatically sets `x-session-affinity` for [prefix caching](https://developers.cloudflare.com/workers-ai/features/prompt-caching/) discounts.
+Magenta automatically sets `x-session-affinity` for [prefix caching](https://developers.cloudflare.com/workers-ai/features/prompt-caching/) discounts.
 
 ### Google Vertex AI
 
@@ -267,9 +283,11 @@ Or set `GOOGLE_APPLICATION_CREDENTIALS` to a service account key file.
 
 ## Resolution Order
 
-When resolving credentials for a provider:
+When resolving request credentials for a provider, prefer this mental model:
 
 1. CLI `--api-key` flag
-2. `auth.json` entry (API key or OAuth token)
-3. Environment variable
-4. Custom provider keys from `models.json`
+2. `~/.magenta/agent/auth.json` entry (API key or OAuth token)
+3. Process environment or supported external Claude Code/Codex configuration
+4. Custom provider key declared in `~/.magenta/agent/models.json`
+
+Provider-scoped `env` values inside an `auth.json` API-key entry are used while resolving that entry and its provider configuration. They do not mutate `process.env`.

@@ -184,7 +184,7 @@ Same-name role classes are collected by static code generation:
 5. Assembly attaches those real entities to the one HcpClient.
 
 Adding a repository Module/Source requires its TOML declaration and real role
-files, followed by:
+files, followed by this command from `HarnessComponentProtocol/`:
 
 ```bash
 npm run generate:hcp-sources

@@ -72,7 +72,8 @@ cd HarnessComponentProtocol
 npm test -- test/tools/todo/todo.test.ts
 ```
 
-All tests are located in `test/tools/todo/todo.test.ts`.
+Focused coverage lives in `test/tools/todo/todo.test.ts`; the full Harness suite
+also covers generated Tool ownership and session assembly.
 
 ## State Management
 

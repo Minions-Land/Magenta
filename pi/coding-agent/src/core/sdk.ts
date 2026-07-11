@@ -54,15 +54,16 @@ export interface CreateAgentSessionOptions {
 	 * Optional default tool suppression mode when no explicit allowlist is provided.
 	 *
 	 * - "all": start with no tools enabled
-	 * - "builtin": disable the default built-in tools (read, bash, edit, write)
-	 *   but keep extension/custom tools enabled
+	 * - "builtin": disable the default application and repository-default HCP tools,
+	 *   but keep extension/custom, package, and user MCP tools enabled
 	 */
 	noTools?: "all" | "builtin";
 	/**
 	 * Optional allowlist of tool names.
 	 *
-	 * When omitted, pi enables the default built-in tools (read, bash, edit, write)
-	 * and leaves extension/custom tools enabled unless `noTools` changes that default.
+	 * When omitted, pi enables the default application tools (read, bash, edit, write,
+	 * bg_shell, sub_agent), repository-default HCP tools, package tools, user MCP tools,
+	 * and extension/custom tools unless `noTools` changes that default.
 	 * When provided, only the listed tool names are enabled.
 	 */
 	tools?: string[];

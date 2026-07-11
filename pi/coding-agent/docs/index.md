@@ -1,82 +1,64 @@
-# Pi Documentation
+# Magenta Documentation
 
-Pi is a minimal terminal coding harness. It is designed to stay small at the core while being extended through TypeScript extensions, skills, prompt templates, themes, and pi packages.
+Magenta is the terminal coding agent built by this repository. Its executable is `magenta`; its default user directory is `~/.magenta/agent`, and project-local resources live under `.magenta/`.
 
-## Quick start
+The published package and TypeScript APIs retain `@earendil-works/pi-*` and some `pi` identifiers for compatibility. Those identifiers do not change the CLI command.
 
-Install Pi with npm:
+## Quick Start
+
+Magenta requires Node.js 22.19.0 or newer.
 
 ```bash
 npm install -g --ignore-scripts @earendil-works/pi-coding-agent
+magenta
 ```
 
-`--ignore-scripts` disables dependency lifecycle scripts during install. Pi does not require install scripts for normal npm installs.
+Authenticate from the TUI with `/login`, provide an API key in the environment, or use supported external Claude Code/Codex credentials. See [Quickstart](quickstart.md) and [Providers](providers.md).
 
-On Linux or macOS, you can also use the installer:
+To run this repository checkout:
 
 ```bash
-curl -fsSL https://pi.dev/install.sh | sh
+npm install
+npm run build
+node pi/coding-agent/dist/cli.js
 ```
 
-To uninstall pi itself, use npm for curl and npm installs:
+## Start Here
 
-```bash
-npm uninstall -g @earendil-works/pi-coding-agent
-```
-
-For pnpm, Yarn, or Bun installs, use the matching global remove command: `pnpm remove -g @earendil-works/pi-coding-agent`, `yarn global remove @earendil-works/pi-coding-agent`, or `bun uninstall -g @earendil-works/pi-coding-agent`.
-
-Then run it in a project directory:
-
-```bash
-pi
-```
-
-Authenticate with `/login` for subscription providers, or set an API key such as `ANTHROPIC_API_KEY` before starting pi.
-
-For the full first-run flow, see [Quickstart](quickstart.md).
-
-## Start here
-
-- [Quickstart](quickstart.md) - install, authenticate, and run a first session.
-- [Using Pi](usage.md) - interactive mode, slash commands, context files, and CLI reference.
-- [Providers](providers.md) - subscription and API-key setup for built-in providers.
-- [Security](security.md) - project trust, sandbox boundaries, and vulnerability reporting.
-- [Containerization](containerization.md) - sandbox pi with Gondolin, Docker, or OpenShell.
-- [Settings](settings.md) - global and project settings.
-- [Keybindings](keybindings.md) - default shortcuts and custom keybindings.
-- [Sessions](sessions.md) - session management, branching, and tree navigation.
-- [Compaction](compaction.md) - context compaction and branch summarization.
+- [Quickstart](quickstart.md) - install, authenticate, and run a first session
+- [Using Magenta](usage.md) - TUI, slash commands, context files, and CLI reference
+- [Providers](providers.md) - authentication and provider setup
+- [Models](models.md) - custom models and model-specific reasoning levels
+- [Settings](settings.md) - user and project configuration
+- [Security](security.md) - trust and process-permission boundaries
+- [Sessions](sessions.md) - persistence, branching, and navigation
+- [Compaction](compaction.md) - context compaction and branch summaries
 
 ## Customization
 
-- [Extensions](extensions.md) - TypeScript modules for tools, commands, events, and custom UI.
-- [Skills](skills.md) - Agent Skills for reusable on-demand capabilities.
-- [Prompt templates](prompt-templates.md) - reusable prompts that expand from slash commands.
-- [Themes](themes.md) - built-in and custom terminal themes.
-- [Pi packages](packages.md) - bundle and share extensions, skills, prompts, and themes.
-- [Custom models](models.md) - add model entries for supported provider APIs.
-- [Custom providers](custom-provider.md) - implement custom APIs and OAuth flows.
+- [Extensions](extensions.md) - TypeScript tools, commands, events, and UI
+- [Skills](skills.md) - reusable Agent Skills
+- [Prompt templates](prompt-templates.md) - slash-expanded prompts
+- [Themes](themes.md) - terminal themes
+- [Extension packages](packages.md) - npm, git, HTTPS, SSH, and local packages
+- [Custom providers](custom-provider.md) - extension-owned APIs and OAuth
 
-## Programmatic usage
+Extension APIs and package manifest keys preserve their upstream `pi` names. Harness domain packages are a separate input: an external cache should be passed with `--harness-packages-root`; without it, Magenta checks only `<current-workspace>/packages`. It does not scan sibling directories or require a package submodule. Future GitHub acquisition is outside the current loader.
 
-- [SDK](sdk.md) - embed pi in Node.js applications.
-- [RPC mode](rpc.md) - integrate over stdin/stdout JSONL.
-- [JSON event stream mode](json.md) - print mode with structured events.
-- [TUI components](tui.md) - build custom terminal UI for extensions.
+## Integration
 
-## Reference
+- [SDK](sdk.md) - embed the coding agent in Node.js
+- [RPC](rpc.md) - integrate over stdin/stdout JSONL
+- [JSON mode](json.md) - consume structured one-shot events
+- [TUI](tui.md) - build extension UI components
+- [Session format](session-format.md) - JSONL schema and SessionManager API
 
-- [Session format](session-format.md) - JSONL session file format, entry types, and SessionManager API.
+## Platform And Development
 
-## Platform setup
-
+- [Development](development.md)
+- [Containerization](containerization.md)
 - [Windows](windows.md)
-- [Termux on Android](termux.md)
+- [Termux](termux.md)
 - [tmux](tmux.md)
 - [Terminal setup](terminal-setup.md)
 - [Shell aliases](shell-aliases.md)
-
-## Development
-
-- [Development](development.md) - local setup, project structure, and debugging.

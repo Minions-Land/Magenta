@@ -114,17 +114,17 @@ test.describe('TUI Interactive Mode (real PTY)', () => {
     expect(gotAnswer).toBe(true);
   });
 
-  test('should run a slash command (/help)', async () => {
+  test('should run the /session slash command', async () => {
     tui.start(['--no-session']);
     await tui.waitFor((out) => out.length > 0, 10000);
 
-    tui.type('/help');
+    tui.type('/session');
     await tui.wait(500);
     tui.enter();
 
-    // /help should surface command listing text.
+    // /session renders a stable, command-specific information panel.
     const shown = await tui.waitFor(
-      (out) => /help|command|\/clear|\/exit|usage/i.test(out),
+      (out) => out.includes('Session Info') && out.includes('Messages') && out.includes('Tokens'),
       15000
     );
     expect(shown).toBe(true);

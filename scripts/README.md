@@ -1,53 +1,45 @@
-# scripts/
+# Repository scripts
 
-Repo-level maintenance, release, CI-check, and analysis scripts. These operate
-across the whole monorepo (workspaces + harness), as opposed to per-package
-scripts that live inside each package.
+`scripts/` contains monorepo-wide build, validation, release, profiling, and
+maintenance programs. Prefer the root `package.json` command when one exists;
+it records the supported arguments and composes prerequisite steps.
 
-Most are wired into root `package.json` scripts; run them via `npm run <name>`
-where one exists, or invoke directly with `node scripts/<file>`.
+## Supported root commands
 
-## Release & versioning
-
-| Script | Purpose |
+| Command | Purpose |
 |---|---|
-| `release.mjs` | Full release flow (`npm run release:{patch,minor,major}`) |
-| `local-release.mjs` | Local dry-run style release (`npm run release:local`) |
-| `release-notes.mjs` | Generate / fix GitHub release notes |
-| `publish.mjs` | Publish packages to npm (`npm run publish[:dry]`) |
-| `sync-versions.js` | Sync workspace versions after `npm version` bump |
-| `sync-brand.mjs` | Propagate brand registry values across packages |
-| `generate-coding-agent-shrinkwrap.mjs` | Generate/verify the coding-agent npm-shrinkwrap |
-| `build-binaries.sh` | Build standalone coding-agent binaries |
+| `npm run build` | Build Pi, Harness, memory, and the coding-agent in dependency order |
+| `npm run check` | Format/lint, validate pinned dependencies/imports/shrinkwrap, type-check, and run the browser smoke build |
+| `npm run test` | Run every workspace test script |
+| `npm run sync-brand -- --dry-run` | Preview brand metadata synchronization |
+| `npm run shrinkwrap:coding-agent` | Regenerate the published CLI shrinkwrap |
+| `npm run profile:tui` | Profile TUI startup/runtime |
+| `npm run profile:rpc` | Profile RPC startup/runtime |
+| `npm run publish:dry` | Build, validate, and exercise the npm publication flow without publishing |
 
-## CI / consistency checks
+Release commands (`release:patch`, `release:minor`, and `release:major`) are
+remote release operations, not local preparation helpers. `release.mjs`
+requires a clean tree, updates versions and changelogs, creates two commits,
+tags the release, then directly pushes local `main` and the tag to `origin`.
+Run it only from the intended, up-to-date `main` after confirming the remote
+and release version. Use `publish:dry` or `release:local` for non-publishing
+validation.
 
-| Script | Purpose |
-|---|---|
-| `check-pinned-deps.mjs` | Enforce exact versions on direct external deps |
-| `check-ts-relative-imports.mjs` | Forbid relative `.js` imports in `.ts` sources |
-| `check-lockfile-commit.mjs` | Guard against accidental `package-lock.json` commits |
-| `check-browser-smoke.mjs` | Run the browser smoke test and report failures |
-| `browser-smoke-entry.ts` | Entry point loaded by the browser smoke check |
+## Script groups
 
-## Profiling & analysis
+- `check-*.mjs` and `browser-smoke-entry.ts`: repository invariants and browser
+  compatibility.
+- `generate-coding-agent-shrinkwrap.mjs`: deterministic published dependency
+  metadata.
+- `build-binaries.sh`, `local-release.mjs`, `publish.mjs`, `release*.mjs`:
+  packaging and release operations.
+- `profile-coding-agent-node.mjs`, `session-context-stats.mjs`,
+  `session-transcripts.ts`, `stats.ts`, `cost.ts`, and `*tool-stats*`:
+  profiling and local session analysis.
+- `sync-brand.mjs`: build-time brand metadata synchronization.
+- `update-source-imports-to-ts.sh` and `repro-5893-wsl-bash.mjs`: targeted
+  migration/reproduction helpers, not routine development commands.
 
-| Script | Purpose |
-|---|---|
-| `profile-coding-agent-node.mjs` | Profile the CLI in `--mode tui` or `--mode rpc` |
-| `session-context-stats.mjs` | Context-window usage stats across sessions |
-| `session-transcripts.ts` | Export / analyze session transcripts |
-| `stats.ts` | Aggregate token/usage totals from session logs |
-| `cost.ts` | Estimate spend over a session directory / window |
-| `tool-stats.ts`, `read-tool-stats.mjs`, `edit-tool-stats.mjs` | Per-tool usage reports (HTML/CLI) |
-
-## Migration & repro helpers
-
-| Script | Purpose |
-|---|---|
-| `update-source-imports-to-ts.sh` | One-off: rewrite source imports to `.ts` extensions |
-| `repro-5893-wsl-bash.mjs` | Regression repro for issue #5893 (WSL bash) |
-
-> [!TIP]
-> Scripts that print a `Usage:` banner accept `--help`-style flags; run them with
-> no args to see options.
+Several scripts originated in upstream Pi and still encode upstream release
+assumptions. Read the script and inspect its diff before running any mutating
+version, publication, brand, or migration command.

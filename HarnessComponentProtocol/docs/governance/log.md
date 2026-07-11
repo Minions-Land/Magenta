@@ -1,5 +1,27 @@
 # Harness Governance Log
 
+Status: **HISTORICAL, APPEND-ONLY RECORD.** Entries below preserve the names,
+paths, architecture proposals, Package ownership assumptions, and verification
+counts that were current when each decision was recorded. Several were later
+replaced, including the old `harness/` root, registry design, central builder
+tables, and repository-owned concrete Package root. Do not use this file as
+implementation guidance and do not rewrite old entries to resemble current
+code.
+
+Current authority:
+
+- [`hcp-architecture.md`](./hcp-architecture.md) for HCP ownership and assembly;
+- [`hcp-naming.md`](./hcp-naming.md) for the entity-tree naming law;
+- [`contract.md`](./contract.md) for current development boundaries; and
+- [`../DEVELOPING.md`](../DEVELOPING.md) for task-oriented workflows.
+
+In particular, current code lives under `HarnessComponentProtocol/`, HCP has
+only `HcpClient`, `HcpServer`, and `HcpMagnet` roles, and concrete domain
+Packages will be independently published on GitHub. Magenta3 retains only the
+generic Package interface and consumes a resolved local root after acquisition.
+External integration supplies that root explicitly; the omitted-root fallback
+is only `<repoRoot>/packages`, never a sibling checkout or submodule.
+
 ## 2026-07-02
 
 ### User Direction Captured

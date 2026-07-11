@@ -2,6 +2,8 @@
 
 Stateful agent with tool execution and event streaming. Built on `@earendil-works/pi-ai`.
 
+Requires Node.js 22.19.0 or newer.
+
 ## Installation
 
 ```bash
@@ -12,13 +14,18 @@ npm install @earendil-works/pi-agent-core
 
 ```typescript
 import { Agent } from "@earendil-works/pi-agent-core";
-import { getModel } from "@earendil-works/pi-ai";
+import { builtinModels } from "@earendil-works/pi-ai/providers/all";
+
+const models = builtinModels();
+const model = models.getModel("anthropic", "claude-sonnet-4-6");
+if (!model) throw new Error("Model not found");
 
 const agent = new Agent({
   initialState: {
     systemPrompt: "You are a helpful assistant.",
-    model: getModel("anthropic", "claude-sonnet-4-20250514"),
+    model,
   },
+  streamFn: (model, context, options) => models.streamSimple(model, context, options),
 });
 
 agent.subscribe((event) => {
@@ -30,6 +37,8 @@ agent.subscribe((event) => {
 
 await agent.prompt("Hello!");
 ```
+
+`builtinModels()` resolves provider authentication through `@earendil-works/pi-ai`. Applications that only need a few providers can build a smaller `Models` collection with individual provider factories instead.
 
 ## Core Concepts
 
@@ -268,7 +277,7 @@ await agent.continue();
 
 ```typescript
 agent.state.systemPrompt = "New prompt";
-agent.state.model = getModel("openai", "gpt-4o");
+agent.state.model = models.getModel("openai", "gpt-4o")!;
 agent.state.thinkingLevel = "medium";
 agent.state.tools = [myTool];
 agent.toolExecution = "sequential";
@@ -291,6 +300,8 @@ agent.thinkingBudgets = {
   high: 2048,
 };
 ```
+
+The `ThinkingLevel` type is the library-wide vocabulary. A concrete model may support only a subset; callers should use `getSupportedThinkingLevels(model)` from `@earendil-works/pi-ai` before presenting choices. Built-in GPT-5.6 entries for OpenAI, Azure OpenAI Responses, and OpenRouter support `off`, `low`, `medium`, `high`, `xhigh`, and `max`; `minimal` and `ultra` are not valid choices for those entries.
 
 ### Control
 
@@ -462,7 +473,7 @@ const context: AgentContext = {
 };
 
 const config: AgentLoopConfig = {
-  model: getModel("openai", "gpt-4o"),
+  model: models.getModel("openai", "gpt-4o")!,
   convertToLlm: (msgs) => msgs.filter(m => ["user", "assistant", "toolResult"].includes(m.role)),
   toolExecution: "parallel",  // overridden by per-tool executionMode if set
   beforeToolCall: async ({ toolCall, args, context }) => undefined,

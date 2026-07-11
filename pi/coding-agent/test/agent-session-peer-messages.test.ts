@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { getModel } from "@earendil-works/pi-ai/compat";
 import { MessageStore } from "@magenta/harness";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { ENV_AGENT_DIR } from "../src/config.ts";
 import { DefaultResourceLoader } from "../src/core/resource-loader.ts";
 import { createAgentSession } from "../src/core/sdk.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
@@ -83,6 +84,46 @@ describe("AgentSession peer messaging", () => {
 			}
 		} finally {
 			await session.dispose();
+		}
+	});
+
+	it("keeps the default mailbox at the machine config root", async () => {
+		const previousAgentDir = process.env[ENV_AGENT_DIR];
+		process.env[ENV_AGENT_DIR] = agentDir;
+		const settingsManager = SettingsManager.create(tempDir, agentDir);
+		const sessionManager = SessionManager.inMemory();
+		const resourceLoader = new DefaultResourceLoader({ cwd: tempDir, agentDir, settingsManager });
+		await resourceLoader.reload();
+
+		let session: Awaited<ReturnType<typeof createAgentSession>>["session"] | undefined;
+		try {
+			session = (
+				await createAgentSession({
+					cwd: tempDir,
+					model: getModel("anthropic", "claude-sonnet-4-5")!,
+					settingsManager,
+					sessionManager,
+					resourceLoader,
+				})
+			).session;
+
+			const peerStore = new MessageStore(join(tempDir, "messages.db"));
+			try {
+				peerStore.send("teammate-session", session.sessionId, "config-root delivery");
+			} finally {
+				peerStore.close();
+			}
+
+			const drained = (session as any)._peerMessages.drainForInjection();
+			expect(drained).toHaveLength(1);
+			expect(drained[0].content).toBe("config-root delivery");
+		} finally {
+			await session?.dispose();
+			if (previousAgentDir === undefined) {
+				delete process.env[ENV_AGENT_DIR];
+			} else {
+				process.env[ENV_AGENT_DIR] = previousAgentDir;
+			}
 		}
 	});
 });

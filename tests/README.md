@@ -1,46 +1,32 @@
-# tests/
+# End-to-end tests
 
-Repo-level end-to-end tests. These drive the built CLI/TUI as a real process,
-so they complement (not replace) the per-package unit tests under each
-workspace and `HarnessComponentProtocol/`.
+Repository-level Playwright tests launch the compiled coding-agent as a real
+process. Workspace unit and integration tests remain under `pi/*/test` and
+`HarnessComponentProtocol/test`.
 
-## Layout
+| Project | Test | External model credentials |
+|---|---|---|
+| `cli-conversation` | One-shot conversation, tools, JSON output, attachments, and system prompts | Required |
+| `tui-tests` | TUI boot, conversation, slash command, and tool execution through a real PTY | Required |
+| `lazypi-tests` | Static retirement and ownership-boundary assertions | Not required |
 
-```
-tests/
-└── e2e/                        # Playwright end-to-end specs
-    ├── cli-conversation.test.ts  # real CLI conversation via external auth
-    ├── tui.test.ts               # interactive TUI over a real PTY
-    └── lazypi.test.ts            # extension-retirement / harness boundary checks
-```
-
-Configuration lives in [`playwright.config.ts`](../playwright.config.ts) at the
-repo root. Tests run sequentially (`workers: 1`) because they share the CLI/TUI
-process and terminal.
-
-## What each spec covers
-
-- `cli-conversation.test.ts` — one-shot prompts against a live model: simple
-  reply, `read`/`bash`/`write` tool use, JSON output mode, `@` file attachments,
-  and `--system-prompt` handling. Needs working credentials.
-- `tui.test.ts` — boots the TUI in a real pseudo-terminal, checks the input
-  prompt renders, holds a conversation, runs a slash command (`/help`), and uses
-  a tool interactively. Needs credentials.
-- `lazypi.test.ts` — structural assertions that retired built-in extensions are
-  gone, migrated UX features live in Pi core/TUI, and reusable tools live in the
-  harness. No model calls.
-
-## Running
+The suite is sequential (`workers: 1`) because tests create CLI/TUI processes
+and shared terminal state.
 
 ```bash
-npm run build          # e2e drives the built CLI, so build first
-npx playwright test                          # all e2e specs
-npx playwright test tests/e2e/tui.test.ts    # a single spec
-npx playwright test --project tui-tests      # a configured project
+npm run build
+
+npx playwright test
+npx playwright test --project cli-conversation
+npx playwright test --project tui-tests
+npx playwright test --project lazypi-tests
 ```
 
-> [!NOTE]
-> The conversation and TUI specs make real model calls and need credentials in
-> the environment (see [`docs/AUTHENTICATION.md`](../docs/AUTHENTICATION.md)).
-> `test.sh` at the repo root sets up an isolated, key-stripped environment for
-> provider/auth test runs.
+`npm test` runs workspace tests; it does not invoke this root Playwright suite.
+`./test.sh` runs workspace tests with an isolated temporary `HOME` and clears
+provider environment variables. This hides Magenta, Claude Code, Codex, AWS,
+and other home-directory credentials without moving the user's real files.
+
+Live CLI/TUI tests can incur provider usage. Confirm authentication and the
+selected model before running them; see
+[`docs/AUTHENTICATION.md`](../docs/AUTHENTICATION.md).

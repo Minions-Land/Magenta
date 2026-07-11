@@ -1,6 +1,7 @@
 # SDK Examples
 
-Programmatic usage of pi-coding-agent via `createAgentSession()` and `createAgentSessionRuntime()`.
+Programmatic usage of the Magenta coding-agent package via
+`createAgentSession()` and `createAgentSessionRuntime()`.
 
 The runtime example shows how to build a recreate function that closes over process-global fixed inputs and recreates cwd-bound services and sessions as the active session cwd changes.
 
@@ -25,18 +26,19 @@ The runtime example shows how to build a recreate function that closes over proc
 ## Running
 
 ```bash
-cd packages/coding-agent
+cd pi/coding-agent
 npx tsx examples/sdk/01-minimal.ts
 ```
 
 ## Quick Reference
 
 ```typescript
-import { getModel } from "@earendil-works/pi-ai";
+import { getModel } from "@earendil-works/pi-ai/compat";
 import {
   AuthStorage,
   createAgentSession,
   DefaultResourceLoader,
+  getAgentDir,
   ModelRegistry,
   SessionManager,
   SettingsManager,
@@ -55,6 +57,8 @@ const { session } = await createAgentSession({ model, thinkingLevel: "high", aut
 
 // Modify prompt
 const loader = new DefaultResourceLoader({
+  cwd: process.cwd(),
+  agentDir: getAgentDir(),
   systemPromptOverride: (base) => `${base}\n\nBe concise.`,
 });
 await loader.reload();
@@ -76,6 +80,8 @@ customAuth.setRuntimeApiKey("anthropic", process.env.MY_KEY!);
 const customRegistry = ModelRegistry.create(customAuth);
 
 const resourceLoader = new DefaultResourceLoader({
+  cwd: process.cwd(),
+  agentDir: getAgentDir(),
   systemPromptOverride: () => "You are helpful.",
   extensionFactories: [myExtension],
   skillsOverride: () => ({ skills: [], diagnostics: [] }),
@@ -111,10 +117,10 @@ await session.prompt("Hello");
 | `authStorage` | `AuthStorage.create()` | Credential storage |
 | `modelRegistry` | `ModelRegistry.create(authStorage)` | Model registry |
 | `cwd` | `process.cwd()` | Working directory |
-| `agentDir` | `~/.pi/agent` | Config directory |
+| `agentDir` | `~/.magenta/agent` | Config directory |
 | `model` | From settings/first available | Model to use |
-| `thinkingLevel` | From settings/"off" | off, low, medium, high |
-| `tools` | `["read", "bash", "edit", "write"]` built-ins | Allowlist tool names across built-in, extension, and custom tools |
+| `thinkingLevel` | From settings/"off" | off, minimal, low, medium, high, xhigh, max |
+| `tools` | `undefined` (automatic application defaults) | Optional allowlist across built-in, extension, and custom tools |
 | `customTools` | `[]` | Additional tool definitions |
 | `resourceLoader` | DefaultResourceLoader | Resource loader for extensions, skills, prompts, themes |
 | `sessionManager` | `SessionManager.create(cwd)` | Persistence |

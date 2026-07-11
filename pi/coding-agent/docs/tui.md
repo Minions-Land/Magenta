@@ -1,10 +1,10 @@
-> pi can create TUI components. Ask it to build one for your use case.
+> Magenta can create TUI components. Ask it to build one for your use case.
 
 # TUI Components
 
 Extensions and custom tools can render custom TUI components for interactive user interfaces. This page covers the component system and available building blocks.
 
-**Source:** [`@earendil-works/pi-tui`](https://github.com/earendil-works/pi-mono/tree/main/packages/tui)
+**Source:** [`@earendil-works/pi-tui`](../../tui/)
 
 ## Component Interface
 
@@ -457,7 +457,7 @@ interface MyTheme {
 Set `PI_TUI_WRITE_LOG` to capture the raw ANSI stream written to stdout.
 
 ```bash
-PI_TUI_WRITE_LOG=/tmp/tui-ansi.log npx tsx packages/tui/test/chat-simple.ts
+PI_TUI_WRITE_LOG=/tmp/tui-ansi.log npx tsx pi/tui/test/chat-simple.ts
 ```
 
 ## Performance
@@ -746,7 +746,7 @@ ctx.ui.setStatus("my-ext", undefined);
 
 ### Pattern 4b: Working Indicator Customization
 
-Customize the inline working indicator shown while pi is streaming a response.
+Customize the inline working indicator shown while Magenta is streaming a response.
 
 ```typescript
 // Static indicator
@@ -766,7 +766,7 @@ ctx.ui.setWorkingIndicator({
 // Hide the indicator entirely
 ctx.ui.setWorkingIndicator({ frames: [] });
 
-// Restore pi's default spinner
+// Restore Magenta's default spinner
 ctx.ui.setWorkingIndicator();
 ```
 

@@ -1,5 +1,7 @@
 # Durable AgentHarness and session design
 
+> **Historical design record.** This is a durability proposal for an `AgentHarness` API that the current `@earendil-works/pi-agent-core` package does not export. Current runtime behavior is documented in [`../README.md`](../README.md).
+
 <!-- Synced from jot zmnps2zu. Edit this file in-repo going forward. -->
 
 Durable AgentHarness / session design notes.

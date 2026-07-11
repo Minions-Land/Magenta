@@ -127,7 +127,7 @@ All sub-skills are chapters of this handbook, marked `disable-model-invocation: 
   (translate behavior, wire roles) as one end-to-end flow.
 
 - **`package-forge/SKILL.md`** — Wrap an external project or heavy capability
-  set as an independently published GitHub package, following
+  set for eventual publication as an independent GitHub package, following
   Magenta3's generic package contract.
 
 ---

@@ -1,109 +1,171 @@
-# External Authentication Setup
+# Authentication
 
-Magenta3 can automatically load API keys from multiple sources.
+Magenta can use credentials stored by Magenta, supplied for the current
+process, or discovered from compatible local tools. User login state is stored
+under the active Magenta agent directory, normally:
 
-## Auto-Detection Priority
+```text
+~/.magenta/agent/auth.json
+```
 
-Magenta checks for credentials in this order:
+## Recommended Setup
 
-1. **Magenta's own auth.json** (`~/.magenta/agent/auth.json`)
-2. **External tools** (Claude Code, Codex)
-3. **Environment variables**
-
-## Setup Methods
-
-### Method 1: Interactive Login (Recommended)
-
-Start Magenta and use the `/login` command:
+Start the TUI and run `/login`:
 
 ```bash
 ./bin/magenta
+```
+
+```text
 /login
 ```
 
-Select your provider and enter credentials. They'll be stored in `~/.magenta/agent/auth.json`.
+The provider selector performs the supported OAuth or credential flow and
+writes the result to `auth.json`. `/logout` removes stored credentials for a
+provider.
 
-### Method 2: Environment Variables
-
-Set the appropriate environment variable:
-
-```bash
-# Anthropic Claude
-export ANTHROPIC_API_KEY=sk-ant-xxx
-
-# OpenAI
-export OPENAI_API_KEY=sk-xxx
-
-# Google Gemini
-export GEMINI_API_KEY=xxx
-
-# Then start Magenta
-./bin/magenta
-```
-
-### Method 3: Command-Line Parameter
-
-Pass the API key directly:
+For API keys, environment variables are also straightforward:
 
 ```bash
-./bin/magenta --api-key sk-ant-xxx --provider anthropic
+export ANTHROPIC_API_KEY=sk-ant-...
+export OPENAI_API_KEY=sk-...
+export GEMINI_API_KEY=...
+
+./bin/magenta --provider anthropic --model claude-sonnet-4-5
 ```
 
-### Method 4: External Tool Integration
+Run `./bin/magenta --help` for the common environment variables documented by
+the CLI.
 
-If you have Claude Code or OpenAI Codex installed, Magenta will automatically detect their credentials:
+## Lookup Order
 
-**Claude Code:** `~/.claude/auth.json`
-**Codex:** `~/.openai/auth.json`
+For a provider request, Magenta resolves credentials in this order:
 
-No additional setup needed - just install those tools and Magenta will use their credentials.
+1. Runtime `--api-key` override
+2. Provider credential stored in `~/.magenta/agent/auth.json`
+3. Compatible external credential discovery
+4. Provider environment fallback
 
-## Supported Providers
+External discovery itself is first-match per provider:
 
-Magenta supports 28+ providers including:
+1. Process environment
+2. Claude Code settings
+3. Codex credentials
 
-- **Anthropic** (Claude) - `ANTHROPIC_API_KEY`
-- **OpenAI** (GPT) - `OPENAI_API_KEY`
-- **Google** (Gemini) - `GEMINI_API_KEY`
-- **DeepSeek** - `DEEPSEEK_API_KEY`
-- **Groq** - `GROQ_API_KEY`
-- **xAI** (Grok) - `XAI_API_KEY`
-- **OpenRouter** - `OPENROUTER_API_KEY`
-- And many more...
+Environment discovery currently handles the common Anthropic, OpenAI, and
+Google variables directly. The provider layer supplies fallback mappings for
+the broader provider set.
 
-See `pi/coding-agent/docs/providers.md` for the complete list.
+## External Tool Discovery
 
-## Verifying Setup
+### Claude Code
 
-Check if credentials are found:
+Magenta reads:
+
+```text
+~/.claude/settings.json
+```
+
+It looks inside the top-level `env` object for
+`ANTHROPIC_AUTH_TOKEN` or `ANTHROPIC_API_KEY`, plus optional
+`ANTHROPIC_BASE_URL` and `ANTHROPIC_MODEL` values. Magenta does not modify this
+file.
+
+### Codex
+
+Magenta reads:
+
+```text
+~/.codex/auth.json
+~/.codex/config.toml
+```
+
+`auth.json` can provide `OPENAI_API_KEY`. `config.toml` can provide the active
+model provider's `base_url` and a top-level default `model`. Magenta does not
+modify either file.
+
+This integration expects the current `~/.codex/` layout; `~/.openai/auth.json`
+is not the configured lookup path.
+
+## Common Providers
+
+| Provider | Environment variable |
+|---|---|
+| Anthropic | `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_OAUTH_TOKEN`, `ANTHROPIC_API_KEY` |
+| OpenAI | `OPENAI_API_KEY` |
+| Google | `GEMINI_API_KEY`, `GOOGLE_API_KEY` |
+| Azure OpenAI | `AZURE_OPENAI_API_KEY` plus endpoint settings |
+| OpenRouter | `OPENROUTER_API_KEY` |
+| Amazon Bedrock | Standard AWS profile, key, region, or bearer-token variables |
+
+Provider-specific base URLs and additional variables are implemented in
+`pi/ai/src/providers/`; `./bin/magenta --help` lists the common user-facing
+subset.
+
+## Custom Agent Directory
+
+Override the default Magenta agent directory with:
 
 ```bash
-# This should not show "No API key found"
-./bin/magenta --version
-./bin/magenta --print --no-session "echo hello"
+export MAGENTA_CODING_AGENT_DIR=/absolute/path/to/agent-state
 ```
 
-If you see "No API key found", credentials are not configured yet.
+This changes the location of `auth.json`, `settings.json`, models, themes, and
+related agent state. Session storage can be overridden separately with
+`MAGENTA_CODING_AGENT_SESSION_DIR` or `--session-dir`.
 
-## Security Notes
+## Verification
 
-- All auth files are stored with `0600` permissions (read/write for owner only)
-- Credentials are never logged or displayed in output
-- External auth files are read-only (Magenta never modifies them)
-- OAuth tokens are automatically refreshed when expired
+List models visible with the configured credentials:
+
+```bash
+./bin/magenta --list-models
+```
+
+Then make a minimal live call:
+
+```bash
+./bin/magenta --provider openai --model gpt-5.6-sol --print --no-session "Reply with OK"
+```
+
+`--version` only prints application metadata; it does not verify a provider
+credential.
+
+## Security
+
+- Do not pass secrets in shell history unless the environment permits it;
+  prefer `/login` or environment management over `--api-key` for routine use.
+- Never commit `auth.json`, `.env` files, session exports, or provider tokens.
+- External Claude Code and Codex files are read-only inputs to Magenta.
+- Treat custom base URLs as privileged configuration because they receive model
+  prompts and credentials.
+- Use a separate `MAGENTA_CODING_AGENT_DIR` for isolated development or test
+  runs.
 
 ## Troubleshooting
 
-**"No API key found"**
-- Check that at least one of the setup methods is configured
-- Verify the provider name matches (e.g., `anthropic`, not `claude`)
-- Check file permissions on `~/.magenta/agent/auth.json`
+**No models are available**
 
-**External credentials not detected**
-- Ensure the external tool's auth file exists and contains valid JSON
-- Check file paths: `~/.claude/auth.json` or `~/.openai/auth.json`
-- The file must have a structure like `{"provider": {"type": "api_key", "key": "..."}}`
+- Confirm the provider name and corresponding environment variable.
+- Run `./bin/magenta --list-models <search>`.
+- Inspect `/login` and `/logout` state in the TUI.
+- Check that the expected external credential file exists and is valid JSON or
+  TOML.
 
-**OAuth tokens expired**
-- Run `/login` again to refresh
-- Or use an API key directly instead of OAuth
+**Claude Code credentials are ignored**
+
+- Confirm the token is in `~/.claude/settings.json` under `env`, not in an
+  unrelated file.
+- An existing process environment credential wins for the same provider.
+
+**Codex endpoint or model is wrong**
+
+- Confirm `~/.codex/config.toml` declares the intended top-level
+  `model_provider`.
+- Put `base_url` in that provider's `[model_providers.<name>]` table.
+- A process `OPENAI_API_KEY` takes precedence over Codex discovery.
+
+**Stored OAuth expired**
+
+- Magenta attempts a locked refresh automatically.
+- If refresh fails, run `/login` again; credentials remain stored for retry.

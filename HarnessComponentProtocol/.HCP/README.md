@@ -1,32 +1,35 @@
-# `.HCP/` Plumbing
+# `.HCP/`: Generic HCP Infrastructure
 
-This directory contains HCP infrastructure that is not a fourth entity-tree
-role. The only roles remain `HcpClient`, `HcpServer`, and `HcpMagnet`. HCP-related
-names here still require the `Hcp` prefix; directory placement is not an escape
-hatch.
+This directory is the host-agnostic implementation support for the three HCP
+roles. It does not introduce a fourth role and is not a Harness Module.
 
-- `HcpServerTypes.ts`, `HcpMagnetTypes.ts`: protocol data types only
-- `assembly/`: generated Server/Magnet declarations and session assembly
-- `transport/`: explicitly HCP-owned process/JSONL plumbing; it owns no Server
-  or Module
+```text
+.HCP/
+  HcpServerTypes.ts              Server request/response data
+  HcpMagnetTypes.ts              Magnet build and product data
+  assembly/session-hcp.ts        the single component construction pipeline
+  assembly/sources.generated.ts  generated Server map and Magnet rows
+  transport/hcp-process.ts       optional injectable JSONL transport
+```
 
-There is no separate discovery or ownership subsystem under `.HCP/`.
-Repository component declarations are projected by codegen into `HCP_SERVERS`
-and `HCP_MAGNETS`, which the one `../HcpClient.ts` consumes directly.
+The actual router remains [`../HcpClient.ts`](../HcpClient.ts). Actual Module
+Servers and Source Magnets remain beside the components they own. Code under
+`.HCP/` may validate, build, route, and dispose ordinary component inputs, but
+it must not know whether an input came from a Package, an MCP configuration, a
+CLI flag, or another Magenta host feature.
 
-The agent-facing router is `../HcpClient.ts`. Real Module Servers and Source
-Magnets live in their owning Module/Source directories. No Magnet constructs a
-Server, and this directory must not contain a revived `magnet/` framework.
-`transport/hcp-process.ts::HcpMagnetProcess` is only an injectable JSONL
-transport for an owning Source; it is not auto-assembled, does not represent a
-Source role, and cannot own an address. Production default assembly has no
-reference to it.
+The generated `HCP_SERVERS` and `HCP_MAGNETS` values are projections of TOML,
+not entities or registries. From `HarnessComponentProtocol/`, regenerate them
+with `npm run generate:hcp-sources`; never edit them or derive a parallel
+selection system.
 
-The sibling `../_magenta/` tree is outside the HCP entity chain. It contains
-private host/shared support code, including generic Package integration under
-`../_magenta/packages/`, MCP support under `../_magenta/mcp/`, and TOML parsing
-under `../_magenta/utils/`. These are not Modules, Sources, contracts, or HCP
-selection layers.
+`transport/hcp-process.ts` is deliberately narrow. `HcpMagnetProcess` provides
+managed JSONL request/response plumbing to a Source that explicitly injects it.
+It is not the `hcp-process` Module, not a Source, not a default session
+component, and not an alternative route around a Module's real `HcpServer`.
 
-See `../docs/governance/hcp-architecture.md` and
-`../docs/governance/hcp-naming.md` for the authoritative contracts.
+Magenta-specific Package, MCP, session, environment, and utility support belongs
+under [`../_magenta/`](../_magenta/), outside this generic boundary. See
+[`HCP-OVERVIEW.md`](./HCP-OVERVIEW.md),
+[`../docs/governance/hcp-architecture.md`](../docs/governance/hcp-architecture.md),
+and [`../docs/governance/hcp-naming.md`](../docs/governance/hcp-naming.md).

@@ -1,29 +1,23 @@
 #!/usr/bin/env bash
-set -e
+set -euo pipefail
 
-AUTH_FILE="$HOME/.magenta/agent/auth.json"
-AUTH_BACKUP="$HOME/.magenta/agent/auth.json.bak"
-
-# Restore auth.json on exit (success or failure)
+# Isolate every home-directory credential source, including Magenta, Claude
+# Code, Codex, AWS profiles, and other provider CLIs.
+TMP_ROOT="${TMPDIR:-/tmp}"
+TEST_HOME="$(mktemp -d "${TMP_ROOT%/}/magenta-no-auth.XXXXXX")"
 cleanup() {
-    if [[ -f "$AUTH_BACKUP" ]]; then
-        mv "$AUTH_BACKUP" "$AUTH_FILE"
-        echo "Restored auth.json"
-    fi
+    rm -rf "$TEST_HOME"
 }
 trap cleanup EXIT
-
-# Move auth.json out of the way
-if [[ -f "$AUTH_FILE" ]]; then
-    mv "$AUTH_FILE" "$AUTH_BACKUP"
-    echo "Moved auth.json to backup"
-fi
+export HOME="$TEST_HOME"
+export npm_config_update_notifier=false
 
 # Skip local LLM tests (ollama, lmstudio)
 export PI_NO_LOCAL_LLM=1
 
-# Unset API keys (see packages/ai/src/stream.ts getEnvApiKey)
+# Unset API keys (see pi/ai/src/env-api-keys.ts and provider factories).
 unset ANTHROPIC_API_KEY
+unset ANTHROPIC_AUTH_TOKEN
 unset ANTHROPIC_OAUTH_TOKEN
 unset ANT_LING_API_KEY
 unset NVIDIA_API_KEY
@@ -31,6 +25,7 @@ unset OPENAI_API_KEY
 unset AZURE_OPENAI_API_KEY
 unset DEEPSEEK_API_KEY
 unset GEMINI_API_KEY
+unset GOOGLE_API_KEY
 unset GOOGLE_CLOUD_API_KEY
 unset GROQ_API_KEY
 unset CEREBRAS_API_KEY
@@ -58,6 +53,13 @@ unset XIAOMI_TOKEN_PLAN_SGP_API_KEY
 unset COPILOT_GITHUB_TOKEN
 unset GH_TOKEN
 unset GITHUB_TOKEN
+unset GIT_ASKPASS
+unset SSH_ASKPASS
+unset SSH_AUTH_SOCK
+unset HF_HOME
+unset HUGGINGFACE_HUB_TOKEN
+unset NPM_TOKEN
+unset NODE_AUTH_TOKEN
 unset GOOGLE_APPLICATION_CREDENTIALS
 unset GOOGLE_CLOUD_PROJECT
 unset GCLOUD_PROJECT
@@ -73,6 +75,7 @@ unset AWS_CONTAINER_CREDENTIALS_RELATIVE_URI
 unset AWS_CONTAINER_CREDENTIALS_FULL_URI
 unset AWS_WEB_IDENTITY_TOKEN_FILE
 unset BEDROCK_EXTENSIVE_MODEL_TEST
+export GIT_TERMINAL_PROMPT=0
 
-echo "Running tests without API keys..."
+echo "Running tests with an isolated HOME and no provider API keys..."
 npm test

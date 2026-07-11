@@ -1,5 +1,9 @@
 # Module Realignment Status
 
+> **Historical phase snapshot.** The `ModuleHcpServer` model and paths below
+> were superseded by the frozen entity-tree work. See
+> [`../README.md`](../README.md) and the current HCP governance documents.
+
 **Date**: 2026-07-08  
 **Model**: B (true per-module `ModuleHcpServer`, per-source magnets, single HcpClient)
 

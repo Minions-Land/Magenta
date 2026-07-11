@@ -160,9 +160,11 @@ supply components, but their origin is deliberately opaque to HCP assembly.
 Package parsing and selection live in `_magenta/packages/`. The overlay returns
 one canonical component list; it does not derive parallel Tool/Resource lookup
 systems. `HcpClientpackageinputfromoverlay()` maps supported declarations from
-an explicitly supplied, already-downloaded local root to the ordinary components
-and settings accepted by HCP assembly. Package paths remain relative to that
-root, and integration must not infer a sibling repository path.
+the resolved, already-downloaded local root to the ordinary components and
+settings accepted by HCP assembly. External integration should supply
+`packagesRoot`; if omitted, discovery falls back only to `<repoRoot>/packages`.
+Package paths remain relative to that root, and integration must not infer a
+sibling repository, `MagentaPackages`, or submodule path.
 
 The owning Module's repository-declared `tools/descriptor/HcpMagnet.ts`
 constructs both Package tool products and configured user MCP products. One MCP
@@ -172,8 +174,8 @@ remain behind that Source and `_magenta/mcp/`, never in `.HCP/assembly/`.
 
 Magenta3's root `packages/` retains only the generic contract and templates and
 does not depend on a fixed Package checkout. Concrete domain Packages will be
-published in independent GitHub repositories. A later acquisition layer will
-download, select versions, verify, and cache them; that layer is not implemented
+maintained and published in independent GitHub repositories. A later acquisition
+layer will download, select versions, verify, and cache them; that layer is not implemented
 by this change and remains outside HCP.
 
 Selection is consumed once. Consumers never name a Source and never fall back
@@ -264,7 +266,7 @@ the ownership chain.
 12. Root `packages/` contains only the generic contract and templates. GitHub
     acquisition, versioning, caching, and verification remain future host work.
 
-Verification:
+Verification from `HarnessComponentProtocol/`:
 
 ```bash
 npm run generate:hcp-sources -- --check

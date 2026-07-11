@@ -1,56 +1,45 @@
-# pi/
+# Pi foundation
 
-The Pi foundation — vendored from the upstream [pi.dev](https://pi.dev) project
-and kept synchronized with the original codebase. Pi provides the agent loop,
-multi-provider LLM layer, TUI framework, and CLI runtime. Magenta3 builds **on
-top of** this foundation, adding the harness (execution layer) and HCP (assembly
-protocol).
+`pi/` contains the model, agent-loop, terminal UI, and coding-agent workspaces
+on which Magenta3 is built. The code originated from Pi and is maintained here
+with Magenta-specific integration, so current source and tests in this
+repository are authoritative.
 
-## Packages
+| Workspace | Package | Responsibility |
+|---|---|---|
+| [`ai/`](./ai/) | `@earendil-works/pi-ai` | Provider APIs, model catalogs, authentication contracts, streaming, and usage accounting |
+| [`agent/`](./agent/) | `@earendil-works/pi-agent-core` | Stateful agent loop, messages, tools, events, and transport-neutral execution |
+| [`tui/`](./tui/) | `@earendil-works/pi-tui` | Differential terminal rendering and reusable TUI components |
+| [`coding-agent/`](./coding-agent/) | `@earendil-works/pi-coding-agent` | Magenta CLI/TUI, sessions, resource loading, and application assembly |
 
-| Package | Purpose |
-|---|---|
-| [`ai/`](./ai/) | `@earendil-works/pi-ai` — Unified LLM API with provider collections, auth resolution, token/cost tracking |
-| [`agent/`](./agent/) | `@earendil-works/pi-agent-core` — Stateful agent with tool execution and event streaming |
-| [`tui/`](./tui/) | `@earendil-works/pi-tui` — Terminal UI framework with differential rendering for flicker-free CLI apps |
-| [`coding-agent/`](./coding-agent/) | `@earendil-works/pi-coding-agent` — Full CLI/TUI application, built on `agent` and `tui` |
+The coding-agent workspace publishes the `magenta` executable. It supplies
+host/session inputs to `@magenta/harness`; generic HCP assembly remains under
+`HarnessComponentProtocol/.HCP`, while Magenta-specific adapters remain under
+`HarnessComponentProtocol/_magenta`.
 
-The `coding-agent` is the entry point — it wires everything together
-(`ai` → `agent` → `tui`), loads the harness at runtime, and exposes the final
-`bin/magenta` CLI.
+The retained [`README-upstream.md`](./README-upstream.md) is a historical
+upstream reference. Its paths, binary names, and development workflow are not
+the Magenta3 contract.
 
-## Relationship to upstream
+## Build and test
 
-The upstream Pi README is preserved at [`README-upstream.md`](./README-upstream.md)
-for reference. The packages here are vendored copies — changes made to
-accommodate Magenta's harness architecture are kept minimal and isolated so
-synchronization with upstream remains feasible.
-
-Magenta-specific changes:
-- `coding-agent` loads and assembles the harness via HCP at startup
-- Extensions are loaded from Magenta's extension layer instead of upstream's bundled set
-- Some UX features (SSH, background work) now live in the harness or have harness connectors
-
-> [!NOTE]
-> Pi packages remain under the `@earendil-works` scope; Magenta's execution
-> layer lives under `@magenta` (`@magenta/harness`, `@magenta/memory`).
-
-## Building
-
-From the repo root:
+From the repository root:
 
 ```bash
 npm install
-npm run build -w @earendil-works/pi-ai \
-              -w @earendil-works/pi-agent-core \
-              -w @earendil-works/pi-tui \
-              -w @earendil-works/pi-coding-agent
+npm run build
+npm run check
+npm test
+node pi/coding-agent/dist/cli.js
 ```
 
-Or build everything (harness included) with:
+For a focused workspace:
 
 ```bash
-npm run build
+npm run build -w @earendil-works/pi-ai
+npm run test -w @earendil-works/pi-ai
 ```
 
-See each sub-package's README for detailed API docs.
+Use each workspace README for its public API and development details. Use the
+root [`README.md`](../README.md) and [`docs/`](../docs/) for the integrated
+Magenta3 architecture and operator workflow.

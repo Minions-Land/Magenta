@@ -44,7 +44,7 @@ import {
 	type SshTarget,
 	type SshToolOperations,
 } from "@magenta/harness";
-import { getPeerMessageDbPath } from "../config.ts";
+import { getAgentDir, getPeerMessageDbPath } from "../config.ts";
 import { createBuiltInMessageRenderersExtension } from "../modes/interactive/builtin-message-renderers.ts";
 import { getThemeByName, theme } from "../modes/interactive/theme/theme.ts";
 import { resolvePath } from "../utils/paths.ts";
@@ -426,8 +426,13 @@ export class AgentSession {
 		// the mailbox is a single machine-global database so messages cross between
 		// independent agent processes. A caller-provided agentDir (tests) overrides
 		// the location.
+		const configuredAgentDir = config.agentDir ? resolvePath(config.agentDir) : undefined;
+		const defaultAgentDir = resolvePath(getAgentDir());
 		this._peerMessages = new SendMessageController({
-			dbPath: config.agentDir ? join(config.agentDir, "messages.db") : getPeerMessageDbPath(),
+			dbPath:
+				configuredAgentDir && configuredAgentDir !== defaultAgentDir
+					? join(configuredAgentDir, "messages.db")
+					: getPeerMessageDbPath(),
 			getSessionId: () => this.sessionId,
 			// Idle wake: when a peer sends this session an urgent message while it is
 			// idle, its process is signalled and this fires. Trigger a drain by

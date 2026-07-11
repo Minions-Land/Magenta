@@ -1,168 +1,180 @@
-# Harness Governance Contract
+# Harness Development Contract
 
-Date: 2026-07-02
+Date: 2026-07-11
+Status: **CURRENT.** Architecture is authoritative in
+[`hcp-architecture.md`](./hcp-architecture.md); naming is authoritative in
+[`hcp-naming.md`](./hcp-naming.md). This document defines the operating rules
+for changing that architecture without creating parallel concepts.
 
-This contract records how Magenta3 harness should be managed while HCP, Magnet,
-package overlays, process runtimes, and UI selection keep evolving.
+## 1. Runtime Law
 
-## Operating Principles
+Every assembled component follows one chain:
 
-1. The loop matters more than the prompt: harness work must follow gather,
-   reason, act, verify, repeat.
-2. Roles stay separate even in one coding session:
-   - Planner defines contracts, invariants, migration order, and success gates.
-   - Generator edits code, docs, scripts, or tests against the contract.
-   - Evaluator checks behavior with terminal evidence and records gaps.
-3. Long-running state lives on disk. Use this directory for durable contract,
-   progress, and log records instead of relying on chat context.
-4. Restarting or deleting harness code is allowed when evidence shows the
-   abstraction is wrong or obsolete. Do not preserve scaffolding just because it
-   exists.
-5. The current bottleneck must be made visible. Planning, implementation,
-   verification, and taste can each become the weak point; the governance loop
-   should expose the next one.
+```text
+HcpClient -> HcpServer -> HcpMagnet -> Tool | Capability | Resource
+```
 
-## Architectural Invariants
+The implications are strict:
 
-- HCP is the assembly, management, and control path. It is not the tool
-  execution hot path.
-- A Source-owned HcpMagnet is the repository-declared adapter boundary. Native
-  TypeScript, process, Python, script, MCP, API, Rust, or future runtime
-  integrations must converge into one Tool, Capability, or Resource Source
-  product before reaching the agent loop; runtime technology does not create a
-  Magnet subtype.
-- Everything related to or helping HCP carries the `Hcp` prefix; `.HCP/`
-  placement is not an escape hatch. Generic Package and MCP support therefore
-  lives under `_magenta/`, while Hcp-prefixed assembly and JSONL transport stay
-  in `.HCP/`. Infrastructure cannot own Servers or addresses.
-- `_magenta/` contains host/shared Magenta support code. Its `packages`, `mcp`,
-  `session`, `env`, `messages`, `types`, and `utils` directories are not Harness
-  Modules, Sources, contracts, or generated HCP entities.
-- `HcpMagnetProcess` is an injectable JSONL transport for an owning Source. It
-  is not a Module, Source role, or automatically assembled component.
-- `runtime://process` is the shared process execution boundary. Package process,
-  Python, and script-backed tools must not bypass its sandbox and policy checks.
-  A Source that explicitly injects `HcpMagnetProcess` must provide equivalent
-  runtime policy and sandbox enforcement; the helper itself is not a default
-  process Module.
-- Repository-level `packages/` retains only the generic package contract and
-  templates. Concrete domain expert packages are independently published from
-  GitHub repositories; Magenta3 must not vendor them or infer a sibling checkout.
-  Download, version selection, verification, and caching belong to a future
-  acquisition layer. Current integration accepts an explicitly supplied local
-  root containing already-downloaded packages.
-  `HarnessComponentProtocol/_magenta/packages` is the generic integration
-  boundary for explicitly supplied Package roots, not a second Package owner.
-- Harness implementation Source names are origin-agent names, not programming
-  languages or runtime mechanisms. Magenta/Magenta1-related material uses
-  `magenta`; Pi uses `pi`; future Codex and Claude Code material should use
-  `codex` and `claude-code`. The sole host-supplied exception is the reserved
-  `descriptor` Source: an owning Module may declare `descriptor/HcpMagnet.ts` to
-  adapt host or Package descriptor settings into its Tool or Resource product.
-  `descriptor` is not an origin agent, a runtime mechanism, or permission to
-  introduce other mechanism-named Sources.
-- A declared component that names a Source such as
-  `source = "magenta"` or `source = "pi"` must have the corresponding Source
-  directory beside its descriptor. A `descriptor` Source must likewise be
-  repository-declared and routed through the owning Module's
-  `descriptor/HcpMagnet.ts`. Runtime mechanisms and grouped "pack" labels must
-  not stand in for Module kinds or Source names.
-- Process-backed tools are still tools. Their descriptors and tool-specific
-  adapters live under the owning Module Source. The shared managed runtime lives
-  at `HarnessComponentProtocol/_magenta/process-tools` and is reached through
-  `runtime://process`; a `HarnessComponentProtocol/tools/process` capability
-  slot or per-tool copy of the shared runtime is invalid.
-- Tool sub-operations are not separate top-level tool modules when they serve
-  the same capability slot. For example `edit-hashline` and `ast-edit-plan`
-  belong under `tools/edit/<source>/`, `read-anchored` and `read-url` under
-  `tools/read/<source>/`, `glob` and `fuzzy-find` under `tools/find/<source>/`,
-  and `ast-grep` under `tools/grep/<source>/`.
-- `HarnessComponentProtocol/tools/<name>` is reserved for selectable tool
-  capability slots with `tools/<name>/<name>.toml`. Shared utility code belongs under
-  `HarnessComponentProtocol/_magenta/utils/<source>/`, not under `tools/support`.
-- `pi/coding-agent` owns app composition, CLI/TUI surfaces, and ResourceLoader.
-  It should consume harness through package-level APIs and should not deep-import
-  harness internals.
-- `HarnessComponentProtocol/harness.toml` and its referenced component TOML
-  files are the repository declarations from which codegen produces
-  `HCP_SERVERS` and `HCP_MAGNETS`.
-- Generated assembly has one Server map (`HCP_SERVERS`) and one Magnet list
-  (`HCP_MAGNETS`). Consumers filter `HCP_MAGNETS`; they do not maintain derived
-  Magnet lists or grant core/contract exceptions.
-- Tools and skills retain both levels of real ownership: `tools/HcpServer.ts`
-  and `skills/HcpServer.ts` are grouping Servers, and every declared tool or
-  skill leaf owns its own `HcpServer.ts`.
+1. Client, Server, and Magnet are the only HCP roles.
+2. Every real Module owns `HcpServer.ts`; every declared Source owns
+   `HcpMagnet.ts`.
+3. Common selection, routing, and lifecycle behavior belongs to `HcpClient`.
+   An `HcpServer` keeps only its Module identity and unique operations.
+4. A returned Magnet exposes exactly one product. A build may fan out only into
+   sibling single-product Magnets with distinct selectors.
+5. HCP ends after assembly and resolution. Tools and live capability values are
+   called directly at runtime.
 
-## Management Model
+Do not add role interfaces, base role classes, anonymous or per-Magnet Servers,
+a second Client, a contract layer, or another selection/lookup service.
 
-Manage `HarnessComponentProtocol/` as four layers:
+## 2. Code Ownership
 
-1. Protocol and assembly:
-   `HcpClient` (agent-facing router) plus Hcp-prefixed protocol data, assembly,
-   and explicit HCP transport under `.HCP/`; generic Package/MCP support stays
-   under `_magenta/`.
-2. Runtime guardrails:
-   `runtime`, `sandbox`, `policy`, `hooks`.
-3. Harness Modules:
-   `tools` and its leaves, `skills` and its leaves, `prompt-templates`,
-   `system-prompt`, `compaction`, `context`, `memory`, and `multiagent`.
-4. Package and Resource integration:
-   the repository-level generic Package contract/templates and explicitly
-   supplied external Package roots.
+### Generic Protocol
 
-`_magenta/` is a separate host/shared support area, not a fifth management
-layer and not a place to attach pseudo Modules.
+`HarnessComponentProtocol/HcpClient.ts` and `HarnessComponentProtocol/.HCP/`
+own generic HCP behavior:
 
-New functionality must declare which layer it belongs to before code is added.
+- Server and Magnet protocol data;
+- static generated declarations;
+- component dependency ordering, construction, routing, cleanup, and session
+  Client creation; and
+- optional explicitly injected HCP JSONL transport.
 
-## ModernTSF Lessons To Borrow
+Generic assembly accepts ordinary component rows and Source settings. It must
+not parse Package manifests, discover MCP servers, inspect CLI configuration,
+or branch on Magenta host concepts.
 
-ModernTSF's useful pattern is a closed loop:
+### Magenta Host Support
 
-- declarative TOML config
-- typed validation/schema
-- reproducible generated code
-- scaffold tool for new components
-- inspect/smoke command for verification
-- agent-facing docs that point to the same tools
+`HarnessComponentProtocol/_magenta/` owns private host and shared support:
 
-For Magenta3, do not copy ModernTSF's Python `NAME_MAP` pattern directly.
-Magenta3 has repository declarations in `harness.toml`, generated
-`HCP_SERVERS`/`HCP_MAGNETS`, a generic Package overlay boundary, and
-`ResourceLoader`. Borrow the closed-loop discipline instead:
+- Package manifest parsing and overlay conversion;
+- MCP clients, schemas, caching, connections, and Tool adaptation;
+- session storage, environment adapters, messages, shared types, and utilities;
+- shared process-tool binaries.
 
-- `harness inspect` should explain what is declared, generated, assembled, and
-  executable.
-- `harness check:structure` should detect drift between TOML, files, exports,
-  docs, and configured package inputs.
-- `harness scaffold` should create a module or tool with TOML, README, test
-  stub, real role files, and its `harness.toml` declaration together. Package
-  templates remain generic; domain package scaffolding belongs to the package's
-  own upstream GitHub repository.
-- `harness smoke` should verify a selected package/tool path through the same
-  runtime boundary used by the app.
+These directories are not Harness Modules or Sources. They own no `HcpServer`,
+never appear in generated declarations, and do not form a fourth management
+layer. An owning Source may call them, then return a normal Magnet product.
 
-## Verification Gates
+### Application Composition
 
-For documentation-only governance changes:
+`pi/coding-agent` owns CLI/TUI composition, settings, authentication, the
+resource loader, and active session policy. It consumes the package-level
+`@magenta/harness` API and must not choose implementations through deep Source
+imports.
 
-- `git status --short --branch`
-- Review changed files.
+## 3. Declarations And Generation
 
-For HarnessComponentProtocol code, declarations, runtime, Package, or Magnet
-changes:
+`HarnessComponentProtocol/harness.toml` and its referenced component TOML files
+are the repository declaration source of truth. Codegen produces exactly:
 
-- `cd HarnessComponentProtocol && npm run generate:hcp-sources -- --check`
-- `cd HarnessComponentProtocol && npm run check:structure`
-- `cd HarnessComponentProtocol && npm run build`
-- `cd HarnessComponentProtocol && npm test`
+- `HCP_SERVERS`: real Module Server classes keyed by Module path;
+- `HCP_MAGNETS`: Source Magnet classes plus the static data required to select
+  and build them.
 
-For app assembly, CLI, TUI, or ResourceLoader changes:
+These generated values are disposable data. They are not an Inventory,
+Registration, Registry, or another HCP role. Consumers may filter the single
+`HCP_MAGNETS` list; they must not maintain product-specific lists, builder maps,
+default-Source maps, or central Source switches.
 
-- `cd pi/coding-agent && npm test`
-- `cd pi/coding-agent && npx tsgo --noEmit`
-- `cd pi/coding-agent && npm test`
+Adding a repository component should require its TOML declaration, real role
+files, implementation, tests, and regeneration. If an ordinary Source requires
+editing several central selection files, the design has drifted.
 
-For UI behavior, use Playwright only when a browser or rendered frontend is
-actually involved. For this terminal/TUI harness governance work, terminal
-verification is the source of truth.
+## 4. Source And Product Rules
+
+Source names identify implementation origin: `pi`, `magenta`, `codex`, or
+`claude-code`. Runtime technology is not Source identity. Process, Rust, Python,
+script, MCP, API, and JSONL details live inside the Source that owns them.
+
+`descriptor` is the one reserved host-input Source. Repository-declared
+`descriptor/HcpMagnet.ts` files adapt validated Tool or Resource settings from
+the host or a Package. This does not permit arbitrary mechanism-named Sources.
+
+Products are mutually exclusive:
+
+- **Tool**: an `AgentTool` called by the agent loop;
+- **Capability**: a live host value resolved by slot;
+- **Resource**: inert content or file metadata merged by the resource loader.
+
+Product adapters such as `ProcessTool`, `PythonModuleTool`, and `McpTool` are
+not Magnets or HCP roles. `HcpMagnetProcess` is optional JSONL plumbing injected
+by an owning Source; it is not a Module, Source, generated component, or default
+process path.
+
+## 5. Package Boundary
+
+Magenta3 keeps a generic Package integration surface but does not own concrete
+domain expert packages. Root `packages/` therefore contains only documentation
+and a generic template.
+
+The intended flow is:
+
+```text
+future GitHub acquisition and cache
+-> verified local Package root
+-> --harness-packages-root / packagesRoot
+-> _magenta Package overlay
+-> ordinary HcpClient component inputs
+-> normal HcpServer and HcpMagnet ownership
+```
+
+The GitHub acquisition, version selection, verification, and cache layer is not
+implemented yet. External integration should explicitly supply its downloaded
+root. If `packagesRoot` is omitted, the API falls back only to
+`<repoRoot>/packages`; it must not require a submodule, vendor domain content,
+or infer a sibling checkout such as `MagentaPackages`.
+
+Package precedence and profile expansion stay in `_magenta/packages/`. Generic
+`.HCP/assembly/` sees only normal inputs and must not add Package-specific
+builders, categories, or routing.
+
+## 6. Change Discipline
+
+Before implementation:
+
+1. Identify the owning Module, Source, product, and code boundary.
+2. Check the TOML and generated declarations instead of guessing an interface.
+3. Reuse an existing HcpClient, HcpServer, HcpMagnet, or product adapter when it
+   already owns the behavior.
+4. Reject new architecture nouns unless they name a necessary real entity and
+   comply with the naming law.
+
+During review, require evidence that:
+
+- external behavior remains compatible unless a behavior change was requested;
+- no host concern leaked into `.HCP/`;
+- no generic HCP role leaked into `_magenta/` support code;
+- no generated file or parallel lookup table was hand-maintained;
+- dynamic products still route through a real Server and Source Magnet; and
+- Package integration remains independent of acquisition location.
+
+Historical rollout records in `log.md` and `hcp-rollout-progress.md` preserve
+old names and paths intentionally. They are not current implementation guidance.
+
+## 7. Verification Gates
+
+From the repository root:
+
+```bash
+npm run check:hcp-sources -w @magenta/harness
+npm run check:structure -w @magenta/harness
+npm run check:assumptions -w @magenta/harness
+npm run build -w @magenta/harness
+npm test -w @magenta/harness
+```
+
+When a change crosses into app composition, CLI, TUI, or resource loading, also
+run the relevant `pi/coding-agent` tests and the repository-wide gates:
+
+```bash
+npm run build
+npm run check
+npm test
+```
+
+For real TUI behavior, launch the built application with
+`node pi/coding-agent/dist/cli.js` and exercise the affected user workflow.

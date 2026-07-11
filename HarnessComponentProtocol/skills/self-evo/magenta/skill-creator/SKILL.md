@@ -374,7 +374,7 @@ Propose an improved description based on these patterns. Iterate up to 5 times, 
 Before landing the skill, run Magenta's verification gates:
 
 ```bash
-cd /Users/mjm/Magenta3/HarnessComponentProtocol
+cd HarnessComponentProtocol
 
 # Build and verify
 npm run generate:hcp-sources -- --check

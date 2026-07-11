@@ -527,6 +527,10 @@ export function getAgentDir(): string {
  * machine-global state shared across every agent session.
  */
 export function getConfigRootDir(): string {
+	const envDir = process.env[ENV_AGENT_DIR];
+	if (envDir) {
+		return dirname(expandTildePath(envDir));
+	}
 	return join(homedir(), CONFIG_DIR_NAME);
 }
 

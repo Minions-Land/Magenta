@@ -1,76 +1,90 @@
 # HarnessComponentProtocol
 
-This package owns Magenta3 harness components and the HCP assembly/control
-plane.
-
-## HCP Model
+This workspace contains Magenta3's Harness Modules and the Harness Component
+Protocol (HCP) used to assemble them. HCP has one runtime ownership chain:
 
 ```text
-HcpClient -> real module HcpServer -> selected source HcpMagnet -> source product
+HcpClient -> HcpServer -> HcpMagnet -> Tool | Capability | Resource
 ```
 
-- `HcpClient.ts` is the one session router.
-- Every actual Module owns `HcpServer.ts`.
-- Every repository-declared Source owns `HcpMagnet.ts`.
-- A Magnet produces exactly one Tool, Capability, or Resource.
-- HCP performs assembly and management; resolved tools and capability instances
-  execute directly.
+- One session owns one `HcpClient`, which performs selection and address routing.
+- Every real Module owns a bare `HcpServer` in `HcpServer.ts`.
+- Every declared Source owns a bare `HcpMagnet` in `HcpMagnet.ts`.
+- Each returned Magnet exposes exactly one product. Resolved products execute
+  directly; HCP is not middleware around every tool call.
 
-There are no role interfaces, anonymous/facade Servers, per-Magnet Servers,
-`toHcpServer()`, Universal Magnet, or parallel component lookup layer.
-Everything related to or helping HCP carries the `Hcp` prefix, including
-infrastructure under `.HCP/`; there is no directory-based escape hatch.
+Client, Server, and Magnet are the only HCP roles. Generated arrays, Package
+declarations, MCP connections, transports, and product adapters are data or
+support code, not additional roles.
 
-## Layout
+## Repository Boundaries
 
 ```text
 HarnessComponentProtocol/
-  HcpClient.ts
-  .HCP/                 Hcp protocol data, Client assembly, Hcp transport
-  _magenta/             generic Package, MCP, host, and utility support
-  compaction/           module Server + source Magnet(s)
-  context/
-  hooks/
-  memory/
-  multiagent/
-  policy/
-  prompt-templates/
-  runtime/
-  sandbox/
-  skills/               root grouping Server + skill leaf Servers/Magnets
-  system-prompt/
-  tools/                root grouping Server + tool leaf Servers/Magnets
+  HcpClient.ts          session router
+  harness.toml          repository component declarations
+  .HCP/                 generic HCP types, assembly, and optional transport
+  _magenta/             private Magenta host adapters and shared support
+  <module>/             Module Server and Source Magnet implementations
+  tools/                tool grouping Server and tool leaf Modules
+  skills/               skill grouping Server and skill leaf Modules
 ```
 
-Repository component declarations start in `harness.toml` and their referenced
-TOML files. Codegen projects them into `HCP_SERVERS` and `HCP_MAGNETS` in
-`.HCP/assembly/sources.generated.ts`; these arrays are generated data used by
-the one `HcpClient`, not another HCP role or subsystem. Package profiles are
-parsed by `_magenta/packages/package-overlay.ts` and enter the same Client
-assembly path. Infrastructure under `.HCP/` owns no Module or Server; dynamic
-products remain under a real owning Module/Server and Source Magnet.
+`.HCP/` must remain host-agnostic. It consumes ordinary component inputs and
+Source settings; it does not parse Package manifests, discover MCP servers, or
+choose a Magenta product policy. `_magenta/` owns those host concerns and feeds
+their results back through the same HcpClient assembly path. Neither directory
+is itself a Harness Module, and neither may acquire an `HcpServer`.
 
-Magenta3 keeps the generic Package contract and template under `../packages/`.
-Concrete domain packages are managed independently; callers provide their root
-through the optional `packagesRoot` boundary instead of relying on a hardcoded
-repository location.
+`harness.toml` and its referenced component TOML files are the repository source
+of truth. `scripts/generate-hcp-sources.mjs` validates them and regenerates
+`.HCP/assembly/sources.generated.ts`, containing the disposable `HCP_SERVERS`
+and `HCP_MAGNETS` projections. Never edit that generated file or maintain a
+second Server map, Magnet list, or product-specific builder table.
 
-## Public Use
+## Package Boundary
 
-Consumers import from the package-level barrel (`@magenta/harness`) and remain
-Source-agnostic. Do not deep-import a `pi/` or `magenta/` implementation.
+The repository-level `../packages/` directory intentionally retains only the
+generic Package integration contract and template. Concrete domain packages
+will be published independently on GitHub. A future host acquisition layer will
+download, version, verify, and cache them. External integration should pass its
+already-downloaded local root through `packagesRoot` or
+`--harness-packages-root <dir>`.
 
-The authoritative contracts are:
+When callers omit `packagesRoot`, the support API falls back only to
+`<repoRoot>/packages`. In this repository that directory contains only the
+interface and template. It never searches a sibling checkout,
+`MagentaPackages`, or a git submodule. `_magenta/packages/` maps declarations
+from the resolved root to ordinary HcpClient inputs, so Package is not a fourth
+HCP role and `.HCP/assembly/` contains no Package-specific branch.
 
-- `docs/governance/hcp-architecture.md`
-- `docs/governance/hcp-naming.md`
-- `docs/DEVELOPING.md`
+## Development
 
-## Verification
+Use package-level imports from `@magenta/harness`; application code must not
+deep-import a `pi/`, `magenta/`, `_magenta/`, or `.HCP/` implementation.
+
+From the repository root (Node.js 22.19 or newer):
 
 ```bash
-npm run generate:hcp-sources -- --check
-npm run check:structure
+npm install
 npm run build
+npm run check
 npm test
 ```
+
+For focused Harness work:
+
+```bash
+npm run check:hcp-sources -w @magenta/harness
+npm run check:structure -w @magenta/harness
+npm run check:assumptions -w @magenta/harness
+npm run build -w @magenta/harness
+npm test -w @magenta/harness
+```
+
+Read [`README-harness.md`](./README-harness.md) for the assembly walkthrough,
+[`docs/DEVELOPING.md`](./docs/DEVELOPING.md) for extension workflows,
+[`docs/governance/hcp-architecture.md`](./docs/governance/hcp-architecture.md)
+for the authoritative architecture, and
+[`docs/governance/hcp-naming.md`](./docs/governance/hcp-naming.md) for the
+authoritative naming law.

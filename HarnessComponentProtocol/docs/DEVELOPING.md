@@ -100,7 +100,7 @@ See `governance/hcp-naming.md` for complete specification.
    `toHcpServer()`. Magnet-side entities such as `HcpMagnetProcess` are
    injectable helpers, not source role classes or products.
 3. **One selection path.** TOML declares available Sources and the
-   repository-default choice; explicit Package/assembly input may override that
+   repository-default choice; explicit host or Package input may override that
    choice before assembly. Your Magnet only *binds* and makes no selection
    decisions. Codegen writes `.HCP/assembly/sources.generated.ts`:
    `HCP_SERVERS` is the Server map and `HCP_MAGNETS` is the one Magnet list.
@@ -110,10 +110,11 @@ See `governance/hcp-naming.md` for complete specification.
    under `.HCP/transport/`; generic MCP/runtime support lives under `_magenta/`
    or the Source implementation. Transport is not a Module and owns no Server
    or address.
-5. **Frozen by default (spec §9).** Live Capability products are stateful and
+5. **Frozen by default.** Live Capability products are stateful and
    non-hot-swap unless their component TOML explicitly sets
    `hot_swappable = true` for a stateless provider. Codegen passes that node
-   property into `HcpMagnet.build()`.
+   property into `HcpMagnet.build()`; the authoritative rule lives in the
+   [assembly contract](./governance/hcp-architecture.md#4-assembly-and-selection).
 6. **Host support is not a Module.** `_magenta/packages`, `_magenta/mcp`,
    `_magenta/session`, `_magenta/env`, `_magenta/messages`, `_magenta/types`,
    and `_magenta/utils` are private host/shared support libraries. They own no
@@ -240,7 +241,7 @@ HarnessComponentProtocol/memory/
    add a central builder literal.
 
 The component TOML declares available Sources and its default-selected Source.
-An explicit Package/assembly choice can replace it before the HcpClient assembles
+An explicit host or Package choice can replace it before the HcpClient assembles
 the slot. The Magnet never decides which Source is active.
 
 ---
@@ -283,14 +284,15 @@ packages/
   templates/harness-package/
 ```
 
-Concrete domain expert packages are independently published from GitHub
-repositories. Do not vendor them into Magenta3 or infer a sibling checkout. A
-future acquisition layer will own download, version selection, verification,
-and caching; it is intentionally out of scope here. For now, tests and callers
-provide an arbitrary local directory containing packages that have already been
-downloaded.
-`discoverHarnessPackages()` and `loadPackageOverlay()` accept an optional
-`packagesRoot` for this purpose.
+Concrete domain expert packages will be maintained and published in independent
+GitHub repositories. Do not vendor them into Magenta3 or infer a sibling
+checkout. A future acquisition layer will own download, version selection, verification,
+and caching; it is intentionally out of scope here. For now, external callers
+can provide a local directory containing Packages that have already been
+downloaded. `discoverHarnessPackages()` and `loadPackageOverlay()` accept an
+optional `packagesRoot` for this purpose. If omitted, they fall back only to
+`<repoRoot>/packages`; they never scan a sibling checkout, `MagentaPackages`, or
+a git submodule.
 
 The generic package shape remains:
 

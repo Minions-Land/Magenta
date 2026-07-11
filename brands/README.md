@@ -1,180 +1,62 @@
-# Brand Registry System
+# Brand build configuration
 
-Centralized brand configuration system for the agent. Supports multiple brands (Pi, Magenta, custom) with automatic synchronization.
+`brands/` contains build-time product metadata used by
+[`scripts/sync-brand.mjs`](../scripts/sync-brand.mjs). It is not a runtime
+plugin registry and it does not add an HCP role.
 
-## Structure
-
-```
+```text
 brands/
-  registry.toml              # Brand registry (declares active brand)
-  brand.interface.ts         # TypeScript interface for brand configs
-  
-  magenta/
-    magenta.brand.ts         # Magenta brand configuration
-  
-  pi/
-    pi.brand.ts              # Pi (upstream) brand configuration
-  
-  template/
-    template.brand.ts        # Template for creating new brands
+  registry.toml
+  brand.interface.ts
+  magenta/magenta.brand.ts
+  pi/pi.brand.ts
+  template/template.brand.ts
 ```
 
-## Active Brand
+`registry.toml` selects one named configuration. The active configuration is
+currently `magenta`.
 
-The active brand is set in `brands/registry.toml`:
+## What synchronization changes
 
-```toml
-active = "magenta"
-```
-
-Change `active` to any registered brand name and run `npm run sync-brand`.
-
-## Registered Brands
-
-### Magenta
-- **Name**: Magenta
-- **Version**: 0.0.1 (product version)
-- **Theme**: Pink/Magenta (#E91E63) + Purple (#9C27B0)
-- **CLI**: `magenta`
-- **Scope**: `@magenta/*`
-
-### Pi
-- **Name**: Pi
-- **Version**: 0.80.2 (matches infrastructure)
-- **Theme**: Blue (#2196F3)
-- **CLI**: `pi`
-- **Scope**: `@earendil-works/*`
-
-## Brand Configuration Interface
-
-All brand configs export `BRAND_CONFIG: BrandConfig`:
-
-```typescript
-interface BrandConfig {
-  name: string;              // Agent name
-  version: string;           // Product version
-  packageScope: string;      // NPM scope (@magenta, @yourcompany)
-  
-  theme: {
-    primaryColor: string;    // Main brand color (hex)
-    accentColor: string;
-    successColor: string;
-    warningColor: string;
-    errorColor: string;
-  };
-  
-  cli: {
-    binaryName: string;      // Command name
-    description: string;
-    welcomeMessage: string;
-    prompt: string;
-  };
-  
-  urls: {
-    homepage: string;
-    docs: string;
-    issues: string;
-    repository: string;
-  };
-  
-  infra: {
-    piVersion: string;       // Infrastructure version (pi/*)
-    harnessVersion: string;  // Harness version
-    renamePiPackages: boolean; // Rename to @{scope}/* or keep @earendil-works/pi-*
-  };
-  
-  productPackages?: string[]; // Brand-specific packages
-}
-```
-
-## Synchronization
-
-Run the sync script to apply brand configuration to all packages:
+Run the script from the repository root:
 
 ```bash
-# Apply active brand from registry.toml
-npm run sync-brand
-
-# Dry-run (preview changes without modifying files)
 npm run sync-brand -- --dry-run
-
-# Override active brand temporarily
-npm run sync-brand -- --brand=pi
-
-# Switch active brand permanently
-# 1. Edit brands/registry.toml: active = "pi"
-# 2. Run: npm run sync-brand
-# 3. npm install && npm run build
+npm run sync-brand
+npm run sync-brand -- --brand=pi --dry-run
 ```
 
-The sync script updates:
-- All package.json `version` fields (product packages → brand version, infra → infra version)
-- All package.json `name` fields (if `renamePiPackages: true`)
-- Workspace dependency versions
-- CLI binary name, description (future)
-- Theme colors (future)
+The script synchronizes the fields that are wired today:
 
-## Creating a New Brand
+- root, Harness, memory, and Pi workspace package versions;
+- package names and internal dependency versions;
+- `pi/coding-agent/package.json` `piConfig` and npm binary name;
+- the standalone binary output name in the coding-agent build script.
 
-1. **Copy template**:
-   ```bash
-   cp -r brands/template brands/yourbrand
-   mv brands/yourbrand/template.brand.ts brands/yourbrand/yourbrand.brand.ts
-   ```
+It does not currently generate runtime themes, rewrite documentation, or apply
+the configured welcome text and URLs. Treat those fields as source metadata
+until code explicitly consumes them. `infra.harnessVersion` is also
+informational today: the sync script versions `@magenta/harness` with the
+selected product version.
 
-2. **Edit configuration**:
-   ```typescript
-   // brands/yourbrand/yourbrand.brand.ts
-   export const BRAND_CONFIG: BrandConfig = {
-     name: "YourAgent",
-     version: "0.0.1",
-     packageScope: "@youragent",
-     theme: { primaryColor: "#007ACC", ... },
-     cli: { binaryName: "youragent", ... },
-     // ...
-   };
-   ```
+Always inspect the resulting diff. A real synchronization changes tracked
+package manifests, so follow it with:
 
-3. **Register in `brands/registry.toml`**:
-   ```toml
-   [[brands]]
-   name = "yourbrand"
-   path = "yourbrand/yourbrand.brand.ts"
-   description = "Your custom agent"
-   ```
-
-4. **Activate and sync**:
-   ```bash
-   # Edit registry.toml: active = "yourbrand"
-   npm run sync-brand
-   npm install
-   npm run build
-   ```
-
-5. **Verify**:
-   ```bash
-   node pi/coding-agent/dist/cli.js --version  # Should show your version
-   ```
-
-## Two-Layer Versioning
-
-- **Product layer** (`@magenta/memory` and other Magenta-specific packages) → Uses `BRAND_CONFIG.version`
-- **Harness layer** (`@magenta/harness`) → Uses `BRAND_CONFIG.infra.harnessVersion`
-- **Infrastructure layer** (`pi/*` packages) → Uses `BRAND_CONFIG.infra.piVersion`
-
-This allows:
-- Magenta product releases (0.0.1 → 0.1.0) independent of infrastructure updates
-- Tracking upstream pi updates (0.80.2 → 0.81.0) without forcing a Magenta product bump
-- Clear separation: product features vs. foundation updates
-
-## CLI Version Display
-
-Currently `--version` shows the infrastructure version (0.80.2, from coding-agent's package.json).
-
-**Future enhancement**: Show both layers:
-```
-Magenta 0.0.1
-  Infrastructure: pi@0.80.2, harness@0.1.0
+```bash
+npm install
+npm run build
+npm run check
 ```
 
-See `docs/BRANDING.md` for full design rationale.
+## Adding a configuration
+
+1. Copy `brands/template/` to `brands/<name>/`.
+2. Rename and edit `<name>.brand.ts` so it exports `BRAND_CONFIG` satisfying
+   `BrandConfig`.
+3. Add the path to `brands/registry.toml`.
+4. Preview with `npm run sync-brand -- --brand=<name> --dry-run`.
+5. Run the synchronization only after reviewing the preview and expected
+   package-name changes.
+
+Changing brand metadata is a build operation. It does not change the HCP
+runtime law: `HcpClient -> HcpServer -> HcpMagnet`.

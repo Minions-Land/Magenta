@@ -102,6 +102,8 @@ directly.
 
 ## Verification
 
+From `HarnessComponentProtocol/`:
+
 ```bash
 npm run generate:hcp-sources -- --check
 npm run check:structure
