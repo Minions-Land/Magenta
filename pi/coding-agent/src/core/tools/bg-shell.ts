@@ -113,7 +113,7 @@ const bgShellSchema = Type.Object({
 	),
 	eventId: Type.Optional(
 		Type.String({
-			description: "Event id for action=status/wait/cancel. Omit for action=status to list all events.",
+			description: "Background event identifier for action=status/wait/cancel. Parameter name is 'eventId' (not 'id'). Omit for action=status to list all events.",
 		}),
 	),
 	waitTimeoutSeconds: Type.Optional(
