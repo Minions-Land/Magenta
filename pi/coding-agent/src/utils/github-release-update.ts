@@ -3,8 +3,7 @@
  * 
  * This module checks GitHub Releases for new versions and downloads the binary
  * when updates are available. Binaries are published to a PUBLIC repository
- * (Minions-Land/Magenta-CLI) so downloads work anonymously with no token,
- * while the source code stays in a separate private repository.
+ * (Minions-Land/Magenta-CLI) so downloads work anonymously with no token.
  * 
  * Unlike magenta-update.ts (git-based), this works with distributed binaries.
  */
@@ -12,7 +11,7 @@
 import { spawnSync } from "node:child_process";
 import { createWriteStream, existsSync } from "node:fs";
 import { chmod, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
-import { homedir, platform } from "node:os";
+import { arch, homedir, platform } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { VERSION, isBunBinary } from "../config.ts";
@@ -161,11 +160,18 @@ async function getLatestRelease(): Promise<GitHubRelease | null> {
 	}
 }
 
+/**
+ * Resolve the release asset name for the current platform + architecture.
+ * Naming must match the assets produced by `npm run build:release-all`:
+ *   magenta-macos-arm64, magenta-macos-x64,
+ *   magenta-linux-x64, magenta-windows-x64.exe
+ */
 function getBinaryAssetName(): string {
 	const plat = platform();
-	if (plat === "darwin") return "magenta-macos";
-	if (plat === "linux") return "magenta-linux";
-	if (plat === "win32") return "magenta-windows.exe";
+	const a = arch(); // "arm64" | "x64" | ...
+	if (plat === "darwin") return a === "arm64" ? "magenta-macos-arm64" : "magenta-macos-x64";
+	if (plat === "linux") return "magenta-linux-x64";
+	if (plat === "win32") return "magenta-windows-x64.exe";
 	return "magenta";
 }
 
