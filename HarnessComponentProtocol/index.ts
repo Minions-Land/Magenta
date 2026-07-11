@@ -17,10 +17,12 @@ export * from "./_magenta/mcp/tool.ts";
 export * from "./_magenta/messages/messages.ts";
 export * from "./_magenta/packages/hcp-client-components.ts";
 export * from "./_magenta/packages/package-overlay.ts";
+export { initProcessToolsBinary } from "./_magenta/process-tools/embedded-binaries.ts";
 export * from "./_magenta/session/pi/repo-utils.ts";
 export * from "./_magenta/session/pi/session.ts";
 export { uuidv7 } from "./_magenta/session/pi/uuid.ts";
 export * from "./_magenta/types/types.ts";
+export { getEmbeddedToolPath } from "./_magenta/utils/pi/embedded-tools.ts";
 export * from "./_magenta/utils/pi/truncate.ts";
 // 规范§2.1：<module>/HcpServer.ts 都导出裸 class HcpServer
 // 为避免命名冲突，只导出具体的 provider 类型，不导出 HcpServer class

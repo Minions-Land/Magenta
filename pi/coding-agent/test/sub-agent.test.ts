@@ -258,6 +258,55 @@ describe("built-in sub_agent tool", () => {
 		expect(spawnRecords[0]?.args).not.toEqual(expect.arrayContaining(["claude-opus-4-8"]));
 	});
 
+	it("passes granted packages as --harness-package args", async () => {
+		const tool = controller.createToolDefinition();
+		const ctx = createContext(tempDir);
+
+		await tool.execute(
+			"call-start",
+			{ action: "start", task: "Analyze the paper", packages: ["paper-analysis", "pptx"] },
+			undefined,
+			undefined,
+			ctx,
+		);
+
+		const args = spawnRecords[0]?.args ?? [];
+		expect(args).toEqual(expect.arrayContaining(["--harness-package", "paper-analysis"]));
+		expect(args).toEqual(expect.arrayContaining(["--harness-package", "pptx"]));
+		// Two selectors → two --harness-package flags.
+		expect(args.filter((a) => a === "--harness-package")).toHaveLength(2);
+	});
+
+	it("does not add --harness-package when no packages are granted", async () => {
+		const tool = controller.createToolDefinition();
+		const ctx = createContext(tempDir);
+
+		await tool.execute("call-start", { action: "start", task: "Plain task" }, undefined, undefined, ctx);
+
+		expect(spawnRecords[0]?.args).not.toEqual(expect.arrayContaining(["--harness-package"]));
+	});
+
+	it("grants top-level packages to every task unless a task overrides them", async () => {
+		const tool = controller.createToolDefinition();
+		const ctx = createContext(tempDir);
+
+		await tool.execute(
+			"call-start",
+			{
+				action: "start",
+				packages: [" shared-package "],
+				tasks: [{ task: "Use the shared package" }, { task: "Use an override", packages: ["task-package"] }],
+			},
+			undefined,
+			undefined,
+			ctx,
+		);
+
+		expect(spawnRecords[0]?.args).toEqual(expect.arrayContaining(["--harness-package", "shared-package"]));
+		expect(spawnRecords[1]?.args).toEqual(expect.arrayContaining(["--harness-package", "task-package"]));
+		expect(spawnRecords[1]?.args).not.toEqual(expect.arrayContaining(["shared-package"]));
+	});
+
 	it("starts multiple sub-agents concurrently", async () => {
 		const tool = controller.createToolDefinition();
 		const ctx = createContext(tempDir);

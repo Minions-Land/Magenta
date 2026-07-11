@@ -42,6 +42,13 @@ describe("isContextOverflow", () => {
 		expect(isContextOverflow(message, 262144)).toBe(true);
 	});
 
+	it("detects Anthropic-compatible context-window-full errors", () => {
+		const message = createErrorMessage(
+			'400 {"error":{"message":"Context window is full. Reduce conversation history, system prompt, or tools."}}',
+		);
+		expect(isContextOverflow(message, 1_000_000)).toBe(true);
+	});
+
 	it("detects LiteLLM-wrapped OpenAI maximum context length errors", () => {
 		const message = createErrorMessage(
 			"Error: 503 litellm.ServiceUnavailableError: litellm.MidStreamFallbackError: litellm.APIConnectionError: APIConnectionError: OpenAIException - Requested token count exceeds the model's maximum context length of 131072 tokens.",

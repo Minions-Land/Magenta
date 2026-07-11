@@ -5,6 +5,7 @@
 
 import type { Extension, MessageRenderer } from "../../core/extensions/types.ts";
 import { bgShellReturnRenderer } from "./components/bg-shell-return-renderer.ts";
+import { subAgentReturnRenderer } from "./components/sub-agent-return-renderer.ts";
 
 export function createBuiltInMessageRenderersExtension(): Extension {
 	return {
@@ -18,7 +19,10 @@ export function createBuiltInMessageRenderersExtension(): Extension {
 		},
 		handlers: new Map(),
 		tools: new Map(),
-		messageRenderers: new Map([["bg-shell-return", bgShellReturnRenderer as MessageRenderer]]),
+		messageRenderers: new Map([
+			["bg-shell-return", bgShellReturnRenderer as MessageRenderer],
+			["sub-agent-return", subAgentReturnRenderer as MessageRenderer],
+		]),
 		commands: new Map(),
 		flags: new Map(),
 		shortcuts: new Map(),

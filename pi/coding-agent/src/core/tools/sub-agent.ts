@@ -61,6 +61,7 @@ type AgentTask = {
 	label?: string;
 	cwd?: string;
 	tools?: string[];
+	packages?: string[];
 	model?: string;
 	provider?: string;
 	thinking?: ThinkingLevel;
@@ -76,6 +77,7 @@ type SubAgentEvent = {
 	label?: string;
 	cwd: string;
 	tools: string[];
+	packages?: string[];
 	model?: string;
 	provider?: string;
 	thinking: ThinkingLevel;
@@ -149,6 +151,11 @@ const TaskSchema = Type.Object({
 	tools: Type.Optional(
 		Type.Array(Type.String(), {
 			description: `Allowed tools for the sub-agent. Defaults to read-only: ${DEFAULT_TOOLS.join(",")}.`,
+		}),
+	),
+	packages: Type.Optional(
+		Type.Array(Type.String(), {
+			description: "Harness package selectors to load for this sub-agent (e.g. a domain package).",
 		}),
 	),
 	model: Type.Optional(Type.String({ description: `Optional ${APP_NAME} model pattern or provider/model id.` })),
@@ -235,6 +242,11 @@ const subAgentSchema = Type.Object({
 	tools: Type.Optional(
 		Type.Array(Type.String(), { description: `Allowed tools. Defaults to ${DEFAULT_TOOLS.join(",")}.` }),
 	),
+	packages: Type.Optional(
+		Type.Array(Type.String(), {
+			description: "Harness package selectors to load for the sub-agent(s) started by this call.",
+		}),
+	),
 	model: Type.Optional(Type.String({ description: "Optional model for action=start." })),
 	provider: Type.Optional(Type.String({ description: "Optional provider for action=start." })),
 	thinking: Type.Optional(StringEnum(THINKING_LEVELS)),
@@ -260,7 +272,11 @@ const subAgentSchema = Type.Object({
 			description: "Optional instruction prepended to the automatic return message for the parent agent.",
 		}),
 	),
-	eventId: Type.Optional(Type.String({ description: "Sub-agent identifier for status/wait/cancel. Parameter name is 'eventId' (not 'id')." })),
+	eventId: Type.Optional(
+		Type.String({
+			description: "Sub-agent identifier for status/wait/cancel. Parameter name is 'eventId' (not 'id').",
+		}),
+	),
 	eventIds: Type.Optional(
 		Type.Array(Type.String(), {
 			description: "Multiple sub-agent ids for status/wait/cancel. Omit eventId/eventIds to target all events.",
@@ -372,16 +388,35 @@ function finishEvent(
 	for (const resolveWaiter of waiters) resolveWaiter();
 }
 
-function summarizeEvent(event: SubAgentEvent, includeOutput = true): string {
-	if (event.kind === "workflow") return summarizeWorkflowEvent(event, includeOutput);
+function summarizeEvent(event: SubAgentEvent, includeOutput = true, collapsed = false): string {
+	if (event.kind === "workflow") return summarizeWorkflowEvent(event, includeOutput, collapsed);
 	const elapsedUntil = event.endedAt ?? Date.now();
 	const output = truncateTail(event.tail.trimEnd());
+	if (collapsed) {
+		// Compact form for the chat return: one status line plus an output hint.
+		// Full metadata (cwd/tools/model/paths/task) is available on expand.
+		const head = `Sub-agent ${event.id}${event.label ? ` (${event.label})` : ""}: ${event.status} (${formatDuration(elapsedUntil - event.startedAt)})`;
+		const lines = [head];
+		if (event.error) lines.push(`Error: ${event.error}`);
+		if (includeOutput) {
+			if (output.text) {
+				const outputLineCount = output.text.split("\n").length;
+				lines.push(
+					`... ${outputLineCount} output ${outputLineCount === 1 ? "line" : "lines"} hidden (ctrl+o to expand)`,
+				);
+			} else {
+				lines.push("(no output)");
+			}
+		}
+		return lines.join("\n");
+	}
 	const lines = [
 		`Sub-agent: ${event.id}${event.label ? ` (${event.label})` : ""}`,
 		`Status: ${event.status}`,
 		`Role: ${event.role ?? "general"}`,
 		`CWD: ${event.cwd}`,
 		`Tools: ${event.tools.join(",")}`,
+		...(event.packages?.length ? [`Packages: ${event.packages.join(",")}`] : []),
 		`Model: ${event.model ?? "default"}`,
 		`Thinking: ${event.thinking}`,
 		`Elapsed: ${formatDuration(elapsedUntil - event.startedAt)}`,
@@ -402,8 +437,90 @@ function summarizeEvent(event: SubAgentEvent, includeOutput = true): string {
 	return lines.join("\n");
 }
 
-function summarizeWorkflowEvent(event: SubAgentEvent, includeOutput: boolean): string {
+/** Compact chat-return summary (metadata trimmed, output count hidden). */
+export function summarizeSubAgentCollapsed(event: SubAgentEventSnapshot): string {
+	return summarizeEvent(event as SubAgentEvent, true, true);
+}
+
+/** Full summary with all metadata and the captured output tail. */
+export function summarizeSubAgentExpanded(event: SubAgentEventSnapshot): string {
+	return summarizeEvent(event as SubAgentEvent, true, false);
+}
+
+/**
+ * Plain-data snapshot of a sub-agent event, safe for structuredClone/postMessage.
+ * The live event holds ChildProcess/WriteStream/Timer/AbortController references
+ * that are not cloneable, so message payloads must carry this snapshot.
+ */
+export type SubAgentEventSnapshot = Pick<
+	SubAgentEvent,
+	| "id"
+	| "kind"
+	| "task"
+	| "role"
+	| "label"
+	| "cwd"
+	| "tools"
+	| "packages"
+	| "model"
+	| "provider"
+	| "thinking"
+	| "promptPath"
+	| "logPath"
+	| "pattern"
+	| "workflowResult"
+	| "startedAt"
+	| "endedAt"
+	| "status"
+	| "exitCode"
+	| "signal"
+	| "error"
+	| "tail"
+>;
+
+export function serializableSubAgentSnapshot(event: SubAgentEvent): SubAgentEventSnapshot {
+	return {
+		id: event.id,
+		kind: event.kind,
+		task: event.task,
+		role: event.role,
+		label: event.label,
+		cwd: event.cwd,
+		tools: event.tools,
+		packages: event.packages,
+		model: event.model,
+		provider: event.provider,
+		thinking: event.thinking,
+		promptPath: event.promptPath,
+		logPath: event.logPath,
+		pattern: event.pattern,
+		workflowResult: event.workflowResult,
+		startedAt: event.startedAt,
+		endedAt: event.endedAt,
+		status: event.status,
+		exitCode: event.exitCode,
+		signal: event.signal,
+		error: event.error,
+		tail: event.tail,
+	};
+}
+
+function summarizeWorkflowEvent(event: SubAgentEvent, includeOutput: boolean, collapsed = false): string {
 	const elapsedUntil = event.endedAt ?? Date.now();
+	if (collapsed) {
+		const head = `Workflow ${event.id} (${event.label}) [${event.pattern}]: ${event.status} (${formatDuration(elapsedUntil - event.startedAt)})`;
+		const lines = [head];
+		if (event.error) lines.push(`Error: ${event.error}`);
+		if (includeOutput && event.workflowResult) {
+			const resultLineCount = formatWorkflowResult(event.workflowResult).split("\n").length;
+			lines.push(
+				`... ${resultLineCount} result ${resultLineCount === 1 ? "line" : "lines"} hidden (ctrl+o to expand)`,
+			);
+		} else if (includeOutput) {
+			lines.push("(no result yet)");
+		}
+		return lines.join("\n");
+	}
 	const lines = [
 		`Workflow: ${event.id} (${event.label})`,
 		`Pattern: ${event.pattern}`,
@@ -569,6 +686,7 @@ export class SubAgentController {
 					`role: ${event.role ?? "general"}`,
 					`cwd: ${event.cwd}`,
 					`tools: ${event.tools.join(",")}`,
+					...(event.packages?.length ? [`packages: ${event.packages.join(",")}`] : []),
 					`model: ${event.model ?? "default"}`,
 					`thinking: ${event.thinking}`,
 					`prompt: ${event.promptPath}`,
@@ -754,9 +872,13 @@ export class SubAgentController {
 
 		const commonTimeoutSeconds = positiveNumber(params.timeoutSeconds) ?? this.config.defaultTimeoutSeconds;
 		const commonThinking = (params.thinking ?? this.config.defaultThinking) as ThinkingLevel;
+		const commonPackages = params.packages
+			?.map((selector) => selector.trim())
+			.filter((selector) => selector.length > 0);
 		const rawTasks = hasTasks ? (params.tasks as AgentTask[]) : [params as AgentTask];
 		const tasks = rawTasks.map((task) => ({
 			...task,
+			packages: task.packages ?? commonPackages,
 			thinking: task.thinking ?? commonThinking,
 			timeoutSeconds: positiveNumber(task.timeoutSeconds) ?? commonTimeoutSeconds,
 		}));
@@ -894,6 +1016,8 @@ export class SubAgentController {
 		const id = `agent_${String(this.nextAgentNumber++).padStart(3, "0")}`;
 		const cwd = resolve(parentCwd, input.cwd ?? ".");
 		const tools = input.tools?.length ? input.tools : DEFAULT_TOOLS;
+		const packages =
+			input.packages?.map((selector) => selector.trim()).filter((selector) => selector.length > 0) ?? [];
 		const thinking = input.thinking ?? DEFAULT_THINKING;
 		const stamp = timestampForFile();
 		const promptPath = join(WORK_DIR, `${id}-${stamp}.prompt.md`);
@@ -903,6 +1027,9 @@ export class SubAgentController {
 		await writeFile(promptPath, prompt, "utf8");
 
 		const args = ["--print", "--no-session", "--no-extensions", "--tools", tools.join(","), "--thinking", thinking];
+		// Packages are independent of extensions: --no-extensions above still stands,
+		// but the parent may grant specific harness packages to the sub-agent.
+		for (const selector of packages) args.push("--harness-package", selector);
 		const inheritedModel = !input.provider && !input.model ? this.getDefaultModel?.() : undefined;
 		const provider = input.provider ?? inheritedModel?.provider;
 		const model = input.model ?? inheritedModel?.model;
@@ -926,6 +1053,7 @@ export class SubAgentController {
 			label: input.label,
 			cwd,
 			tools,
+			packages,
 			model,
 			provider,
 			thinking,
@@ -1061,17 +1189,27 @@ export class SubAgentController {
 	): void {
 		if (this.shuttingDown || completedEvents.length === 0) return;
 
-		const summaries = completedEvents.map((event) => summarizeEvent(event)).join("\n\n---\n\n");
+		// content keeps the full per-event output so the main agent can synthesize
+		// the findings without re-fetching. The chat DISPLAY is collapsed by the
+		// sub-agent-return renderer (ctrl+o expands), using the eventData snapshots.
+		const summaries = completedEvents.map((event) => summarizeSubAgentExpanded(event)).join("\n\n---\n\n");
 		const defaultInstruction =
 			"Sub-agent work has completed. Read these returned results, synthesize the findings, and continue the original task. Do not ask the user to manually inspect event ids unless more information is needed.";
+		const resolvedInstruction = instruction?.trim() || defaultInstruction;
 		void this.sendMessage(
 			{
 				customType: "sub-agent-return",
-				content: `${instruction?.trim() || defaultInstruction}\n\n${summaries}`,
+				content: `${resolvedInstruction}\n\n${summaries}`,
 				display: true,
 				details: {
 					ids: completedEvents.map((event) => event.id),
 					statuses: completedEvents.map((event) => event.status),
+					// Instruction is stored separately so the renderer can regenerate the
+					// collapsed/expanded body without fragile content parsing.
+					instruction: resolvedInstruction,
+					// Plain-data snapshots so the renderer can regenerate collapsed/expanded
+					// views on ctrl+o without holding non-cloneable live event handles.
+					eventData: completedEvents.map((event) => serializableSubAgentSnapshot(event)),
 				},
 			},
 			{ deliverAs: delivery, triggerTurn: delivery !== "nextTurn" },

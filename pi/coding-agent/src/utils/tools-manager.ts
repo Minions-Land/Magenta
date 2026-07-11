@@ -1,3 +1,4 @@
+import { getEmbeddedToolPath } from "@magenta/harness";
 import chalk from "chalk";
 import { type SpawnSyncReturns, spawnSync } from "child_process";
 import { chmodSync, createWriteStream, existsSync, mkdirSync, readdirSync, renameSync, rmSync } from "fs";
@@ -6,7 +7,6 @@ import { join } from "path";
 import { Readable } from "stream";
 import { pipeline } from "stream/promises";
 import { APP_NAME, getBinDir } from "../config.ts";
-import { getEmbeddedToolPath } from "../../../../HarnessComponentProtocol/.HCP/assembly/embedded-tools.ts";
 
 const TOOLS_DIR = getBinDir();
 const NETWORK_TIMEOUT_MS = 10_000;

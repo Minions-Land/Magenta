@@ -1,18 +1,22 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const magentaUpdateMocks = vi.hoisted(() => ({
-	checkForMagentaUpdate: vi.fn(),
 	runMagentaUpdate: vi.fn(),
 }));
+const unifiedUpdateMocks = vi.hoisted(() => ({ checkForAnyUpdate: vi.fn() }));
 
 vi.mock("../src/utils/magenta-update.ts", () => magentaUpdateMocks);
+vi.mock("../src/utils/unified-update-check.ts", () => unifiedUpdateMocks);
 
 import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
 
 function createFakeInteractiveMode() {
+	const prototype = InteractiveMode.prototype as any;
 	return {
 		setMagentaUpdateStatus: vi.fn(),
 		showMagentaUpdateBanner: vi.fn(),
+		handleGitUpdateStatus: prototype.handleGitUpdateStatus,
+		handleReleaseUpdateStatus: prototype.handleReleaseUpdateStatus,
 	};
 }
 
@@ -25,8 +29,8 @@ describe("InteractiveMode Magenta auto-update status", () => {
 	const savedOffline = process.env.PI_OFFLINE;
 
 	beforeEach(() => {
-		magentaUpdateMocks.checkForMagentaUpdate.mockReset();
 		magentaUpdateMocks.runMagentaUpdate.mockReset();
+		unifiedUpdateMocks.checkForAnyUpdate.mockReset();
 		if (savedSkip === undefined) delete process.env.MAGENTA_SKIP_UPDATE;
 		else process.env.MAGENTA_SKIP_UPDATE = savedSkip;
 		if (savedOffline === undefined) delete process.env.PI_OFFLINE;
@@ -35,13 +39,16 @@ describe("InteractiveMode Magenta auto-update status", () => {
 
 	it("shows an up-to-date footer status when the checkout is current", async () => {
 		const fakeThis = createFakeInteractiveMode();
-		magentaUpdateMocks.checkForMagentaUpdate.mockResolvedValue({
-			repoRoot: "/repo",
-			behind: 0,
-			localSha: "aaa111",
-			remoteSha: "aaa111",
-			clean: true,
-			fastForwardable: true,
+		unifiedUpdateMocks.checkForAnyUpdate.mockResolvedValue({
+			type: "git",
+			status: {
+				repoRoot: "/repo",
+				behind: 0,
+				localSha: "aaa111",
+				remoteSha: "aaa111",
+				clean: true,
+				fastForwardable: true,
+			},
 		});
 
 		await runCheck(fakeThis);
@@ -56,13 +63,16 @@ describe("InteractiveMode Magenta auto-update status", () => {
 
 	it("shows a skipped footer status when the working tree is dirty", async () => {
 		const fakeThis = createFakeInteractiveMode();
-		magentaUpdateMocks.checkForMagentaUpdate.mockResolvedValue({
-			repoRoot: "/repo",
-			behind: 1,
-			localSha: "aaa111",
-			remoteSha: "bbb222",
-			clean: false,
-			fastForwardable: true,
+		unifiedUpdateMocks.checkForAnyUpdate.mockResolvedValue({
+			type: "git",
+			status: {
+				repoRoot: "/repo",
+				behind: 1,
+				localSha: "aaa111",
+				remoteSha: "bbb222",
+				clean: false,
+				fastForwardable: true,
+			},
 		});
 
 		await runCheck(fakeThis);
@@ -88,7 +98,7 @@ describe("InteractiveMode Magenta auto-update status", () => {
 			clean: true,
 			fastForwardable: true,
 		};
-		magentaUpdateMocks.checkForMagentaUpdate.mockResolvedValue(status);
+		unifiedUpdateMocks.checkForAnyUpdate.mockResolvedValue({ type: "git", status });
 		magentaUpdateMocks.runMagentaUpdate.mockResolvedValue({ ok: true, newSha: "ccc333" });
 
 		await runCheck(fakeThis);

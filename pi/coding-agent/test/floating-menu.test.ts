@@ -372,4 +372,77 @@ describe("FloatingMenuBody", () => {
 
 		expect(selected).toEqual(["third"]);
 	});
+
+	// Magenta feature: /skill: auto-drill-in for command dock
+	it("openChildByValue drills into a parent by value and applies a child filter", () => {
+		const body = createMenu([
+			{ value: "command:model", label: "Model", children: [{ value: "model:a", label: "A" }] },
+			{
+				value: "command:skill",
+				label: "Skills",
+				children: [
+					{ value: "insert-skill:foo", label: "skill:foo" },
+					{ value: "insert-skill:bar", label: "skill:bar" },
+				],
+			},
+		]);
+
+		expect(body.submenuDepth).toBe(0);
+		const opened = body.openChildByValue("command:skill", "ba");
+		expect(opened).toBe(true);
+		expect(body.submenuDepth).toBe(1);
+
+		// The rendered menu should show only the filtered child ("bar" matches "ba")
+		const text = renderText(body);
+		expect(text).toContain("skill:bar");
+		expect(text).not.toContain("skill:foo");
+	});
+
+	it("openChildByValue no-ops when already in a submenu", () => {
+		const body = createMenu([
+			{
+				value: "command:skill",
+				label: "Skills",
+				children: [{ value: "insert-skill:foo", label: "skill:foo" }],
+			},
+		]);
+
+		body.openChildByValue("command:skill");
+		expect(body.submenuDepth).toBe(1);
+		const secondAttempt = body.openChildByValue("command:skill");
+		expect(secondAttempt).toBe(false);
+		expect(body.submenuDepth).toBe(1);
+	});
+
+	it("openChildByValue no-ops for non-existent or non-parent values", () => {
+		const body = createMenu([
+			{ value: "slash:new", label: "New Session" },
+			{ value: "command:skill", label: "Skills", children: [{ value: "skill:foo", label: "Foo" }] },
+		]);
+
+		expect(body.openChildByValue("command:nonexistent")).toBe(false);
+		expect(body.submenuDepth).toBe(0);
+		expect(body.openChildByValue("slash:new")).toBe(false); // leaf, no children
+		expect(body.submenuDepth).toBe(0);
+	});
+
+	it("resetToRoot pops back to the root level", () => {
+		const body = createMenu([
+			{
+				value: "command:skill",
+				label: "Skills",
+				children: [{ value: "insert-skill:foo", label: "skill:foo" }],
+			},
+		]);
+
+		body.openChildByValue("command:skill");
+		expect(body.submenuDepth).toBe(1);
+		body.resetToRoot();
+		expect(body.submenuDepth).toBe(0);
+
+		// The rendered menu should now show the root ("Skills" parent)
+		const text = renderText(body);
+		expect(text).toContain("Skills");
+		expect(text).not.toContain("skill:foo");
+	});
 });

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { FloatingMenuBody, type FloatingMenuItem } from "../src/modes/interactive/components/floating-menu.ts";
 import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
 
 type SubmitContext = {
@@ -35,6 +36,21 @@ type InteractiveModePrivate = {
 	setupEditorSubmitHandler(this: SubmitContext): void;
 	getUserInput(this: InputContext): Promise<string>;
 	showMcpManager(this: SubmitContext): void;
+	applyCommandDockFilter(this: { commandDockBody?: FloatingMenuBody }, filter: string): void;
+	skillDockParentItem(this: {
+		settingsManager: { getEnableSkillCommands: () => boolean };
+		skillMenuItems: () => FloatingMenuItem[];
+	}): FloatingMenuItem[];
+	handleCommandDockItem(
+		this: {
+			handleHarnessMenuItem: (item: FloatingMenuItem) => boolean;
+			setEditorTextWithoutCommandDockSync: (value: string) => void;
+			closeCommandDock: () => void;
+			ui: { setFocus: (target: unknown) => void; requestRender: () => void };
+			editor: unknown;
+		},
+		item: FloatingMenuItem,
+	): void;
 };
 
 const interactiveModePrototype = InteractiveMode.prototype as unknown as InteractiveModePrivate;
@@ -122,5 +138,71 @@ describe("InteractiveMode startup input", () => {
 		await expect(interactiveModePrototype.getUserInput.call(context)).resolves.toBe("queued prompt");
 		expect(context.onInputCallback).toBeUndefined();
 		expect(context.pendingUserInputs).toEqual([]);
+	});
+
+	it("builds the Skills dock only when skill commands are enabled", () => {
+		const children = [{ value: "insert-skill:review", label: "skill:review" }];
+		const enabled = interactiveModePrototype.skillDockParentItem.call({
+			settingsManager: { getEnableSkillCommands: () => true },
+			skillMenuItems: () => children,
+		});
+		expect(enabled).toEqual([expect.objectContaining({ value: "command:skill", label: "Skills", children })]);
+
+		const disabled = interactiveModePrototype.skillDockParentItem.call({
+			settingsManager: { getEnableSkillCommands: () => false },
+			skillMenuItems: () => children,
+		});
+		expect(disabled).toEqual([]);
+	});
+
+	it("routes /skill:<partial> into the filtered Skills submenu", () => {
+		const selected: string[] = [];
+		const commandDockBody = new FloatingMenuBody({
+			title: "command dock",
+			items: [
+				{ value: "command:model", label: "Model", children: [] },
+				{
+					value: "command:skill",
+					label: "Skills",
+					children: [
+						{ value: "insert-skill:analyze", label: "skill:analyze" },
+						{ value: "insert-skill:review", label: "skill:review" },
+					],
+				},
+			],
+			onSelect: (item) => {
+				selected.push(item.value);
+				return undefined;
+			},
+			requestRender: () => undefined,
+		});
+
+		interactiveModePrototype.applyCommandDockFilter.call({ commandDockBody }, "skill:rev");
+		expect(commandDockBody.submenuDepth).toBe(1);
+		commandDockBody.handleInput("\r");
+		expect(selected).toEqual(["insert-skill:review"]);
+	});
+
+	it("backfills a selected skill command with a trailing argument space", () => {
+		const setEditorTextWithoutCommandDockSync = vi.fn();
+		const closeCommandDock = vi.fn();
+		const editor = {};
+		const ui = { setFocus: vi.fn(), requestRender: vi.fn() };
+
+		interactiveModePrototype.handleCommandDockItem.call(
+			{
+				handleHarnessMenuItem: () => false,
+				setEditorTextWithoutCommandDockSync,
+				closeCommandDock,
+				ui,
+				editor,
+			},
+			{ value: "insert-skill:review", label: "skill:review" },
+		);
+
+		expect(setEditorTextWithoutCommandDockSync).toHaveBeenCalledWith("/skill:review ");
+		expect(closeCommandDock).toHaveBeenCalledTimes(1);
+		expect(ui.setFocus).toHaveBeenCalledWith(editor);
+		expect(ui.requestRender).toHaveBeenCalledTimes(1);
 	});
 });

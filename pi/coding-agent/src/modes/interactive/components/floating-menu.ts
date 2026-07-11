@@ -224,6 +224,37 @@ export class FloatingMenuBody implements FloatingOverlayBody {
 		this.options.requestRender();
 	}
 
+	/**
+	 * Drill into a root-level parent item by its value, optionally applying a
+	 * filter inside that submenu. No-op if already inside a submenu or the value
+	 * is not a root parent with children. Used to auto-navigate `/skill:` straight
+	 * into the Skills submenu.
+	 */
+	openChildByValue(value: string, childFilter = ""): boolean {
+		if (this.stack.length > 0) return false;
+		const item = this.options.items.find((candidate) => candidate.value === value);
+		if (!item || !item.children || item.disabled) return false;
+		this.filter = "";
+		this.selectedIndex = this.options.items.indexOf(item);
+		this.openChild(item, childFilter);
+		return true;
+	}
+
+	/** Depth of the submenu stack (0 = at root). */
+	get submenuDepth(): number {
+		return this.stack.length;
+	}
+
+	/** Pop all submenus back to the root level. */
+	resetToRoot(): void {
+		if (this.stack.length === 0) return;
+		this.stack.length = 0;
+		this.selectedIndex = 0;
+		this.scrollTop = 0;
+		this.filter = "";
+		this.options.requestRender();
+	}
+
 	hasSelectableItems(): boolean {
 		return this.current().items.some((item) => !item.disabled);
 	}
@@ -469,20 +500,24 @@ export class FloatingMenuBody implements FloatingOverlayBody {
 
 	private current(): { title: string; subtitle?: string; items: FloatingMenuItem[] } {
 		const top = this.stack[this.stack.length - 1];
-		if (top) return top;
-		return { title: this.options.title, subtitle: this.options.subtitle, items: this.filteredRootItems() };
+		if (top) return { title: top.title, subtitle: top.subtitle, items: this.filterItems(top.items) };
+		return {
+			title: this.options.title,
+			subtitle: this.options.subtitle,
+			items: this.filterItems(this.options.items),
+		};
 	}
 
-	private filteredRootItems(): FloatingMenuItem[] {
-		if (!this.filter) return this.options.items;
-		return this.options.items
+	private filterItems(source: FloatingMenuItem[]): FloatingMenuItem[] {
+		if (!this.filter) return source;
+		return source
 			.map((item, index) => ({ item, index, score: itemFilterScore(item, this.filter) }))
 			.filter(({ score }) => score < Number.MAX_SAFE_INTEGER)
 			.sort((left, right) => left.score - right.score || left.index - right.index)
 			.map(({ item }) => item);
 	}
 
-	private openChild(item: FloatingMenuItem): void {
+	private openChild(item: FloatingMenuItem, childFilter?: string): void {
 		this.stack.push({
 			title: `${this.current().title} / ${item.label || item.value}`,
 			subtitle: item.description ?? this.current().subtitle,
@@ -495,6 +530,10 @@ export class FloatingMenuBody implements FloatingOverlayBody {
 		);
 		this.selectedIndex = activeIndex >= 0 ? activeIndex : 0;
 		this.scrollTop = 0;
+		// Clear root filter when drilling in via keyboard, but preserve explicit
+		// child filter when openChildByValue is used (e.g. `/skill:pdf` should filter
+		// to pdf-related skills inside the submenu).
+		this.filter = childFilter ?? "";
 		this.options.requestRender();
 	}
 
@@ -502,6 +541,8 @@ export class FloatingMenuBody implements FloatingOverlayBody {
 		const previous = this.stack.pop();
 		this.selectedIndex = previous?.selectedIndex ?? 0;
 		this.scrollTop = previous?.scrollTop ?? 0;
+		// Leaving a submenu clears any filter that was scoped to it.
+		this.filter = "";
 		this.options.requestRender();
 	}
 
