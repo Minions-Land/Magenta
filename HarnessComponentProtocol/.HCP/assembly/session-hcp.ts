@@ -1,11 +1,17 @@
-import { isAbsolute, resolve } from "node:path";
+import { dirname, isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { HcpClient } from "../../HcpClient.ts";
 import type { HcpMagnetBinding, HcpMagnetBuildContext, HcpMagnetResource } from "../HcpMagnetTypes.ts";
 import { HCP_MAGNETS, HCP_SERVERS } from "./sources.generated.ts";
 
-const HCP_ROOT = fileURLToPath(new URL("../..", import.meta.url));
+// Detect Bun compiled binary: import.meta.url becomes a virtual path like file:///$bunfs/root/...
+// In this case, resolve HCP_ROOT from the executable's directory instead.
+const HCP_IS_BUN_BINARY =
+	typeof (globalThis as any).Bun !== "undefined" && import.meta.url.includes("/$bunfs/root/");
+const HCP_ROOT = HCP_IS_BUN_BINARY
+	? dirname(process.execPath)
+	: fileURLToPath(new URL("../..", import.meta.url));
 
 type HcpMagnetproduct = {
 	readonly kind: string;

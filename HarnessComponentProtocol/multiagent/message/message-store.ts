@@ -129,7 +129,7 @@ CREATE TABLE IF NOT EXISTS presence (
  *    SELECT-then-UPDATE race window is closed).
  */
 export class MessageStore {
-	private readonly db: DatabaseSync;
+	private readonly db: InstanceType<typeof DatabaseSync>;
 	private readonly stalenessMs: number;
 
 	constructor(dbPath: string, options?: { stalenessMs?: number }) {

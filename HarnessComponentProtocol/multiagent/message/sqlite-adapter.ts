@@ -6,7 +6,7 @@
 // Detect runtime and import appropriate SQLite implementation
 let DatabaseSync: any;
 
-if (typeof Bun !== "undefined") {
+if (typeof (globalThis as any).Bun !== "undefined") {
 	// Bun runtime - use bun:sqlite
 	// @ts-ignore - Bun-specific import
 	const { Database } = await import("bun:sqlite");
@@ -43,3 +43,4 @@ if (typeof Bun !== "undefined") {
 }
 
 export { DatabaseSync };
+export type DatabaseSyncType = typeof DatabaseSync;
