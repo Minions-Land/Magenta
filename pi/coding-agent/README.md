@@ -1,6 +1,6 @@
 # Magenta Coding Agent
 
-Magenta is the terminal coding agent in this repository. The npm package is `@earendil-works/pi-coding-agent`, but the installed executable, application name, and user configuration directory are branded for Magenta:
+Magenta is an autonomous terminal coding agent. The installed executable, application name, and user configuration directory are:
 
 ```text
 command:     magenta
@@ -8,9 +8,7 @@ user state:  ~/.magenta/agent/
 project:     .magenta/
 ```
 
-The package names and extension API retain their upstream `pi` names for compatibility. They are library identifiers, not alternate CLI commands.
-
-Magenta supports interactive TUI, one-shot text output, JSON event output, RPC integration, and an embeddable SDK. Its normal coding tools are assembled through the repository's Harness Component Protocol implementation.
+Magenta supports interactive TUI, one-shot text output, JSON event output, RPC integration, and an embeddable SDK. Its coding tools are assembled through the Harness Component Protocol implementation.
 
 ## Requirements
 
@@ -19,14 +17,41 @@ Magenta supports interactive TUI, one-shot text output, JSON event output, RPC i
 
 ## Install
 
-Install the published package globally:
+### One-line installation (Recommended)
 
 ```bash
-npm install -g --ignore-scripts @earendil-works/pi-coding-agent
+curl -fsSL https://raw.githubusercontent.com/Minions-Land/Magenta-CLI/main/install.sh | bash
+```
+
+This downloads the pre-compiled binary for your platform and sets up all runtime resources.
+
+### Manual installation
+
+Download the appropriate binary from [GitHub Releases](https://github.com/Minions-Land/Magenta-CLI/releases):
+
+```bash
+# macOS arm64
+curl -fsSL https://github.com/Minions-Land/Magenta-CLI/releases/latest/download/magenta-macos-arm64 -o ~/.local/bin/magenta
+chmod +x ~/.local/bin/magenta
+
+# Download runtime resources
+cd ~/.local/bin
+curl -fsSL https://github.com/Minions-Land/Magenta-CLI/releases/latest/download/magenta-resources-universal.tar.gz | tar -xz
+
+# Run
 magenta
 ```
 
-`--ignore-scripts` prevents dependency lifecycle scripts. The package does not require install scripts for normal npm use.
+### From source
+
+Requires Node.js 22.19.0+, Bun, and Rust toolchain:
+
+```bash
+git clone https://github.com/Minions-Land/Magenta.git
+cd Magenta
+npm install
+npm run build:release-all
+```
 
 Build and run the current repository checkout:
 
@@ -181,7 +206,7 @@ Print mode emits the final text response. JSON mode emits JSONL events. RPC mode
 
 ## Customization
 
-Magenta preserves the upstream extension surfaces:
+Magenta provides several extension surfaces:
 
 - [Extensions](docs/extensions.md): TypeScript tools, commands, events, flags, and UI
 - [Skills](docs/skills.md): reusable Agent Skills
@@ -193,7 +218,7 @@ Magenta preserves the upstream extension surfaces:
 An extension's conventional parameter is still named `pi` because that is the public compatibility API:
 
 ```typescript
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "magenta";
 
 export default function (pi: ExtensionAPI) {
   pi.registerCommand("status", {
