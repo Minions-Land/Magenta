@@ -2,8 +2,9 @@
  * GitHub Releases-based auto-update mechanism for Magenta.
  * 
  * This module checks GitHub Releases for new versions and downloads the binary
- * when updates are available. The GitHub token is compiled into the binary to
- * allow access to private repository releases without exposing source code.
+ * when updates are available. Binaries are published to a PUBLIC repository
+ * (Minions-Land/Magenta-CLI) so downloads work anonymously with no token,
+ * while the source code stays in a separate private repository.
  * 
  * Unlike magenta-update.ts (git-based), this works with distributed binaries.
  */
@@ -14,21 +15,21 @@ import { chmod, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promi
 import { homedir, platform } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { pipeline } from "node:stream/promises";
-import { VERSION } from "../config.ts";
+import { VERSION, isBunBinary } from "../config.ts";
 
 // ============================================================================
 // Configuration - Set these before building the binary
 // ============================================================================
 
 /** GitHub repository in format "owner/repo" */
-const GITHUB_REPO = process.env.MAGENTA_GITHUB_REPO || "Minions-Land/Magenta";
+const GITHUB_REPO = process.env.MAGENTA_GITHUB_REPO || "Minions-Land/Magenta-CLI";
 
 /** 
- * GitHub Personal Access Token with public_repo scope.
- * This token is embedded in the binary to allow downloading releases
- * from a private repository without giving users source code access.
+ * GitHub Personal Access Token (optional).
+ * For public repositories, no token is needed - downloads work anonymously.
+ * Set MAGENTA_GITHUB_TOKEN environment variable only if using a private repo.
  */
-const GITHUB_TOKEN = process.env.MAGENTA_GITHUB_TOKEN || "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";
+const GITHUB_TOKEN = process.env.MAGENTA_GITHUB_TOKEN || "";
 
 /** Check for updates at most once per day */
 const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
@@ -139,18 +140,10 @@ async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs: nu
 }
 
 async function getLatestRelease(): Promise<GitHubRelease | null> {
-	if (!GITHUB_TOKEN) {
-		return null;
-	}
-
 	try {
 		const url = `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`;
 		const response = await fetchWithTimeout(url, {
-			headers: {
-				Accept: "application/vnd.github+json",
-				Authorization: `Bearer ${GITHUB_TOKEN}`,
-				"User-Agent": "Magenta-Auto-Update",
-			},
+			headers: buildGitHubHeaders("application/vnd.github+json"),
 		});
 
 		if (!response.ok) {
@@ -176,6 +169,21 @@ function getBinaryAssetName(): string {
 	return "magenta";
 }
 
+/**
+ * Build GitHub request headers. Includes Authorization only when a token is
+ * configured (private repos). Public repos download anonymously.
+ */
+function buildGitHubHeaders(accept: string): Record<string, string> {
+	const headers: Record<string, string> = {
+		Accept: accept,
+		"User-Agent": "Magenta-Auto-Update",
+	};
+	if (GITHUB_TOKEN) {
+		headers.Authorization = `Bearer ${GITHUB_TOKEN}`;
+	}
+	return headers;
+}
+
 // ============================================================================
 // Public API
 // ============================================================================
@@ -190,15 +198,6 @@ export async function checkForUpdate(options: { force?: boolean } = {}): Promise
 		return {
 			updateAvailable: false,
 			currentVersion: VERSION,
-		};
-	}
-
-	// Require GitHub token
-	if (!GITHUB_TOKEN) {
-		return {
-			updateAvailable: false,
-			currentVersion: VERSION,
-			error: "GitHub token not configured",
 		};
 	}
 
@@ -242,8 +241,8 @@ export async function checkForUpdate(options: { force?: boolean } = {}): Promise
 			currentVersion: VERSION,
 			latestVersion,
 			releaseNotes: release.body,
-			// For private repos, use API endpoint instead of browser_download_url
-			downloadUrl: asset.url,
+			// Public repo: anonymous download via browser_download_url
+			downloadUrl: asset.browser_download_url,
 		};
 }
 
@@ -267,10 +266,15 @@ export async function backgroundUpdateNotification(): Promise<void> {
  * This replaces the current binary with the new one.
  */
 export async function installUpdate(): Promise<UpdateInstallResult> {
-	if (!GITHUB_TOKEN) {
+	// Safety guard: self-update only works for the compiled single-file binary.
+	// When running via Node.js (e.g. `node dist/cli.js`), process.execPath points
+	// to the Node.js executable itself — overwriting it would corrupt the host
+	// Node.js installation. Refuse to update in that case.
+	if (!isBunBinary) {
 		return {
 			success: false,
-			error: "GitHub token not configured",
+			error:
+				"自更新仅适用于编译后的 Magenta 二进制文件。当前通过 Node.js 运行，跳过自更新以避免覆盖 Node.js。",
 		};
 	}
 
@@ -303,11 +307,7 @@ export async function installUpdate(): Promise<UpdateInstallResult> {
 	try {
 		// Download the new binary (use longer timeout for large files)
 		const response = await fetchWithTimeout(checkResult.downloadUrl, {
-			headers: {
-				Accept: "application/octet-stream",
-				Authorization: `Bearer ${GITHUB_TOKEN}`,
-				"User-Agent": "Magenta-Auto-Update",
-			},
+			headers: buildGitHubHeaders("application/octet-stream"),
 		}, DOWNLOAD_TIMEOUT_MS);
 
 		if (!response.ok) {

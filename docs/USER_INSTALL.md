@@ -1,93 +1,72 @@
 # Magenta 安装指南
 
+Magenta 的二进制文件发布在公开仓库 `Minions-Land/Magenta-CLI`，任何人都可以**匿名下载**，无需 GitHub Token。
+
 ## 📦 方式一：一键安装（推荐）
 
-### macOS / Linux
-
+### macOS
 ```bash
-# 设置你的 GitHub Token（必需，因为是私有仓库）
-export MAGENTA_GITHUB_TOKEN="your_github_token_here"
-
-# 一键安装
-curl -fsSL https://raw.githubusercontent.com/Minions-Land/Magenta/main/scripts/remote-install.sh | bash
+curl -fsSL https://github.com/Minions-Land/Magenta-CLI/releases/latest/download/magenta-macos -o ~/.local/bin/magenta && \
+chmod +x ~/.local/bin/magenta && \
+~/.local/bin/magenta --version
 ```
 
-安装完成后：
+### Linux
 ```bash
-# 添加到 PATH（如果提示需要）
-echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
+curl -fsSL https://github.com/Minions-Land/Magenta-CLI/releases/latest/download/magenta-linux -o ~/.local/bin/magenta && \
+chmod +x ~/.local/bin/magenta && \
+~/.local/bin/magenta --version
+```
+
+安装完成后，添加到 PATH（如果提示需要）：
+```bash
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc   # macOS
 source ~/.zshrc
 
-# 验证安装
+# 验证
 magenta --version
 ```
+
+> 提示：如果 `~/.local/bin` 不存在，先运行 `mkdir -p ~/.local/bin`。
 
 ---
 
 ## 📥 方式二：手动下载
 
-### 1. 获取 GitHub Token
-
-访问：https://github.com/settings/tokens
-
-创建一个 Personal Access Token，权限选择：
-- ✅ `repo` (Full control of private repositories)
-
-### 2. 下载二进制文件
+直接从浏览器或命令行下载对应平台的二进制：
 
 **macOS:**
 ```bash
-export GITHUB_TOKEN="your_token_here"
-
-# 获取最新版本信息
-RELEASE_INFO=$(curl -fsSL \
-  -H "Accept: application/vnd.github+json" \
-  -H "Authorization: Bearer $GITHUB_TOKEN" \
-  "https://api.github.com/repos/Minions-Land/Magenta/releases/latest")
-
-# 获取 asset ID
-ASSET_ID=$(echo "$RELEASE_INFO" | grep -A3 '"name": "magenta-macos"' | grep '"id":' | head -1 | sed -E 's/.*"id": *([0-9]+).*/\1/')
-
-# 下载
-curl -fsSL \
-  -H "Accept: application/octet-stream" \
-  -H "Authorization: Bearer $GITHUB_TOKEN" \
-  -o magenta \
-  "https://api.github.com/repos/Minions-Land/Magenta/releases/assets/$ASSET_ID"
-
-# 设置可执行权限
+curl -fsSL https://github.com/Minions-Land/Magenta-CLI/releases/latest/download/magenta-macos -o magenta
 chmod +x magenta
-
-# 移动到系统路径
 sudo mv magenta /usr/local/bin/
 ```
 
 **Linux:**
 ```bash
-# 同上，但下载 magenta-linux
-# （将 "magenta-macos" 替换为 "magenta-linux"）
+curl -fsSL https://github.com/Minions-Land/Magenta-CLI/releases/latest/download/magenta-linux -o magenta
+chmod +x magenta
+sudo mv magenta /usr/local/bin/
 ```
 
-### 3. 验证安装
-
+**验证安装：**
 ```bash
 magenta --version
 # 应该显示: 0.0.3（或更高版本）
 ```
 
+也可以在页面手动下载：https://github.com/Minions-Land/Magenta-CLI/releases/latest
+
 ---
 
 ## 🔄 更新 Magenta
 
-安装后，更新非常简单：
-
 ```bash
-# 自动检查并更新到最新版本
 magenta --update
 ```
 
 更新过程：
-1. 🔍 检查 GitHub 最新版本
+1. 🔍 检查公开仓库最新版本（匿名，无需 token）
 2. 📥 自动下载新版本（显示进度）
 3. 💾 备份旧版本（.backup）
 4. ✅ 原子替换，失败自动回滚
@@ -96,13 +75,17 @@ magenta --update
 
 ## ❓ 常见问题
 
-### 问：为什么需要 GitHub Token？
+### 问：需要 GitHub Token 吗？
 
-答：Magenta 仓库是私有的，需要 token 才能访问 releases。
+答：**不需要。** 二进制发布在公开仓库，下载和更新都是匿名的。
 
 ### 问：安装需要 Node.js 吗？
 
-答：**不需要！** Magenta 是单文件二进制，无任何依赖。
+答：**不需要。** Magenta 是单文件二进制，无任何依赖。
+
+### 问：能看到源代码吗？
+
+答：看不到。源码在私有仓库 `Minions-Land/Magenta`，公开仓库 `Magenta-CLI` 只包含编译后的二进制，不含任何源码或凭证。
 
 ### 问：文件多大？
 
@@ -111,8 +94,8 @@ magenta --update
 ### 问：支持哪些平台？
 
 答：
-- ✅ macOS (Intel & Apple Silicon)
-- 🚧 Linux（即将支持）
+- ✅ macOS (Apple Silicon)
+- 🚧 Linux（构建中）
 - ❌ Windows（暂不支持）
 
 ### 问：更新失败怎么办？
@@ -135,8 +118,6 @@ sudo rm /usr/local/bin/magenta
 
 ## 🚀 快速开始
 
-安装完成后：
-
 ```bash
 # 查看版本
 magenta --version
@@ -156,25 +137,7 @@ magenta --update
 
 ---
 
-## 🔒 安全提示
-
-1. **保护你的 GitHub Token**
-   - 不要提交到代码仓库
-   - 使用环境变量或密钥管理工具
-   - 定期轮换
-
-2. **验证下载**
-   - 安装脚本会验证文件大小
-   - 更新时会验证新版本能正常运行
-
-3. **备份机制**
-   - 每次更新自动备份旧版本
-   - 失败自动回滚
-
----
-
 ## 📞 获取帮助
 
 - 文档：[README.md](../README.md)
-- 问题：[GitHub Issues](https://github.com/Minions-Land/Magenta/issues)
 - 更新日志：[CHANGELOG.md](../pi/coding-agent/CHANGELOG.md)
