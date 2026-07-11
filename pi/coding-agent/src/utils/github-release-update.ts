@@ -35,6 +35,7 @@ const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
 /** Timeout for network requests */
 const FETCH_TIMEOUT_MS = 30_000;
+const DOWNLOAD_TIMEOUT_MS = 300_000; // 5 minutes for binary downloads
 
 // ============================================================================
 // Types
@@ -122,9 +123,9 @@ async function recordUpdateCheck(): Promise<void> {
 // GitHub API
 // ============================================================================
 
-async function fetchWithTimeout(url: string, options: RequestInit): Promise<Response> {
+async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs: number = FETCH_TIMEOUT_MS): Promise<Response> {
 	const controller = new AbortController();
-	const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+	const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
 	try {
 		const response = await fetch(url, {
@@ -300,14 +301,14 @@ export async function installUpdate(): Promise<UpdateInstallResult> {
 	console.log(`📦 正在下载 Magenta v${checkResult.latestVersion}...`);
 
 	try {
-		// Download the new binary
+		// Download the new binary (use longer timeout for large files)
 		const response = await fetchWithTimeout(checkResult.downloadUrl, {
 			headers: {
 				Accept: "application/octet-stream",
 				Authorization: `Bearer ${GITHUB_TOKEN}`,
 				"User-Agent": "Magenta-Auto-Update",
 			},
-		});
+		}, DOWNLOAD_TIMEOUT_MS);
 
 		if (!response.ok) {
 			throw new Error(`Download failed: ${response.status} ${response.statusText}`);
@@ -319,11 +320,47 @@ export async function installUpdate(): Promise<UpdateInstallResult> {
 		const tempPath = `${currentBinary}.new`;
 
 		// Save downloaded binary to temp location
-		const fileStream = createWriteStream(tempPath);
 		if (!response.body) {
 			throw new Error("Response body is null");
 		}
-		await pipeline(response.body as any, fileStream);
+		
+		const fileStream = createWriteStream(tempPath);
+		
+		// Convert Web ReadableStream to Node.js stream and add progress
+		const contentLength = parseInt(response.headers.get("content-length") || "0", 10);
+		let downloadedBytes = 0;
+		const startTime = Date.now();
+		
+		const reader = response.body.getReader();
+		const writeChunk = async (): Promise<void> => {
+			const { done, value } = await reader.read();
+			if (done) {
+				fileStream.end();
+				return;
+			}
+			
+			if (contentLength > 0) {
+				downloadedBytes += value.length;
+				const percent = Math.floor((downloadedBytes / contentLength) * 100);
+				const elapsed = Math.max(1, (Date.now() - startTime) / 1000);
+				const speed = (downloadedBytes / elapsed / 1024 / 1024).toFixed(2);
+				process.stdout.write(`\r📥 下载中: ${percent}% (${speed} MB/s)`);
+			}
+			
+			fileStream.write(value);
+			await writeChunk();
+		};
+		
+		await writeChunk();
+		if (contentLength > 0) {
+			console.log(""); // New line after progress
+		}
+		
+		// Wait for stream to finish
+		await new Promise<void>((resolve, reject) => {
+			fileStream.on("finish", resolve);
+			fileStream.on("error", reject);
+		});
 
 		// Make it executable
 		await chmod(tempPath, 0o755);
