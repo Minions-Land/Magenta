@@ -4,18 +4,31 @@ Magenta 的二进制文件发布在公开仓库 `Minions-Land/Magenta-CLI`，任
 
 ## 📦 方式一：一键安装（推荐）
 
-### macOS
+### macOS (Apple Silicon)
 ```bash
-curl -fsSL https://github.com/Minions-Land/Magenta-CLI/releases/latest/download/magenta-macos -o ~/.local/bin/magenta && \
+curl -fsSL https://github.com/Minions-Land/Magenta-CLI/releases/latest/download/magenta-macos-arm64 -o ~/.local/bin/magenta && \
 chmod +x ~/.local/bin/magenta && \
 ~/.local/bin/magenta --version
 ```
 
-### Linux
+### macOS (Intel)
 ```bash
-curl -fsSL https://github.com/Minions-Land/Magenta-CLI/releases/latest/download/magenta-linux -o ~/.local/bin/magenta && \
+curl -fsSL https://github.com/Minions-Land/Magenta-CLI/releases/latest/download/magenta-macos-x64 -o ~/.local/bin/magenta && \
 chmod +x ~/.local/bin/magenta && \
 ~/.local/bin/magenta --version
+```
+
+### Linux (x64)
+```bash
+curl -fsSL https://github.com/Minions-Land/Magenta-CLI/releases/latest/download/magenta-linux-x64 -o ~/.local/bin/magenta && \
+chmod +x ~/.local/bin/magenta && \
+~/.local/bin/magenta --version
+```
+
+### Windows (x64)
+```powershell
+# PowerShell
+Invoke-WebRequest -Uri "https://github.com/Minions-Land/Magenta-CLI/releases/latest/download/magenta-windows-x64.exe" -OutFile "magenta.exe"
 ```
 
 安装完成后，添加到 PATH（如果提示需要）：
@@ -35,18 +48,31 @@ magenta --version
 
 直接从浏览器或命令行下载对应平台的二进制：
 
-**macOS:**
+**macOS (Apple Silicon):**
 ```bash
-curl -fsSL https://github.com/Minions-Land/Magenta-CLI/releases/latest/download/magenta-macos -o magenta
+curl -fsSL https://github.com/Minions-Land/Magenta-CLI/releases/latest/download/magenta-macos-arm64 -o magenta
 chmod +x magenta
 sudo mv magenta /usr/local/bin/
 ```
 
-**Linux:**
+**macOS (Intel):**
 ```bash
-curl -fsSL https://github.com/Minions-Land/Magenta-CLI/releases/latest/download/magenta-linux -o magenta
+curl -fsSL https://github.com/Minions-Land/Magenta-CLI/releases/latest/download/magenta-macos-x64 -o magenta
 chmod +x magenta
 sudo mv magenta /usr/local/bin/
+```
+
+**Linux (x64):**
+```bash
+curl -fsSL https://github.com/Minions-Land/Magenta-CLI/releases/latest/download/magenta-linux-x64 -o magenta
+chmod +x magenta
+sudo mv magenta /usr/local/bin/
+```
+
+**Windows (x64):**
+```powershell
+# PowerShell (以管理员身份运行)
+Invoke-WebRequest -Uri "https://github.com/Minions-Land/Magenta-CLI/releases/latest/download/magenta-windows-x64.exe" -OutFile "C:\Windows\System32\magenta.exe"
 ```
 
 **验证安装：**
@@ -90,9 +116,9 @@ magenta --update
 ### 问：支持哪些平台？
 
 答：
-- ✅ macOS (Apple Silicon)
-- 🚧 Linux（构建中）
-- ❌ Windows（暂不支持）
+- ✅ macOS (Apple Silicon / Intel)
+- ✅ Linux (x64)
+- ✅ Windows (x64)
 
 ### 问：更新失败怎么办？
 

@@ -10,10 +10,22 @@ echo "📦 Magenta 快速安装..."
 
 # 检测平台
 OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+ARCH=$(uname -m)
 case "$OS" in
-  darwin) BINARY="magenta-macos" ;;
-  linux)  BINARY="magenta-linux" ;;
-  *) echo "❌ 不支持的系统: $OS"; exit 1 ;;
+  darwin)
+    case "$ARCH" in
+      arm64|aarch64) BINARY="magenta-macos-arm64" ;;
+      x86_64|amd64)  BINARY="magenta-macos-x64" ;;
+      *) echo "❌ 不支持的 macOS 架构: $ARCH"; exit 1 ;;
+    esac
+    ;;
+  linux)
+    case "$ARCH" in
+      x86_64|amd64) BINARY="magenta-linux-x64" ;;
+      *) echo "❌ 不支持的 Linux 架构: $ARCH"; exit 1 ;;
+    esac
+    ;;
+  *) echo "❌ 不支持的系统: $OS (Windows 请用 PowerShell 下载 magenta-windows-x64.exe)"; exit 1 ;;
 esac
 
 INSTALL_DIR="$HOME/.local/bin"
