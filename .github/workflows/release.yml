@@ -75,6 +75,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           repository: Minions-Land/Magenta-CLI
+          token: ${{ secrets.MAGENTA_CLI_RELEASE_TOKEN }}
           files: |
             pi/coding-agent/dist/release/magenta-macos-arm64
             pi/coding-agent/dist/release/magenta-macos-x64
@@ -85,8 +86,6 @@ jobs:
           body_path: /tmp/release_notes.md
           draft: false
           prerelease: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.MAGENTA_CLI_RELEASE_TOKEN }}
       
       - name: Release complete
         if: success()
