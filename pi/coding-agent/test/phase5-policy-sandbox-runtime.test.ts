@@ -65,7 +65,7 @@ describe("Phase 5: policy/sandbox/runtime resolution (C5.1-C5.3)", () => {
 
 	it("C5.1: resolves policy/sandbox/runtime from session HCP", async () => {
 		const { session, resourceLoader } = await createSession();
-		const sessionHcp = resourceLoader.getSessionHcp();
+		const sessionHcp = resourceLoader.HcpClientgetsession();
 
 		// Verify the session HCP exposes policy/sandbox/runtime capabilities
 		expect(sessionHcp).toBeDefined();

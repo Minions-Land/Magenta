@@ -413,7 +413,7 @@ export function hasNamedClassExport(source, className, fileName = `${className}.
 	});
 }
 
-export function inspectHcpSyntax(source, fileName = "source.ts") {
+export function HcpClientinspectsyntax(source, fileName = "source.ts") {
 	const file = sourceFile(source, fileName);
 	const forbiddenIdentifiers = new Map();
 	const hcpClientConstructions = [];
@@ -528,7 +528,7 @@ function checkHarnessClassOnlyTypes() {
 		const source = readFileSync(filePath, "utf8");
 		if (!isMagnetRole && !source.includes("interface") && !source.includes("implements")) continue;
 
-		const inspection = inspectHcpSyntax(source, filePath);
+		const inspection = HcpClientinspectsyntax(source, filePath);
 		for (const declaration of inspection.interfaceDeclarations) {
 			fail(`forbidden production interface ${declaration.name} at ${pathLabel(filePath)}:${declaration.line}`);
 		}
@@ -595,7 +595,7 @@ function checkInfrastructureBoundaries() {
 	}
 }
 
-function checkHcpFinalState() {
+function HcpClientcheckfinalstate() {
 	for (const filePath of collectProductionSourceFiles(repoRoot)) {
 		if (basename(filePath) === "magnet.ts") {
 			fail(`retired production role file ${pathLabel(filePath)} must be named HcpMagnet.ts`);
@@ -603,7 +603,7 @@ function checkHcpFinalState() {
 
 		const source = readFileSync(filePath, "utf8");
 		if (![...forbiddenHcpIdentifiers, "HcpClient"].some((identifier) => source.includes(identifier))) continue;
-		const inspection = inspectHcpSyntax(source, filePath);
+		const inspection = HcpClientinspectsyntax(source, filePath);
 		for (const identifier of inspection.forbiddenIdentifiers) {
 			fail(`forbidden production identifier ${identifier.name} at ${pathLabel(filePath)}:${identifier.line}`);
 		}
@@ -633,7 +633,7 @@ function checkGeneratedNoise() {
 	}
 }
 
-function checkHcpCoreFiles() {
+function HcpClientcheckcorefiles() {
 	const hcpClientFiles = [
 		join(harnessRoot, "HcpClient.ts"),
 		join(harnessRoot, ".HCP", "HcpServerTypes.ts"),
@@ -660,8 +660,8 @@ export function runStructureCheck() {
 	checkPackageBoundary();
 	checkSupportLayout();
 	checkToolLayout();
-	checkHcpCoreFiles();
-	checkHcpFinalState();
+	HcpClientcheckcorefiles();
+	HcpClientcheckfinalstate();
 	checkGeneratedNoise();
 
 	for (const message of notes) console.log(`note: ${message}`);

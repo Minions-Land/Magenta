@@ -245,7 +245,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	}
 
 	const defaultActiveToolNames: string[] = ["read", "bash", "edit", "write", "bg_shell", "sub_agent"];
-	const sessionHcp = resourceLoader.getSessionHcp?.();
+	const sessionHcp = resourceLoader.HcpClientgetsession?.();
 	if (sessionHcp) {
 		await HcpClientassembletools({
 			hcp: sessionHcp,

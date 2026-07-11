@@ -65,7 +65,7 @@ export interface ResourceLoader {
 	 * capabilities from this HCP instead of statically importing implementations. Returns undefined for loaders
 	 * that do not assemble an HCP (null loader, test doubles).
 	 */
-	getSessionHcp?(): HcpClient | undefined;
+	HcpClientgetsession?(): HcpClient | undefined;
 	/**
 	 * Resolve a skill by a `/skill:` handle: bare `name`, or `<source>:<name>` qualified name (which
 	 * also reaches collision-shadowed skills excluded from {@link getSkills}). Optional so alternative
@@ -508,7 +508,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 	 * is available even when no package was selected (default capabilities still
 	 * apply).
 	 */
-	getSessionHcp(): HcpClient | undefined {
+	HcpClientgetsession(): HcpClient | undefined {
 		return this.sessionHcp;
 	}
 

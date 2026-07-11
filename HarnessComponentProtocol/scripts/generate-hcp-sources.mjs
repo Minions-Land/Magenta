@@ -154,7 +154,7 @@ export function findComponentSourceDirectories(root, componentPath, spec, source
 }
 
 /** Resolve exactly one source-owned HcpMagnet.ts for a declared component. */
-export function findComponentHcpMagnet(root, componentPath, spec, source = spec.source) {
+export function HcpClientfindcomponentmagnet(root, componentPath, spec, source = spec.source) {
 	invariant(typeof source === "string" && source !== "", `${pathLabel(componentPath, root)} is missing a source`);
 	const candidates = findComponentSourceDirectories(root, componentPath, spec, source)
 		.map((directory) => resolve(directory, "HcpMagnet.ts"))
@@ -361,7 +361,7 @@ function assertSelectedComponentDependencies(entries) {
  * Generated role imports are deduplicated, while component rows retain every
  * component/source pairing. A shared role class can therefore serve multiple slots.
  */
-export function collectHcpSources(options = {}) {
+export function HcpClientcollectsources(options = {}) {
 	const root = resolve(options.harnessRoot ?? defaultHarnessRoot);
 	const harnessTomlPath = resolve(options.harnessTomlPath ?? resolve(root, "harness.toml"));
 	invariant(existsSync(harnessTomlPath), `Missing harness.toml index: ${pathLabel(harnessTomlPath, root)}`);
@@ -548,7 +548,7 @@ function importSpecifier(fromDirectory, target) {
 	return path.startsWith(".") ? path : `./${path}`;
 }
 
-export function renderHcpSources(collected, outputPath) {
+export function HcpClientrendersources(collected, outputPath) {
 	const outputDirectory = dirname(outputPath);
 	const imports = [];
 	const pathsByAlias = new Map();
@@ -624,12 +624,12 @@ export function renderHcpSources(collected, outputPath) {
 	return lines.join("\n");
 }
 
-export function generateHcpSources(options = {}) {
-	const collected = collectHcpSources(options);
+export function HcpClientgeneratesources(options = {}) {
+	const collected = HcpClientcollectsources(options);
 	const outputPath = resolve(
 		options.outputPath ?? resolve(collected.harnessRoot, ".HCP", "assembly", "sources.generated.ts"),
 	);
-	const expected = renderHcpSources(collected, outputPath);
+	const expected = HcpClientrendersources(collected, outputPath);
 	const actual = existsSync(outputPath) ? readFileSync(outputPath, "utf8") : undefined;
 	if (options.check) {
 		invariant(
@@ -647,7 +647,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
 	try {
 		const unknown = process.argv.slice(2).filter((argument) => argument !== "--check");
 		invariant(unknown.length === 0, `Unknown arguments: ${unknown.join(", ")}`);
-		const result = generateHcpSources({ check: process.argv.includes("--check") });
+		const result = HcpClientgeneratesources({ check: process.argv.includes("--check") });
 		console.log(
 			`${result.changed ? "Generated" : "Checked"} ${pathLabel(result.outputPath, result.collected.harnessRoot)} ` +
 				`(${result.collected.servers.length} servers, ${result.collected.magnets.length} unique magnet role files, ` +

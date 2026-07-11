@@ -931,7 +931,7 @@ describe("ExtensionRunner", () => {
 
 			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
 			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
-			runner.setHcp(mockHcp as any);
+			runner.HcpClientsetsession(mockHcp as any);
 
 			// Emit tool_call
 			const toolCallResult = await runner.emitToolCall({
@@ -976,7 +976,7 @@ describe("ExtensionRunner", () => {
 
 			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
 			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
-			// Don't call setHcp — runner has no HCP
+			// Don't call HcpClientsetsession — runner has no HCP
 
 			await runner.emitToolCall({
 				type: "tool_call",

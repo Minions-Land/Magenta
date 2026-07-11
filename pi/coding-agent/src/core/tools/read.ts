@@ -106,7 +106,7 @@ function getPiDocsClassification(absolutePath: string): CompactReadClassificatio
 	return undefined;
 }
 
-function isHcpSkillSlot(directory: string): boolean {
+function HcpClientisskillslot(directory: string): boolean {
 	const slotName = basename(directory);
 	return existsSync(resolvePath(directory, "HcpServer.ts")) || existsSync(resolvePath(directory, `${slotName}.toml`));
 }
@@ -123,9 +123,9 @@ function getCompactReadClassification(
 	if (fileName === "SKILL.md") {
 		const skillDir = dirname(absolutePath);
 		const owningSlot = dirname(skillDir);
-		const skillName = isHcpSkillSlot(skillDir)
+		const skillName = HcpClientisskillslot(skillDir)
 			? basename(skillDir)
-			: isHcpSkillSlot(owningSlot)
+			: HcpClientisskillslot(owningSlot)
 				? basename(owningSlot)
 				: basename(skillDir);
 		return { kind: "skill", label: skillName || fileName };

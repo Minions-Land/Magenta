@@ -289,7 +289,7 @@ export class ExtensionRunner {
 	private shortcutDiagnostics: ResourceDiagnostic[] = [];
 	private commandDiagnostics: ResourceDiagnostic[] = [];
 	private staleMessage: string | undefined;
-	/** Phase 4: resolved HookProvider, cached at setHcp time so runtime hook
+	/** Phase 4: resolved HookProvider, cached at HcpClientsetsession time so runtime hook
 	 * invocations are direct method calls, not per-turn HCP resolution (INV-3). */
 	private hookProvider?: HookProvider;
 
@@ -314,7 +314,7 @@ export class ExtensionRunner {
 	 * is resolved eagerly and cached here so runtime hook invocations are direct
 	 * method calls, not per-turn HCP resolution (INV-3: hot path stays off HCP).
 	 */
-	setHcp(hcp?: HcpClient): void {
+	HcpClientsetsession(hcp?: HcpClient): void {
 		if (!hcp) {
 			this.hookProvider = undefined;
 			return;

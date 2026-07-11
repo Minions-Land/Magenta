@@ -505,12 +505,12 @@ export class AgentSession {
 	 * — the same underlying function, so behavior is identical either way.
 	 */
 	private _resolveCompactionProvider(): CompactionProvider | undefined {
-		const hcp: HcpClient | undefined = this._resourceLoader.getSessionHcp?.();
+		const hcp: HcpClient | undefined = this._resourceLoader.HcpClientgetsession?.();
 		return hcp?.resolveCapability?.<CompactionProvider>("compaction");
 	}
 
 	private _resolveMultiAgentProvider(): SubAgentWorkflowProvider | undefined {
-		const hcp: HcpClient | undefined = this._resourceLoader.getSessionHcp?.();
+		const hcp: HcpClient | undefined = this._resourceLoader.HcpClientgetsession?.();
 		return hcp?.resolveCapability?.<SubAgentWorkflowProvider>("multiagent");
 	}
 
@@ -528,17 +528,17 @@ export class AgentSession {
 	 * either way.
 	 */
 	private _resolvePolicyProvider(): PolicyProvider | undefined {
-		const hcp: HcpClient | undefined = this._resourceLoader.getSessionHcp?.();
+		const hcp: HcpClient | undefined = this._resourceLoader.HcpClientgetsession?.();
 		return hcp?.resolveCapability?.<PolicyProvider>("policy");
 	}
 
 	private _resolveSandboxProvider(): SandboxProvider | undefined {
-		const hcp: HcpClient | undefined = this._resourceLoader.getSessionHcp?.();
+		const hcp: HcpClient | undefined = this._resourceLoader.HcpClientgetsession?.();
 		return hcp?.resolveCapability?.<SandboxProvider>("sandbox");
 	}
 
 	private _resolveRuntimeProvider(): ProcessRuntimeProvider | undefined {
-		const hcp: HcpClient | undefined = this._resourceLoader.getSessionHcp?.();
+		const hcp: HcpClient | undefined = this._resourceLoader.HcpClientgetsession?.();
 		// runtime is multi-slot; the process runtime lives at `runtime:process`.
 		return hcp?.resolveCapability?.<ProcessRuntimeProvider>("runtime:process");
 	}
@@ -2733,7 +2733,7 @@ export class AgentSession {
 		// resolve back through the magnet chain. Satisfies INV-1 (all content via HCP)
 		// while preserving pi's per-runtime option injection lifecycle. Falls back to
 		// local construction when no session HCP is available (e.g. custom loaders).
-		const sessionHcp = this._resourceLoader.getSessionHcp?.();
+		const sessionHcp = this._resourceLoader.HcpClientgetsession?.();
 		const baseToolDefinitions: Record<string, ToolDefinitionEntry> = this._baseToolsOverride
 			? Object.fromEntries(
 					Object.entries(this._baseToolsOverride).map(([name, tool]) => [
@@ -2745,7 +2745,7 @@ export class AgentSession {
 					]),
 				)
 			: sessionHcp
-				? this._resolveToolsFromHcp(sessionHcp)
+				? this.HcpClientresolvetools(sessionHcp)
 				: Object.fromEntries(
 						Object.entries(
 							createAllToolDefinitions(this._cwd, {
@@ -2811,7 +2811,7 @@ export class AgentSession {
 		// Phase 4: inject the session HCP so ExtensionRunner can delegate lifecycle
 		// hooks (pre-tool/post-tool/pre-llm/post-llm) to the HCP-resolved HookProvider.
 		// Runs on every _buildRuntime (including reload) so the provider stays current.
-		this._extensionRunner.setHcp(sessionHcp);
+		this._extensionRunner.HcpClientsetsession(sessionHcp);
 		// Phase 5: resolve command-execution safety capabilities from the session HCP
 		// so bash safety is HCP-routed (C5.1). These are cached for consultation but
 		// NOT enforced by default (policy=yolo, sandbox=none) so behavior is identical
@@ -2846,7 +2846,7 @@ export class AgentSession {
 		});
 	}
 
-	private _resolveToolsFromHcp(sessionHcp: HcpClient): Record<string, ToolDefinitionEntry> {
+	private HcpClientresolvetools(sessionHcp: HcpClient): Record<string, ToolDefinitionEntry> {
 		// Tools were built once by the session assembler. Runtime code only resolves
 		// their addresses and adds pi-owned rendering metadata.
 		const canonical = createAllToolDefinitions(this._cwd) as Record<string, ToolDefinition>;
@@ -2909,7 +2909,7 @@ export class AgentSession {
 		await this._resourceLoader.reload({
 			onPackageAssemblyProgress: this._packageLoad.onProgress,
 		});
-		const sessionHcp = this._resourceLoader.getSessionHcp?.();
+		const sessionHcp = this._resourceLoader.HcpClientgetsession?.();
 		if (sessionHcp) {
 			await HcpClientassembletools({
 				hcp: sessionHcp,

@@ -51,14 +51,20 @@ package overlays, process runtimes, and UI selection keep evolving.
   repository's filesystem location.
   `HarnessComponentProtocol/_magenta/packages` is the generic integration
   boundary for explicitly supplied Package roots, not a second Package owner.
-- Harness Source names are origin-agent names, not programming languages or
-  runtime mechanisms. Magenta/Magenta1-related material uses `magenta`; Pi uses
-  `pi`; future Codex and Claude Code material should use `codex` and
-  `claude-code`.
+- Harness implementation Source names are origin-agent names, not programming
+  languages or runtime mechanisms. Magenta/Magenta1-related material uses
+  `magenta`; Pi uses `pi`; future Codex and Claude Code material should use
+  `codex` and `claude-code`. The sole host-supplied exception is the reserved
+  `descriptor` Source: an owning Module may declare `descriptor/HcpMagnet.ts` to
+  adapt host or Package descriptor settings into its Tool or Resource product.
+  `descriptor` is not an origin agent, a runtime mechanism, or permission to
+  introduce other mechanism-named Sources.
 - A declared component that names a Source such as
   `source = "magenta"` or `source = "pi"` must have the corresponding Source
-  directory beside its descriptor. Runtime mechanisms and grouped "pack" labels
-  must not stand in for Module kinds or Source names.
+  directory beside its descriptor. A `descriptor` Source must likewise be
+  repository-declared and routed through the owning Module's
+  `descriptor/HcpMagnet.ts`. Runtime mechanisms and grouped "pack" labels must
+  not stand in for Module kinds or Source names.
 - Process-backed tools are still tools. Their descriptors and tool-specific
   adapters live under the owning Module Source. The shared managed runtime lives
   at `HarnessComponentProtocol/_magenta/process-tools` and is reached through

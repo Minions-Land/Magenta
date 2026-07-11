@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 type SourceLocation = { line: number; column: number };
-type HcpSyntaxInspection = {
+type HcpClientsyntaxinspection = {
 	forbiddenIdentifiers: Array<SourceLocation & { name: string }>;
 	hcpClientConstructions: SourceLocation[];
 	interfaceDeclarations: Array<SourceLocation & { name: string }>;
@@ -10,12 +10,12 @@ type HcpSyntaxInspection = {
 };
 type StructureGuard = {
 	hasNamedClassExport(source: string, className: string, fileName?: string): boolean;
-	inspectHcpSyntax(source: string, fileName?: string): HcpSyntaxInspection;
+	HcpClientinspectsyntax(source: string, fileName?: string): HcpClientsyntaxinspection;
 	isAllowedInfrastructurePath(relativePath: string): boolean;
 };
 
 const structureGuardUrl = new URL("../scripts/check-structure.mjs", import.meta.url);
-const { hasNamedClassExport, inspectHcpSyntax, isAllowedInfrastructurePath }: StructureGuard = await import(
+const { hasNamedClassExport, HcpClientinspectsyntax, isAllowedInfrastructurePath }: StructureGuard = await import(
 	structureGuardUrl.href
 );
 
@@ -29,7 +29,7 @@ describe("HCP structure guard syntax checks", () => {
 	});
 
 	it("finds retired production identifiers without matching comments or strings", () => {
-		const inspected = inspectHcpSyntax(`
+		const inspected = HcpClientinspectsyntax(`
 			// ModuleHcpServer and CapabilitySourceMagnet are historical names.
 			const note = "ModuleHcpServer";
 			class ModuleHcpServer {}
@@ -43,7 +43,7 @@ describe("HCP structure guard syntax checks", () => {
 	});
 
 	it("finds direct and qualified HcpClient construction", () => {
-		const inspected = inspectHcpSyntax(`
+		const inspected = HcpClientinspectsyntax(`
 			const one = new HcpClient();
 			const two = new protocol.HcpClient();
 		`);
@@ -52,7 +52,7 @@ describe("HCP structure guard syntax checks", () => {
 	});
 
 	it("finds interfaces, implements clauses, and HcpMagnet server factories", () => {
-		const inspected = inspectHcpSyntax(`
+		const inspected = HcpClientinspectsyntax(`
 			// interface IgnoredComment {}
 			const ignoredString = "class Ignored implements Contract { toHcpServer() {} }";
 			interface Contract {}

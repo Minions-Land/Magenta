@@ -71,7 +71,7 @@ describe("AgentSession multiagent HCP selection", () => {
 		);
 		const resourceLoader = {
 			...createTestResourceLoader(),
-			getSessionHcp: () => hcp,
+			HcpClientgetsession: () => hcp,
 		};
 		const settingsManager = SettingsManager.create(tempDir, agentDir);
 		const { session } = await createAgentSession({

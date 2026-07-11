@@ -4,7 +4,7 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
-type CollectedHcpSources = {
+type HcpClientcollectedsources = {
 	harnessRoot: string;
 	harnessTomlPath: string;
 	servers: Array<{ module: string; path: string }>;
@@ -32,20 +32,19 @@ type GeneratorOptions = {
 	check?: boolean;
 };
 
-type HcpSourcesGenerator = {
-	collectHcpSources(options?: GeneratorOptions): CollectedHcpSources;
-	renderHcpSources(collected: CollectedHcpSources, outputPath: string): string;
-	generateHcpSources(options?: GeneratorOptions): {
+type HcpClientsourcegenerator = {
+	HcpClientcollectsources(options?: GeneratorOptions): HcpClientcollectedsources;
+	HcpClientrendersources(collected: HcpClientcollectedsources, outputPath: string): string;
+	HcpClientgeneratesources(options?: GeneratorOptions): {
 		changed: boolean;
 		outputPath: string;
-		collected: CollectedHcpSources;
+		collected: HcpClientcollectedsources;
 	};
 };
 
 const generatorUrl = new URL("../scripts/generate-hcp-sources.mjs", import.meta.url);
-const { collectHcpSources, generateHcpSources, renderHcpSources }: HcpSourcesGenerator = await import(
-	generatorUrl.href
-);
+const { HcpClientcollectsources, HcpClientgeneratesources, HcpClientrendersources }: HcpClientsourcegenerator =
+	await import(generatorUrl.href);
 
 const HARNESS_ROOT = fileURLToPath(new URL("..", import.meta.url));
 const temporaryDirectories: string[] = [];
@@ -178,12 +177,12 @@ async function createDependencyCycleFixture(): Promise<string> {
 
 describe("HCP assembly source codegen", () => {
 	it("keeps the checked-in generated assembly synchronized", () => {
-		expect(() => generateHcpSources({ harnessRoot: HARNESS_ROOT, check: true })).not.toThrow();
+		expect(() => HcpClientgeneratesources({ harnessRoot: HARNESS_ROOT, check: true })).not.toThrow();
 	});
 
 	it("derives module identity and nested source paths from TOML", async () => {
 		const root = await createFixture();
-		const collected = collectHcpSources({ harnessRoot: root });
+		const collected = HcpClientcollectsources({ harnessRoot: root });
 
 		expect(collected.servers.map(({ module }) => module)).toEqual([
 			"lifecycle",
@@ -218,7 +217,7 @@ describe("HCP assembly source codegen", () => {
 		]);
 
 		const outputPath = join(root, ".HCP", "assembly", "sources.generated.ts");
-		const generated = renderHcpSources(collected, outputPath);
+		const generated = HcpClientrendersources(collected, outputPath);
 		expect(generated).toContain('import * as lifecycle from "../../lifecycle/HcpServer.ts";');
 		expect(generated).toContain(
 			'import * as lifecycleWorkflowMagenta from "../../lifecycle/workflow/magenta/HcpMagnet.ts";',
@@ -245,11 +244,13 @@ describe("HCP assembly source codegen", () => {
 	it("detects a stale generated file", async () => {
 		const root = await createFixture();
 		const outputPath = resolve(root, ".HCP", "assembly", "sources.generated.ts");
-		generateHcpSources({ harnessRoot: root, outputPath });
-		expect(() => generateHcpSources({ harnessRoot: root, outputPath, check: true })).not.toThrow();
+		HcpClientgeneratesources({ harnessRoot: root, outputPath });
+		expect(() => HcpClientgeneratesources({ harnessRoot: root, outputPath, check: true })).not.toThrow();
 
 		await writeFile(outputPath, "// stale\n");
-		expect(() => generateHcpSources({ harnessRoot: root, outputPath, check: true })).toThrow(/is missing or stale/);
+		expect(() => HcpClientgeneratesources({ harnessRoot: root, outputPath, check: true })).toThrow(
+			/is missing or stale/,
+		);
 	});
 
 	it("rejects declared infrastructure or shared code without real HCP roles", async () => {
@@ -265,7 +266,9 @@ path = ".HCP/transport/transport.toml"
 `,
 		);
 
-		expect(() => collectHcpSources({ harnessRoot: root })).toThrow(/missing .*HcpServer\.ts.*must not be declared/s);
+		expect(() => HcpClientcollectsources({ harnessRoot: root })).toThrow(
+			/missing .*HcpServer\.ts.*must not be declared/s,
+		);
 	});
 
 	it("rejects production role files that are absent from TOML declarations", async () => {
@@ -276,7 +279,7 @@ path = ".HCP/transport/transport.toml"
 			'export class HcpMagnet { static readonly module = "tools/read"; static readonly kind = "tool"; static readonly source = "codex"; static build() { return new HcpMagnet(); } }\n',
 		);
 
-		expect(() => collectHcpSources({ harnessRoot: root })).toThrow(
+		expect(() => HcpClientcollectsources({ harnessRoot: root })).toThrow(
 			/HcpMagnet\.ts role files missing from TOML declarations.*codex/,
 		);
 	});
@@ -288,13 +291,13 @@ path = ".HCP/transport/transport.toml"
 			'export class HcpMagnet { static readonly module = "tools/read"; static readonly kind = "tool"; static readonly source = "pi"; static build() { return new HcpMagnet(); } }\n',
 		);
 
-		expect(() => collectHcpSources({ harnessRoot: root })).toThrow(
+		expect(() => HcpClientcollectsources({ harnessRoot: root })).toThrow(
 			/source=pi does not match TOML declaration magenta/,
 		);
 	});
 
 	it("retains one component row per declaration when a generated role class is shared", () => {
-		const collected = collectHcpSources({ harnessRoot: HARNESS_ROOT });
+		const collected = HcpClientcollectsources({ harnessRoot: HARNESS_ROOT });
 		const runtimeEntries = collected.entries.filter(({ module }) => module === "runtime");
 		expect(runtimeEntries).toHaveLength(2);
 		expect(new Set(runtimeEntries.map(({ path }) => path)).size).toBe(1);
@@ -308,7 +311,7 @@ path = ".HCP/transport/transport.toml"
 	});
 
 	it("reads the selected source and autoload policy from component TOML", () => {
-		const collected = collectHcpSources({ harnessRoot: HARNESS_ROOT });
+		const collected = HcpClientcollectsources({ harnessRoot: HARNESS_ROOT });
 		const selectedTools = collected.entries
 			.filter(({ product, selected }) => product === "tool" && selected)
 			.map(({ name, source, autoload }) => ({ name, source, autoload }));
@@ -332,7 +335,9 @@ path = ".HCP/transport/transport.toml"
 		const root = await createFixture();
 		await writeFile(join(root, "skills", "demo", "demo.toml"), 'kind = "skill"\nname = "demo"\nsource = "pi"\n');
 
-		expect(() => collectHcpSources({ harnessRoot: root })).toThrow(/skills\/demo\/demo\.toml is missing product/);
+		expect(() => HcpClientcollectsources({ harnessRoot: root })).toThrow(
+			/skills\/demo\/demo\.toml is missing product/,
+		);
 	});
 
 	it("rejects a capability without an explicit slot", async () => {
@@ -342,7 +347,7 @@ path = ".HCP/transport/transport.toml"
 			'kind = "hook"\nproduct = "capability"\nname = "hooks"\nsource = "magenta"\nimpl = ["lifecycle/workflow/magenta/provider.ts"]\n',
 		);
 
-		expect(() => collectHcpSources({ harnessRoot: root })).toThrow(/product=capability is missing slot/);
+		expect(() => HcpClientcollectsources({ harnessRoot: root })).toThrow(/product=capability is missing slot/);
 	});
 
 	it("rejects a missing selected-component dependency", async () => {
@@ -352,7 +357,9 @@ path = ".HCP/transport/transport.toml"
 			'kind = "hook"\nproduct = "capability"\nslot = "hook"\nrequires = ["policy"]\nname = "hooks"\nsource = "magenta"\nimpl = ["lifecycle/workflow/magenta/provider.ts"]\n',
 		);
 
-		expect(() => collectHcpSources({ harnessRoot: root })).toThrow(/requires policy.*no selected component provides/);
+		expect(() => HcpClientcollectsources({ harnessRoot: root })).toThrow(
+			/requires policy.*no selected component provides/,
+		);
 	});
 
 	it("does not treat a selected Tool address as a capability dependency provider", async () => {
@@ -362,7 +369,7 @@ path = ".HCP/transport/transport.toml"
 			'kind = "tool"\nproduct = "tool"\nname = "read"\nsource = "pi"\nsources = ["pi", "magenta"]\n\n[source_config.pi]\nrequires = ["tool:read"]\n',
 		);
 
-		expect(() => collectHcpSources({ harnessRoot: root })).toThrow(
+		expect(() => HcpClientcollectsources({ harnessRoot: root })).toThrow(
 			/requires tool:read.*no selected component provides/,
 		);
 	});
@@ -370,7 +377,7 @@ path = ".HCP/transport/transport.toml"
 	it("rejects a selected-component dependency cycle", async () => {
 		const root = await createDependencyCycleFixture();
 
-		expect(() => collectHcpSources({ harnessRoot: root })).toThrow(
+		expect(() => HcpClientcollectsources({ harnessRoot: root })).toThrow(
 			/Selected component dependency cycle: alpha -> beta -> alpha/,
 		);
 	});
@@ -382,6 +389,6 @@ path = ".HCP/transport/transport.toml"
 			'kind = "tool"\nproduct = "tool"\nname = "read"\nsource = "magenta"\nsources = ["pi", "magenta"]\n\n[source_config.pi]\nrequires = ["tool:read"]\n',
 		);
 
-		expect(() => collectHcpSources({ harnessRoot: root })).not.toThrow();
+		expect(() => HcpClientcollectsources({ harnessRoot: root })).not.toThrow();
 	});
 });

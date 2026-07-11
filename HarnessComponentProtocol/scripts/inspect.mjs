@@ -1,6 +1,6 @@
 import { existsSync, readdirSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
-import { collectHcpSources } from "./generate-hcp-sources.mjs";
+import { HcpClientcollectsources } from "./generate-hcp-sources.mjs";
 import { isInside, pathLabel, readToml, repoRoot } from "./lib/files.mjs";
 
 const args = process.argv.slice(2);
@@ -29,8 +29,8 @@ function resolvePath(baseDir, ref) {
 	return isAbsolute(ref) ? resolve(ref) : resolve(baseDir, ref);
 }
 
-function loadHcpInspect() {
-	const collected = collectHcpSources();
+function HcpClientloadinspect() {
+	const collected = HcpClientcollectsources();
 	const harness = readToml(collected.harnessTomlPath);
 	const components = collected.entries.map((entry) => ({
 		module: entry.module,
@@ -63,7 +63,7 @@ function loadHcpInspect() {
 		description: harness.description,
 		harnessToml: pathLabel(collected.harnessTomlPath),
 		HcpServerCount: collected.servers.length,
-		HcpMagnetClassCount: collected.magnets.length,
+		HcpMagnetCount: collected.magnets.length,
 		componentCount: components.length,
 		selectedComponentCount: components.filter((component) => component.selected).length,
 		componentsByKind: countBy(components, (component) => component.kind),
@@ -318,7 +318,7 @@ function formatCounts(counts) {
 function printHuman(report) {
 	console.log(`Harness inspect: ${report.hcp.name ?? "unnamed"}`);
 	console.log(`HcpServers: ${report.hcp.HcpServerCount}`);
-	console.log(`HcpMagnet classes: ${report.hcp.HcpMagnetClassCount}`);
+	console.log(`HcpMagnet classes: ${report.hcp.HcpMagnetCount}`);
 	console.log(
 		`Components: ${report.hcp.componentCount} (${formatCounts(report.hcp.componentsByKind)}); ` +
 			`${report.hcp.selectedComponentCount} selected`,
@@ -358,7 +358,7 @@ function printHuman(report) {
 }
 
 const report = {
-	hcp: loadHcpInspect(),
+	hcp: HcpClientloadinspect(),
 	packages: loadPackagesInspect(),
 };
 

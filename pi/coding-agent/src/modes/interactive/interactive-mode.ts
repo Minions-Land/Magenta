@@ -4394,7 +4394,7 @@ export class InteractiveMode {
 	}
 
 	private getHarnessComponentsView() {
-		return buildHarnessComponentsView(this.session.resourceLoader.getSessionHcp?.());
+		return buildHarnessComponentsView(this.session.resourceLoader.HcpClientgetsession?.());
 	}
 
 	private async loadHarnessPackagesView(): Promise<HarnessPackagesView> {
@@ -4689,8 +4689,8 @@ export class InteractiveMode {
 	 * every `tool:*` and `capability:*` target that pi resolves at runtime
 	 * (compaction, hooks, policy, sandbox, runtime, etc.). Inspect-only — no toggles.
 	 */
-	private showHarnessLiveHcpSummary(): void {
-		const hcp = this.session.resourceLoader.getSessionHcp?.();
+	private HcpClientshowlivesummary(): void {
+		const hcp = this.session.resourceLoader.HcpClientgetsession?.();
 		if (!hcp) {
 			this.showStatus(["Live HCP", "No session HcpClient is available (null loader / test double)."].join("\n"));
 			return;
@@ -5492,7 +5492,7 @@ export class InteractiveMode {
 			return true;
 		}
 		if (item.value === "harness:livehcp:inspect") {
-			this.showHarnessLiveHcpSummary();
+			this.HcpClientshowlivesummary();
 			return true;
 		}
 		if (parts[1] === "module" && parts[2]) {

@@ -23,15 +23,18 @@ The ownership chain is **HcpClient → Module HcpServer → Source HcpMagnet →
 product**. A *module* is a mechanism the loop needs (e.g. `memory`). A
 *capability* is one possible Magnet product and the address/slot semantic for a
 live loop value; it is not an HCP role or assembly layer. A *source* is who
-implements the product — always an **origin-agent name**
+implements the product and is ordinarily an **origin-agent name**
 (`pi`, `magenta`, `codex`, `claude-code`, …), never a programming language or a
-runtime protocol. Implementations are separated by source, not by tech:
-Rust/Python/MCP/process details live *inside* a source directory, they never
-become a source directory. Repository components are declared in TOML and
-projected by codegen into `HCP_SERVERS` and `HCP_MAGNETS`; the real module
-**HcpServer** owns management and routing while a thin source **HcpMagnet**
-produces one tool, capability, or resource. HCP is assembly-time only — the
-loop calls `tool.execute()` directly, off the HCP path.
+runtime protocol. The sole host-supplied exception is the reserved `descriptor`
+Source: an owning Module may declare `descriptor/HcpMagnet.ts` to adapt host or
+Package descriptor settings into a Tool or Resource product. Implementations
+are otherwise separated by source, not by tech: Rust/Python/MCP/process details
+live *inside* an origin-agent source directory, they never become a source
+directory. Repository components are declared in TOML and projected by codegen
+into `HCP_SERVERS` and `HCP_MAGNETS`; the real module **HcpServer** owns
+management and routing while a thin source **HcpMagnet** produces one tool,
+capability, or resource. HCP is assembly-time only — the loop calls
+`tool.execute()` directly, off the HCP path.
 
 ### Three Magnet products (know which one you are building)
 
@@ -86,9 +89,12 @@ See `governance/hcp-naming.md` for complete specification.
 
 ### General Rules
 
-1. **Source = origin agent, not tech.** Directories are `pi/`, `magenta/`,
-   `codex/`, `claude-code/`. Put Rust/Python/process/MCP details *inside* the
-   owning Source.
+1. **Source = origin agent, except the reserved host descriptor adapter.**
+   Ordinary implementation directories are `pi/`, `magenta/`, `codex/`, or
+   `claude-code/`. The repository-declared `descriptor/` Source exists only to
+   adapt host or Package descriptor settings through the owning Module's
+   `descriptor/HcpMagnet.ts`; it is not a general naming escape. Put
+   Rust/Python/process/MCP details *inside* the owning origin-agent Source.
 2. **One-of invariant.** A source-local role class `HcpMagnet` produces exactly
    ONE of tool / capability / resource. Do not build a hybrid and do not add
    `toHcpServer()`. Magnet-side entities such as `HcpMagnetProcess` are

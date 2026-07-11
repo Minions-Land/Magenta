@@ -393,10 +393,10 @@ describe("DefaultResourceLoader", () => {
 				source: "harness:TestDomain:general",
 				origin: "package",
 			});
-			expect(loader.getSessionHcp()?.resolve("skill:test-domain")).toBe(
-				loader.getSessionHcp()?.resolveModule("skills"),
+			expect(loader.HcpClientgetsession()?.resolve("skill:test-domain")).toBe(
+				loader.HcpClientgetsession()?.resolveModule("skills"),
 			);
-			expect(loader.getSessionHcp()?.resolveInstance<HcpMagnetResource>("brand:package-brand")).toMatchObject({
+			expect(loader.HcpClientgetsession()?.resolveInstance<HcpMagnetResource>("brand:package-brand")).toMatchObject({
 				kind: "brand",
 				name: "package-brand",
 				source: "TestDomain",
@@ -434,10 +434,10 @@ describe("DefaultResourceLoader", () => {
 			expect(loader.getSkills().skills).toEqual([]);
 			expect(loader.getPrompts().prompts).toEqual([]);
 			expect(loader.getThemes().themes).toEqual([]);
-			expect(loader.getSessionHcp()?.resolve("skill:test-domain")).toBeDefined();
-			expect(loader.getSessionHcp()?.resolve("prompt-template:package-prompt")).toBeDefined();
-			expect(loader.getSessionHcp()?.resolve("theme:package-theme")).toBeDefined();
-			expect(loader.getSessionHcp()?.resolve("brand:package-brand")).toBeDefined();
+			expect(loader.HcpClientgetsession()?.resolve("skill:test-domain")).toBeDefined();
+			expect(loader.HcpClientgetsession()?.resolve("prompt-template:package-prompt")).toBeDefined();
+			expect(loader.HcpClientgetsession()?.resolve("theme:package-theme")).toBeDefined();
+			expect(loader.HcpClientgetsession()?.resolve("brand:package-brand")).toBeDefined();
 		});
 
 		it("uses package system prompts unless an explicit system prompt is provided", async () => {
@@ -529,7 +529,7 @@ describe("DefaultResourceLoader", () => {
 			const loader = createLoader();
 			await loader.reload();
 
-			const hcpNoPkg = loader.getSessionHcp();
+			const hcpNoPkg = loader.HcpClientgetsession();
 			expect(hcpNoPkg, "session HCP should exist even with no package").toBeDefined();
 			expect(hcpNoPkg?.resolve("skill:paper-analysis")).toBe(hcpNoPkg?.resolveModule("skills/paper-analysis"));
 			const providerNoPkg = hcpNoPkg?.resolveCapability<{
@@ -545,7 +545,7 @@ describe("DefaultResourceLoader", () => {
 			loader.setHarnessPackageSelectors(["TestDomain"]);
 			await loader.reload();
 
-			const hcpPkg = loader.getSessionHcp();
+			const hcpPkg = loader.HcpClientgetsession();
 			expect(hcpPkg, "session HCP should exist with a package selected").toBeDefined();
 			const providerPkg = hcpPkg?.resolveCapability<{ compact: unknown }>("compaction");
 			expect(typeof providerPkg?.compact, "compaction resolves alongside a selected package").toBe("function");
@@ -1101,7 +1101,7 @@ Content`,
 			const { skills } = loader.getSkills();
 			expect(skills).toEqual([]);
 			// noSkills is a ResourceLoader visibility policy; inert HCP Resources remain manageable.
-			expect(loader.getSessionHcp()?.resolve("skill:paper-analysis")).toBeDefined();
+			expect(loader.HcpClientgetsession()?.resolve("skill:paper-analysis")).toBeDefined();
 		});
 
 		it("should still load additional skill paths when noSkills is true", async () => {
