@@ -6,6 +6,7 @@ import { join } from "path";
 import { Readable } from "stream";
 import { pipeline } from "stream/promises";
 import { APP_NAME, getBinDir } from "../config.ts";
+import { getEmbeddedToolPath } from "../../../../HarnessComponentProtocol/.HCP/assembly/embedded-tools.ts";
 
 const TOOLS_DIR = getBinDir();
 const NETWORK_TIMEOUT_MS = 10_000;
@@ -85,6 +86,12 @@ function commandExists(cmd: string): boolean {
 export function getToolPath(tool: "fd" | "rg"): string | null {
 	const config = TOOLS[tool];
 	if (!config) return null;
+
+	// Check if tool is available as embedded binary (Bun compiled binary)
+	const embeddedPath = getEmbeddedToolPath(tool);
+	if (embeddedPath && existsSync(embeddedPath)) {
+		return embeddedPath;
+	}
 
 	// Check our tools directory first
 	const localPath = join(TOOLS_DIR, config.binaryName + (platform() === "win32" ? ".exe" : ""));
