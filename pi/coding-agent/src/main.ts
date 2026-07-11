@@ -50,6 +50,7 @@ import { initTheme, stopThemeWatcher } from "./modes/interactive/theme/theme.ts"
 import { handleConfigCommand, handlePackageCommand } from "./package-manager-cli.ts";
 import { isLocalPath, normalizePath, resolvePath } from "./utils/paths.ts";
 import { cleanupWindowsSelfUpdateQuarantine } from "./utils/windows-self-update.ts";
+import { checkForUpdate, installUpdate, backgroundUpdateNotification } from "./utils/github-release-update.ts";
 
 const EXTENSION_LOAD_FAILURE_HINT = 'Hint: Start without extensions using "pi -ne".';
 
@@ -517,6 +518,40 @@ export async function main(args: string[], options?: MainOptions) {
 	}
 	time("parseArgs");
 
+	if (parsed.update) {
+		// Handle --update flag
+		console.log("🔍 检查更新...");
+		const result = await checkForUpdate({ force: true });
+		
+		if (result.error) {
+			console.error(chalk.red(`检查更新失败: ${result.error}`));
+			process.exit(1);
+		}
+		
+		if (!result.updateAvailable) {
+			console.log(chalk.green(`✓ 当前已是最新版本 (${result.currentVersion})`));
+			process.exit(0);
+		}
+		
+		console.log(chalk.cyan(`\n📦 发现新版本: ${result.latestVersion}`));
+		if (result.releaseNotes) {
+			console.log(chalk.dim("\n更新内容:"));
+			console.log(result.releaseNotes.split("\n").slice(0, 10).join("\n"));
+		}
+		
+		console.log(chalk.cyan("\n开始下载并安装..."));
+		const installResult = await installUpdate();
+		
+		if (!installResult.success) {
+			console.error(chalk.red(`\n✗ 更新失败: ${installResult.error}`));
+			process.exit(1);
+		}
+		
+		console.log(chalk.green(`\n✓ 已更新到 v${installResult.newVersion}`));
+		console.log(chalk.dim("请重新启动 magenta 使用新版本"));
+		process.exit(0);
+	}
+	
 	if (parsed.version) {
 		console.log(VERSION);
 		process.exit(0);
@@ -875,6 +910,12 @@ export async function main(args: string[], options?: MainOptions) {
 		}
 
 		printTimings();
+		
+		// Background update check (non-blocking)
+		if (!offlineMode) {
+			backgroundUpdateNotification().catch(() => {});
+		}
+		
 		await interactiveMode.run();
 	} else {
 		printTimings();

@@ -1,0 +1,309 @@
+# Magenta 一键安装 - 用户分发方案
+
+## 🎯 目标
+
+用户只需要**一条命令**或**一个链接**，就能安装和更新 Magenta，无需手动下载二进制文件。
+
+---
+
+## 方案对比
+
+| 方案 | 用户操作 | 需要服务器 | 优点 | 缺点 |
+|------|---------|-----------|------|------|
+| **方案 1：托管安装脚本** | 一条命令 | ✅ 需要 | 最简单 | 需要维护服务器 |
+| **方案 2：Git 仓库** | 一条命令 | ❌ 不需要 | 利用 GitHub | 用户需要 Git |
+| **方案 3：GitHub Release + 说明** | 点击下载链接 | ❌ 不需要 | 简单 | 需要两步操作 |
+
+---
+
+## 方案 1：托管安装脚本（推荐）
+
+### 你需要做的
+
+1. **将安装脚本上传到某个 HTTP 服务器**
+
+```bash
+# 编辑 scripts/remote-install.sh，填入你的 GitHub repo 和 token
+vim scripts/remote-install.sh
+
+# 上传到服务器（任意 HTTP 服务器都行）
+# 例如：阿里云 OSS、腾讯云 COS、自己的服务器、GitHub Pages
+scp scripts/remote-install.sh user@your-server.com:/var/www/html/magenta-install.sh
+```
+
+2. **给用户一条安装命令**
+
+```bash
+curl -fsSL https://your-server.com/magenta-install.sh | bash
+```
+
+### 优点
+- ✅ 用户体验最好（一条命令搞定）
+- ✅ 脚本自动从 GitHub Releases 下载最新版本
+- ✅ 不需要给用户发送二进制文件
+- ✅ Token 在脚本里，用户看不到源代码
+
+### 安全注意
+- 确保 HTTPS（避免中间人攻击）
+- 脚本里包含 GitHub Token（定期轮换）
+
+---
+
+## 方案 2：直接从 GitHub 安装（无需额外服务器）
+
+### 实现方式
+
+创建一个公开的 Gist 或使用 GitHub Pages 托管安装脚本。
+
+**步骤 1：创建 GitHub Gist**
+
+1. 访问 https://gist.github.com/
+2. 上传 `scripts/remote-install.sh`（记得填入 token）
+3. 获取 raw URL，例如：
+   ```
+   https://gist.githubusercontent.com/username/xxx/raw/install.sh
+   ```
+
+**步骤 2：给用户安装命令**
+
+```bash
+curl -fsSL https://gist.githubusercontent.com/username/xxx/raw/install.sh | bash
+```
+
+### 优点
+- ✅ 不需要自己的服务器
+- ✅ 一条命令安装
+- ✅ GitHub 免费且稳定
+
+### 缺点
+- ⚠️ 公开的 Gist 包含 GitHub Token（需要使用只读权限的 token）
+
+---
+
+## 方案 3：生成下载页面（HTML）
+
+如果有简单的静态网页托管，可以做一个下载页面：
+
+<function_calls>
+<invoke name="write">
+<parameter name="content"><!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>下载 Magenta</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .container {
+      background: white;
+      border-radius: 16px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+      max-width: 600px;
+      width: 100%;
+      padding: 48px;
+      text-align: center;
+    }
+    h1 {
+      font-size: 42px;
+      margin-bottom: 16px;
+      color: #1a202c;
+    }
+    p {
+      color: #718096;
+      font-size: 18px;
+      margin-bottom: 32px;
+      line-height: 1.6;
+    }
+    .install-box {
+      background: #f7fafc;
+      border: 2px dashed #cbd5e0;
+      border-radius: 8px;
+      padding: 24px;
+      margin: 32px 0;
+      position: relative;
+    }
+    .install-command {
+      font-family: 'Monaco', 'Menlo', monospace;
+      font-size: 14px;
+      color: #2d3748;
+      background: white;
+      padding: 16px;
+      border-radius: 6px;
+      word-break: break-all;
+      user-select: all;
+      cursor: text;
+    }
+    .copy-btn {
+      position: absolute;
+      top: 12px;
+      right: 12px;
+      background: #667eea;
+      color: white;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+      transition: background 0.2s;
+    }
+    .copy-btn:hover {
+      background: #5a67d8;
+    }
+    .copy-btn:active {
+      background: #4c51bf;
+    }
+    .button {
+      display: inline-block;
+      background: #667eea;
+      color: white;
+      padding: 16px 32px;
+      border-radius: 8px;
+      text-decoration: none;
+      font-weight: 600;
+      font-size: 16px;
+      transition: all 0.2s;
+      margin: 8px;
+    }
+    .button:hover {
+      background: #5a67d8;
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+    }
+    .button.secondary {
+      background: #48bb78;
+    }
+    .button.secondary:hover {
+      background: #38a169;
+    }
+    .version {
+      color: #a0aec0;
+      font-size: 14px;
+      margin-top: 32px;
+    }
+    .steps {
+      text-align: left;
+      margin: 32px 0;
+    }
+    .step {
+      display: flex;
+      align-items: flex-start;
+      margin: 16px 0;
+    }
+    .step-number {
+      background: #667eea;
+      color: white;
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: bold;
+      font-size: 14px;
+      flex-shrink: 0;
+      margin-right: 12px;
+    }
+    .step-content {
+      flex: 1;
+      padding-top: 4px;
+    }
+    .step-title {
+      font-weight: 600;
+      color: #2d3748;
+      margin-bottom: 4px;
+    }
+    .step-desc {
+      color: #718096;
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🚀 Magenta</h1>
+    <p>AI 驱动的终端编码助手</p>
+
+    <div class="install-box">
+      <button class="copy-btn" onclick="copyCommand()">复制</button>
+      <div class="install-command" id="install-command">
+        curl -fsSL https://your-server.com/magenta-install.sh | bash
+      </div>
+    </div>
+
+    <div class="steps">
+      <div class="step">
+        <div class="step-number">1</div>
+        <div class="step-content">
+          <div class="step-title">复制安装命令</div>
+          <div class="step-desc">点击上方"复制"按钮</div>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-number">2</div>
+        <div class="step-content">
+          <div class="step-title">打开终端</div>
+          <div class="step-desc">macOS: 按 ⌘+空格 搜索"终端"</div>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-number">3</div>
+        <div class="step-content">
+          <div class="step-title">粘贴并运行</div>
+          <div class="step-desc">右键粘贴，按回车键</div>
+        </div>
+      </div>
+    </div>
+
+    <div style="margin-top: 32px;">
+      <a href="#" class="button" onclick="showManual(); return false;">手动下载</a>
+      <a href="#" class="button secondary" onclick="alert('查看使用文档'); return false;">使用文档</a>
+    </div>
+
+    <div class="version" id="version">最新版本: 加载中...</div>
+  </div>
+
+  <script>
+    // 从 GitHub API 获取最新版本
+    async function fetchLatestVersion() {
+      try {
+        const response = await fetch('https://api.github.com/repos/your-org/magenta3/releases/latest', {
+          headers: {
+            'Authorization': 'Bearer ghp_your_token_here'
+          }
+        });
+        const data = await response.json();
+        document.getElementById('version').textContent = `最新版本: ${data.tag_name}`;
+      } catch (e) {
+        document.getElementById('version').textContent = '最新版本: v0.80.3';
+      }
+    }
+
+    function copyCommand() {
+      const command = document.getElementById('install-command').textContent;
+      navigator.clipboard.writeText(command).then(() => {
+        const btn = event.target;
+        btn.textContent = '已复制✓';
+        setTimeout(() => btn.textContent = '复制', 2000);
+      });
+    }
+
+    function showManual() {
+      alert('手动下载步骤：\\n\\n' +
+            '1. 访问 GitHub Releases 页面\\n' +
+            '2. 下载对应平台的二进制文件\\n' +
+            '3. 运行: chmod +x magenta && mv magenta ~/.local/bin/');
+    }
+
+    fetchLatestVersion();
+  </script>
+</body>
+</html>

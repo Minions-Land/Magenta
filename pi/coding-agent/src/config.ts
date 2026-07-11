@@ -491,7 +491,12 @@ export const APP_NAME: string = piConfigName || "Magenta";
 export const APP_TITLE: string = APP_NAME;
 export const APP_BINARY_NAME: string = pkg.piConfig?.binaryName || APP_NAME.toLowerCase();
 export const CONFIG_DIR_NAME: string = pkg.piConfig?.configDir || ".magenta";
-export const VERSION: string = pkg.version || "0.0.0";
+// VERSION should reflect the product version (Magenta), not the infrastructure version (Pi)
+// Generated at build time from the active brand configuration
+import { BRAND_VERSION } from "./brand-version.generated.ts";
+
+export const VERSION: string = BRAND_VERSION;
+export const INFRA_VERSION: string = pkg.version || "0.0.0";
 
 // e.g., MAGENTA_CODING_AGENT_DIR or PI_CODING_AGENT_DIR
 export const ENV_AGENT_DIR = `${APP_NAME.toUpperCase()}_CODING_AGENT_DIR`;
