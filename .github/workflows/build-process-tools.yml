@@ -1,0 +1,98 @@
+name: Build magenta-process-tools
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'HarnessComponentProtocol/_magenta/process-tools/**'
+      - '.github/workflows/build-process-tools.yml'
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact: magenta-process-tools-macos-arm64
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact: magenta-process-tools-macos-x64
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact: magenta-process-tools-linux-x64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: magenta-process-tools-windows-x64.exe
+
+    runs-on: ${{ matrix.os }}
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      
+      - name: Cache Rust dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            HarnessComponentProtocol/_magenta/process-tools/target/
+          key: ${{ runner.os }}-cargo-${{ matrix.target }}-${{ hashFiles('HarnessComponentProtocol/_magenta/process-tools/Cargo.lock') }}
+      
+      - name: Build process-tools
+        working-directory: HarnessComponentProtocol/_magenta/process-tools
+        run: cargo build --release --target ${{ matrix.target }} --locked
+      
+      - name: Rename binary (Unix)
+        if: runner.os != 'Windows'
+        working-directory: HarnessComponentProtocol/_magenta/process-tools
+        run: |
+          mkdir -p artifacts
+          cp target/${{ matrix.target }}/release/magenta-process-tools artifacts/${{ matrix.artifact }}
+          chmod +x artifacts/${{ matrix.artifact }}
+      
+      - name: Rename binary (Windows)
+        if: runner.os == 'Windows'
+        working-directory: HarnessComponentProtocol/_magenta/process-tools
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path artifacts
+          Copy-Item target/${{ matrix.target }}/release/magenta-process-tools.exe artifacts/${{ matrix.artifact }}
+      
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: HarnessComponentProtocol/_magenta/process-tools/artifacts/${{ matrix.artifact }}
+          if-no-files-found: error
+
+  collect:
+    needs: build
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      
+      - name: Organize binaries
+        run: |
+          mkdir -p HarnessComponentProtocol/_magenta/process-tools/prebuilt
+          find artifacts -type f -exec cp {} HarnessComponentProtocol/_magenta/process-tools/prebuilt/ \;
+          ls -lh HarnessComponentProtocol/_magenta/process-tools/prebuilt/
+      
+      - name: Upload collected binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: all-process-tools-binaries
+          path: HarnessComponentProtocol/_magenta/process-tools/prebuilt/
