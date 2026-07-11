@@ -10,7 +10,10 @@ HcpClient -> real module HcpServer -> selected source HcpMagnet -> product
 - The one session `HcpClient` owns selection, addresses, and routing.
 - Every actual Module owns a bare `HcpServer` in `HcpServer.ts`.
 - Every declared Source owns a bare `HcpMagnet` in `HcpMagnet.ts`.
-- A Magnet produces exactly one Tool, Capability, or Resource.
+- Each Magnet instance produces exactly one Tool, Capability, or Resource. An
+  aggregate input with unique sibling selectors (currently root
+  `tools/descriptor` and Resources) may return multiple sibling Magnets. Fixed
+  capability slots and leaf Tool Modules remain single-product.
 - Once assembled, tools and live capability values execute directly; HCP is not
   the agent loop's execution middleware.
 
@@ -78,8 +81,11 @@ then writes `.HCP/assembly/sources.generated.ts`:
 These generated values are disposable projections of TOML, not additional HCP
 entities. Do not hand-edit the generated file, add product-specific Magnet
 lists, or add central Source switches. Session assembly selects entries, calls
-`HcpMagnet.build()`, and attaches each result to its real Server through the one
-`HcpClient`.
+`HcpMagnet.build()`, and attaches each returned Magnet to its real Server through
+the one `HcpClient`. Its host-facing input is only ordinary components and
+Source settings. It resolves dependencies and owns routing and failure cleanup;
+it does not parse Package declarations, discover MCP servers, or manage MCP
+connections.
 
 Source names describe origin, such as `pi`, `magenta`, `codex`, or
 `claude-code`. Process, Python, Rust, MCP, and JSONL are implementation or
@@ -101,6 +107,11 @@ A source `HcpMagnet` produces one of:
 owning Source may explicitly inject. It is not a Module, is not generated as a
 Source Magnet, owns no Server, and is absent from default session assembly.
 
+`tools/descriptor/HcpMagnet.ts` is the shared Source construction boundary for
+Package tool descriptors and configured user MCP servers. For MCP, one server
+component may build multiple sibling Magnets, each containing one `McpTool`;
+the generic HCP assembly only routes and disposes those Magnets.
+
 ## Package Boundary
 
 Magenta3 intentionally retains the generic Package boundary:
@@ -113,16 +124,24 @@ packages/
 
 Concrete domain expert packages are independently published from GitHub
 repositories. Acquisition will later download, verify, and cache them; the
-support API in
+download, version, cache, and verification layer is not implemented in this
+change. The support API in
 `_magenta/packages/package-overlay.ts` parses Package manifests, profiles,
 resources, and tool descriptors. `discoverHarnessPackages()` and `loadPackageOverlay()`
 accept an optional `packagesRoot`, so current integration can supply an
 already-downloaded local root without hardcoding or implicitly scanning a
 sibling repository.
 
-Package components join the same HcpClient assembly path. The Package overlay is
-not a Module, Source, product category, or second selection system. Package
-paths remain relative to the explicitly supplied Package root.
+`_magenta/packages/hcp-client-components.ts` maps the selected declarations from
+that arbitrary local root into the ordinary component inputs consumed by
+`HcpClientbuildsession()`. Package components then join the same HcpClient
+assembly path without adding a Package branch inside `.HCP/`. The Package
+overlay is not a Module, Source, product category, or second selection system.
+Package paths remain relative to the explicitly supplied Package root.
+
+Magenta3's root `packages/` retains only the generic contract and templates. It
+does not contain concrete domain Packages and does not depend on a fixed sibling
+Package repository.
 
 ## Adding A Component
 

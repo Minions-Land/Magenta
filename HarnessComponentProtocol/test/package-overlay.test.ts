@@ -4,7 +4,6 @@ import { dirname, join } from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { TSchema } from "typebox";
 import { describe, expect, it } from "vitest";
-import { HcpClientbuildsession } from "../.HCP/assembly/session-hcp.ts";
 import type { HcpMagnetResource } from "../.HCP/HcpMagnetTypes.ts";
 import {
 	discoverHarnessPackages,
@@ -12,8 +11,9 @@ import {
 	parsePackageSelector,
 } from "../_magenta/packages/package-overlay.ts";
 import type { ProcessToolDetails } from "../tools/process-tool.ts";
+import { HcpClientbuildpackagesessionfortest, type HcpClientpackagetestbuildresult } from "./package-test-utils.ts";
 
-type SessionAssembly = Awaited<ReturnType<typeof HcpClientbuildsession>>;
+type SessionAssembly = HcpClientpackagetestbuildresult;
 type ProcessAgentTool = AgentTool<TSchema, ProcessToolDetails>;
 
 function firstText(result: { content: readonly { type: string; text?: string }[] } | undefined): string {
@@ -110,7 +110,7 @@ additionalProperties = true
 			expect(overlay.packages.map((pkg) => pkg.id)).toEqual(["ExternalDomain"]);
 			expect(overlay.diagnostics).toEqual([]);
 
-			assembly = await HcpClientbuildsession({ repoRoot, overlay });
+			assembly = await HcpClientbuildpackagesessionfortest({ repoRoot, overlay });
 			expect(assembly.diagnostics).toEqual([]);
 			expect(assembly.packageToolAddresses).toEqual(["tool:external_echo"]);
 			expect(assembly.hcp.resolveInstance<AgentTool>("tool:external_echo")?.name).toBe("external_echo");
@@ -170,7 +170,7 @@ description: Package override.
 			await writeText(join(packageDir, "brand", "BRAND.md"), "Package brand.");
 
 			const overlay = await loadPackageOverlay({ repoRoot, selections: ["OverrideDomain"] });
-			const assembly = await HcpClientbuildsession({ repoRoot, overlay });
+			const assembly = await HcpClientbuildpackagesessionfortest({ repoRoot, overlay });
 			try {
 				expect(assembly.diagnostics).toEqual([]);
 				expect([...assembly.packageResourceAddresses].sort()).toEqual(
@@ -536,7 +536,7 @@ description = "Value to echo."
 			);
 
 			const overlay = await loadPackageOverlay({ repoRoot, selections: ["ProcessDomain"] });
-			const assembly = await HcpClientbuildsession({ repoRoot, overlay });
+			const assembly = await HcpClientbuildpackagesessionfortest({ repoRoot, overlay });
 			expect(assembly.diagnostics).toEqual([]);
 			expect(assembly.packageToolAddresses).toEqual(["tool:echo_process"]);
 			expect(packageToolKinds(assembly)).toEqual(["process"]);
@@ -552,7 +552,7 @@ description = "Value to echo."
 				os_enforced: false,
 			});
 
-			const withoutRuntime = await HcpClientbuildsession({
+			const withoutRuntime = await HcpClientbuildpackagesessionfortest({
 				repoRoot,
 				overlay,
 				disabledModules: ["runtime"],
@@ -568,7 +568,7 @@ description = "Value to echo."
 			);
 
 			await writeText(descriptorPath, processDescriptor(true));
-			const trustedAssembly = await HcpClientbuildsession({ repoRoot, overlay });
+			const trustedAssembly = await HcpClientbuildpackagesessionfortest({ repoRoot, overlay });
 			expect(trustedAssembly.diagnostics).toEqual([]);
 			const trustedResult = await resolveProcessTool(trustedAssembly, "echo_process").execute("tool-call", {
 				value: "trusted",
@@ -625,7 +625,7 @@ type = "object"
 			process.env.MAGENTA_PACKAGE_SECRET = "must-not-leak";
 			try {
 				const overlay = await loadPackageOverlay({ repoRoot, selections: ["EnvDomain"] });
-				const assembly = await HcpClientbuildsession({ repoRoot, overlay });
+				const assembly = await HcpClientbuildpackagesessionfortest({ repoRoot, overlay });
 				expect(assembly.diagnostics).toEqual([]);
 
 				const result = await resolveProcessTool(assembly, "env_probe").execute("tool-call", {});
@@ -691,7 +691,7 @@ process.stdin.on("end", () => {
 			);
 
 			const overlay = await loadPackageOverlay({ repoRoot, selections: ["ScriptDomain"] });
-			const assembly = await HcpClientbuildsession({ repoRoot, overlay });
+			const assembly = await HcpClientbuildpackagesessionfortest({ repoRoot, overlay });
 			expect(assembly.diagnostics).toEqual([]);
 			expect(assembly.packageToolAddresses).toEqual(["tool:node_script"]);
 			expect(packageToolKinds(assembly)).toEqual(["script:node"]);
@@ -767,7 +767,7 @@ print(json.dumps({"argv": sys.argv[1:]}))
 			);
 
 			const overlay = await loadPackageOverlay({ repoRoot, selections: ["PythonDomain"] });
-			const assembly = await HcpClientbuildsession({ repoRoot, overlay });
+			const assembly = await HcpClientbuildpackagesessionfortest({ repoRoot, overlay });
 			expect(assembly.diagnostics).toEqual([]);
 			expect(assembly.packageToolAddresses).toEqual(["tool:python_echo"]);
 			expect(packageToolKinds(assembly)).toEqual(["python"]);
@@ -865,7 +865,7 @@ print(json.dumps({"argv": sys.argv[1:], "cwd": os.getcwd(), "path": os.environ.g
 			process.env.PATH = `${binDir}:${previousPath ?? ""}`;
 			try {
 				const overlay = await loadPackageOverlay({ repoRoot, selections: ["PixiDomain"] });
-				const assembly = await HcpClientbuildsession({ repoRoot, overlay });
+				const assembly = await HcpClientbuildpackagesessionfortest({ repoRoot, overlay });
 				expect(assembly.diagnostics).toEqual([]);
 
 				const result = await resolveProcessTool(assembly, "pixi_python").execute("tool-call", {
@@ -934,7 +934,7 @@ type = "object"
 			await writeText(join(packagesRoot, "NoEnvDomain", ".runtime", "example_runtime", "__init__.py"), "");
 
 			const overlay = await loadPackageOverlay({ repoRoot, selections: ["NoEnvDomain"] });
-			const assembly = await HcpClientbuildsession({ repoRoot, overlay });
+			const assembly = await HcpClientbuildpackagesessionfortest({ repoRoot, overlay });
 
 			expect(assembly.packageToolAddresses).toEqual([]);
 			expect(assembly.diagnostics).toEqual([
@@ -998,7 +998,7 @@ source = "pi"
 			);
 
 			const overlay = await loadPackageOverlay({ repoRoot, selections: ["HcpDomain"] });
-			const assembly = await HcpClientbuildsession({ repoRoot, overlay });
+			const assembly = await HcpClientbuildpackagesessionfortest({ repoRoot, overlay });
 			expect(assembly.diagnostics).toEqual([]);
 
 			const tool = assembly.hcp.resolveInstance<{ name: string }>("tool:echo_process");

@@ -200,7 +200,6 @@ lines.on("line", line => process.stdout.write(line.toUpperCase() + "\\n"));
 			name: "process",
 			source: "magenta",
 			repoRoot: process.cwd(),
-			packagesRoot: process.cwd(),
 		});
 		const hcp = new HcpClient();
 		hcp.registerModule(new runtimeServer.HcpServer(), new Map([["runtime:process", magnet]]));

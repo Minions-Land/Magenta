@@ -1,8 +1,8 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type HcpClient, HcpClientbuildsession } from "@magenta/harness";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { type HcpClient, HcpClientbuildsession, McpConnection } from "@magenta/harness";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ENV_AGENT_DIR } from "../src/config.ts";
 import { loadUserMcpTools } from "../src/core/mcp-config-loader.ts";
 
@@ -20,6 +20,7 @@ describe("loadUserMcpTools", () => {
 
 	afterEach(async () => {
 		await hcp.dispose();
+		vi.restoreAllMocks();
 		if (prevAgentDir === undefined) delete process.env[ENV_AGENT_DIR];
 		else process.env[ENV_AGENT_DIR] = prevAgentDir;
 		rmSync(dir, { recursive: true, force: true });
@@ -27,6 +28,41 @@ describe("loadUserMcpTools", () => {
 
 	const writeConfig = (content: string) => writeFileSync(join(dir, "mcp-servers.json"), content, "utf-8");
 	const load = () => loadUserMcpTools({ hcp, cwd: dir, agentDir: dir });
+	const writeLifecycleServer = (filename: string, eventsPath: string, toolNames: string[]) => {
+		const serverPath = join(dir, filename);
+		writeFileSync(
+			serverPath,
+			`const fs = require("node:fs");
+const readline = require("node:readline");
+const eventsPath = ${JSON.stringify(eventsPath)};
+const tools = ${JSON.stringify(toolNames)}.map((name) => ({
+  name,
+  description: name,
+  inputSchema: { type: "object" }
+}));
+fs.appendFileSync(eventsPath, "spawn\\n");
+const lines = readline.createInterface({ input: process.stdin });
+const send = (id, result) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id, result }) + "\\n");
+process.on("SIGTERM", () => {
+  fs.appendFileSync(eventsPath, "close\\n");
+  process.exit(0);
+});
+lines.on("line", (line) => {
+  const message = JSON.parse(line);
+  if (message.method === "initialize") {
+    send(message.id, { protocolVersion: "2024-11-05", capabilities: { tools: {} } });
+  } else if (message.method === "tools/list") {
+    send(message.id, { tools });
+  } else if (message.method === "tools/call") {
+    send(message.id, { content: [{ type: "text", text: message.params.name + "-ok" }] });
+  }
+});
+`,
+			"utf-8",
+		);
+		return serverPath;
+	};
+	const readLifecycle = (eventsPath: string) => readFileSync(eventsPath, "utf-8").split(/\r?\n/).filter(Boolean);
 
 	it("returns no tools and no diagnostics when the config is missing", async () => {
 		const result = await load();
@@ -113,36 +149,35 @@ lines.on("line", (line) => {
 		expect(hcp.resolveInstance("tool:user_ping")).toMatchObject({ name: "user_ping" });
 	});
 
-	it("keeps an existing HCP Tool when an unprefixed user MCP name collides", async () => {
-		const serverPath = join(dir, "colliding-mcp.cjs");
-		const closeMarker = join(dir, "colliding-mcp-closed.txt");
-		writeFileSync(
-			serverPath,
-			`const fs = require("node:fs");
-	const readline = require("node:readline");
-	const lines = readline.createInterface({ input: process.stdin });
-	const send = (id, result) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id, result }) + "\\n");
-	process.on("SIGTERM", () => { fs.writeFileSync(${JSON.stringify(closeMarker)}, "closed"); process.exit(0); });
-	lines.on("line", (line) => {
-  const message = JSON.parse(line);
-  if (message.method === "initialize") send(message.id, { protocolVersion: "2024-11-05", capabilities: { tools: {} } });
-  if (message.method === "tools/list") {
-    send(message.id, { tools: [{ name: "read", description: "Collision", inputSchema: { type: "object" } }] });
-  }
-});
-`,
-			"utf-8",
-		);
-		const original = {
+	it("closes one shared user MCP connection when every sibling address collides", async () => {
+		const originalClose = McpConnection.prototype.close;
+		const terminalClose = vi.spyOn(McpConnection.prototype, "close").mockImplementation(async function (
+			this: McpConnection,
+		) {
+			await originalClose.call(this);
+			throw new Error("terminal close failed");
+		});
+		const lifecyclePath = join(dir, "all-collision-lifecycle.txt");
+		const serverPath = writeLifecycleServer("all-colliding-mcp.cjs", lifecyclePath, ["read", "write"]);
+		const originalRead = {
 			name: "read",
 			description: "Original read",
 			parameters: {},
-			execute: async () => ({ content: [{ type: "text" as const, text: "original" }], details: {} }),
+			execute: async () => ({ content: [{ type: "text" as const, text: "original-read" }], details: {} }),
+		};
+		const originalWrite = {
+			name: "write",
+			description: "Original write",
+			parameters: {},
+			execute: async () => ({ content: [{ type: "text" as const, text: "original-write" }], details: {} }),
 		};
 		const toolsServer = hcp.resolveModule("tools")!;
 		hcp.registerModule(
 			toolsServer,
-			new Map([["tool:read", { kind: "fixture", source: "fixture", toTool: () => original }]]),
+			new Map([
+				["tool:read", { kind: "fixture", source: "fixture", toTool: () => originalRead }],
+				["tool:write", { kind: "fixture", source: "fixture", toTool: () => originalWrite }],
+			]),
 			{ merge: true },
 		);
 		writeConfig(
@@ -154,36 +189,26 @@ lines.on("line", (line) => {
 		const result = await load();
 		expect(result.tools).toEqual([]);
 		expect(result.addresses).toEqual([]);
-		expect(result.diagnostics).toEqual([
-			expect.objectContaining({ type: "error", message: expect.stringContaining("address collision") }),
-		]);
-		expect(hcp.resolveInstance("tool:read")).toBe(original);
-		expect(readFileSync(closeMarker, "utf-8")).toBe("closed");
+		expect(result.diagnostics).toHaveLength(2);
+		expect(result.diagnostics).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({ type: "error", message: expect.stringContaining('"tool:read"') }),
+				expect.objectContaining({ type: "error", message: expect.stringContaining('"tool:write"') }),
+			]),
+		);
+		expect(hcp.resolveInstance("tool:read")).toBe(originalRead);
+		expect(hcp.resolveInstance("tool:write")).toBe(originalWrite);
+		expect(readLifecycle(lifecyclePath)).toEqual(["spawn", "close"]);
+		expect(terminalClose).toHaveBeenCalledTimes(1);
+
+		await hcp.dispose();
+		expect(readLifecycle(lifecyclePath)).toEqual(["spawn", "close"]);
 	});
 
-	it("keeps later sibling tools usable when the first user MCP address collides", async () => {
-		const serverPath = join(dir, "partially-colliding-mcp.cjs");
-		writeFileSync(
-			serverPath,
-			`const readline = require("node:readline");
-	const lines = readline.createInterface({ input: process.stdin });
-	const send = (id, result) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id, result }) + "\\n");
-	lines.on("line", (line) => {
-	  const message = JSON.parse(line);
-	  if (message.method === "initialize") send(message.id, { protocolVersion: "2024-11-05", capabilities: { tools: {} } });
-	  if (message.method === "tools/list") {
-	    send(message.id, { tools: [
-	      { name: "read", description: "Collision", inputSchema: { type: "object" } },
-	      { name: "unique", description: "Unique", inputSchema: { type: "object" } }
-	    ] });
-	  }
-	  if (message.method === "tools/call") {
-	    send(message.id, { content: [{ type: "text", text: message.params.name + "-ok" }] });
-	  }
-	});
-	`,
-			"utf-8",
-		);
+	it("keeps a non-colliding sibling on the original process until the Client is disposed", async () => {
+		const terminalClose = vi.spyOn(McpConnection.prototype, "close");
+		const lifecyclePath = join(dir, "partial-collision-lifecycle.txt");
+		const serverPath = writeLifecycleServer("partially-colliding-mcp.cjs", lifecyclePath, ["read", "unique"]);
 		const original = {
 			name: "read",
 			description: "Original read",
@@ -208,11 +233,20 @@ lines.on("line", (line) => {
 			expect.objectContaining({ type: "error", message: expect.stringContaining("address collision") }),
 		]);
 		expect(hcp.resolveInstance("tool:read")).toBe(original);
+		expect(readLifecycle(lifecyclePath)).toEqual(["spawn"]);
 		const unique = hcp.resolveInstance<{
 			execute: (...args: unknown[]) => Promise<{ content: Array<{ text: string }> }>;
 		}>("tool:unique");
 		expect(unique).toBeDefined();
 		const executed = await unique!.execute("call-id", {}, undefined, undefined, undefined);
 		expect(executed.content).toEqual([{ type: "text", text: "unique-ok" }]);
+		expect(readLifecycle(lifecyclePath)).toEqual(["spawn"]);
+		expect(terminalClose).not.toHaveBeenCalled();
+
+		await hcp.dispose();
+		expect(readLifecycle(lifecyclePath)).toEqual(["spawn", "close"]);
+		expect(terminalClose).toHaveBeenCalledTimes(1);
+		await hcp.dispose();
+		expect(readLifecycle(lifecyclePath)).toEqual(["spawn", "close"]);
 	});
 });

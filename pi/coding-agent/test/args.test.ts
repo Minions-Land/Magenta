@@ -255,10 +255,10 @@ describe("parseArgs", () => {
 				"--harness-package",
 				"ExternalDomain:general",
 				"--harness-packages-root",
-				"../MagentaPackages",
+				"../downloaded-packages",
 			]);
 			expect(result.harnessPackages).toEqual(["ExternalDomain:general"]);
-			expect(result.harnessPackagesRoot).toBe("../MagentaPackages");
+			expect(result.harnessPackagesRoot).toBe("../downloaded-packages");
 		});
 	});
 

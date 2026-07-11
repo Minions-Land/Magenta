@@ -2,12 +2,12 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import { afterEach, describe, expect, it } from "vitest";
-import { HcpClientbuildsession } from "../.HCP/assembly/session-hcp.ts";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { McpStdioClient } from "../_magenta/mcp/client.ts";
 import { createMcpTools, discoverMcpTools, McpConnection, McpTool } from "../_magenta/mcp/tool.ts";
 import { loadPackageOverlay } from "../_magenta/packages/package-overlay.ts";
 import { createManagedMcpSpawner } from "./mcp-test-utils.ts";
+import { HcpClientbuildpackagesessionfortest } from "./package-test-utils.ts";
 
 /**
  * A minimal MCP stdio server implemented in Node for tests. It speaks the same
@@ -61,6 +61,7 @@ rl.on("line", (line) => {
 const temporaryRoots: string[] = [];
 
 afterEach(async () => {
+	vi.restoreAllMocks();
 	await Promise.all(temporaryRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
@@ -301,6 +302,39 @@ describe("MCP tools", () => {
 		).rejects.toThrow(/tool\[0\].*name/);
 		expect(await readFile(marker, "utf-8")).toBe("closed");
 	});
+
+	it("preserves a discovery failure when closing the connection also fails", async () => {
+		const discoveryFailure = new Error("discovery failed");
+		vi.spyOn(McpConnection.prototype, "listTools").mockRejectedValue(discoveryFailure);
+		const close = vi.spyOn(McpConnection.prototype, "close").mockRejectedValue(new Error("close failed"));
+
+		await expect(
+			discoverMcpTools({
+				serverName: "broken-discovery",
+				client: { command: process.execPath, spawnManaged: spawnManagedMcp },
+			}),
+		).rejects.toBe(discoveryFailure);
+		expect(close).toHaveBeenCalledTimes(1);
+	});
+
+	it("preserves a tool construction failure when closing the connection also fails", async () => {
+		const constructionFailure = new Error("construction failed");
+		vi.spyOn(McpConnection.prototype, "listTools").mockResolvedValue([
+			{ name: "remote", inputSchema: { type: "object" } },
+		]);
+		vi.spyOn(McpConnection.prototype, "retainTool").mockImplementation(() => {
+			throw constructionFailure;
+		});
+		const close = vi.spyOn(McpConnection.prototype, "close").mockRejectedValue(new Error("close failed"));
+
+		await expect(
+			createMcpTools({
+				serverName: "broken-construction",
+				client: { command: process.execPath, spawnManaged: spawnManagedMcp },
+			}),
+		).rejects.toBe(constructionFailure);
+		expect(close).toHaveBeenCalledTimes(1);
+	});
 });
 
 async function writeMcpPackage(descriptor: string): Promise<string> {
@@ -347,7 +381,7 @@ describe("MCP package tool assembly", () => {
 			].join("\n"),
 		);
 		const overlay = await loadPackageOverlay({ repoRoot, selections: ["MockPkg"] });
-		const assembled = await HcpClientbuildsession({ repoRoot, overlay });
+		const assembled = await HcpClientbuildpackagesessionfortest({ repoRoot, overlay });
 
 		expect(assembled.diagnostics).toEqual([]);
 		expect(assembled.packageToolAddresses).toEqual(["tool:web-search", "tool:unique"]);
@@ -377,7 +411,7 @@ describe("MCP package tool assembly", () => {
 			].join("\n"),
 		);
 		const overlay = await loadPackageOverlay({ repoRoot, selections: ["MockPkg"] });
-		const assembled = await HcpClientbuildsession({ repoRoot, overlay });
+		const assembled = await HcpClientbuildpackagesessionfortest({ repoRoot, overlay });
 
 		expect(assembled.packageToolAddresses).toEqual([]);
 		expect(await readFile(marker, "utf-8")).toBe("closed");
@@ -399,7 +433,7 @@ describe("MCP package tool assembly", () => {
 			].join("\n"),
 		);
 		const overlay = await loadPackageOverlay({ repoRoot, selections: ["MockPkg"] });
-		const assembled = await HcpClientbuildsession({ repoRoot, overlay, disabledModules: ["tools"] });
+		const assembled = await HcpClientbuildpackagesessionfortest({ repoRoot, overlay, disabledModules: ["tools"] });
 
 		expect(assembled.packageToolAddresses).toEqual([]);
 		await expect(readFile(marker, "utf-8")).rejects.toMatchObject({ code: "ENOENT" });
@@ -421,7 +455,7 @@ describe("MCP package tool assembly", () => {
 			].join("\n"),
 		);
 		const overlay = await loadPackageOverlay({ repoRoot, selections: ["MockPkg"] });
-		const assembled = await HcpClientbuildsession({ repoRoot, overlay });
+		const assembled = await HcpClientbuildpackagesessionfortest({ repoRoot, overlay });
 
 		expect(assembled.diagnostics).toEqual([]);
 		expect(assembled.packageToolAddresses.sort()).toEqual(["tool:bio_boom", "tool:bio_greet"]);
@@ -444,7 +478,7 @@ describe("MCP package tool assembly", () => {
 	it("reports a descriptor error when an MCP command is missing", async () => {
 		const repoRoot = await writeMcpPackage(['kind = "tool"', 'name = "bio_api"', 'runtime = "mcp"'].join("\n"));
 		const overlay = await loadPackageOverlay({ repoRoot, selections: ["MockPkg"] });
-		const assembled = await HcpClientbuildsession({ repoRoot, overlay });
+		const assembled = await HcpClientbuildpackagesessionfortest({ repoRoot, overlay });
 
 		expect(assembled.packageToolAddresses).toEqual([]);
 		expect(assembled.diagnostics).toContainEqual(

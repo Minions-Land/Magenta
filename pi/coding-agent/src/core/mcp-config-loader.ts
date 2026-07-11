@@ -2,12 +2,11 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import {
-	discoverMcpTools,
 	HCP_MAGNETS,
 	type HcpClient,
 	HcpClientassemble,
 	type HcpClientcomponent,
-	mcpToolName,
+	type McpStdioManagedProcessInput,
 	type ProcessRuntimeProvider,
 	type SandboxProvider,
 } from "@magenta/harness";
@@ -147,12 +146,7 @@ export async function loadUserMcpTools(options: LoadUserMcpToolsOptions): Promis
 	// spawning the server binary during assembly (mirrors the package path).
 	const cacheDir = join(agentDir, "cache", "mcp");
 	const components: HcpClientcomponent[] = [];
-	const componentsByConnection = new Map<
-		Awaited<ReturnType<typeof discoverMcpTools>>["connection"],
-		HcpClientcomponent[]
-	>();
 	const seenNames = new Set<string>();
-	const seenToolNames = new Set<string>();
 
 	for (const server of servers) {
 		if (!server?.name || !server?.command) {
@@ -175,72 +169,48 @@ export async function loadUserMcpTools(options: LoadUserMcpToolsOptions): Promis
 
 		try {
 			const sandbox = sandboxProvider.resolve({ profile: server.sandbox ?? "trusted" });
-			const discovered = await discoverMcpTools({
-				serverName: server.name,
-				namePrefix: server.name_prefix ?? server.name,
-				client: {
-					command: server.command,
-					args: server.args,
-					env: server.env ? { ...process.env, ...server.env } : undefined,
-					requestTimeoutMs: server.timeout_ms,
-					spawnManaged: (input, signal) =>
-						processRuntime.spawnManaged(
-							{
-								command: input.command,
-								args: input.args,
-								cwd: input.cwd ?? options.cwd,
-								workspace_root: options.cwd,
-								env_overrides: Object.fromEntries(
-									Object.entries(input.env ?? {}).filter(
-										(entry): entry is [string, string] => typeof entry[1] === "string",
-									),
+			components.push({
+				...descriptor,
+				name: server.name,
+				selected: true,
+				autoload: false,
+				descriptorPath: path,
+				requires: [],
+				settings: {
+					mcp: {
+						serverName: server.name,
+						namePrefix: server.name_prefix ?? server.name,
+						client: {
+							command: server.command,
+							args: server.args,
+							env: server.env ? { ...process.env, ...server.env } : undefined,
+							requestTimeoutMs: server.timeout_ms,
+							spawnManaged: (input: McpStdioManagedProcessInput, signal?: AbortSignal) =>
+								processRuntime.spawnManaged(
+									{
+										command: input.command,
+										args: input.args,
+										cwd: input.cwd ?? options.cwd,
+										workspace_root: options.cwd,
+										env_overrides: Object.fromEntries(
+											Object.entries(input.env ?? {}).filter(
+												(entry): entry is [string, string] => typeof entry[1] === "string",
+											),
+										),
+										sandbox,
+										tool: {
+											name: `mcp:${server.name}`,
+											operation: "serve",
+											tags: ["trusted"],
+										},
+									},
+									signal,
 								),
-								sandbox,
-								tool: {
-									name: `mcp:${server.name}`,
-									operation: "serve",
-									tags: ["trusted"],
-								},
-							},
-							signal,
-						),
-				},
-				cache: { dir: cacheDir, descriptorEnv: server.env },
-			});
-			if (discovered.tools.length === 0) {
-				await discovered.connection.close();
-				continue;
-			}
-			const serverComponents: HcpClientcomponent[] = [];
-			for (const tool of discovered.tools) {
-				const namePrefix = server.name_prefix ?? server.name;
-				const toolName = mcpToolName(tool.name, namePrefix);
-				if (seenToolNames.has(toolName)) {
-					diagnostics.push({
-						type: "warning",
-						message: `Duplicate user MCP tool name "${toolName}"; skipping the later tool.`,
-						path,
-					});
-					continue;
-				}
-				seenToolNames.add(toolName);
-				serverComponents.push({
-					...descriptor,
-					name: toolName,
-					selected: true,
-					autoload: false,
-					descriptorPath: path,
-					requires: [],
-					settings: {
-						mcp: { connection: discovered.connection, tool, namePrefix },
+						},
+						cache: { dir: cacheDir, descriptorEnv: server.env },
 					},
-				});
-			}
-			if (serverComponents.length === 0) await discovered.connection.close();
-			else {
-				components.push(...serverComponents);
-				componentsByConnection.set(discovered.connection, serverComponents);
-			}
+				},
+			});
 		} catch (error) {
 			diagnostics.push({
 				type: "warning",
@@ -258,18 +228,9 @@ export async function loadUserMcpTools(options: LoadUserMcpToolsOptions): Promis
 		replaceExisting: false,
 		components,
 	});
-	const builtComponents = new Set(assembled.builtComponents.map(({ component }) => component));
-	for (const [connection, connectionComponents] of componentsByConnection) {
-		if (connectionComponents.some((component) => builtComponents.has(component))) continue;
-		try {
-			await connection.close();
-		} catch {
-			// Registration diagnostics are primary; connection cleanup is best-effort.
-		}
-	}
 	diagnostics.push(
 		...assembled.diagnostics.map((diagnostic) => ({
-			type: diagnostic.type,
+			type: diagnostic.code === "component_build_failed" ? ("warning" as const) : diagnostic.type,
 			message: diagnostic.message,
 			path,
 		})),

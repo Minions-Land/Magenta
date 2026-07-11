@@ -45,6 +45,8 @@ const checkedRoleFiles = new Set();
 const declaredComponentPaths = new Set();
 const productionScanIgnoredDirs = new Set([".git", ".tmp", "coverage", "dist", "node_modules", "target"]);
 const forbiddenHcpIdentifiers = new Set(["CapabilitySourceMagnet", "ModuleHcpServer"]);
+const HCP_NAME_PATTERN = /^(?:Hcp|HCP_)/u;
+const HCP_FORBIDDEN_BOUNDARY_DETAIL_PATTERN = /(?:package|mcp)/iu;
 const allowedHcpClientConstructor = resolve(harnessRoot, ".HCP", "assembly", "session-hcp.ts");
 const allowedInfrastructurePaths = new Set([
 	"HCP-OVERVIEW.md",
@@ -418,19 +420,92 @@ export function hasNamedClassExport(source, className, fileName = `${className}.
 export function HcpClientinspectsyntax(source, fileName = "source.ts") {
 	const file = sourceFile(source, fileName);
 	const forbiddenIdentifiers = new Map();
+	const forbiddenInfrastructureIdentifiers = new Map();
 	const hcpClientConstructions = [];
 	const interfaceDeclarations = [];
 	const implementsClauses = [];
+	const moduleDependencies = [];
 	const toHcpServerMembers = [];
+	const unprefixedTopLevelDeclarations = [];
 
 	function location(node) {
 		const position = file.getLineAndCharacterOfPosition(node.getStart(file));
 		return { line: position.line + 1, column: position.character + 1 };
 	}
 
+	function bindingNames(name) {
+		if (ts.isIdentifier(name)) return [name];
+		if (ts.isObjectBindingPattern(name) || ts.isArrayBindingPattern(name)) {
+			return name.elements.flatMap((element) => (ts.isBindingElement(element) ? bindingNames(element.name) : []));
+		}
+		return [];
+	}
+
+	function recordTopLevelDeclaration(name) {
+		if (!HCP_NAME_PATTERN.test(name.text)) {
+			unprefixedTopLevelDeclarations.push({ name: name.text, ...location(name) });
+		}
+	}
+
+	for (const statement of file.statements) {
+		if (ts.isVariableStatement(statement)) {
+			for (const declaration of statement.declarationList.declarations) {
+				for (const name of bindingNames(declaration.name)) recordTopLevelDeclaration(name);
+			}
+			continue;
+		}
+		if (
+			(ts.isFunctionDeclaration(statement) ||
+				ts.isClassDeclaration(statement) ||
+				ts.isTypeAliasDeclaration(statement) ||
+				ts.isInterfaceDeclaration(statement) ||
+				ts.isEnumDeclaration(statement)) &&
+			statement.name
+		) {
+			recordTopLevelDeclaration(statement.name);
+			continue;
+		}
+		if (ts.isModuleDeclaration(statement) && ts.isIdentifier(statement.name)) {
+			recordTopLevelDeclaration(statement.name);
+		}
+	}
+
+	function recordModuleDependency(moduleSpecifier) {
+		if (!moduleSpecifier || !ts.isStringLiteralLike(moduleSpecifier)) return;
+		moduleDependencies.push({ source: moduleSpecifier.text, ...location(moduleSpecifier) });
+	}
+
 	function visit(node) {
 		if (ts.isIdentifier(node) && forbiddenHcpIdentifiers.has(node.text) && !forbiddenIdentifiers.has(node.text)) {
 			forbiddenIdentifiers.set(node.text, location(node));
+		}
+		if (
+			ts.isIdentifier(node) &&
+			HCP_FORBIDDEN_BOUNDARY_DETAIL_PATTERN.test(node.text) &&
+			!forbiddenInfrastructureIdentifiers.has(node.text)
+		) {
+			forbiddenInfrastructureIdentifiers.set(node.text, location(node));
+		}
+		if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) {
+			recordModuleDependency(node.moduleSpecifier);
+		}
+		if (
+			ts.isImportEqualsDeclaration(node) &&
+			ts.isExternalModuleReference(node.moduleReference) &&
+			node.moduleReference.expression
+		) {
+			recordModuleDependency(node.moduleReference.expression);
+		}
+		if (
+			ts.isCallExpression(node) &&
+			node.arguments.length > 0 &&
+			(node.expression.kind === ts.SyntaxKind.ImportKeyword ||
+				(ts.isIdentifier(node.expression) && node.expression.text === "require"))
+		) {
+			recordModuleDependency(node.arguments[0]);
+		}
+		if (ts.isImportTypeNode(node) && ts.isLiteralTypeNode(node.argument)) {
+			recordModuleDependency(node.argument.literal);
 		}
 		if (ts.isInterfaceDeclaration(node)) {
 			interfaceDeclarations.push({ name: node.name.text, ...location(node) });
@@ -464,11 +539,32 @@ export function HcpClientinspectsyntax(source, fileName = "source.ts") {
 	visit(file);
 	return {
 		forbiddenIdentifiers: [...forbiddenIdentifiers].map(([name, at]) => ({ name, ...at })),
+		forbiddenInfrastructureIdentifiers: [...forbiddenInfrastructureIdentifiers].map(([name, at]) => ({
+			name,
+			...at,
+		})),
 		hcpClientConstructions,
 		interfaceDeclarations,
 		implementsClauses,
+		moduleDependencies,
 		toHcpServerMembers,
+		unprefixedTopLevelDeclarations,
 	};
+}
+
+export function HcpClientisforbiddeninfrastructuredependency(specifier) {
+	const segments = specifier.replaceAll("\\", "/").toLowerCase().split("/");
+	return segments.some(
+		(segment) =>
+			segment === "_magenta" ||
+			/^package(?:-|\.|$)/u.test(segment) ||
+			/^mcp(?:-|\.|$)/u.test(segment),
+	);
+}
+
+export function HcpClientisconcreteroledependency(specifier) {
+	const normalized = specifier.replaceAll("\\", "/");
+	return /(?:^|\/)Hcp(?:Server|Magnet)\.ts(?:[?#].*)?$/u.test(normalized);
 }
 
 function checkRoleFile(filePath, className, context) {
@@ -573,10 +669,31 @@ function checkInfrastructureBoundaries() {
 	for (const filePath of collectProductionSourceFiles(resolve(harnessRoot, ".HCP"))) {
 		if (filePath === generatedAssembly) continue;
 		const source = readFileSync(filePath, "utf8");
-		if (/\bfrom\s+["'][^"']*\/Hcp(?:Server|Magnet)\.ts["']/.test(source)) {
+		const inspection = HcpClientinspectsyntax(source, filePath);
+		for (const declaration of inspection.unprefixedTopLevelDeclarations) {
 			fail(
-				`${pathLabel(filePath)} directly imports a concrete HCP role; ` +
-					"only .HCP/assembly/sources.generated.ts may import HcpServer.ts or HcpMagnet.ts",
+				`HCP top-level declaration ${declaration.name} must start with Hcp or HCP_ at ` +
+					`${pathLabel(filePath)}:${declaration.line}`,
+			);
+		}
+		for (const dependency of inspection.moduleDependencies) {
+			if (HcpClientisforbiddeninfrastructuredependency(dependency.source)) {
+				fail(
+					`${pathLabel(filePath)} depends on forbidden HCP infrastructure boundary ${dependency.source} at line ` +
+						`${dependency.line}; Package and MCP adapters belong outside .HCP`,
+				);
+			}
+			if (HcpClientisconcreteroledependency(dependency.source)) {
+				fail(
+					`${pathLabel(filePath)} directly imports concrete HCP role ${dependency.source} at line ${dependency.line}; ` +
+						"only .HCP/assembly/sources.generated.ts may import HcpServer.ts or HcpMagnet.ts",
+				);
+			}
+		}
+		for (const detail of inspection.forbiddenInfrastructureIdentifiers) {
+			fail(
+				`${pathLabel(filePath)} contains forbidden Package/MCP detail ${detail.name} at line ${detail.line}; ` +
+					"pass ordinary HcpClient component/settings data across the boundary",
 			);
 		}
 	}

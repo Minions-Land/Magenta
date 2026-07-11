@@ -13,7 +13,6 @@
  */
 export type HcpMagnetBuildContext = {
 	repoRoot: string;
-	packagesRoot: string;
 	/** Resolve an already-selected capability dependency from the one session Client. */
 	resolveCapability?<T>(name: string): T | undefined;
 	/** Working directory bound to a tool product. Defaults to repoRoot. */
@@ -64,8 +63,7 @@ export type HcpMagnetResourceMergeMode = "replace" | "append";
 
 /**
  * Host-supplied settings for a descriptor-backed Resource Source. The Source
- * class is always `descriptor`; `source` records the actual owner of the data
- * (for example a Package id or `user`).
+ * class is always `descriptor`; `source` records the host-supplied owner id.
  */
 export type HcpMagnetResourcebuildsettings = {
 	name: string;
@@ -81,20 +79,19 @@ export type HcpMagnetResourcebuildsettings = {
  * A resolved Resource binding produced by a Magnet. Resource is the third
  * Magnet product beside Tool and Capability. It is context **data** injected
  * into the model's context and *referenced* rather than *called* — e.g. a
- * package's `SYSTEM.md` system-prompt content. Unlike an HcpMagnetBinding
+ * host source's `SYSTEM.md` system-prompt content. Unlike an HcpMagnetBinding
  * (a live in-process code provider) a Resource carries inert content plus the
  * location it was loaded from, so the resource layer can inject or override it.
  *
- * This is why the AutOmicScience regression (§5.1) was a category error: a
- * content-only `system-prompt` is a Resource, not a Capability, and must never
- * be routed through code-builder resolution.
+ * A content-only `system-prompt` is a Resource, not a Capability, and must
+ * never be routed through code-builder resolution.
  */
 export type HcpMagnetResource = {
 	/** Resource kind, e.g. `"system-prompt"`, `"prompt-template"`. */
 	kind: string;
 	/** Component name within the kind. */
 	name: string;
-	/** The selected source that supplied this content, e.g. `"pi"`, `"AutOmicScience"`. */
+	/** The selected source that supplied this content, e.g. `"pi"`, `"external"`. */
 	source: string;
 	/** How this resource combines with others in the same slot. */
 	mergeMode: HcpMagnetResourceMergeMode;

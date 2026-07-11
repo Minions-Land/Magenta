@@ -8,19 +8,28 @@ Packages.
 This directory is not part of `.HCP/`, is not a Harness Module, owns no
 `HcpServer`, and is not a Package content root. Magenta3's root `packages/`
 contains only the generic contract and templates. Concrete domain Packages are
-independently published from GitHub repositories.
+independently published from GitHub repositories; this integration does not
+depend on a fixed sibling checkout.
 
-This infrastructure owns parsing, profile expansion, component precedence, and
-package-local resource paths. `discoverHarnessPackages()` and
+This infrastructure owns parsing, profile expansion, component precedence,
+package-local resource paths, and the conversion from selected Package
+declarations to ordinary HcpClient component inputs.
+`discoverHarnessPackages()` and
 `loadPackageOverlay()` accept an optional explicit `packagesRoot`; production
 integration with external content must supply that boundary and must not
 hardcode or implicitly scan a sibling repository. Download, version selection,
 verification, and caching belong to a future acquisition layer; this support
-code only consumes packages already present in the supplied root. This layer does not own TUI
-selection, CLI flags, or language/runtime adapter selection. Package `tool`
-descriptors are adapted through the repository-declared
-`tools/descriptor/HcpMagnet.ts`; transport products never become a new Module or
-Magnet subtype.
+code only consumes Packages already present in the supplied root. The future
+acquisition layer is not implemented here. This directory does not own TUI
+selection, CLI flags, or language/runtime adapter selection.
+
+`HcpClientpackageinputfromoverlay()` maps the selected declarations to ordinary
+component inputs and Source settings before they enter `.HCP/assembly/`. HCP
+assembly therefore has no Package-specific branch: it only resolves component
+dependencies, calls `HcpMagnet.build()`, routes returned Magnets, and disposes
+rejected products. Package `tool` descriptors are constructed through the
+repository-declared `tools/descriptor/HcpMagnet.ts`; transport products never
+become a new Module or Magnet subtype.
 
 ## Ownership boundary
 
@@ -125,11 +134,12 @@ path = "skills/domain-guide"
 Known resource component kinds are `skill`, `prompt-template`, `prompt`, `theme`,
 `system-prompt`, `append-system-prompt`, and `brand`. The overlay returns only
 the canonical resolved component list; it does not derive per-kind resource
-arrays or a second registry. Session assembly maps these components to the
-owning `skills`, `prompt-templates`, `themes`, `system-prompt`, or `brand`
-Module's `descriptor/HcpMagnet`, and the resulting Resource is resolved from the
-one HcpClient. Other component kinds remain in the canonical component list for
-later harness/tool integrations.
+arrays or a second lookup system. `HcpClientpackageinputfromoverlay()` maps
+supported declarations to ordinary inputs using the owning `skills`,
+`prompt-templates`, `themes`, `system-prompt`, `brand`, or `tools` Module's
+repository-declared `descriptor/HcpMagnet`. The resulting Resource or Tool is
+resolved from the one HcpClient. Other component kinds remain in the canonical
+component list for later harness/tool integrations.
 
 `system-prompt` and `append-system-prompt` components should point at a module
 descriptor TOML, matching the repository-declared
@@ -165,12 +175,15 @@ workspace and load package code through an absolute package path.
 
 ## Tool Assembly
 
-Package `tool` components are descriptors. At assembly time,
-`.HCP/assembly/session-hcp.ts` expands their build settings and routes them
-through `tools/descriptor/HcpMagnet.ts`. That Magnet calls
-`tools/descriptor/package-tool.ts::createPackageToolProduct()` to materialize
-one or more product adapters. A `ProcessTool`, `PythonModuleTool`, or `McpTool`
-is not a source role or `HcpMagnet`:
+Package `tool` components are descriptors.
+`HcpClientpackageinputfromoverlay()` turns each selected descriptor into a
+normal `tools:descriptor` component plus Source settings. The real
+`tools/descriptor/HcpMagnet.ts` owns construction and delegates Package
+descriptor parsing and product adaptation to
+`tools/descriptor/package-tool.ts`. `.HCP/assembly/session-hcp.ts` sees only the
+normal component and returned Magnets; it does not know that the settings came
+from a Package. A `ProcessTool`, `PythonModuleTool`, or `McpTool` is not a Source
+role or `HcpMagnet`:
 
 ```toml
 kind = "tool"
@@ -188,18 +201,24 @@ Currently implemented product adapters:
 
 - `runtime = "process"` creates a `ProcessTool` for command-line tools and binaries.
 - `runtime = "<name>"` plus a matching `python-runtime:<name>` component creates a `PythonModuleTool` using `python -m <module>`.
-- `runtime = "mcp"` uses `discoverMcpTools()` to fan one server descriptor into
-  per-tool connection/schema settings. The real `tools/descriptor/HcpMagnet.ts`
-  constructs each single-product `McpTool` during HCP assembly.
+- `runtime = "mcp"` lets the descriptor Magnet expand one server descriptor into
+  sibling Magnets, one single-product `McpTool` per discovered remote tool. The
+  shared connection is retained and released by those products rather than by
+  HCP assembly.
 - `runtime = "shell"`, `"python"`, `"node"`, `"r"`, or `"julia"` creates a script-backed `ProcessTool`. The descriptor must provide inline `code`/`script` or a package-local `script_path`; tool-call parameters are passed to the script runtime as stdin JSON and still drive `runtime://process` policy checks.
 
 Declarative-only tools can set `execution = "declarative"`. They stay in the overlay for documentation and later integrations but are not converted into loop-ready `AgentTool`s.
 
-Future Rust binaries, HTTP APIs, and WASM runtimes should extend this product
-factory behind the same descriptor Magnet. Package selection still resolves to
-uniform tool Sources owned by a real tool Module/Server and Source Magnet before
-the agent loop starts.
-Transport plumbing never owns a Server or address.
+Configured user MCP servers use the same `tools/descriptor/HcpMagnet.ts`
+construction boundary: the host supplies one ordinary component per server,
+and the Magnet may return one sibling Magnet per discovered tool. Package and
+user MCP paths therefore share Source construction without teaching `.HCP/`
+about MCP discovery, servers, schemas, or connections.
+
+Future Rust binaries, HTTP APIs, and WASM runtimes should extend product
+adaptation behind the same descriptor Magnet. Package selection still resolves
+to uniform tool Sources owned by a real tool Module/Server and Source Magnet
+before the agent loop starts. Transport plumbing never owns a Server or address.
 
 ## Precedence
 

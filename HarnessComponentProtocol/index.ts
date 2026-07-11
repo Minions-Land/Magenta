@@ -15,6 +15,7 @@ export * from "./_magenta/mcp/client.ts";
 export * from "./_magenta/mcp/schema.ts";
 export * from "./_magenta/mcp/tool.ts";
 export * from "./_magenta/messages/messages.ts";
+export * from "./_magenta/packages/hcp-client-components.ts";
 export * from "./_magenta/packages/package-overlay.ts";
 export * from "./_magenta/session/pi/repo-utils.ts";
 export * from "./_magenta/session/pi/session.ts";

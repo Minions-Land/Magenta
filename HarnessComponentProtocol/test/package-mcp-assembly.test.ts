@@ -4,8 +4,8 @@ import { join } from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import ts from "typescript";
 import { afterEach, describe, expect, it } from "vitest";
-import { HcpClientbuildsession } from "../.HCP/assembly/session-hcp.ts";
 import { loadPackageOverlay } from "../_magenta/packages/package-overlay.ts";
+import { HcpClientbuildpackagesessionfortest } from "./package-test-utils.ts";
 
 const MOCK_MCP_SERVER = `#!/usr/bin/env node
 const fs = require("node:fs");
@@ -114,7 +114,7 @@ describe("package MCP HCP assembly", () => {
 		const repoRoot = await mkdtemp(join(tmpdir(), "package-mcp-hcp-"));
 		roots.push(repoRoot);
 		const overlay = await writeMcpPackage(repoRoot);
-		const assembled = await HcpClientbuildsession({ repoRoot, overlay });
+		const assembled = await HcpClientbuildpackagesessionfortest({ repoRoot, overlay });
 
 		expect(assembled.diagnostics).toEqual([]);
 		expect(assembled.packageToolAddresses.sort()).toEqual(["tool:bio_greet", "tool:bio_status"]);
@@ -133,7 +133,7 @@ describe("package MCP HCP assembly", () => {
 		const overlay = await writeMcpPackage(repoRoot, closeMarker);
 
 		await expect(
-			HcpClientbuildsession({
+			HcpClientbuildpackagesessionfortest({
 				repoRoot,
 				overlay,
 				onPackageAssemblyProgress: (progress) => {

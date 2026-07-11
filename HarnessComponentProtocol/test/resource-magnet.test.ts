@@ -7,7 +7,6 @@ import * as systemPromptPi from "../system-prompt/pi/HcpMagnet.ts";
 
 const context = {
 	repoRoot: process.cwd(),
-	packagesRoot: `${process.cwd()}/packages`,
 	kind: "skill",
 	name: "paper-analysis",
 	source: "pi",

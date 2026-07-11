@@ -574,14 +574,12 @@ describe("HcpClient capability routing", () => {
 		const server = { moduleName: "fixture", description: "fixture" };
 		const single = new FixtureHcpMagnet({
 			repoRoot: "/repo",
-			packagesRoot: "/repo/packages",
 			kind: "fixture",
 			name: "fixture",
 			source: "pi",
 		});
 		const named = new FixtureHcpMagnet({
 			repoRoot: "/repo",
-			packagesRoot: "/repo/packages",
 			kind: "fixture",
 			name: "process",
 			source: "magenta",
@@ -608,7 +606,6 @@ describe("HcpClient capability routing", () => {
 					"fixture",
 					new FixtureHcpMagnet({
 						repoRoot: "/repo",
-						packagesRoot: "/repo/packages",
 						kind: "fixture",
 						name: "fixture",
 						source: "pi",

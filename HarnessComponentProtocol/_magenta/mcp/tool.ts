@@ -39,6 +39,7 @@ export class McpConnection {
 	private connectPromise?: Promise<void>;
 	private idleClosePromise?: Promise<void>;
 	private toolReferences = 0;
+	private terminalOnLastRelease = false;
 	private terminal = false;
 	readonly serverName: string;
 
@@ -85,14 +86,19 @@ export class McpConnection {
 		if (this.client === client) this.client = undefined;
 	}
 
-	retainTool(): void {
+	retainTool(terminalOnLastRelease = false): void {
 		if (this.terminal) throw new Error(`MCP connection ${this.serverName} has been closed`);
+		this.terminalOnLastRelease ||= terminalOnLastRelease;
 		this.toolReferences += 1;
 	}
 
 	async releaseTool(): Promise<void> {
 		if (this.toolReferences > 0) this.toolReferences -= 1;
 		if (this.toolReferences !== 0 || this.terminal) return;
+		if (this.terminalOnLastRelease) {
+			await this.close();
+			return;
+		}
 		if (!this.idleClosePromise) {
 			const client = this.client;
 			const connecting = this.connectPromise;
@@ -110,6 +116,8 @@ export class McpConnection {
 export type McpToolOptions = {
 	connection: McpConnection;
 	tool: McpToolSchema;
+	/** Permanently close the shared connection when its final Tool lease is released. */
+	terminalOnLastRelease?: boolean;
 	/**
 	 * Prefix applied to the remote tool name to namespace it in the local tool
 	 * address space and avoid collisions with repository-declared tools. The exposed tool
@@ -153,7 +161,7 @@ export class McpTool {
 	private released = false;
 
 	constructor(options: McpToolOptions) {
-		const { connection, tool, namePrefix } = options;
+		const { connection, tool, namePrefix, terminalOnLastRelease } = options;
 		const localName = mcpToolName(tool.name, namePrefix);
 		const description = tool.description ?? tool.name;
 		this.source = connection.serverName;
@@ -161,7 +169,7 @@ export class McpTool {
 		this.remoteToolName = tool.name;
 		this.toolName = localName;
 		this.toolDescription = description;
-		this.connection.retainTool();
+		this.connection.retainTool(terminalOnLastRelease);
 		this.parameters =
 			(tool.inputSchema as JsonSchema | undefined) ??
 			(Type.Object({}, { additionalProperties: true }) as unknown as TSchema);
@@ -264,7 +272,7 @@ export async function discoverMcpTools(options: CreateMcpToolsOptions): Promise<
 		}
 		return { connection, tools };
 	} catch (error) {
-		await connection.close();
+		await connection.close().catch(() => undefined);
 		throw error;
 	}
 }
@@ -283,7 +291,7 @@ export async function createMcpTools(options: CreateMcpToolsOptions): Promise<Mc
 		if (products.length === 0) await connection.close();
 		return products;
 	} catch (error) {
-		await connection.close();
+		await connection.close().catch(() => undefined);
 		throw error;
 	}
 }

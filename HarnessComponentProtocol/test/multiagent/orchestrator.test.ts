@@ -34,7 +34,6 @@ describe("multiagent orchestrator", () => {
 	it("exposes the source through the real module HCP server", async () => {
 		const magnet = new multiagentWorkflowMagenta.HcpMagnet({
 			repoRoot: process.cwd(),
-			packagesRoot: process.cwd(),
 			kind: "multiagent",
 			name: "multiagent",
 			source: "magenta",

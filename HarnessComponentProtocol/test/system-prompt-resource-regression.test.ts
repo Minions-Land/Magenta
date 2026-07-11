@@ -7,6 +7,7 @@ import { HCP_MAGNETS } from "../.HCP/assembly/sources.generated.ts";
 import type { HcpMagnetResource } from "../.HCP/HcpMagnetTypes.ts";
 import type { PackageOverlay, PackageResolvedComponent } from "../_magenta/packages/package-overlay.ts";
 import { SystemPromptProvider } from "../system-prompt/pi/provider.ts";
+import { HcpClientbuildpackagesessionfortest } from "./package-test-utils.ts";
 
 function contentOverlay(repoRoot: string): PackageOverlay {
 	const packageDir = join(repoRoot, "packages", "AutOmicScience");
@@ -75,7 +76,7 @@ describe("system-prompt code and content products", () => {
 		const repoRoot = mkdtempSync(join(tmpdir(), "hcp-system-prompt-resource-"));
 		try {
 			const overlay = contentOverlay(repoRoot);
-			const session = await HcpClientbuildsession({ repoRoot, overlay });
+			const session = await HcpClientbuildpackagesessionfortest({ repoRoot, overlay });
 			try {
 				expect(session.diagnostics).toEqual([]);
 				expect(session.packageResourceAddresses).toEqual(["system-prompt:system-prompt"]);
@@ -115,7 +116,7 @@ describe("system-prompt code and content products", () => {
 			overlay.components.push(append);
 			overlay.componentMap.set(append.key, append);
 
-			const session = await HcpClientbuildsession({ repoRoot, overlay });
+			const session = await HcpClientbuildpackagesessionfortest({ repoRoot, overlay });
 			try {
 				expect(session.packageResourceAddresses).toEqual(["system-prompt:system-prompt"]);
 				expect(session.diagnostics).toContainEqual(

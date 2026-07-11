@@ -34,7 +34,11 @@ cannot own Servers.
 Each repository-declared Source owns `HcpMagnet.ts`. A Magnet binds one Source
 and produces exactly one Tool, Capability, or Resource through `toTool()`,
 `toCapability()`, or `toResource()`. It does not attach itself and does not
-expose `toHcpServer()`.
+expose `toHcpServer()`. An aggregate input whose sibling selectors are unique
+(currently the root `tools/descriptor` Source and Resources) may expand one
+build into multiple sibling Magnets, but every returned Magnet still owns
+exactly one product. Fixed capability slots and leaf Tool Modules require one
+product per component; assembly rejects fan-out there.
 
 ## Assembly
 
@@ -43,21 +47,30 @@ declared component TOML files. `HCP_SERVERS` is the real Server map and
 `HCP_MAGNETS` is the only generated Magnet list; assembly filters it by static
 metadata instead of maintaining product-specific lists.
 `assembly/session-hcp.ts::HcpClientbuildsession()` constructs the one HcpClient,
-assembles repository-selected components, applies explicitly configured
-Package Sources, and fills unoccupied default-selected slots. TOML parsing used
-at runtime belongs to the small shared parser in
-`../_magenta/utils/pi/toml.ts`; it is not a discovery or ownership layer.
+accepts only ordinary component inputs and Source settings, resolves their
+dependencies, calls `HcpMagnet.build()`, routes each returned Magnet, and
+releases returned products that cannot be validated or routed. It fills
+unoccupied repository defaults without interpreting where host-supplied inputs
+came from.
+In particular, `.HCP/assembly/` does not parse Package declarations, discover
+MCP servers, or manage MCP connections.
 
-For a selected Package overlay, `../_magenta/packages/package-overlay.ts`
-parses the generic Package contract and `assembly/session-hcp.ts` converts its
-descriptors to ordinary HcpClient component settings. Tool settings are built through
-`../tools/descriptor/HcpMagnet.ts` and
-`../tools/descriptor/package-tool.ts::createPackageToolProduct()`. Slot overlays
-preserve unrelated slots in the same Module. Concrete domain packages are
-independently published from their own GitHub repositories. A future acquisition
-layer will download, verify, and cache them. `discoverHarnessPackages()` and
-`loadPackageOverlay()` currently accept an explicit `packagesRoot` containing
-already-downloaded content; integrations must not infer a sibling checkout.
+For selected Package content, `../_magenta/packages/package-overlay.ts` parses
+the generic contract and
+`../_magenta/packages/hcp-client-components.ts::HcpClientpackageinputfromoverlay()`
+maps the result to the same component inputs accepted by HCP assembly. The host
+loads an explicitly supplied root containing already-downloaded Packages and
+passes those inputs to `HcpClientbuildsession()`; no HCP code infers a fixed
+Package location. `../tools/descriptor/HcpMagnet.ts` owns construction for both
+Package tool descriptors and configured user MCP servers. One MCP server build
+may return multiple sibling Magnets, one per discovered tool, while each Magnet
+still owns one product and the shared connection remains transport plumbing.
+
+Concrete domain Packages will be published in independent GitHub repositories.
+A future acquisition layer will download, select versions, verify, and cache
+them; none of that acquisition work is implemented here. Magenta3's root
+`packages/` retains only the generic contract and templates and has no dependency
+on a sibling Package checkout.
 
 `_magenta/` is outside this chain. It contains host/shared Magenta support code
 such as Package parsing, MCP transport support, session storage, environment

@@ -33,6 +33,7 @@ function bindingNames(node) {
 }
 
 function declarationNames(node) {
+	if (!node) return [];
 	if (node.type === "VariableDeclaration") {
 		return node.declarations.flatMap((declaration) => bindingNames(declaration.id));
 	}
@@ -50,11 +51,11 @@ const hcpExportsPlugin = {
 			meta: {
 				type: "problem",
 				docs: {
-					description: "Require governed HCP exports to use an Hcp or HCP_ prefix",
+					description: "Require governed HCP top-level declarations and exports to use an Hcp or HCP_ prefix",
 				},
 				schema: [],
 				messages: {
-					invalidName: 'Exported name "{{name}}" must start with "Hcp" or "HCP_".',
+					invalidName: 'HCP top-level or exported name "{{name}}" must start with "Hcp" or "HCP_".',
 					namedOnly: 'Use a named export starting with "Hcp" or "HCP_".',
 				},
 			},
@@ -66,12 +67,14 @@ const hcpExportsPlugin = {
 				}
 
 				return {
-					ExportNamedDeclaration(node) {
-						if (node.declaration) {
-							for (const name of declarationNames(node.declaration)) {
-								checkName(node.declaration, name);
-							}
+					Program(node) {
+						for (const statement of node.body) {
+							const declaration =
+								statement.type === "ExportNamedDeclaration" ? statement.declaration : statement;
+							for (const name of declarationNames(declaration)) checkName(declaration, name);
 						}
+					},
+					ExportNamedDeclaration(node) {
 						for (const specifier of node.specifiers) {
 							const name = exportedName(specifier.exported);
 							if (name) checkName(specifier, name);

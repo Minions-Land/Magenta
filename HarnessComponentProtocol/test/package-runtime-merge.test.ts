@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { HcpClientbuildsession } from "../.HCP/assembly/session-hcp.ts";
 import type { PackageOverlay, PackageResolvedComponent } from "../_magenta/packages/package-overlay.ts";
 import { ProcessRuntimeProvider } from "../runtime/magenta/process-runtime.ts";
 import { ScriptRuntimeProvider } from "../runtime/magenta/script-runtime.ts";
 import { SandboxProvider } from "../sandbox/magenta/sandbox.ts";
+import { HcpClientbuildpackagesessionfortest } from "./package-test-utils.ts";
 
 const RUNTIME_PROCESS_COMPONENT: PackageResolvedComponent = {
 	kind: "runtime",
@@ -54,7 +54,7 @@ function runtimeOverlay(component = RUNTIME_PROCESS_COMPONENT): PackageOverlay {
 
 describe("package capability slot merging", () => {
 	it("keeps a package runtime override while filling the other default runtime slot", async () => {
-		const assembly = await HcpClientbuildsession({ repoRoot: "/repo", overlay: runtimeOverlay() });
+		const assembly = await HcpClientbuildpackagesessionfortest({ repoRoot: "/repo", overlay: runtimeOverlay() });
 		expect(assembly.diagnostics).toEqual([]);
 		const hcp = assembly.hcp;
 		const packageProcessRuntime = hcp.resolveCapability("runtime:process");
@@ -69,7 +69,7 @@ describe("package capability slot merging", () => {
 	});
 
 	it("matches a package script runtime override to its exact runtime slot", async () => {
-		const assembly = await HcpClientbuildsession({
+		const assembly = await HcpClientbuildpackagesessionfortest({
 			repoRoot: "/repo",
 			overlay: runtimeOverlay(SCRIPT_RUNTIMES_COMPONENT),
 		});
@@ -85,7 +85,7 @@ describe("package capability slot merging", () => {
 			name: "unknown-runtime",
 			key: "runtime:unknown-runtime",
 		};
-		const assembly = await HcpClientbuildsession({
+		const assembly = await HcpClientbuildpackagesessionfortest({
 			repoRoot: "/repo",
 			overlay: runtimeOverlay(unknownRuntime),
 		});
@@ -105,7 +105,7 @@ describe("package capability slot merging", () => {
 			source: "missing",
 		};
 		const components = [BROKEN_SANDBOX_COMPONENT, unavailableRuntime];
-		const assembly = await HcpClientbuildsession({
+		const assembly = await HcpClientbuildpackagesessionfortest({
 			repoRoot: "/repo",
 			overlay: {
 				...runtimeOverlay(),

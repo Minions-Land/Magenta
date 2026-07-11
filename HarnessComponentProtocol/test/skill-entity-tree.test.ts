@@ -17,7 +17,6 @@ const SKILL_SOURCES = new Map<string, string>([
 
 const context = {
 	repoRoot: resolve(HARNESS_ROOT, ".."),
-	packagesRoot: resolve(HARNESS_ROOT, "..", "packages"),
 };
 
 describe("HCP skill entity tree", () => {

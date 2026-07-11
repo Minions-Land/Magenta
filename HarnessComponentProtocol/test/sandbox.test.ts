@@ -56,7 +56,6 @@ describe("sandbox provider", () => {
 		const descriptorPath = new URL("../sandbox/sandbox.toml", import.meta.url).pathname;
 		const magnet = new sandboxMagenta.HcpMagnet({
 			repoRoot: process.cwd(),
-			packagesRoot: process.cwd(),
 			kind: "sandbox",
 			name: "sandbox",
 			source: "magenta",

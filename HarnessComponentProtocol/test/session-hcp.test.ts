@@ -1,6 +1,6 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import { describe, expect, it } from "vitest";
-import { HcpClientassemble, HcpClientbuildsession } from "../.HCP/assembly/session-hcp.ts";
+import { describe, expect, it, vi } from "vitest";
+import { HcpClientassemble, HcpClientbuildsession, type HcpClientcomponent } from "../.HCP/assembly/session-hcp.ts";
 import { HCP_MAGNETS, HCP_SERVERS } from "../.HCP/assembly/sources.generated.ts";
 import { HcpClient } from "../HcpClient.ts";
 import type { BashOperations } from "../tools/bash/pi/bash.ts";
@@ -53,7 +53,7 @@ describe("session HcpClient assembly", () => {
 		const result = await HcpClientbuildsession({
 			repoRoot: REPO_ROOT,
 			modules: CORE_TOOL_MODULES,
-			toolOptions: { "tools/bash": { operations: mockBashOperations } },
+			settings: { "tools/bash": { operations: mockBashOperations } },
 		});
 
 		expect(result.diagnostics).toEqual([]);
@@ -87,6 +87,71 @@ describe("session HcpClient assembly", () => {
 		expect(selected.hcp.resolve("tool:read")).toBeDefined();
 		expect(selected.hcp.resolve("tool:bash")).toBeUndefined();
 		expect(selected.diagnostics).toEqual([]);
+	});
+
+	it("builds a settings-selected generated Source exactly once", async () => {
+		const row = HCP_MAGNETS.find((candidate) => candidate.module === "tools/todo" && candidate.selected);
+		expect(row).toBeDefined();
+		const build = vi.spyOn(row!.HcpMagnet, "build");
+		try {
+			const result = await HcpClientbuildsession({
+				repoRoot: REPO_ROOT,
+				settings: { "tools/todo": {} },
+			});
+
+			expect(result.diagnostics).toEqual([]);
+			expect(result.hcp.resolve("tool:todo")).toBeDefined();
+			expect(build).toHaveBeenCalledTimes(1);
+			await result.hcp.dispose();
+		} finally {
+			build.mockRestore();
+		}
+	});
+
+	it("rejects fan-out from a leaf Tool Module instead of silently replacing a sibling", async () => {
+		const row = HCP_MAGNETS.find((candidate) => candidate.module === "tools/read" && candidate.selected);
+		expect(row).toBeDefined();
+		const disposed: string[] = [];
+		const HcpMagnet = {
+			module: row!.module,
+			kind: row!.kind,
+			source: row!.source,
+			build: () =>
+				["first", "second"].map((name) => ({
+					kind: "fixture",
+					source: "fixture",
+					toTool: () =>
+						({
+							name,
+							label: name,
+							description: name,
+							parameters: {},
+							execute: async () => ({ content: [], details: {} }),
+						}) as unknown as AgentTool,
+					dispose: () => {
+						disposed.push(name);
+					},
+				})),
+		};
+		const component: HcpClientcomponent = { ...row!, HcpMagnet };
+		const hcp = new HcpClient();
+		const result = await HcpClientassemble({
+			hcp,
+			repoRoot: REPO_ROOT,
+			includeGenerated: false,
+			components: [component],
+		});
+
+		expect(result.addresses).toEqual([]);
+		expect(result.diagnostics).toEqual([
+			expect.objectContaining({
+				code: "component_product_invalid",
+				message: expect.stringContaining("requires one product per component"),
+			}),
+		]);
+		expect(hcp.resolve("tool:first")).toBeUndefined();
+		expect(hcp.resolve("tool:second")).toBeUndefined();
+		expect(disposed.sort()).toEqual(["first", "second"]);
 	});
 
 	it("can assemble only requested modules through the public assembler", async () => {

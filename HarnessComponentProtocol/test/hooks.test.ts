@@ -32,7 +32,6 @@ describe("hook provider", () => {
 	it("runs pre-tool hook as declarative sandbox/approval/shell-policy actions", async () => {
 		const magnet = new hooksMagenta.HcpMagnet({
 			repoRoot: process.cwd(),
-			packagesRoot: process.cwd(),
 			kind: "hook",
 			name: "hook",
 			descriptorPath: "",
@@ -98,7 +97,6 @@ describe("hook provider", () => {
 	it("runs init and workflow hooks as action envelopes", async () => {
 		const magnet = new hooksMagenta.HcpMagnet({
 			repoRoot: process.cwd(),
-			packagesRoot: process.cwd(),
 			kind: "hook",
 			name: "hook",
 			descriptorPath: "",

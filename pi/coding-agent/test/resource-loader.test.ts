@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -622,18 +622,23 @@ describe("DefaultResourceLoader", () => {
 			await loader.reload();
 			const previousHcp = loader.HcpClientgetsession();
 			const serverPath = join(agentDir, "rollback-mcp.cjs");
-			const closeMarker = join(agentDir, "rollback-mcp-closed.txt");
+			const lifecycleMarker = join(agentDir, "rollback-mcp-lifecycle.txt");
 			writeFileSync(
 				serverPath,
 				`const fs = require("node:fs");
 const readline = require("node:readline");
+const lifecycleMarker = ${JSON.stringify(lifecycleMarker)};
+fs.appendFileSync(lifecycleMarker, "spawn\\n");
 const lines = readline.createInterface({ input: process.stdin });
 const send = (id, result) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id, result }) + "\\n");
-process.on("SIGTERM", () => { fs.writeFileSync(${JSON.stringify(closeMarker)}, "closed"); process.exit(0); });
+process.on("SIGTERM", () => { fs.appendFileSync(lifecycleMarker, "close\\n"); process.exit(0); });
 lines.on("line", (line) => {
   const message = JSON.parse(line);
   if (message.method === "initialize") send(message.id, { protocolVersion: "2024-11-05", capabilities: { tools: {} } });
-  if (message.method === "tools/list") send(message.id, { tools: [{ name: "rollback", inputSchema: { type: "object" } }] });
+  if (message.method === "tools/list") send(message.id, { tools: [
+    { name: "rollback_one", inputSchema: { type: "object" } },
+    { name: "rollback_two", inputSchema: { type: "object" } }
+  ] });
 });
 `,
 			);
@@ -649,7 +654,9 @@ lines.on("line", (line) => {
 
 			expect(loader.HcpClientgetsession()).toBe(previousHcp);
 			expect(loader.getUserMcpTools().tools).toEqual([]);
-			expect(readFileSync(closeMarker, "utf8")).toBe("closed");
+			expect(previousHcp?.resolve("tool:candidate_rollback_one")).toBeUndefined();
+			expect(previousHcp?.resolve("tool:candidate_rollback_two")).toBeUndefined();
+			expect(readFileSync(lifecycleMarker, "utf8")).toBe("spawn\nclose\n");
 			await loader.dispose();
 		});
 
@@ -658,6 +665,8 @@ lines.on("line", (line) => {
 			const serverPath = join(agentDir, "live-management-mcp.cjs");
 			const firstCloseMarker = join(agentDir, "live-management-one-closed.txt");
 			const secondCloseMarker = join(agentDir, "live-management-two-closed.txt");
+			const firstReadyMarker = join(agentDir, "live-management-one-ready.txt");
+			const secondReadyMarker = join(agentDir, "live-management-two-ready.txt");
 			const configPath = join(agentDir, "mcp-servers.json");
 			writeFileSync(
 				serverPath,
@@ -665,18 +674,22 @@ lines.on("line", (line) => {
 const readline = require("node:readline");
 const remoteTool = process.argv[2];
 const closeMarker = process.argv[3];
+const readyMarker = process.argv[4];
 const lines = readline.createInterface({ input: process.stdin });
 const send = (id, result) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id, result }) + "\\n");
 process.on("SIGTERM", () => { fs.writeFileSync(closeMarker, "closed"); process.exit(0); });
 lines.on("line", (line) => {
   const message = JSON.parse(line);
   if (message.method === "initialize") send(message.id, { protocolVersion: "2024-11-05", capabilities: { tools: {} } });
-  if (message.method === "tools/list") send(message.id, { tools: [{ name: remoteTool, description: remoteTool, inputSchema: { type: "object" } }] });
+  if (message.method === "tools/list") {
+    fs.writeFileSync(readyMarker, "ready");
+    send(message.id, { tools: [{ name: remoteTool, description: remoteTool, inputSchema: { type: "object" } }] });
+  }
   if (message.method === "tools/call") send(message.id, { content: [{ type: "text", text: remoteTool + "-ok" }] });
 });
 `,
 			);
-			const writeMcpConfig = (remoteTool: string, closeMarker: string) => {
+			const writeMcpConfig = (remoteTool: string, closeMarker: string, readyMarker: string) => {
 				writeFileSync(
 					configPath,
 					JSON.stringify({
@@ -684,7 +697,7 @@ lines.on("line", (line) => {
 							{
 								name: "live",
 								command: process.execPath,
-								args: [serverPath, remoteTool, closeMarker],
+								args: [serverPath, remoteTool, closeMarker, readyMarker],
 								name_prefix: "live",
 							},
 						],
@@ -692,11 +705,19 @@ lines.on("line", (line) => {
 				);
 			};
 
-			writeMcpConfig("one", firstCloseMarker);
-			const loader = createLoader({ harnessPackages: ["TestDomain"] });
+			let assertBeforePublication: (() => void) | undefined;
+			const loader = createLoader({
+				harnessPackages: ["TestDomain"],
+				skillsOverride: (base) => {
+					assertBeforePublication?.();
+					return base;
+				},
+			});
+			writeMcpConfig("one", firstCloseMarker, firstReadyMarker);
 			await loader.reload();
 
 			const firstHcp = loader.HcpClientgetsession()!;
+			expect(readFileSync(firstReadyMarker, "utf8")).toBe("ready");
 			const firstDescriptions = new Map(
 				firstHcp.describeAll().map((description) => [description.target, description]),
 			);
@@ -719,9 +740,20 @@ lines.on("line", (line) => {
 				content: [{ type: "text", text: "one-ok" }],
 			});
 
-			writeMcpConfig("two", secondCloseMarker);
+			writeMcpConfig("two", secondCloseMarker, secondReadyMarker);
+			let observedBeforePublication = false;
+			assertBeforePublication = () => {
+				observedBeforePublication = true;
+				expect(readFileSync(secondReadyMarker, "utf8")).toBe("ready");
+				expect(existsSync(firstCloseMarker)).toBe(false);
+				expect(loader.HcpClientgetsession()).toBe(firstHcp);
+				expect(loader.getUserMcpTools().tools.map((tool) => tool.name)).toEqual(["live_one"]);
+				expect(firstHcp.resolveInstance("tool:live_one")).toBeDefined();
+			};
 			await loader.reload();
+			assertBeforePublication = undefined;
 
+			expect(observedBeforePublication).toBe(true);
 			expect(readFileSync(firstCloseMarker, "utf8")).toBe("closed");
 			const secondHcp = loader.HcpClientgetsession()!;
 			expect(secondHcp).not.toBe(firstHcp);

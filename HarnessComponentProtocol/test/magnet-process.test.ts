@@ -2,7 +2,7 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { HcpMagnetProcess } from "../.HCP/transport/hcp-process.ts";
+import { HcpMagnetProcess, HcpMagnetProcessmanifestload } from "../.HCP/transport/hcp-process.ts";
 import { HcpClient } from "../HcpClient.ts";
 import { execProcess } from "../runtime/magenta/process-runtime.ts";
 import { HcpMagnet as DescriptorHcpMagnet } from "../tools/descriptor/HcpMagnet.ts";
@@ -134,6 +134,36 @@ process.stdin.on("end", () => {
 			command: "bin/tool",
 		});
 		expect(withoutKind.render_kind).toBeUndefined();
+	});
+
+	it("loads an HCP process manifest through the transport-owned TOML parser", async () => {
+		const dir = await mkdtemp(join(tmpdir(), "magenta-hcp-process-manifest-"));
+		const manifestPath = join(dir, "transport.toml");
+		await writeFile(
+			manifestPath,
+			[
+				'kind = "hcp-process"',
+				'name = "echo-jsonl"',
+				'description = "Echo JSONL requests"',
+				'command = "node"',
+				'args = ["server.mjs"]',
+				'env_allowlist = ["PATH"]',
+				"max_wall_seconds = 30",
+			].join("\n"),
+		);
+
+		await expect(HcpMagnetProcessmanifestload(manifestPath)).resolves.toEqual({
+			kind: "hcp-process",
+			name: "echo-jsonl",
+			description: "Echo JSONL requests",
+			command: "node",
+			args: ["server.mjs"],
+			cwd: undefined,
+			env_allowlist: ["PATH"],
+			sandbox_backend: undefined,
+			max_wall_seconds: 30,
+			capabilities: [],
+		});
 	});
 
 	it("is managed by the real tools HcpServer", async () => {
@@ -274,6 +304,11 @@ rl.on("line", line => {
 			name: "nonzero process exit",
 			output: { status: 7, stdout: "", stderr: "process failed" },
 			expected: /exited with status 7[\s\S]*process failed/,
+		},
+		{
+			name: "empty response",
+			output: { status: 0, stdout: "\n", stderr: "no reply" },
+			expected: /exited without a response[\s\S]*no reply/,
 		},
 		{
 			name: "invalid JSONL",

@@ -15,6 +15,7 @@ import {
 	type Skill as HarnessSkill,
 	type HcpClient,
 	HcpClientbuildsession,
+	HcpClientpackageinputfromoverlay,
 	type HcpMagnetResource,
 	loadPackageOverlay,
 	type PackageAssemblyProgress,
@@ -1028,25 +1029,46 @@ export class DefaultResourceLoader implements ResourceLoader {
 							packagesRoot: this.harnessPackagesRoot,
 							selections: this.harnessPackages,
 						});
-			if (overlay) packageDiagnostics.push(...overlay.diagnostics.map(packageDiagnosticToResourceDiagnostic));
+			const packageInput = overlay
+				? HcpClientpackageinputfromoverlay(overlay)
+				: { components: [], diagnostics: [], toolDiagnostics: [] };
+			packageDiagnostics.push(...packageInput.diagnostics.map(packageDiagnosticToResourceDiagnostic));
+			if (overlay) {
+				for (const [index, component] of overlay.components.entries()) {
+					onAssemblyProgress?.({ phase: "start", index, total: overlay.components.length, component });
+				}
+			}
 
 			const sessionAssembly = await HcpClientbuildsession({
 				repoRoot: this.cwd,
-				packagesRoot: this.harnessPackagesRoot,
-				overlay,
-				onPackageAssemblyProgress: overlay ? onAssemblyProgress : undefined,
+				components: packageInput.components,
 			});
 			candidateHcp = sessionAssembly.hcp;
+			packageDiagnostics.push(...packageInput.toolDiagnostics.map(packageDiagnosticToResourceDiagnostic));
 			packageDiagnostics.push(...sessionAssembly.diagnostics.map(packageDiagnosticToResourceDiagnostic));
-			const packageAddresses = new Set(sessionAssembly.packageToolAddresses);
-			const packageResources = sessionAssembly.packageResourceAddresses
+			const packageComponents = new Set(packageInput.components);
+			const packageToolAddresses = sessionAssembly.builtComponents
+				.filter(({ component }) => packageComponents.has(component) && component.product === "tool")
+				.flatMap(({ addresses }) => addresses)
+				.filter((address) => address.startsWith("tool:"));
+			const packageResourceAddresses = sessionAssembly.builtComponents
+				.filter(({ component }) => packageComponents.has(component) && component.product === "resource")
+				.flatMap(({ addresses }) => addresses);
+			if (overlay) {
+				for (const [index, component] of overlay.components.entries()) {
+					onAssemblyProgress?.({ phase: "assembled", index, total: overlay.components.length, component });
+				}
+			}
+			const uniquePackageToolAddresses = [...new Set(packageToolAddresses)];
+			const packageAddresses = new Set(uniquePackageToolAddresses);
+			const packageResources = [...new Set(packageResourceAddresses)]
 				.map((address) => sessionAssembly.hcp.resolveInstance<HcpMagnetResource>(address))
 				.filter((resource): resource is HcpMagnetResource => resource !== undefined);
 			candidateHcp = undefined;
 			return {
 				hcp: sessionAssembly.hcp,
 				overlay,
-				packageToolAddresses: sessionAssembly.packageToolAddresses,
+				packageToolAddresses: uniquePackageToolAddresses,
 				defaultToolAddresses: sessionAssembly.toolAddresses.filter((address) => !packageAddresses.has(address)),
 				packageResources,
 				packageDiagnostics,
@@ -1059,7 +1081,6 @@ export class DefaultResourceLoader implements ResourceLoader {
 			});
 			const fallback = await HcpClientbuildsession({
 				repoRoot: this.cwd,
-				packagesRoot: this.harnessPackagesRoot,
 			});
 			packageDiagnostics.push(...fallback.diagnostics.map(packageDiagnosticToResourceDiagnostic));
 			return {
