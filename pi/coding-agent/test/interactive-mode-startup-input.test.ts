@@ -12,10 +12,18 @@ type SubmitContext = {
 		isStreaming: boolean;
 		isBashRunning: boolean;
 		prompt: (text: string, options?: unknown) => Promise<void>;
+		resourceLoader: {
+			getUserMcpTools: () => {
+				tools: Array<{ name: string; provenance?: { kind: string; server?: string } }>;
+				diagnostics: Array<{ type: "error" | "warning"; message: string }>;
+			};
+		};
 	};
 	flushPendingBashComponents: () => void;
 	onInputCallback?: (text: string) => void;
 	pendingUserInputs: string[];
+	showFloatingMenu: (...args: unknown[]) => unknown;
+	showMcpManager: () => void;
 };
 
 type InputContext = {
@@ -26,6 +34,7 @@ type InputContext = {
 type InteractiveModePrivate = {
 	setupEditorSubmitHandler(this: SubmitContext): void;
 	getUserInput(this: InputContext): Promise<string>;
+	showMcpManager(this: SubmitContext): void;
 };
 
 const interactiveModePrototype = InteractiveMode.prototype as unknown as InteractiveModePrivate;
@@ -44,9 +53,14 @@ function createSubmitContext(): SubmitContext {
 			isStreaming: false,
 			isBashRunning: false,
 			prompt: vi.fn(async () => {}),
+			resourceLoader: {
+				getUserMcpTools: vi.fn(() => ({ tools: [], diagnostics: [] })),
+			},
 		},
 		flushPendingBashComponents: vi.fn(),
 		pendingUserInputs: [],
+		showFloatingMenu: vi.fn(),
+		showMcpManager: vi.fn(),
 	};
 }
 
@@ -60,6 +74,44 @@ describe("InteractiveMode startup input", () => {
 		expect(context.pendingUserInputs).toEqual(["early prompt"]);
 		expect(context.flushPendingBashComponents).toHaveBeenCalledTimes(1);
 		expect(context.editor.addToHistory).toHaveBeenCalledWith("early prompt");
+	});
+
+	it("opens the empty MCP manager without submitting the command as model input", async () => {
+		const context = createSubmitContext();
+		const onInputCallback = vi.fn();
+		context.onInputCallback = onInputCallback;
+		context.showMcpManager = () => interactiveModePrototype.showMcpManager.call(context);
+		interactiveModePrototype.setupEditorSubmitHandler.call(context);
+
+		await context.defaultEditor.onSubmit?.(" /mcp ");
+
+		expect(context.editor.setText).toHaveBeenCalledWith("");
+		expect(context.session.prompt).not.toHaveBeenCalled();
+		expect(onInputCallback).not.toHaveBeenCalled();
+		expect(context.pendingUserInputs).toEqual([]);
+		expect(context.showFloatingMenu).toHaveBeenCalledTimes(1);
+		expect(vi.mocked(context.showFloatingMenu).mock.calls[0]?.[2]).toEqual([
+			expect.objectContaining({ label: "No MCP servers configured", disabled: true }),
+		]);
+	});
+
+	it("groups MCP tools by provenance instead of parsing local name prefixes", () => {
+		const context = createSubmitContext();
+		context.session.resourceLoader.getUserMcpTools = vi.fn(() => ({
+			tools: [
+				{ name: "my_team_alpha", provenance: { kind: "mcp", server: "managed" } },
+				{ name: "my_team_beta", provenance: { kind: "mcp", server: "managed" } },
+				{ name: "custom_name", provenance: { kind: "mcp", server: "second" } },
+			],
+			diagnostics: [],
+		}));
+
+		interactiveModePrototype.showMcpManager.call(context);
+
+		expect(vi.mocked(context.showFloatingMenu).mock.calls[0]?.[2]).toEqual([
+			expect.objectContaining({ label: "managed", description: "2 tools loaded" }),
+			expect.objectContaining({ label: "second", description: "1 tool loaded" }),
+		]);
 	});
 
 	it("returns queued startup input before installing a new input callback", async () => {

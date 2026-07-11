@@ -2767,6 +2767,11 @@ export class InteractiveMode {
 				this.editor.setText("");
 				return;
 			}
+			if (text === "/mcp") {
+				this.showMcpManager();
+				this.editor.setText("");
+				return;
+			}
 			if (text === "/harness" || text.startsWith("/harness ") || text === "/h" || text.startsWith("/h ")) {
 				this.editor.setText("");
 				await this.handleHarnessCommand(text);
@@ -6263,11 +6268,11 @@ export class InteractiveMode {
 				disabled: true,
 			});
 		} else {
-			// Tool names are `<prefix>_<remoteTool>`; group by the server prefix.
 			const byServer = new Map<string, number>();
 			for (const tool of tools) {
-				const prefix = tool.name.includes("_") ? tool.name.slice(0, tool.name.indexOf("_")) : tool.name;
-				byServer.set(prefix, (byServer.get(prefix) ?? 0) + 1);
+				const server = tool.provenance?.kind === "mcp" ? tool.provenance.server : undefined;
+				const owner = server?.trim() || "unknown";
+				byServer.set(owner, (byServer.get(owner) ?? 0) + 1);
 			}
 			for (const [server, count] of byServer) {
 				items.push({
