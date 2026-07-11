@@ -12,6 +12,11 @@ one authoritative HCP specification.
 - [`AUTHENTICATION.md`](./AUTHENTICATION.md) - provider credential lookup and setup
 - [`BRANDING.md`](./BRANDING.md) - build-time brand registry and synchronization
 
+## Installation and Distribution
+
+- [`USER_INSTALL.md`](./USER_INSTALL.md) - user installation guide
+- [`UPDATE_SETUP_GUIDE.md`](./UPDATE_SETUP_GUIDE.md) - release and auto-update workflow for maintainers
+
 ## Harness And HCP
 
 - [`../HarnessComponentProtocol/README.md`](../HarnessComponentProtocol/README.md) - current Harness layout
