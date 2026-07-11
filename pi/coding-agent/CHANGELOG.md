@@ -4,6 +4,28 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)。
 
+## [0.0.5] - 2026-07-11
+
+### 重大改进
+- **内嵌式单文件分发**：将 4 平台的 `magenta-process-tools` 二进制嵌入主程序
+- **自动解压机制**：首次运行时自动提取到 `~/.magenta/cache/process-tools/`
+- **零配置开箱即用**：所有核心工具（bash/read/write/edit/grep/web-search）无需额外设置
+
+### 新增
+- GitHub Actions CI 自动化四平台交叉编译
+- 构建前检查脚本确保所有平台二进制就绪
+- 内嵌式二进制管理器处理提取、缓存、路径解析
+
+### 修复
+- 修复所有平台缺少 `magenta-process-tools` 二进制的问题
+- 修复 Bun 编译环境下 `HCP_ROOT` 路径解析错误
+- 修复安装脚本未下载运行时资源包的问题
+
+### 变更
+- 清理 CHANGELOG，移除上游 Pi 项目的历史记录
+- 资源包从 4MB 缩减到 3.8MB（process-tools 已内嵌到主程序）
+- 二进制大小增加到 114-147MB（包含嵌入的 4 个平台 process-tools）
+
 ## [未发布]
 
 ### 新增
