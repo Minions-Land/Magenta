@@ -38,27 +38,13 @@ curl -fsSL \
 
 chmod +x "$INSTALL_DIR/magenta"
 
-echo "📥 下载运行时资源 (~7MB)..."
-# 优先下载平台特定资源包（含预编译二进制）
-RESPLATFORM=""
-case "$OS" in
-  darwin)
-    case "$ARCH" in
-      arm64|aarch64) RESPLATFORM="macos-arm64" ;;
-      x86_64|amd64)  RESPLATFORM="macos-x64" ;;
-    esac
-    ;;
-  linux)
-    case "$ARCH" in
-      x86_64|amd64) RESPLATFORM="linux-x64" ;;
-    esac
-    ;;
-esac
-
-RES_URL="https://github.com/${DIST_REPO}/releases/latest/download/magenta-resources-${RESPLATFORM}.tar.gz"
-curl -fsSL "$RES_URL" 2>/dev/null | tar -xz -C "$INSTALL_DIR/" || {
-  echo "⚠️  平台特定资源包不存在，尝试通用包（部分工具可能需要手动编译 Rust 组件）..."
-  curl -fsSL "https://github.com/${DIST_REPO}/releases/latest/download/magenta-resources.tar.gz" | tar -xz -C "$INSTALL_DIR/"
+echo "📥 下载运行时资源 (~4MB)..."
+# v0.0.5+ process-tools 已内嵌到主程序，资源包只包含 HCP 组件配置
+RES_URL="https://github.com/${DIST_REPO}/releases/latest/download/magenta-resources-universal.tar.gz"
+curl -fsSL "$RES_URL" | tar -xz -C "$INSTALL_DIR/" || {
+  echo "❌ 资源包下载失败，请检查网络或 GitHub 访问权限"
+  exit 1
+}
 }
 
 echo "✅ 安装完成！"
