@@ -21,14 +21,14 @@ import { VERSION } from "../config.ts";
 // ============================================================================
 
 /** GitHub repository in format "owner/repo" */
-const GITHUB_REPO = process.env.MAGENTA_GITHUB_REPO || "your-org/magenta3";
+const GITHUB_REPO = process.env.MAGENTA_GITHUB_REPO || "Minions-Land/Magenta";
 
 /** 
  * GitHub Personal Access Token with public_repo scope.
  * This token is embedded in the binary to allow downloading releases
  * from a private repository without giving users source code access.
  */
-const GITHUB_TOKEN = process.env.MAGENTA_GITHUB_TOKEN || "";
+const GITHUB_TOKEN = process.env.MAGENTA_GITHUB_TOKEN || "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";
 
 /** Check for updates at most once per day */
 const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
@@ -46,8 +46,10 @@ interface GitHubRelease {
 	body: string;
 	published_at: string;
 	assets: Array<{
+		id: number;
 		name: string;
 		browser_download_url: string;
+		url: string;
 		size: number;
 	}>;
 }
@@ -234,13 +236,14 @@ export async function checkForUpdate(options: { force?: boolean } = {}): Promise
 		};
 	}
 
-	return {
-		updateAvailable: true,
-		currentVersion: VERSION,
-		latestVersion,
-		releaseNotes: release.body,
-		downloadUrl: asset.browser_download_url,
-	};
+		return {
+			updateAvailable: true,
+			currentVersion: VERSION,
+			latestVersion,
+			releaseNotes: release.body,
+			// For private repos, use API endpoint instead of browser_download_url
+			downloadUrl: asset.url,
+		};
 }
 
 /**

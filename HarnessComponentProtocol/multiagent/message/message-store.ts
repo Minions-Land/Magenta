@@ -29,7 +29,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import { DatabaseSync } from "./sqlite-adapter.js";
 
 /** Liveness of an agent, as recorded in the `presence` table. */
 export type PresenceState = "active" | "idle" | "offline";
