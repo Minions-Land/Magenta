@@ -110,6 +110,8 @@ import { copyToClipboard } from "../../utils/clipboard.ts";
 import { extensionForImageMimeType, readClipboardImage } from "../../utils/clipboard-image.ts";
 import { parseGitUrl } from "../../utils/git.ts";
 import { checkForMagentaUpdate, recompileMagenta, runMagentaUpdate } from "../../utils/magenta-update.ts";
+import { checkForAnyUpdate } from "../../utils/unified-update-check.ts";
+import type { UpdateCheckResult } from "../../utils/github-release-update.ts";
 import { getCwdRelativePath } from "../../utils/paths.ts";
 import { getPiUserAgent } from "../../utils/pi-user-agent.ts";
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
@@ -4108,53 +4110,97 @@ export class InteractiveMode {
 
 		this.setMagentaUpdateStatus("Auto-update: checking");
 		try {
-			const status = await checkForMagentaUpdate();
-			if (!status) {
+			const unified = await checkForAnyUpdate();
+
+			if (unified.type === "unavailable") {
 				this.setMagentaUpdateStatus("Auto-update: unavailable");
 				return;
 			}
-			if (status.behind === 0) {
-				this.setMagentaUpdateStatus(`Auto-update: up to date (${status.localSha})`);
+
+			if (unified.type === "git") {
+				await this.handleGitUpdateStatus(unified.status);
 				return;
 			}
 
-			if (!status.clean || !status.fastForwardable) {
-				this.setMagentaUpdateStatus(
-					status.clean ? "Auto-update: skipped (diverged)" : "Auto-update: skipped (dirty)",
-				);
-				this.showMagentaUpdateBanner(
-					`${APP_NAME} is ${status.behind} commit(s) behind ${status.remoteSha}.`,
-					status.clean
-						? "Local branch has diverged — run git pull manually to update."
-						: "Working tree has uncommitted changes — auto-update skipped.",
-				);
-				return;
-			}
-
-			this.setMagentaUpdateStatus(`Auto-update: updating ${status.localSha} -> ${status.remoteSha}`);
-			this.showMagentaUpdateBanner(
-				`Updating ${APP_NAME} (${status.behind} commit(s) behind)…`,
-				`${status.localSha} → ${status.remoteSha}. This may take a minute.`,
-			);
-			const result = await runMagentaUpdate(status);
-			if (result.ok) {
-				const newSha = result.newSha ?? status.remoteSha;
-				this.setMagentaUpdateStatus(`Auto-update: updated (${newSha})`);
-				this.showMagentaUpdateBanner(
-					`${APP_NAME} updated to ${newSha}.`,
-					`Restart ${APP_NAME} to run the new version.`,
-				);
-			} else {
-				this.setMagentaUpdateStatus("Auto-update: failed");
-				this.showMagentaUpdateBanner(
-					`${APP_NAME} auto-update failed.`,
-					`${result.reason ?? "unknown error"} — update manually with git pull && npm install && npm run build.`,
-				);
-			}
+			// unified.type === "release"
+			this.handleReleaseUpdateStatus(unified.status);
 		} catch {
 			// Auto-update is best-effort; never disrupt the session on failure.
 			this.setMagentaUpdateStatus("Auto-update: unavailable");
 		}
+	}
+
+	/** Handle update status for Git checkout installations (developer mode). */
+	private async handleGitUpdateStatus(status: Awaited<ReturnType<typeof checkForMagentaUpdate>>): Promise<void> {
+		if (!status) {
+			this.setMagentaUpdateStatus("Auto-update: unavailable");
+			return;
+		}
+		if (status.behind === 0) {
+			this.setMagentaUpdateStatus(`Auto-update: up to date (${status.localSha})`);
+			return;
+		}
+
+		if (!status.clean || !status.fastForwardable) {
+			this.setMagentaUpdateStatus(
+				status.clean ? "Auto-update: skipped (diverged)" : "Auto-update: skipped (dirty)",
+			);
+			this.showMagentaUpdateBanner(
+				`${APP_NAME} is ${status.behind} commit(s) behind ${status.remoteSha}.`,
+				status.clean
+					? "Local branch has diverged — run git pull manually to update."
+					: "Working tree has uncommitted changes — auto-update skipped.",
+			);
+			return;
+		}
+
+		this.setMagentaUpdateStatus(`Auto-update: updating ${status.localSha} -> ${status.remoteSha}`);
+		this.showMagentaUpdateBanner(
+			`Updating ${APP_NAME} (${status.behind} commit(s) behind)…`,
+			`${status.localSha} → ${status.remoteSha}. This may take a minute.`,
+		);
+		const result = await runMagentaUpdate(status);
+		if (result.ok) {
+			const newSha = result.newSha ?? status.remoteSha;
+			this.setMagentaUpdateStatus(`Auto-update: updated (${newSha})`);
+			this.showMagentaUpdateBanner(`${APP_NAME} updated to ${newSha}.`, `Restart ${APP_NAME} to run the new version.`);
+		} else {
+			this.setMagentaUpdateStatus("Auto-update: failed");
+			this.showMagentaUpdateBanner(
+				`${APP_NAME} auto-update failed.`,
+				`${result.reason ?? "unknown error"} — update manually with git pull && npm install && npm run build.`,
+			);
+		}
+	}
+
+	/** Handle update status for binary installations (GitHub Releases). */
+	private handleReleaseUpdateStatus(status: UpdateCheckResult): void {
+		if (status.error) {
+			this.setMagentaUpdateStatus("Auto-update: unavailable");
+			return;
+		}
+
+		if (!status.updateAvailable) {
+			this.setMagentaUpdateStatus(`Auto-update: up to date (v${status.currentVersion})`);
+			return;
+		}
+
+		this.setMagentaUpdateStatus(`Auto-update: v${status.latestVersion} available`);
+		const notes = status.releaseNotes ? this.summarizeReleaseNotes(status.releaseNotes) : undefined;
+		this.showMagentaUpdateBanner(
+			`${APP_NAME} v${status.latestVersion} is available (current: v${status.currentVersion}).`,
+			`${notes ? `${notes}\n` : ""}Run '${APP_NAME.toLowerCase()} --update' to install, then restart.`,
+		);
+	}
+
+	/** Truncate release notes to a few lines for banner display. */
+	private summarizeReleaseNotes(notes: string): string {
+		const lines = notes
+			.split("\n")
+			.map((line) => line.trim())
+			.filter((line) => line.length > 0 && !line.startsWith("#"));
+		const preview = lines.slice(0, 3).join("\n");
+		return lines.length > 3 ? `${preview}\n…` : preview;
 	}
 
 	private showMagentaUpdateBanner(title: string, detail: string): void {
