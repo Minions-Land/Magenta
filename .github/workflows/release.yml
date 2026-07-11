@@ -1,0 +1,103 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build release binaries
+    runs-on: macos-14  # arm64 runner
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.19.0'
+      
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.14'
+      
+      - name: Install dependencies
+        run: |
+          npm install
+          npm --prefix pi/tui install
+          npm --prefix pi/ai install
+          npm --prefix pi/agent install
+          npm --prefix pi/coding-agent install
+      
+      - name: Verify embedded binaries
+        run: |
+          cd pi/coding-agent
+          node scripts/check-process-tools.mjs
+      
+      - name: Build all platforms
+        run: |
+          cd pi/coding-agent
+          npm run build:release-all
+      
+      - name: Create release tarball
+        run: |
+          cd pi/coding-agent/dist/release
+          tar -czf magenta-resources-universal.tar.gz \
+            sandbox tools policy runtime skills theme assets \
+            export-html docs examples package.json README.md \
+            CHANGELOG.md *.wasm
+      
+      - name: Calculate checksums
+        run: |
+          cd pi/coding-agent/dist/release
+          shasum -a 256 magenta-* > SHA256SUMS
+          cat SHA256SUMS
+      
+      - name: Extract release notes
+        id: release_notes
+        run: |
+          # Extract version from tag
+          VERSION="${GITHUB_REF#refs/tags/}"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          
+          # Extract release notes from CHANGELOG
+          cd pi/coding-agent
+          awk "/^## \[${VERSION#v}\]/{flag=1; next} /^## \[/{flag=0} flag" CHANGELOG.md > /tmp/release_notes.md
+          
+          # Fallback if no notes found
+          if [ ! -s /tmp/release_notes.md ]; then
+            echo "Release $VERSION" > /tmp/release_notes.md
+          fi
+      
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            pi/coding-agent/dist/release/magenta-macos-arm64
+            pi/coding-agent/dist/release/magenta-macos-x64
+            pi/coding-agent/dist/release/magenta-linux-x64
+            pi/coding-agent/dist/release/magenta-windows-x64.exe
+            pi/coding-agent/dist/release/magenta-resources-universal.tar.gz
+            pi/coding-agent/dist/release/SHA256SUMS
+          body_path: /tmp/release_notes.md
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Trigger Magenta-CLI release update
+        if: success()
+        run: |
+          echo "✅ Release ${{ steps.release_notes.outputs.version }} published"
+          echo "📦 Artifacts:"
+          ls -lh pi/coding-agent/dist/release/magenta-*
+          echo ""
+          echo "🔗 Update Magenta-CLI repository:"
+          echo "   gh release create ${{ steps.release_notes.outputs.version }} --repo Minions-Land/Magenta-CLI --notes 'See main repository'"
