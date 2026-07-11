@@ -372,6 +372,53 @@ describe("HcpServer module routing", () => {
 		await hcp.dispose();
 	});
 
+	it("waits for async retirement after preserving a synchronously reattached Magnet", async () => {
+		const hcp = new HcpClient();
+		const server = new HcpServer("tools");
+		let releaseDisposal!: () => void;
+		const disposalGate = new Promise<void>((resolve) => {
+			releaseDisposal = resolve;
+		});
+		let disposalStarted = 0;
+		let disposalCompleted = 0;
+		const first = {
+			...createFakeMagnet("tool:shared", "tool", { name: "first" }),
+			dispose: async () => {
+				disposalStarted += 1;
+				await disposalGate;
+				disposalCompleted += 1;
+			},
+		};
+		const second = createFakeMagnet("tool:shared", "tool", { name: "second" });
+		const third = createFakeMagnet("tool:shared", "tool", { name: "third" });
+
+		hcp.registerModule(server, new Map([["shared", first]]));
+		hcp.registerModule(server, new Map([["shared", second]]), { merge: true });
+		hcp.registerModule(server, new Map([["shared", first]]), { merge: true });
+		await Promise.resolve();
+		await Promise.resolve();
+
+		expect(disposalStarted).toBe(0);
+		expect(hcp.resolveInstance("tool:shared")).toEqual({ name: "first" });
+
+		hcp.registerModule(server, new Map([["shared", third]]), { merge: true });
+		await Promise.resolve();
+		expect(disposalStarted).toBe(1);
+		expect(disposalCompleted).toBe(0);
+
+		let HcpClientdisposed = false;
+		const disposing = hcp.dispose().then(() => {
+			HcpClientdisposed = true;
+		});
+		await Promise.resolve();
+		expect(HcpClientdisposed).toBe(false);
+
+		releaseDisposal();
+		await disposing;
+		expect(disposalCompleted).toBe(1);
+		expect(HcpClientdisposed).toBe(true);
+	});
+
 	it("keeps the tools root independent and lists its direct children", () => {
 		const hcp = new HcpClient();
 		const root = new HcpServer("tools");

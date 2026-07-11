@@ -547,6 +547,7 @@ export async function HcpClientbuildsession(
 			repoRoot,
 			packagesRoot,
 			cwd: options.cwd ?? repoRoot,
+			includeAutoload: options.overlay ? false : undefined,
 			disabledModules: options.disabledModules,
 			modules: options.modules,
 			components: packageComponentTemplates.filter((component) => component.product !== "tool"),

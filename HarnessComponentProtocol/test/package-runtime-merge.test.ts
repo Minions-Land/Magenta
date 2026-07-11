@@ -127,6 +127,9 @@ describe("package capability slot merging", () => {
 				message: expect.stringContaining("selects unavailable source missing"),
 			}),
 		);
+		expect(assembly.diagnostics).not.toContainEqual(
+			expect.objectContaining({ code: "component_dependency_missing" }),
+		);
 		expect(assembly.hcp.resolveCapability("sandbox")).toBeInstanceOf(SandboxProvider);
 		expect(assembly.hcp.resolveCapability("runtime:process")).toBeInstanceOf(ProcessRuntimeProvider);
 		expect(assembly.hcp.resolveCapability("runtime:script-runtimes")).toBeInstanceOf(ScriptRuntimeProvider);

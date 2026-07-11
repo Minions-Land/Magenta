@@ -549,14 +549,15 @@ describe("DefaultResourceLoader", () => {
 			expect(hcpPkg, "session HCP should exist with a package selected").toBeDefined();
 			const providerPkg = hcpPkg?.resolveCapability<{ compact: unknown }>("compaction");
 			expect(typeof providerPkg?.compact, "compaction resolves alongside a selected package").toBe("function");
-			// The package overlay assembled cleanly into the same session (Phase 1
-			// layers defaults on the overlay HCP without a second assembly pass).
+			// The package overlay and any unoccupied defaults share the same Client.
 			expect(loader.getPackageTools().tools.map((tool) => tool.name)).toEqual(["test_package_tool"]);
 		});
 
 		it("keeps the previous Client and resources when a late reload step fails", async () => {
+			writeHarnessPackageFixture(cwd);
 			let failSkills = false;
 			const loader = createLoader({
+				harnessPackages: ["TestDomain"],
 				skillsOverride: (base) => {
 					if (failSkills) throw new Error("late skill failure");
 					return base;
@@ -565,13 +566,22 @@ describe("DefaultResourceLoader", () => {
 			await loader.reload();
 			const previousHcp = loader.HcpClientgetsession();
 			const previousSkills = loader.getSkills().skills;
+			const previousOverlay = loader.getPackageOverlay();
 			expect(previousHcp?.resolveCapability("compaction")).toBeDefined();
+			expect(loader.getPackageTools().tools.map((tool) => tool.name)).toEqual(["test_package_tool"]);
+			expect(previousSkills.some((skill) => skill.name === "test-domain")).toBe(true);
+			expect(loader.getSystemPrompt()).toBe("Package system prompt.");
 
+			loader.setHarnessPackageSelectors([]);
 			failSkills = true;
 			await expect(loader.reload()).rejects.toThrow("late skill failure");
 
 			expect(loader.HcpClientgetsession()).toBe(previousHcp);
 			expect(loader.getSkills().skills).toBe(previousSkills);
+			expect(loader.getPackageOverlay()).toBe(previousOverlay);
+			expect(loader.getHarnessPackageSelectors()).toEqual([]);
+			expect(loader.getPackageTools().tools.map((tool) => tool.name)).toEqual(["test_package_tool"]);
+			expect(loader.getSystemPrompt()).toBe("Package system prompt.");
 			expect(previousHcp?.resolveCapability("compaction")).toBeDefined();
 			await loader.dispose();
 		});
@@ -640,6 +650,99 @@ lines.on("line", (line) => {
 			expect(loader.HcpClientgetsession()).toBe(previousHcp);
 			expect(loader.getUserMcpTools().tools).toEqual([]);
 			expect(readFileSync(closeMarker, "utf8")).toBe("closed");
+			await loader.dispose();
+		});
+
+		it("keeps dynamic Package and user MCP management state accurate across reload", async () => {
+			writeHarnessPackageFixture(cwd);
+			const serverPath = join(agentDir, "live-management-mcp.cjs");
+			const firstCloseMarker = join(agentDir, "live-management-one-closed.txt");
+			const secondCloseMarker = join(agentDir, "live-management-two-closed.txt");
+			const configPath = join(agentDir, "mcp-servers.json");
+			writeFileSync(
+				serverPath,
+				`const fs = require("node:fs");
+const readline = require("node:readline");
+const remoteTool = process.argv[2];
+const closeMarker = process.argv[3];
+const lines = readline.createInterface({ input: process.stdin });
+const send = (id, result) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id, result }) + "\\n");
+process.on("SIGTERM", () => { fs.writeFileSync(closeMarker, "closed"); process.exit(0); });
+lines.on("line", (line) => {
+  const message = JSON.parse(line);
+  if (message.method === "initialize") send(message.id, { protocolVersion: "2024-11-05", capabilities: { tools: {} } });
+  if (message.method === "tools/list") send(message.id, { tools: [{ name: remoteTool, description: remoteTool, inputSchema: { type: "object" } }] });
+  if (message.method === "tools/call") send(message.id, { content: [{ type: "text", text: remoteTool + "-ok" }] });
+});
+`,
+			);
+			const writeMcpConfig = (remoteTool: string, closeMarker: string) => {
+				writeFileSync(
+					configPath,
+					JSON.stringify({
+						servers: [
+							{
+								name: "live",
+								command: process.execPath,
+								args: [serverPath, remoteTool, closeMarker],
+								name_prefix: "live",
+							},
+						],
+					}),
+				);
+			};
+
+			writeMcpConfig("one", firstCloseMarker);
+			const loader = createLoader({ harnessPackages: ["TestDomain"] });
+			await loader.reload();
+
+			const firstHcp = loader.HcpClientgetsession()!;
+			const firstDescriptions = new Map(
+				firstHcp.describeAll().map((description) => [description.target, description]),
+			);
+			expect(firstDescriptions.get("tool:test_package_tool")).toMatchObject({
+				kind: "tool",
+				metadata: { implementation: "process", source: "descriptor" },
+			});
+			expect(firstDescriptions.get("tool:live_one")).toMatchObject({
+				kind: "tool",
+				metadata: {
+					implementation: "mcp",
+					source: "descriptor",
+					provenance: { kind: "mcp", server: "live", remoteTool: "one" },
+				},
+			});
+			expect(firstHcp.resolveModule("tools")?.describe().metadata?.slots).toEqual(
+				expect.arrayContaining(["tool:test_package_tool", "tool:live_one"]),
+			);
+			await expect(loader.getUserMcpTools().tools[0]!.execute("live-one", {})).resolves.toMatchObject({
+				content: [{ type: "text", text: "one-ok" }],
+			});
+
+			writeMcpConfig("two", secondCloseMarker);
+			await loader.reload();
+
+			expect(readFileSync(firstCloseMarker, "utf8")).toBe("closed");
+			const secondHcp = loader.HcpClientgetsession()!;
+			expect(secondHcp).not.toBe(firstHcp);
+			expect(secondHcp.resolve("tool:live_one")).toBeUndefined();
+			expect(secondHcp.describeAll().map((description) => description.target)).toEqual(
+				expect.arrayContaining(["tool:test_package_tool", "tool:live_two"]),
+			);
+			expect(secondHcp.resolveModule("tools")?.describe().metadata?.slots).toEqual(
+				expect.arrayContaining(["tool:test_package_tool", "tool:live_two"]),
+			);
+			await expect(loader.getUserMcpTools().tools[0]!.execute("live-two", {})).resolves.toMatchObject({
+				content: [{ type: "text", text: "two-ok" }],
+			});
+
+			writeFileSync(configPath, JSON.stringify({ servers: [] }));
+			await loader.reload();
+
+			expect(readFileSync(secondCloseMarker, "utf8")).toBe("closed");
+			expect(loader.getUserMcpTools().tools).toEqual([]);
+			expect(loader.HcpClientgetsession()?.resolve("tool:live_two")).toBeUndefined();
+			expect(loader.HcpClientgetsession()?.resolve("tool:test_package_tool")).toBeDefined();
 			await loader.dispose();
 		});
 

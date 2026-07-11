@@ -268,6 +268,57 @@ rl.on("line", line => {
 			blocked: null,
 		});
 	});
+
+	it.each([
+		{
+			name: "nonzero process exit",
+			output: { status: 7, stdout: "", stderr: "process failed" },
+			expected: /exited with status 7[\s\S]*process failed/,
+		},
+		{
+			name: "invalid JSONL",
+			output: { status: 0, stdout: "not-json\n", stderr: "" },
+			expected: /returned invalid JSONL/,
+		},
+		{
+			name: "mismatched response id",
+			output: { status: 0, stdout: '{"id":"other","ok":true,"result":{}}\n', stderr: "" },
+			expected: /response id mismatch: expected req-error, got other/,
+		},
+		{
+			name: "remote error response",
+			output: {
+				status: 0,
+				stdout: '{"id":"req-error","ok":false,"error":{"message":"remote rejected"}}\n',
+				stderr: "",
+			},
+			expected: /remote rejected/,
+		},
+	])("rejects a $name", async ({ output, expected }) => {
+		const transport = new HcpMagnetProcess({
+			cwd: process.cwd(),
+			manifest: {
+				kind: "hcp-process",
+				name: "error-jsonl",
+				description: "JSONL error fixture",
+				command: process.execPath,
+			},
+			runtimeExec: async () => ({
+				...output,
+				policy: undefined,
+				truncated: { stdout: false, stderr: false },
+			}),
+		});
+
+		await expect(
+			transport.send({
+				id: "req-error",
+				method: "call",
+				target: "tool:Error",
+				op: "call",
+			}),
+		).rejects.toThrow(expected);
+	});
 });
 
 function testSandbox() {
