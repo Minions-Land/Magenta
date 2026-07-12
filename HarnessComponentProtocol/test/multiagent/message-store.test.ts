@@ -1,8 +1,41 @@
+import { type ChildProcess, fork } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { MessageStore } from "../../multiagent/message/message-store.ts";
+
+type DrainWorkerMessage = { type: "ready" } | { type: "result"; ids: string[]; contents: string[] };
+
+function waitForWorkerMessage<T extends DrainWorkerMessage["type"]>(
+	child: ChildProcess,
+	type: T,
+): Promise<Extract<DrainWorkerMessage, { type: T }>> {
+	return new Promise((resolve, reject) => {
+		const onMessage = (message: DrainWorkerMessage) => {
+			if (message?.type !== type) return;
+			cleanup();
+			resolve(message as Extract<DrainWorkerMessage, { type: T }>);
+		};
+		const onError = (error: Error) => {
+			cleanup();
+			reject(error);
+		};
+		const onExit = (code: number | null) => {
+			cleanup();
+			reject(new Error(`drain worker exited before ${type} with code ${code}`));
+		};
+		const cleanup = () => {
+			child.off("message", onMessage);
+			child.off("error", onError);
+			child.off("exit", onExit);
+		};
+		child.on("message", onMessage);
+		child.once("error", onError);
+		child.once("exit", onExit);
+	});
+}
 
 /**
  * Storage-kernel invariants ported from MinionsOS2's eacn3::messages tests:
@@ -137,6 +170,54 @@ describe("MessageStore", () => {
 			}
 		});
 
+		it("does not reclaim an old claim while its exact owner process is still active", () => {
+			const strict = new MessageStore(join(dir, "live-claim", "messages.db"), { stalenessMs: 0 });
+			try {
+				strict.updatePresence("gru", "active", { pid: process.pid, bootId: "live-owner" });
+				const id = strict.send("kevin", "gru", "long-running turn");
+				expect(
+					strict
+						.drainUnread("gru", undefined, { ownerId: "live-owner", pid: process.pid })
+						.map((message) => message.id),
+				).toEqual([id]);
+				// Even with a zero staleness window, a second drain must not duplicate
+				// work that is still queued inside the live owner process.
+				expect(strict.drainUnread("gru", undefined, { ownerId: "live-owner", pid: process.pid })).toHaveLength(0);
+				strict.markDelivered([id], "live-owner");
+				expect(strict.drainUnread("gru")).toHaveLength(0);
+			} finally {
+				strict.close();
+			}
+		});
+
+		it("reclaims a dead owner's claim without letting the old owner settle the new claim", () => {
+			const strict = new MessageStore(join(dir, "owner-handoff", "messages.db"), { stalenessMs: 0 });
+			const deadPid = 2_147_483_646;
+			try {
+				strict.updatePresence("gru", "active", { pid: deadPid, bootId: "old-owner" });
+				const id = strict.send("kevin", "gru", "handoff safely");
+				expect(
+					strict
+						.drainUnread("gru", undefined, { ownerId: "old-owner", pid: deadPid })
+						.map((message) => message.id),
+				).toEqual([id]);
+
+				strict.updatePresence("gru", "active", { pid: process.pid, bootId: "new-owner" });
+				const recovered = strict.drainUnread("gru", undefined, { ownerId: "new-owner", pid: process.pid });
+				expect(recovered.map((message) => message.id)).toEqual([id]);
+
+				// A late callback from the old process cannot confirm or requeue rows
+				// that the new owner has already claimed.
+				strict.markDelivered([id], "old-owner");
+				strict.requeue([id], "old-owner");
+				expect(strict.drainUnread("gru", undefined, { ownerId: "new-owner", pid: process.pid })).toHaveLength(0);
+				strict.markDelivered([id], "new-owner");
+				expect(strict.drainUnread("gru")).toHaveLength(0);
+			} finally {
+				strict.close();
+			}
+		});
+
 		it("markDelivered and requeue ignore ids that are not pending", () => {
 			// Idempotent no-ops: confirming/requeuing an unknown or already-terminal
 			// id must not throw or resurrect anything.
@@ -263,6 +344,102 @@ describe("MessageStore", () => {
 			store.send("a", "b", "urgent-2", "urgent");
 			const drained = store.drainUnread("b");
 			expect(drained.map((m) => m.content)).toEqual(["urgent-1", "urgent-2", "normal-1", "normal-2"]);
+		});
+	});
+
+	describe("drain cap", () => {
+		it("claims at most `limit` messages, leaving the rest unread", () => {
+			for (let i = 0; i < 5; i++) store.send("a", "b", `m${i}`, "normal");
+			const first = store.drainUnread("b", 2);
+			expect(first.map((m) => m.content)).toEqual(["m0", "m1"]);
+			expect(store.unreadCount("b")).toBe(3);
+		});
+
+		it("delivers the whole backlog across successive capped drains, no loss or dup", () => {
+			for (let i = 0; i < 5; i++) store.send("a", "b", `m${i}`, "normal");
+			const seen: string[] = [];
+			let batch = store.drainUnread("b", 2);
+			while (batch.length > 0) {
+				seen.push(...batch.map((m) => m.content));
+				batch = store.drainUnread("b", 2);
+			}
+			expect(seen).toEqual(["m0", "m1", "m2", "m3", "m4"]);
+		});
+
+		it("claims disjoint full batches across independent database connections", () => {
+			for (let i = 0; i < 6; i++) store.send("a", "b", `m${i}`, "normal");
+			const secondStore = new MessageStore(join(dir, "sub", "messages.db"));
+			try {
+				const first = store.drainUnread("b", 3);
+				const second = secondStore.drainUnread("b", 3);
+				expect(first.map((message) => message.content)).toEqual(["m0", "m1", "m2"]);
+				expect(second.map((message) => message.content)).toEqual(["m3", "m4", "m5"]);
+				expect(new Set([...first, ...second].map((message) => message.id)).size).toBe(6);
+			} finally {
+				secondStore.close();
+			}
+		});
+
+		it("claims disjoint batches when separate processes drain simultaneously", async () => {
+			const dbPath = join(dir, "sub", "messages.db");
+			for (let i = 0; i < 20; i++) store.send("a", "b", `m${i}`, "normal");
+			const workerPath = fileURLToPath(new URL("./message-store-drain-worker.ts", import.meta.url));
+			const workers = [
+				fork(workerPath, [dbPath, "b", "10"], {
+					execArgv: ["--import", "tsx"],
+					stdio: ["ignore", "ignore", "inherit", "ipc"],
+				}),
+				fork(workerPath, [dbPath, "b", "10"], {
+					execArgv: ["--import", "tsx"],
+					stdio: ["ignore", "ignore", "inherit", "ipc"],
+				}),
+			];
+			try {
+				const ready = workers.map((worker) => waitForWorkerMessage(worker, "ready"));
+				await Promise.all(ready);
+				const results = workers.map((worker) => waitForWorkerMessage(worker, "result"));
+				for (const worker of workers) worker.send("go");
+				const drained = await Promise.all(results);
+				const ids = drained.flatMap((result) => result.ids);
+				const contents = drained.flatMap((result) => result.contents);
+				expect(drained.map((result) => result.ids)).toEqual([expect.any(Array), expect.any(Array)]);
+				expect(drained.every((result) => result.ids.length === 10)).toBe(true);
+				expect(new Set(ids).size).toBe(20);
+				expect(contents.slice().sort()).toEqual(Array.from({ length: 20 }, (_, index) => `m${index}`).sort());
+				expect(store.unreadCount("b")).toBe(0);
+			} finally {
+				for (const worker of workers) {
+					if (!worker.killed) worker.kill();
+				}
+			}
+		});
+
+		it("lets urgent messages take the cap ahead of older normal ones", () => {
+			store.send("a", "b", "normal-old", "normal");
+			store.send("a", "b", "normal-old2", "normal");
+			store.send("a", "b", "urgent-new", "urgent");
+			// cap=1: the urgent message wins the single slot despite being newest.
+			const first = store.drainUnread("b", 1);
+			expect(first.map((m) => m.content)).toEqual(["urgent-new"]);
+			// Remaining drains preserve FIFO among the leftover normals.
+			const rest = store.drainUnread("b");
+			expect(rest.map((m) => m.content)).toEqual(["normal-old", "normal-old2"]);
+		});
+
+		it("treats a non-positive or omitted limit as unbounded", () => {
+			for (let i = 0; i < 3; i++) store.send("a", "b", `m${i}`, "normal");
+			expect(store.drainUnread("b", 0)).toHaveLength(3);
+		});
+
+		it("floors a fractional cap and treats a non-finite cap as unbounded", () => {
+			for (let i = 0; i < 3; i++) store.send("a", "b", `m${i}`, "normal");
+			const first = store.drainUnread("b", 1.9);
+			expect(first.map((message) => message.content)).toEqual(["m0"]);
+			store.markDelivered(first.map((message) => message.id));
+			expect(store.drainUnread("b", Number.POSITIVE_INFINITY).map((message) => message.content)).toEqual([
+				"m1",
+				"m2",
+			]);
 		});
 	});
 });

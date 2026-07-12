@@ -1,5 +1,62 @@
 export const RESULT_LIMIT_BYTES = 50 * 1024;
 export const TAIL_LIMIT_BYTES = 64 * 1024;
+/** Per-event budget for the complete model-visible background result. */
+export const MODEL_RESULT_LIMIT_BYTES = 8 * 1024;
+/** Aggregate budget for a complete multi-event model-visible result. */
+export const MODEL_RESULT_TOTAL_LIMIT_BYTES = 32 * 1024;
+
+const MODEL_SHORTENED_MARKER =
+	"\n\n[Model-visible result shortened; use Ctrl+O or the event log for retained details.]\n\n";
+
+function takeUtf8Prefix(text: string, maxBytes: number): string {
+	if (maxBytes <= 0) return "";
+	let bytes = 0;
+	let result = "";
+	for (const char of text) {
+		const charBytes = Buffer.byteLength(char, "utf8");
+		if (bytes + charBytes > maxBytes) break;
+		result += char;
+		bytes += charBytes;
+	}
+	return result;
+}
+
+function takeUtf8Suffix(text: string, maxBytes: number): string {
+	if (maxBytes <= 0) return "";
+	const chars = Array.from(text);
+	let bytes = 0;
+	let start = chars.length;
+	while (start > 0) {
+		const charBytes = Buffer.byteLength(chars[start - 1]!, "utf8");
+		if (bytes + charBytes > maxBytes) break;
+		start--;
+		bytes += charBytes;
+	}
+	return chars.slice(start).join("");
+}
+
+/**
+ * Bound a complete model-visible string while retaining both identifying
+ * metadata at the head and the most recent result at the tail. This covers the
+ * instructions, commands, tasks, paths, labels, and errors surrounding output.
+ */
+export function truncateModelText(
+	text: string,
+	maxBytes: number,
+	shortenedMarker = MODEL_SHORTENED_MARKER,
+): { text: string; truncated: boolean } {
+	if (maxBytes <= 0) return { text: "", truncated: text.length > 0 };
+	if (Buffer.byteLength(text, "utf8") <= maxBytes) return { text, truncated: false };
+
+	const marker = takeUtf8Prefix(shortenedMarker, maxBytes);
+	const remaining = Math.max(0, maxBytes - Buffer.byteLength(marker, "utf8"));
+	const headBytes = Math.floor(remaining * 0.4);
+	const tailBytes = remaining - headBytes;
+	return {
+		text: `${takeUtf8Prefix(text, headBytes)}${marker}${takeUtf8Suffix(text, tailBytes)}`,
+		truncated: true,
+	};
+}
 
 export function shellQuote(value: string): string {
 	return `'${value.replace(/'/g, `'\\''`)}'`;

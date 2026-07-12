@@ -6,6 +6,7 @@ import type {
 	ChatCompletionContentPartText,
 	ChatCompletionCreateParamsNonStreaming,
 } from "openai/resources/chat/completions.js";
+import { applyReportedCost } from "../models.ts";
 import type {
 	AssistantImages,
 	ImageContent,
@@ -15,6 +16,7 @@ import type {
 	ImagesOptions,
 	ProviderHeaders,
 	TextContent,
+	Usage,
 } from "../types.ts";
 import { headersToRecord, providerHeadersToRecord } from "../utils/headers.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
@@ -154,6 +156,7 @@ function parseUsage(
 	rawUsage: {
 		prompt_tokens?: number;
 		completion_tokens?: number;
+		cost?: number | string;
 		prompt_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number };
 	},
 	model: ImagesModel<"openrouter-images">,
@@ -165,7 +168,7 @@ function parseUsage(
 		cacheWriteTokens > 0 ? Math.max(0, reportedCachedTokens - cacheWriteTokens) : reportedCachedTokens;
 	const input = Math.max(0, promptTokens - cacheReadTokens - cacheWriteTokens);
 	const output = rawUsage.completion_tokens || 0;
-	const usage = {
+	const usage: Usage = {
 		input,
 		output,
 		cacheRead: cacheReadTokens,
@@ -179,6 +182,11 @@ function parseUsage(
 			total: 0,
 		},
 	};
-	usage.cost.total = usage.cost.input + usage.cost.output + usage.cost.cacheRead + usage.cost.cacheWrite;
+	if (model.variablePricing) {
+		usage.cost.unknown = true;
+		applyReportedCost(usage, rawUsage.cost);
+	} else {
+		usage.cost.total = usage.cost.input + usage.cost.output + usage.cost.cacheRead + usage.cost.cacheWrite;
+	}
 	return usage;
 }

@@ -186,6 +186,12 @@ jobs:
           & "$env:MAGENTA_SMOKE_INSTALL_DIR\magenta.exe" --help | Out-Null
           if ($LASTEXITCODE -ne 0) { throw "Installed Magenta failed under PowerShell 7 with exit code $LASTEXITCODE" }
 
+      - name: Start installed binary from Git Bash
+        shell: bash
+        run: |
+          install_dir="$(cygpath -u "$MAGENTA_SMOKE_INSTALL_DIR")"
+          "$install_dir/magenta.exe" --help >/dev/null
+
   publish:
     name: Publish verified release
     needs: [build, smoke-windows]

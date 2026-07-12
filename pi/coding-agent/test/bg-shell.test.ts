@@ -290,6 +290,80 @@ describe("built-in bg_shell tool", () => {
 		expect(eventData).not.toHaveProperty("waiters");
 	});
 
+	it("bounds model-visible return output while retaining the full expandable snapshot", async () => {
+		const tool = controller.createToolDefinition();
+		const ctx = createContext(tempDir);
+		const command = `${JSON.stringify(process.execPath)} -e "process.stdout.write('x'.repeat(20000) + 'TAIL-MARKER')"`;
+
+		const start = await tool.execute(
+			"call-start-large",
+			{ action: "start", command, returnToMain: true, returnDelivery: "nextTurn" },
+			undefined,
+			undefined,
+			ctx,
+		);
+		const eventId = start.details?.id as string;
+		await tool.execute(
+			"call-wait-large",
+			{ action: "wait", eventId, waitTimeoutSeconds: 5 },
+			undefined,
+			undefined,
+			ctx,
+		);
+		await waitUntil(() => returned.length === 1);
+
+		const returnedMessage = returned[0]?.message;
+		expect(Buffer.byteLength(returnedMessage?.content ?? "", "utf8")).toBeLessThan(12 * 1024);
+		expect(returnedMessage?.content).toContain("TAIL-MARKER");
+		expect(returnedMessage?.content).toContain("Output shortened");
+		const eventData = (returnedMessage?.details as { eventData?: BackgroundShellEventSnapshot } | undefined)
+			?.eventData;
+		expect(Buffer.byteLength(eventData?.tail ?? "", "utf8")).toBeGreaterThan(20_000);
+	});
+
+	it("caps the complete return when instruction and metadata are huge", async () => {
+		const tool = controller.createToolDefinition();
+		const ctx = createContext(tempDir);
+		const label = `large-label-${"l".repeat(20_000)}`;
+
+		const start = await tool.execute(
+			"call-start-huge-metadata",
+			{
+				action: "start",
+				command: "printf METADATA-TAIL",
+				label,
+				returnToMain: true,
+				returnDelivery: "nextTurn",
+				returnInstruction: `instruction-${"i".repeat(30_000)}`,
+			},
+			undefined,
+			undefined,
+			ctx,
+		);
+		const eventId = start.details?.id as string;
+		await tool.execute(
+			"call-wait-huge-metadata",
+			{ action: "wait", eventId, waitTimeoutSeconds: 5 },
+			undefined,
+			undefined,
+			ctx,
+		);
+		await waitUntil(() => returned.length === 1);
+
+		const returnedMessage = returned[0]?.message;
+		expect(Buffer.byteLength(returnedMessage?.content ?? "", "utf8")).toBeLessThanOrEqual(8 * 1024);
+		expect(returnedMessage?.content).toContain("Model-visible result shortened");
+		expect(returnedMessage?.content).toContain("METADATA-TAIL");
+		const details = returnedMessage?.details as
+			| { instruction?: string; eventData?: BackgroundShellEventSnapshot }
+			| undefined;
+		expect(Buffer.byteLength(details?.instruction ?? "", "utf8")).toBeLessThanOrEqual(2 * 1024);
+		expect(details?.eventData?.label).toBe(label);
+
+		const status = await tool.execute("call-status-huge", { action: "status" }, undefined, undefined, ctx);
+		expect(Buffer.byteLength(textOf(status), "utf8")).toBeLessThanOrEqual(8 * 1024);
+	});
+
 	it("updates session defaults with config action", async () => {
 		const tool = controller.createToolDefinition();
 		const ctx = createContext(tempDir);

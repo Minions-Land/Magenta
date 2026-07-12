@@ -10,6 +10,7 @@ import { AuthStorage } from "./auth-storage.ts";
 import { DEFAULT_NATIVE_ACTIVE_TOOLS, DEFAULT_THINKING_LEVEL } from "./defaults.ts";
 import type { ExtensionRunner, LoadExtensionsResult, SessionStartEvent, ToolDefinition } from "./extensions/index.ts";
 import { HcpClientassembletools } from "./HcpClienttools.ts";
+import { configureHttpDispatcher } from "./http-dispatcher.ts";
 import { convertToLlm } from "./messages.ts";
 import { ModelRegistry } from "./model-registry.ts";
 import { findInitialModel } from "./model-resolver.ts";
@@ -31,6 +32,8 @@ import {
 	createWriteTool,
 	withFileMutationQueue,
 } from "./tools/index.ts";
+
+const EFFECTIVELY_UNBOUNDED_PROVIDER_TIMEOUT_MS = 2_147_483_647;
 
 export interface CreateAgentSessionOptions {
 	/** Working directory for project-local discovery. Default: process.cwd() */
@@ -179,6 +182,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	const modelRegistry = options.modelRegistry ?? ModelRegistry.create(authStorage, modelsPath);
 
 	const settingsManager = options.settingsManager ?? SettingsManager.create(cwd, agentDir);
+	configureHttpDispatcher(settingsManager.getHttpIdleTimeoutMs());
 	const sessionManager = options.sessionManager ?? SessionManager.create(cwd, getDefaultSessionDir(cwd, agentDir));
 	let HcpClientprepared = false;
 
@@ -348,10 +352,16 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			const env = auth.env || options?.env ? { ...(auth.env ?? {}), ...(options?.env ?? {}) } : undefined;
 			const providerRetrySettings = settingsManager.getProviderRetrySettings();
 			const httpIdleTimeoutMs = settingsManager.getHttpIdleTimeoutMs();
-			// SDKs treat timeout=0 as 0ms (immediate timeout), not "no timeout".
-			// Use max int32 to effectively disable the timeout.
-			const effectiveTimeoutMs = httpIdleTimeoutMs === 0 ? 2147483647 : httpIdleTimeoutMs;
-			const timeoutMs = options?.timeoutMs ?? providerRetrySettings.timeoutMs ?? effectiveTimeoutMs;
+			// Keep transport idleness separate from a whole-request deadline. Reusing
+			// the 5-minute HTTP idle setting as an SDK total timeout killed healthy
+			// long-running GPT/Claude streams even while data was still arriving.
+			// Codex WebSocket intentionally uses timeoutMs as its idle timer; standard
+			// HTTP providers rely on undici's headers/body idle timeouts instead.
+			const codexIdleTimeoutMs =
+				httpIdleTimeoutMs === 0 ? EFFECTIVELY_UNBOUNDED_PROVIDER_TIMEOUT_MS : httpIdleTimeoutMs;
+			const defaultProviderTimeoutMs =
+				model.api === "openai-codex-responses" ? codexIdleTimeoutMs : EFFECTIVELY_UNBOUNDED_PROVIDER_TIMEOUT_MS;
+			const timeoutMs = options?.timeoutMs ?? providerRetrySettings.timeoutMs ?? defaultProviderTimeoutMs;
 			const websocketConnectTimeoutMs =
 				options?.websocketConnectTimeoutMs ?? settingsManager.getWebSocketConnectTimeoutMs();
 			return streamSimple(model, context, {

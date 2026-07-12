@@ -272,4 +272,19 @@ describe("fan_out_synthesize skeleton", () => {
 		expect(synthCall?.prompt).toContain("result-w3");
 		expect(result.outcome?.text).toBe("merged");
 	});
+
+	it("passes workflow package defaults and per-slot overrides to workers", async () => {
+		const { runner, calls } = makeRunner(() => ({ text: "ok" }));
+		const orch = new MultiAgentOrchestrator({ runner });
+		await orch.orchestrate({
+			pattern: "fan_out_synthesize",
+			packages: ["shared-package"],
+			workers: [{ task: "uses override", packages: ["worker-package"] }, { task: "uses default" }],
+			synthesizer: { task: "merge", packages: ["synth-package"] },
+		});
+
+		expect(calls[0]?.packages).toEqual(["worker-package"]);
+		expect(calls[1]?.packages).toEqual(["shared-package"]);
+		expect(calls[2]?.packages).toEqual(["synth-package"]);
+	});
 });

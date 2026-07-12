@@ -280,6 +280,7 @@ export interface SessionStats {
 		total: number;
 	};
 	cost: number;
+	costUnknown?: boolean;
 	contextUsage?: ContextUsage;
 }
 
@@ -736,6 +737,17 @@ export class AgentSession {
 					event.message.display,
 					event.message.details,
 				);
+				if (event.message.customType === PEER_MESSAGE_CUSTOM_TYPE) {
+					const ids = (event.message.details as { ids?: unknown } | undefined)?.ids;
+					if (Array.isArray(ids) && ids.every((id): id is string => typeof id === "string")) {
+						try {
+							this._peerMessages.confirmDelivered(ids);
+						} catch {
+							// Keep rows pending. Stale-claim recovery will redeliver a
+							// persisted message if confirmation itself could not complete.
+						}
+					}
+				}
 			} else if (
 				event.message.role === "user" ||
 				event.message.role === "assistant" ||
@@ -842,8 +854,8 @@ export class AgentSession {
 			// session, injecting them into context. Urgent messages steer (before the
 			// next tool-calling turn); normal messages follow up (at loop end). Presence
 			// is refreshed on every turn so a long loop always advertises a live pid.
-			// Draining is fire-once (marks read atomically), so each message is injected
-			// once, and everything queued while busy arrives together.
+			// Draining atomically claims a bounded batch as pending. Each message is
+			// confirmed only after persistence; overflow remains unread for a later turn.
 			this._peerMessages.recordPresence("active");
 			await this._injectPeerMessages();
 			const extensionEvent: TurnStartEvent = {
@@ -1617,6 +1629,7 @@ export class AgentSession {
 	): Promise<void> {
 		if (messages.length === 0) return;
 		const ids = messages.map((m) => m.id);
+		const queuedForLaterDelivery = this.isStreaming;
 		try {
 			await this.sendCustomMessage(
 				{
@@ -1627,7 +1640,9 @@ export class AgentSession {
 				},
 				{ deliverAs },
 			);
-			this._peerMessages.confirmDelivered(ids);
+			// A queued steer/follow-up is not durable delivery yet. message_end
+			// confirms only after the custom message has entered state and persisted.
+			if (!queuedForLaterDelivery) this._peerMessages.confirmDelivered(ids);
 		} catch {
 			try {
 				this._peerMessages.requeue(ids);
@@ -1641,10 +1656,18 @@ export class AgentSession {
 	 * Magenta feature: wake this session to drain pending peer messages. Fired
 	 * when a peer signals this (idle) process after sending an urgent message.
 	 * If the session is already streaming, the next turn_start drains anyway, so
-	 * this is a no-op. Otherwise it drains the mailbox and turns the messages into
-	 * a turn payload.
+	 * this is a no-op. Otherwise it drains the mailbox and starts a turn.
 	 *
-	 * Delivery depends on who owns the turn-runner:
+	 * urgent and normal are kept on separate tracks (they are two independent
+	 * pending kinds, never merged into one block): the urgent group triggers the
+	 * turn now, while any normal messages that happened to be queued are handed to
+	 * the follow-up queue so they land when the woken loop would otherwise end —
+	 * the same steer-vs-follow-up split `_injectPeerMessages` applies mid-loop.
+	 * Only an urgent message wakes an idle session, so the urgent group is the
+	 * normal trigger; the normal-only case (an urgent already claimed by a racing
+	 * turn_start) falls back to triggering on whatever normal messages remain.
+	 *
+	 * The trigger group's delivery depends on who owns the turn-runner:
 	 *  - Host-claimed (interactive TUI): emit an `external_activation` event
 	 *    carrying the payload so the host runs it through its own activation loop.
 	 *    This keeps a single turn-runner and avoids racing the host's input loop.
@@ -1659,13 +1682,44 @@ export class AgentSession {
 		try {
 			drained = this._peerMessages.drainForInjection();
 			if (drained.length === 0) return;
-			const ids = drained.map((m) => m.id);
+			const urgent = drained.filter((m) => m.priority === "urgent");
+			const normal = drained.filter((m) => m.priority !== "urgent");
+			// Urgent wakes the session, so it is the trigger; normal is deferred to the
+			// follow-up queue. If no urgent survived (a racing turn_start already
+			// claimed it), trigger on the leftover normals instead.
+			const triggerGroup = urgent.length > 0 ? urgent : normal;
+			const deferredGroup = urgent.length > 0 ? normal : [];
+
+			// Deferred normal messages ride the follow-up queue so the woken loop
+			// handles them at its end, after the urgent turn — kept off the urgent
+			// trigger block so the two tracks never merge.
+			if (deferredGroup.length > 0) {
+				const normalIds = deferredGroup.map((m) => m.id);
+				try {
+					this.agent.followUp({
+						role: "custom",
+						customType: PEER_MESSAGE_CUSTOM_TYPE,
+						content: formatPeerMessages(deferredGroup),
+						display: true,
+						details: { count: deferredGroup.length, ids: normalIds, wake: true },
+						timestamp: Date.now(),
+					} satisfies CustomMessage);
+				} catch {
+					try {
+						this._peerMessages.requeue(normalIds);
+					} catch {
+						// Best-effort; a stuck `pending` row is reclaimed by staleness later.
+					}
+				}
+			}
+
+			const ids = triggerGroup.map((m) => m.id);
 			const payload = {
 				role: "custom" as const,
 				customType: PEER_MESSAGE_CUSTOM_TYPE,
-				content: formatPeerMessages(drained),
+				content: formatPeerMessages(triggerGroup),
 				display: true,
-				details: { count: drained.length, ids, wake: true },
+				details: { count: triggerGroup.length, ids, wake: true },
 				timestamp: Date.now(),
 			} satisfies CustomMessage;
 
@@ -1701,10 +1755,10 @@ export class AgentSession {
 				return;
 			}
 
-			// Cold wake, self-run: inject all pending messages as one turn-triggering
-			// custom message. Priority ordering is already applied by the drain, and
-			// since we are not looping the steer/followUp distinction does not apply —
-			// the turn starts immediately regardless.
+			// Cold wake, self-run: trigger a turn on the urgent group (the wake
+			// trigger). Any normal messages were already handed to the follow-up queue
+			// above, so they are not part of this immediate payload — the two tracks
+			// stay separate. Priority ordering within the group is applied by the drain.
 			void this.sendCustomMessage(
 				{
 					customType: PEER_MESSAGE_CUSTOM_TYPE,
@@ -1713,15 +1767,13 @@ export class AgentSession {
 					details: payload.details,
 				},
 				{ triggerTurn: true },
-			)
-				.then(() => this._peerMessages.confirmDelivered(ids))
-				.catch(() => {
-					try {
-						this._peerMessages.requeue(ids);
-					} catch {
-						// Best-effort; a stuck `pending` row is reclaimed by staleness later.
-					}
-				});
+			).catch(() => {
+				try {
+					this._peerMessages.requeue(ids);
+				} catch {
+					// Best-effort; a stuck `pending` row is reclaimed by staleness later.
+				}
+			});
 		} catch {
 			if (drained.length > 0) {
 				try {
@@ -1851,7 +1903,24 @@ export class AgentSession {
 		const followUp = [...this._followUpMessages];
 		this._steeringMessages = [];
 		this._followUpMessages = [];
-		this.agent.clearAllQueues();
+		const cleared = this.agent.clearAllQueues();
+		const peerMessageIds = new Set<string>();
+		for (const message of [...cleared.steering, ...cleared.followUp]) {
+			if (message.role !== "custom" || message.customType !== PEER_MESSAGE_CUSTOM_TYPE) continue;
+			const ids = (message.details as { ids?: unknown } | undefined)?.ids;
+			if (!Array.isArray(ids)) continue;
+			for (const id of ids) {
+				if (typeof id === "string") peerMessageIds.add(id);
+			}
+		}
+		if (peerMessageIds.size > 0) {
+			try {
+				this._peerMessages.requeue([...peerMessageIds]);
+			} catch {
+				// Best-effort. A later owner handoff or clean shutdown makes the claim
+				// reclaimable if the mailbox is temporarily unavailable here.
+			}
+		}
 		this._emitQueueUpdate();
 		return { steering, followUp };
 	}
@@ -3602,6 +3671,7 @@ export class AgentSession {
 		let totalCacheRead = 0;
 		let totalCacheWrite = 0;
 		let totalCost = 0;
+		let costUnknown = false;
 
 		for (const message of state.messages) {
 			if (message.role === "assistant") {
@@ -3611,7 +3681,11 @@ export class AgentSession {
 				totalOutput += assistantMsg.usage.output;
 				totalCacheRead += assistantMsg.usage.cacheRead;
 				totalCacheWrite += assistantMsg.usage.cacheWrite;
-				totalCost += assistantMsg.usage.cost.total;
+				if (assistantMsg.usage.cost.unknown) {
+					costUnknown = true;
+				} else {
+					totalCost += assistantMsg.usage.cost.total;
+				}
 			}
 		}
 
@@ -3631,6 +3705,7 @@ export class AgentSession {
 				total: totalInput + totalOutput + totalCacheRead + totalCacheWrite,
 			},
 			cost: totalCost,
+			...(costUnknown ? { costUnknown: true } : {}),
 			contextUsage: this.getContextUsage(),
 		};
 	}

@@ -1,5 +1,12 @@
 import type { HcpMagnetBinding, HcpMagnetBuildContext } from "../../../.HCP/HcpMagnetTypes.ts";
 import { MultiAgentOrchestrator } from "./orchestrator.ts";
+import type { WorkerInvocationResolver } from "./worker.ts";
+
+function HcpMagnetworkerinvocation(settings: unknown): WorkerInvocationResolver | undefined {
+	if (!settings || typeof settings !== "object") return undefined;
+	const resolver = (settings as { resolveWorkerInvocation?: unknown }).resolveWorkerInvocation;
+	return typeof resolver === "function" ? (resolver as WorkerInvocationResolver) : undefined;
+}
 
 /**
  * The magenta source's binding for the `multiagent` capability (spec §8).
@@ -25,7 +32,10 @@ export class HcpMagnet {
 		this.name = context.name ?? "multiagent";
 		this.source = context.source ?? "magenta";
 		this.hotSwappable = context.hotSwappable ?? false;
-		this.provider = new MultiAgentOrchestrator({ cwd: context.repoRoot });
+		this.provider = new MultiAgentOrchestrator({
+			cwd: context.repoRoot,
+			resolveWorkerInvocation: HcpMagnetworkerinvocation(context.settings),
+		});
 	}
 
 	toCapability(): HcpMagnetBinding {

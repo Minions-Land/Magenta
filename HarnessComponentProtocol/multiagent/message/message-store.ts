@@ -5,8 +5,9 @@
  *
  * The message-delivery kernel is ported faithfully from MinionsOS2's
  * `eacn3::messages` (Rust). Each `send` inserts one unread row addressed to one
- * recipient; each `drainUnread` returns and marks read that recipient's unread
- * rows in a single atomic statement. A consumed message is never redelivered.
+ * recipient; each `drainUnread` atomically claims matching rows as `pending`.
+ * The caller confirms them as `read` only after durable context injection, or
+ * requeues/reclaims them after failure, providing at-least-once delivery.
  *
  * The `presence` table is a Magenta addition on top of that kernel: every agent
  * records whether it is `active` (in an agent loop), `idle` (process alive, not
@@ -103,6 +104,8 @@ CREATE TABLE IF NOT EXISTS messages (
     created_at TEXT NOT NULL,
     status     TEXT NOT NULL DEFAULT 'unread',
     drained_at TEXT,
+    claim_owner TEXT,
+    claim_pid   INTEGER,
     priority   TEXT NOT NULL DEFAULT 'normal'
 );
 CREATE INDEX IF NOT EXISTS idx_messages_recipient ON messages(recipient, status);
@@ -124,9 +127,9 @@ CREATE TABLE IF NOT EXISTS presence (
  * database file. Cross-process correctness relies on two things ported from
  * MinionsOS2:
  *  - WAL mode, so a reader never blocks a writer and vice versa.
- *  - A single `UPDATE ... RETURNING` drain, so no message inserted concurrently
- *    with a drain can be flipped to `read` without being returned (the classic
- *    SELECT-then-UPDATE race window is closed).
+ *  - A single `UPDATE ... RETURNING` drain (with an ordered subquery when capped),
+ *    so no message inserted concurrently with a drain can be claimed without
+ *    being returned (the classic SELECT-then-UPDATE race window is closed).
  */
 export class MessageStore {
 	private readonly db: InstanceType<typeof DatabaseSync>;
@@ -148,6 +151,9 @@ export class MessageStore {
 	 * incrementally as the feature set grew:
 	 *  - `drained_at` + the `pending` status: added when delivery gained an
 	 *    at-least-once guarantee (drain → inject → confirm).
+	 *  - `claim_owner` + `claim_pid`: identify the exact process instance whose
+	 *    in-memory queue owns a pending row, preventing live long turns from being
+	 *    mistaken for abandoned work.
 	 *  - `priority`: added for urgent vs normal message delivery.
 	 *  - presence `pid` + `boot_id`: added for signal-based idle wake (a sender
 	 *    signals an idle recipient's process to make it drain immediately).
@@ -161,6 +167,12 @@ export class MessageStore {
 		}
 		if (!msgCols.some((c) => c.name === "priority")) {
 			this.db.exec(`ALTER TABLE messages ADD COLUMN priority TEXT NOT NULL DEFAULT 'normal'`);
+		}
+		if (!msgCols.some((c) => c.name === "claim_owner")) {
+			this.db.exec(`ALTER TABLE messages ADD COLUMN claim_owner TEXT`);
+		}
+		if (!msgCols.some((c) => c.name === "claim_pid")) {
+			this.db.exec(`ALTER TABLE messages ADD COLUMN claim_pid INTEGER`);
 		}
 		const presCols = this.db.prepare(`PRAGMA table_info(presence)`).all() as Array<{ name: string }>;
 		if (!presCols.some((c) => c.name === "pid")) {
@@ -208,20 +220,31 @@ export class MessageStore {
 	 * share a millisecond timestamp. This makes "the first thing an agent sees on
 	 * entering its loop is every urgent message, then everything else that piled
 	 * up while it was busy, in send order" exact.
+	 *
+	 * `limit` caps how many messages a single drain claims, so a large backlog is
+	 * injected in bounded batches across successive loops instead of one oversized
+	 * context block. Messages beyond the cap stay `unread` and are claimed by the
+	 * next drain, in the same priority-then-FIFO order, so nothing is lost or
+	 * reordered — the cap only bounds batch size, never drops a message. Omitting
+	 * `limit` (or a non-positive/non-finite value) claims everything, preserving
+	 * the original behaviour. SQLite does not support portable `UPDATE ... ORDER
+	 * BY ... LIMIT`, so the capped path selects the ordered rowids inside the
+	 * UPDATE's `IN` subquery. Claiming remains one atomic statement across the
+	 * independent SQLite connections opened by different agent processes.
+	 * When `claim` is supplied, confirm/requeue operations must present the same
+	 * owner id. Stale recovery then keeps claims owned by the live current process
+	 * in flight regardless of age, while abandoned owners remain recoverable.
 	 */
-	drainUnread(recipient: string): PeerMessage[] {
+	drainUnread(recipient: string, limit?: number, claim?: { ownerId: string; pid: number }): PeerMessage[] {
 		// Recover any messages left `pending` by a previous drain whose injection
 		// never confirmed (crash, thrown injector, interrupted turn). They rejoin
 		// this claim so a transient failure cannot strand a message forever.
 		this.reclaimStalePending(recipient);
 		const drainedAt = new Date().toISOString();
-		const rows = this.db
-			.prepare(
-				`UPDATE messages SET status = 'pending', drained_at = ?
-				 WHERE recipient = ? AND status = 'unread'
-				 RETURNING rowid, id, sender, recipient, content, created_at, priority`,
-			)
-			.all(drainedAt, recipient) as Array<{
+		const normalizedLimit =
+			typeof limit === "number" && Number.isFinite(limit) && limit > 0 ? Math.max(1, Math.floor(limit)) : undefined;
+
+		type Row = {
 			rowid: number;
 			id: string;
 			sender: string;
@@ -229,7 +252,31 @@ export class MessageStore {
 			content: string;
 			created_at: string;
 			priority: MessagePriority;
-		}>;
+		};
+
+		let rows: Row[];
+		if (normalizedLimit !== undefined) {
+			rows = this.db
+				.prepare(
+					`UPDATE messages SET status = 'pending', drained_at = ?, claim_owner = ?, claim_pid = ?
+					 WHERE status = 'unread' AND rowid IN (
+					   SELECT rowid FROM messages
+					    WHERE recipient = ? AND status = 'unread'
+					    ORDER BY (CASE priority WHEN 'urgent' THEN 0 ELSE 1 END), rowid
+					    LIMIT ?
+					 )
+					 RETURNING rowid, id, sender, recipient, content, created_at, priority`,
+				)
+				.all(drainedAt, claim?.ownerId ?? null, claim?.pid ?? null, recipient, normalizedLimit) as Row[];
+		} else {
+			rows = this.db
+				.prepare(
+					`UPDATE messages SET status = 'pending', drained_at = ?, claim_owner = ?, claim_pid = ?
+					 WHERE recipient = ? AND status = 'unread'
+					 RETURNING rowid, id, sender, recipient, content, created_at, priority`,
+				)
+				.all(drainedAt, claim?.ownerId ?? null, claim?.pid ?? null, recipient) as Row[];
+		}
 
 		// Priority DESC (urgent before normal), then rowid ASC (FIFO within a priority).
 		const ordered = rows.slice().sort((a, b) => {
@@ -251,46 +298,84 @@ export class MessageStore {
 	 * Confirm that the given messages were successfully injected into the
 	 * recipient's context. Moves them from `pending` to the terminal `read`
 	 * state so they are never redelivered. Ids not currently `pending` are
-	 * ignored (idempotent).
+	 * ignored (idempotent). Owned claims are settled only by their matching owner;
+	 * omitting `claimOwner` settles only legacy/unowned claims.
 	 */
-	markDelivered(ids: string[]): void {
+	markDelivered(ids: string[], claimOwner?: string): void {
 		if (ids.length === 0) return;
 		const placeholders = ids.map(() => "?").join(",");
+		const ownerPredicate = claimOwner === undefined ? "claim_owner IS NULL" : "claim_owner = ?";
 		this.db
-			.prepare(`UPDATE messages SET status = 'read' WHERE status = 'pending' AND id IN (${placeholders})`)
-			.run(...ids);
+			.prepare(
+				`UPDATE messages SET status = 'read', drained_at = NULL, claim_owner = NULL, claim_pid = NULL
+				 WHERE status = 'pending' AND ${ownerPredicate} AND id IN (${placeholders})`,
+			)
+			.run(...(claimOwner === undefined ? ids : [claimOwner, ...ids]));
 	}
 
 	/**
 	 * Return the given messages to the `unread` state so the next drain redelivers
 	 * them. Called when injection failed after a drain. Ids not currently
-	 * `pending` are ignored (idempotent).
+	 * `pending` are ignored (idempotent). Owned claims are requeued only by their
+	 * matching owner; omitting `claimOwner` touches only legacy/unowned claims.
 	 */
-	requeue(ids: string[]): void {
+	requeue(ids: string[], claimOwner?: string): void {
 		if (ids.length === 0) return;
 		const placeholders = ids.map(() => "?").join(",");
+		const ownerPredicate = claimOwner === undefined ? "claim_owner IS NULL" : "claim_owner = ?";
 		this.db
 			.prepare(
-				`UPDATE messages SET status = 'unread', drained_at = NULL WHERE status = 'pending' AND id IN (${placeholders})`,
+				`UPDATE messages SET status = 'unread', drained_at = NULL, claim_owner = NULL, claim_pid = NULL
+				 WHERE status = 'pending' AND ${ownerPredicate} AND id IN (${placeholders})`,
 			)
-			.run(...ids);
+			.run(...(claimOwner === undefined ? ids : [claimOwner, ...ids]));
 	}
 
 	/**
-	 * Return to `unread` any of this recipient's messages that have been stuck in
-	 * `pending` longer than the staleness window — i.e. a drain claimed them but no
-	 * {@link markDelivered}/{@link requeue} ever followed (the classic
-	 * crash-after-claim case). Reusing the presence staleness window keeps a
-	 * single "how long before we assume a process is gone" knob.
+	 * Return to `unread` stale pending messages whose claim owner is no longer the
+	 * live process instance registered for this recipient. This preserves crash
+	 * recovery without redelivering a message merely because a healthy model/tool
+	 * turn ran longer than the time window. Legacy rows without an owner retain the
+	 * historical time-only recovery rule.
 	 */
 	reclaimStalePending(recipient: string): void {
 		const cutoff = new Date(Date.now() - this.stalenessMs).toISOString();
+		// Legacy/unowned claims retain the historical time-only recovery rule.
 		this.db
 			.prepare(
-				`UPDATE messages SET status = 'unread', drained_at = NULL
-				 WHERE recipient = ? AND status = 'pending' AND (drained_at IS NULL OR drained_at <= ?)`,
+				`UPDATE messages SET status = 'unread', drained_at = NULL, claim_owner = NULL, claim_pid = NULL
+				 WHERE recipient = ? AND status = 'pending' AND claim_owner IS NULL
+				   AND (drained_at IS NULL OR drained_at <= ?)`,
 			)
 			.run(recipient, cutoff);
+
+		const presence = this.db.prepare(`SELECT state, pid, boot_id FROM presence WHERE agent_id = ?`).get(recipient) as
+			| { state: PresenceState; pid: number | null; boot_id: string | null }
+			| undefined;
+		const claims = this.db
+			.prepare(
+				`SELECT DISTINCT claim_owner, claim_pid FROM messages
+				 WHERE recipient = ? AND status = 'pending' AND claim_owner IS NOT NULL
+				   AND (drained_at IS NULL OR drained_at <= ?)`,
+			)
+			.all(recipient, cutoff) as Array<{ claim_owner: string; claim_pid: number | null }>;
+
+		for (const claim of claims) {
+			const ownerStillCurrent =
+				presence?.state !== "offline" &&
+				presence?.boot_id === claim.claim_owner &&
+				claim.claim_pid !== null &&
+				(presence.pid === null || presence.pid === claim.claim_pid) &&
+				MessageStore.isProcessAlive(claim.claim_pid);
+			if (ownerStillCurrent) continue;
+			this.db
+				.prepare(
+					`UPDATE messages SET status = 'unread', drained_at = NULL, claim_owner = NULL, claim_pid = NULL
+					 WHERE recipient = ? AND status = 'pending' AND claim_owner = ? AND claim_pid IS ?
+					   AND (drained_at IS NULL OR drained_at <= ?)`,
+				)
+				.run(recipient, claim.claim_owner, claim.claim_pid, cutoff);
+		}
 	}
 
 	/** Count unread messages for a recipient without consuming them. */

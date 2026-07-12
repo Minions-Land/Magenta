@@ -11,7 +11,7 @@ type AssistantUsage = {
 	output: number;
 	cacheRead: number;
 	cacheWrite: number;
-	cost: { total: number };
+	cost: { total: number; unknown?: boolean };
 };
 
 function createSession(options: {
@@ -152,5 +152,23 @@ describe("FooterComponent width handling", () => {
 
 		const statsLine = stripAnsi(footer.render(120)[1]);
 		expect(statsLine).toContain("CH25.0%");
+	});
+
+	it("does not display variable pricing as a free request", () => {
+		const session = createSession({
+			sessionName: "",
+			usage: {
+				input: 100,
+				output: 10,
+				cacheRead: 0,
+				cacheWrite: 0,
+				cost: { total: 0, unknown: true },
+			},
+		});
+		const footer = new FooterComponent(session, createFooterData(1));
+
+		const statsLine = stripAnsi(footer.render(120)[1]);
+		expect(statsLine).toContain("cost?");
+		expect(statsLine).not.toContain("$0.000");
 	});
 });

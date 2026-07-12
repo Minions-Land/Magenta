@@ -479,6 +479,7 @@ export const OPENROUTER_MODELS = {
 		provider: "openrouter",
 		baseUrl: "https://openrouter.ai/api/v1",
 		compat: {"supportsDeveloperRole":false,"thinkingFormat":"openrouter"},
+		variablePricing: true,
 		reasoning: true,
 		input: ["text", "image"],
 		cost: {
@@ -3189,11 +3190,12 @@ export const OPENROUTER_MODELS = {
 		provider: "openrouter",
 		baseUrl: "https://openrouter.ai/api/v1",
 		compat: {"supportsDeveloperRole":false,"thinkingFormat":"openrouter"},
+		variablePricing: true,
 		reasoning: true,
 		input: ["text", "image"],
 		cost: {
-			input: -1000000,
-			output: -1000000,
+			input: 0,
+			output: 0,
 			cacheRead: 0,
 			cacheWrite: 0,
 		},
@@ -3225,6 +3227,7 @@ export const OPENROUTER_MODELS = {
 		provider: "openrouter",
 		baseUrl: "https://openrouter.ai/api/v1",
 		compat: {"supportsDeveloperRole":false,"thinkingFormat":"openrouter"},
+		variablePricing: true,
 		reasoning: true,
 		input: ["text"],
 		cost: {

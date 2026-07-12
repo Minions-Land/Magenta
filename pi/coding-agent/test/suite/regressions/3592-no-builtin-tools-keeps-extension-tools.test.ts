@@ -72,6 +72,44 @@ describe("regression #3592: no-builtin-tools keeps extension tools enabled", () 
 		return session;
 	}
 
+	it("enables every shipped and loaded tool by default", async () => {
+		const session = await createSession();
+		const allToolNames = session
+			.getAllTools()
+			.map((tool) => tool.name)
+			.sort();
+
+		expect(session.getActiveToolNames().sort()).toEqual(allToolNames);
+		expect(allToolNames).toEqual(
+			[
+				"bash",
+				...BUILTIN_BACKGROUND_TOOLS,
+				"dynamic_tool",
+				"edit",
+				"find",
+				"grep",
+				"ls",
+				"lsp",
+				"read",
+				"send_message",
+				"show",
+				"todo",
+				"web-fetch",
+				"web-search",
+				"write",
+			].sort(),
+		);
+
+		await session.reload();
+		expect(session.getActiveToolNames().sort()).toEqual(
+			session
+				.getAllTools()
+				.map((tool) => tool.name)
+				.sort(),
+		);
+		await session.dispose();
+	});
+
 	it("keeps extension tools active when built-in defaults are disabled", async () => {
 		const session = await createSession({ noTools: "builtin" });
 

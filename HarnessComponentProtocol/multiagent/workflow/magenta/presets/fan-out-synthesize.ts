@@ -12,7 +12,7 @@ export default async function fanOutSynthesize(args: unknown, ctx: any) {
 	};
 
 	const results = await ctx.parallelAgents(
-		req.workers.map((w: any, i: number) => () => ctx.agent(w.task, { label: `fanout-${i}` })),
+		req.workers.map((w: any, i: number) => () => ctx.agent(w.task, { ...w, label: `fanout-${i}` })),
 		req.maxConcurrent,
 	);
 
@@ -23,6 +23,7 @@ export default async function fanOutSynthesize(args: unknown, ctx: any) {
 		.join("\n\n");
 
 	const outcome = await ctx.agent(`${req.synthesizer.task}\n\n${merged}`, {
+		...req.synthesizer,
 		label: "synth",
 		guard: ctx.guards.synthesizer,
 	});

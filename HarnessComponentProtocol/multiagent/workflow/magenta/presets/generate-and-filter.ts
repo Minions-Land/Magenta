@@ -34,7 +34,10 @@ export default async function generateAndFilter(args: unknown, ctx: any) {
 
 	// Generate `count` independent candidates in parallel.
 	const candidates = await ctx.parallelAgents(
-		Array.from({ length: count }, (_, i) => () => ctx.agent(req.generator.task, { label: `gen-${i}` })),
+		Array.from(
+			{ length: count },
+			(_, i) => () => ctx.agent(req.generator.task, { ...req.generator, label: `gen-${i}` }),
+		),
 		req.maxConcurrent,
 	);
 
@@ -43,6 +46,7 @@ export default async function generateAndFilter(args: unknown, ctx: any) {
 		candidates.map(
 			(c: any, i: number) => () =>
 				ctx.agent(`${req.evaluator.task}\n\nCandidate to score:\n${c.text}`, {
+					...req.evaluator,
 					label: `eval-${i}`,
 					guard: ctx.guards.evaluator,
 					schema: SCORE_SCHEMA,

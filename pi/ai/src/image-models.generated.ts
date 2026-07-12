@@ -283,9 +283,10 @@ export const IMAGE_MODELS = {
 			baseUrl: "https://openrouter.ai/api/v1",
 			input: ["text","image"],
 			output: ["text","image"],
+			variablePricing: true,
 			cost: 	{
-	  "input": -1000000,
-	  "output": -1000000,
+	  "input": 0,
+	  "output": 0,
 	  "cacheRead": 0,
 	  "cacheWrite": 0
 	}

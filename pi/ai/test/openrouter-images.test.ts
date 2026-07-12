@@ -5,6 +5,7 @@ import type { ImagesContext, ImagesModel } from "../src/types.ts";
 const mockState = vi.hoisted(() => ({
 	lastParams: undefined as unknown,
 	lastRequestOptions: undefined as unknown,
+	reportedCost: undefined as number | undefined,
 }));
 
 vi.mock("openai", () => {
@@ -29,6 +30,7 @@ vi.mock("openai", () => {
 							prompt_tokens: 12,
 							completion_tokens: 34,
 							prompt_tokens_details: { cached_tokens: 0 },
+							...(mockState.reportedCost !== undefined ? { cost: mockState.reportedCost } : {}),
 						},
 						choices: [
 							{
@@ -62,6 +64,7 @@ describe("openrouter images", () => {
 	beforeEach(() => {
 		mockState.lastParams = undefined;
 		mockState.lastRequestOptions = undefined;
+		mockState.reportedCost = undefined;
 	});
 
 	it("returns text plus images in final output", async () => {
@@ -136,5 +139,48 @@ describe("openrouter images", () => {
 
 		const output = await generateImages(model, context, { apiKey: "test" });
 		expect(output.output.some((item) => item.type === "image")).toBe(true);
+	});
+
+	it("does not report auto-router image pricing as free when the provider omits cost", async () => {
+		const model: ImagesModel<"openrouter-images"> = {
+			id: "openrouter/auto",
+			name: "Auto Router",
+			api: "openrouter-images",
+			provider: "openrouter",
+			baseUrl: "https://openrouter.ai/api/v1",
+			input: ["text", "image"],
+			output: ["text", "image"],
+			variablePricing: true,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		};
+		const output = await generateImages(
+			model,
+			{ input: [{ type: "text", text: "Generate a dog" }] },
+			{ apiKey: "test" },
+		);
+		expect(output.usage?.cost.total).toBe(0);
+		expect(output.usage?.cost.unknown).toBe(true);
+	});
+
+	it("uses the auto-router cost reported by OpenRouter", async () => {
+		mockState.reportedCost = 0.0123;
+		const model: ImagesModel<"openrouter-images"> = {
+			id: "openrouter/auto",
+			name: "Auto Router",
+			api: "openrouter-images",
+			provider: "openrouter",
+			baseUrl: "https://openrouter.ai/api/v1",
+			input: ["text", "image"],
+			output: ["text", "image"],
+			variablePricing: true,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		};
+		const output = await generateImages(
+			model,
+			{ input: [{ type: "text", text: "Generate a dog" }] },
+			{ apiKey: "test" },
+		);
+		expect(output.usage?.cost.total).toBe(0.0123);
+		expect(output.usage?.cost.unknown).toBeUndefined();
 	});
 });

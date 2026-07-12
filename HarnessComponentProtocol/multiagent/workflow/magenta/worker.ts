@@ -80,6 +80,8 @@ export type SpawnWorkerOptions = {
 	thinking?: ThinkingLevel;
 	/** Tool whitelist. Defaults to read-only tools. */
 	tools?: string[];
+	/** Harness package selectors granted to the worker. */
+	packages?: string[];
 	/** JSON Schema; when set, the worker's final text is parsed into `structured`. */
 	schema?: unknown;
 	/** Working directory. */
@@ -91,6 +93,14 @@ export type SpawnWorkerOptions = {
 	/** Hard wall-clock timeout in ms. Defaults to 120s. */
 	timeoutMs?: number;
 };
+
+export type WorkerInvocation = {
+	command: string;
+	args: string[];
+};
+
+/** Host-owned resolver for invoking the coding-agent executable. */
+export type WorkerInvocationResolver = (args: string[]) => WorkerInvocation;
 
 /**
  * A minimal shape of the pi NDJSON `message_end` payload we consume. pi emits
@@ -129,7 +139,7 @@ type PiMessage = {
  * demonstrably pi's own binary/script; otherwise we resolve the `pi` CLI on
  * PATH.
  */
-function getPiInvocation(args: string[]): { command: string; args: string[] } {
+function getPiInvocation(args: string[]): WorkerInvocation {
 	const currentScript = process.argv[1];
 	const execName = path.basename(process.execPath).toLowerCase();
 	const isGenericRuntime = /^(node|bun|tsx|deno)(\.exe)?$/.test(execName);
@@ -203,7 +213,11 @@ function writeSystemPromptFile(workerId: string, systemPrompt: string): string {
  * `WorkerResult` with `success: false` and an `error`, so a pattern can decide
  * how to handle partial failure without one worker aborting the whole batch.
  */
-export async function spawnWorker(options: SpawnWorkerOptions, signal?: AbortSignal): Promise<WorkerResult> {
+export async function spawnWorker(
+	options: SpawnWorkerOptions,
+	signal?: AbortSignal,
+	resolveInvocation: WorkerInvocationResolver = getPiInvocation,
+): Promise<WorkerResult> {
 	const start = Date.now();
 
 	// Recursion guard: orchestration is strictly one level deep. If this process
@@ -239,6 +253,9 @@ export async function spawnWorker(options: SpawnWorkerOptions, signal?: AbortSig
 	// Headless, sessionless, no extensions (prevents recursive sub-agent spawning),
 	// structured NDJSON output.
 	const args = ["--mode", "json", "-p", "--no-session", "--no-extensions", "--tools", tools.join(",")];
+	for (const selector of options.packages?.map((value) => value.trim()).filter(Boolean) ?? []) {
+		args.push("--harness-package", selector);
+	}
 	if (options.model) args.push("--model", options.model);
 	if (options.provider) args.push("--provider", options.provider);
 	if (options.thinking) args.push("--thinking", options.thinking);
@@ -266,7 +283,7 @@ export async function spawnWorker(options: SpawnWorkerOptions, signal?: AbortSig
 
 	try {
 		const exitCode = await new Promise<number>((resolve) => {
-			const invocation = getPiInvocation(args);
+			const invocation = resolveInvocation(args);
 			const child: ChildProcess = spawn(invocation.command, invocation.args, {
 				cwd: options.cwd ?? process.cwd(),
 				shell: false,
@@ -404,6 +421,7 @@ export async function parallel(
 	specs: SpawnWorkerOptions[],
 	maxConcurrent: number,
 	signal?: AbortSignal,
+	resolveInvocation: WorkerInvocationResolver = getPiInvocation,
 ): Promise<WorkerResult[]> {
 	const limit = Math.max(1, maxConcurrent);
 	const results = new Array<WorkerResult>(specs.length);
@@ -413,7 +431,7 @@ export async function parallel(
 		while (true) {
 			const index = next++;
 			if (index >= specs.length) return;
-			results[index] = await spawnWorker(specs[index], signal);
+			results[index] = await spawnWorker(specs[index], signal, resolveInvocation);
 		}
 	}
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { HcpClient } from "../../HcpClient.ts";
-import type { WorkerSlot } from "../../multiagent/HcpServer.ts";
+import type { MultiAgentProvider, WorkerSlot } from "../../multiagent/HcpServer.ts";
 import * as multiagentServer from "../../multiagent/HcpServer.ts";
 import * as multiagentWorkflowMagenta from "../../multiagent/workflow/magenta/HcpMagnet.ts";
 import { MultiAgentOrchestrator } from "../../multiagent/workflow/magenta/orchestrator.ts";
@@ -60,6 +60,43 @@ describe("multiagent orchestrator", () => {
 		const orch = new MultiAgentOrchestrator();
 		// All seven patterns are wired; discover() reflects the full set.
 		expect(orch.discover().patterns).toHaveLength(7);
+	});
+
+	it("passes the host invocation resolver from the Magnet to every worker", async () => {
+		const requestedArgs: string[][] = [];
+		const fixture = [
+			"const event = {",
+			'type: "message_end",',
+			'message: { role: "assistant", content: [{ type: "text", text: "worker-ok" }] },',
+			"};",
+			'process.stdout.write(JSON.stringify(event) + "\\n");',
+		].join("\n");
+		const magnet = new multiagentWorkflowMagenta.HcpMagnet({
+			repoRoot: process.cwd(),
+			kind: "multiagent",
+			name: "multiagent",
+			source: "magenta",
+			settings: {
+				resolveWorkerInvocation: (args: string[]) => {
+					requestedArgs.push([...args]);
+					return { command: process.execPath, args: ["-e", fixture] };
+				},
+			},
+		});
+		const provider = magnet.toCapability().instance as MultiAgentProvider;
+
+		const result = await provider.orchestrate({
+			pattern: "fan_out_synthesize",
+			packages: ["ClaudeScience"],
+			workers: [{ task: "inspect" }],
+			synthesizer: { task: "summarize" },
+		});
+
+		expect(result.outcome?.text).toBe("worker-ok");
+		expect(requestedArgs).toHaveLength(2);
+		for (const args of requestedArgs) {
+			expect(args).toEqual(expect.arrayContaining(["--harness-package", "ClaudeScience"]));
+		}
 	});
 });
 

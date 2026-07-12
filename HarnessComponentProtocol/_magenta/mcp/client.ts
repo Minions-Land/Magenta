@@ -1,24 +1,42 @@
 /**
- * Minimal Model Context Protocol (MCP) client over a stdio transport.
+ * Minimal Model Context Protocol (MCP) client transports.
  *
  * This is a deliberately small, dependency-free implementation of the subset of
  * the MCP protocol the harness needs to expose an external MCP server's tools
  * through an owning Harness tool Module: the `initialize` handshake, `tools/list`
- * discovery, and `tools/call` dispatch. It speaks newline-delimited JSON-RPC 2.0
- * over the managed process's stdin/stdout, matching the stdio transport every MCP
- * server ships.
+ * discovery, and `tools/call` dispatch.
  *
- * We intentionally do NOT depend on `@modelcontextprotocol/sdk`: the harness core
- * keeps a minimal dependency surface (pi-agent-core + pi-ai only), and these
- * three verbs are all a long-lived stdio server connection requires. SSE / HTTP
- * transports, OAuth, sampling, roots, and pagination are out of scope here; if a
- * future server needs them, add a transport rather than pulling the full SDK.
+ * `McpStdioClient` speaks newline-delimited JSON-RPC 2.0 over a managed
+ * process's stdin/stdout (the stdio transport every MCP server ships). The
+ * streamable-HTTP transport lives in `./http-client.ts`; both satisfy the
+ * transport-agnostic {@link McpClient} shape so `McpConnection` never cares
+ * which one it holds. Request/response correlation is shared through
+ * {@link JsonRpcPeer} in `./jsonrpc.ts`.
+ *
+ * We intentionally do NOT depend on `@modelcontextprotocol/sdk`: the harness
+ * core keeps a minimal dependency surface, and these three verbs are all a
+ * long-lived server connection requires. OAuth, sampling, roots, and pagination
+ * remain out of scope; a future need adds a transport rather than pulling the
+ * full SDK.
  */
 
-/** JSON-RPC 2.0 protocol version advertised during initialization. */
-const JSONRPC_VERSION = "2.0";
+import { JsonRpcPeer, type JsonRpcResponse } from "./jsonrpc.ts";
+
 /** MCP protocol revision this client implements. */
 const MCP_PROTOCOL_VERSION = "2024-11-05";
+
+/**
+ * Transport-agnostic MCP client surface. `McpConnection` only ever touches
+ * these five members, so any transport (stdio, streamable-HTTP, ...) that
+ * satisfies this shape is a drop-in. Selection happens in `./transport.ts`.
+ */
+export type McpClient = {
+	readonly isConnected: boolean;
+	connect(): Promise<void>;
+	listTools(): Promise<McpToolSchema[]>;
+	callTool(name: string, args: Record<string, unknown>): Promise<McpToolCallResult>;
+	close(): Promise<void>;
+};
 
 export type McpToolSchema = {
 	name: string;
@@ -89,6 +107,8 @@ export type McpStdioManagedSpawner = (
 ) => Promise<McpStdioManagedProcess>;
 
 export type McpStdioClientOptions = {
+	/** Transport discriminant. Absent or "stdio" selects the stdio transport. */
+	transport?: "stdio";
 	command: string;
 	args?: string[];
 	cwd?: string;
@@ -102,19 +122,22 @@ export type McpStdioClientOptions = {
 	requestTimeoutMs?: number;
 };
 
-type PendingRequest = {
-	resolve: (value: unknown) => void;
-	reject: (reason: Error) => void;
-	timer: ReturnType<typeof setTimeout>;
+/** Host-supplied settings for the streamable-HTTP transport (`./http-client.ts`). */
+export type McpHttpClientOptions = {
+	transport: "http";
+	/** Absolute MCP endpoint URL, e.g. `https://host/mcp`. */
+	url: string;
+	/** Static request headers (e.g. `Authorization: Bearer ...`). */
+	headers?: Record<string, string>;
+	signal?: AbortSignal;
+	clientName?: string;
+	clientVersion?: string;
+	/** Per-request timeout in milliseconds. Default: 30000. */
+	requestTimeoutMs?: number;
 };
 
-type JsonRpcResponse = {
-	jsonrpc?: string;
-	id?: number | string | null;
-	result?: unknown;
-	error?: { code?: number; message?: string; data?: unknown };
-	method?: string;
-};
+/** Discriminated union of every MCP transport's construction settings. */
+export type McpClientOptions = McpStdioClientOptions | McpHttpClientOptions;
 
 /**
  * A long-lived connection to a single MCP server process. Spawn once, run the
@@ -126,8 +149,7 @@ export class McpStdioClient {
 	private process?: McpStdioManagedProcess;
 	private removeStdoutListener?: () => void;
 	private removeStderrListener?: () => void;
-	private nextId = 1;
-	private readonly pending = new Map<number, PendingRequest>();
+	private readonly peer: JsonRpcPeer;
 	private initialized = false;
 	private closed = false;
 	private exitError?: Error;
@@ -137,6 +159,7 @@ export class McpStdioClient {
 
 	constructor(options: McpStdioClientOptions) {
 		this.options = options;
+		this.peer = new JsonRpcPeer({ requestTimeoutMs: options.requestTimeoutMs });
 	}
 
 	get isConnected(): boolean {
@@ -258,32 +281,19 @@ export class McpStdioClient {
 		if (!managedProcess) {
 			return Promise.reject(new Error("MCP server process is not writable"));
 		}
-		const id = this.nextId++;
-		const payload = `${JSON.stringify({ jsonrpc: JSONRPC_VERSION, id, method, params })}\n`;
-		const timeoutMs = this.options.requestTimeoutMs ?? 30_000;
-		return new Promise<unknown>((resolve, reject) => {
-			const timer = setTimeout(() => {
-				this.pending.delete(id);
-				reject(new Error(`MCP request "${method}" timed out after ${timeoutMs}ms`));
-			}, timeoutMs);
-			this.pending.set(id, { resolve, reject, timer });
-			void managedProcess.write(payload).catch((error: unknown) => {
-				if (this.pending.delete(id)) {
-					clearTimeout(timer);
-					reject(error instanceof Error ? error : new Error(String(error)));
-				}
-			});
+		const { id, payload, promise } = this.peer.createRequest(method, params);
+		void managedProcess.write(`${payload}\n`).catch((error: unknown) => {
+			this.peer.failRequest(id, error instanceof Error ? error : new Error(String(error)));
 		});
+		return promise;
 	}
 
 	private notify(method: string, params: unknown): void {
 		const managedProcess = this.process;
 		if (!managedProcess) return;
-		void managedProcess
-			.write(`${JSON.stringify({ jsonrpc: JSONRPC_VERSION, method, params })}\n`)
-			.catch((error: unknown) => {
-				this.failAll(error instanceof Error ? error : new Error(String(error)));
-			});
+		void managedProcess.write(`${this.peer.createNotification(method, params)}\n`).catch((error: unknown) => {
+			this.peer.failAll(error instanceof Error ? error : new Error(String(error)));
+		});
 	}
 
 	private handleLine(line: string): void {
@@ -297,26 +307,12 @@ export class McpStdioClient {
 			return;
 		}
 		// Server-initiated requests/notifications carry a `method`; this minimal
-		// client does not implement server->client calls, so we ignore them.
-		if (typeof message.id !== "number") return;
-		const pending = this.pending.get(message.id);
-		if (!pending) return;
-		this.pending.delete(message.id);
-		clearTimeout(pending.timer);
-		if (message.error) {
-			const detail = message.error.message ?? "unknown error";
-			pending.reject(new Error(`MCP error ${message.error.code ?? ""}: ${detail}`.trim()));
-			return;
-		}
-		pending.resolve(message.result);
+		// client does not implement server->client calls, so the peer ignores them.
+		this.peer.handleParsed(message);
 	}
 
 	private failAll(error: Error): void {
-		for (const [, pending] of this.pending) {
-			clearTimeout(pending.timer);
-			pending.reject(error);
-		}
-		this.pending.clear();
+		this.peer.failAll(error);
 	}
 
 	private captureStderr(chunk: string): void {

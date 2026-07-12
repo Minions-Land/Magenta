@@ -518,6 +518,47 @@ export const APP_TITLE: string = APP_NAME;
 export const APP_BINARY_NAME: string = pkg.piConfig?.binaryName || APP_NAME.toLowerCase();
 export const CONFIG_DIR_NAME: string = pkg.piConfig?.configDir || ".magenta";
 
+export type AgentInvocation = {
+	command: string;
+	args: string[];
+};
+
+export type AgentInvocationRuntime = {
+	/** True when process.execPath is the compiled coding-agent executable itself. */
+	isCompiledBinary: boolean;
+	/** True only for the coding-agent CLI, never an arbitrary SDK host script. */
+	isCliEntrypoint: boolean;
+	executablePath: string;
+	entrypoint?: string;
+	fallbackCommand: string;
+	pathExists?: (path: string) => boolean;
+};
+
+/** Resolve a child coding-agent invocation without assuming a branded filename. */
+export function resolveAgentInvocation(args: string[], runtime: AgentInvocationRuntime): AgentInvocation {
+	if (runtime.isCompiledBinary) {
+		return { command: runtime.executablePath, args };
+	}
+	const pathExists = runtime.pathExists ?? existsSync;
+	if (runtime.isCliEntrypoint && runtime.entrypoint && pathExists(runtime.entrypoint)) {
+		return { command: runtime.executablePath, args: [runtime.entrypoint, ...args] };
+	}
+	return { command: runtime.fallbackCommand, args };
+}
+
+/** Resolve the current Magenta/pi CLI for a child worker. */
+export function getAgentInvocation(args: string[]): AgentInvocation {
+	const rawEntrypoint = process.argv[1];
+	const entrypoint = rawEntrypoint && existsSync(rawEntrypoint) ? resolve(rawEntrypoint) : rawEntrypoint;
+	return resolveAgentInvocation(args, {
+		isCompiledBinary: isBunBinary,
+		isCliEntrypoint: process.env.PI_CODING_AGENT === "true",
+		executablePath: process.execPath,
+		entrypoint,
+		fallbackCommand: APP_BINARY_NAME,
+	});
+}
+
 // VERSION should reflect the product version (Magenta), not the infrastructure version (Pi)
 // Generated at build time from the active brand configuration
 import { BRAND_VERSION } from "./brand-version.generated.ts";

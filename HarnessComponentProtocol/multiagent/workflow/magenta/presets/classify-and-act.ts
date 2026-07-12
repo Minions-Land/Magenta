@@ -17,6 +17,7 @@ export default async function classifyAndAct(args: unknown, ctx: any) {
 	const classified = await ctx.agent(
 		`${req.classifier.task}\n\nAvailable labels: ${labels.join(", ")}\n\nInput:\n${req.input}`,
 		{
+			...req.classifier,
 			label: "classify",
 			guard: ctx.guards.classifier,
 			schema: { type: "object", properties: { label: { type: "string", enum: labels } }, required: ["label"] },
@@ -30,6 +31,6 @@ export default async function classifyAndAct(args: unknown, ctx: any) {
 		return { outcome: classified, terminatedBy: "completed" };
 	}
 
-	const handler = await ctx.agent(`${handlerSlot.task}\n\nInput:\n${req.input}`, { label: "handle" });
+	const handler = await ctx.agent(`${handlerSlot.task}\n\nInput:\n${req.input}`, { ...handlerSlot, label: "handle" });
 	return { outcome: handler, terminatedBy: "completed" };
 }

@@ -2,7 +2,7 @@ import type { FSWatcher } from "node:fs";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
 import chalk from "chalk";
-import { CONFIG_DIR_NAME } from "../config.ts";
+import { CONFIG_DIR_NAME, getAgentInvocation } from "../config.ts";
 import { loadThemeFromPath, type Theme } from "../modes/interactive/theme/theme.ts";
 import type { ResourceDiagnostic } from "./diagnostics.ts";
 import { loadUserMcpTools } from "./mcp-config-loader.ts";
@@ -42,6 +42,10 @@ import { loadPromptTemplates } from "./prompt-templates.ts";
 import { SettingsManager } from "./settings-manager.ts";
 import type { Skill } from "./skills.ts";
 import { createSourceInfo, type SourceInfo } from "./source-info.ts";
+
+const HcpClientsessionassemblysettings = {
+	"multiagent:multiagent": { resolveWorkerInvocation: getAgentInvocation },
+} as const;
 
 export interface ResourceExtensionPaths {
 	skillPaths?: Array<{ path: string; metadata: PathMetadata }>;
@@ -507,9 +511,18 @@ export class DefaultResourceLoader implements ResourceLoader {
 	getDefaultToolNames(): string[] {
 		const hcp = this.sessionHcp;
 		if (!hcp) return [];
+		// Tool magnets with autoload=false (currently lsp and todo) are registered
+		// during HcpClientprepare, after the initial assembly result captured
+		// defaultToolAddresses. Derive from the live Client as well so every shipped
+		// repository tool is enabled by default without rebuilding the binary.
+		const nonDefaultAddresses = new Set([...this.packageToolAddresses, ...this.userMcpToolAddresses]);
+		const addresses = new Set([
+			...this.defaultToolAddresses,
+			...hcp.addresses().filter((address) => address.startsWith("tool:") && !nonDefaultAddresses.has(address)),
+		]);
 		return [
 			...new Set(
-				this.defaultToolAddresses
+				[...addresses]
 					.map((address) => hcp.resolveInstance<AgentTool>(address)?.name)
 					.filter((name): name is string => name !== undefined),
 			),
@@ -1100,6 +1113,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 			const sessionAssembly = await HcpClientbuildsession({
 				repoRoot: this.cwd,
 				components: packageInput.components,
+				settings: HcpClientsessionassemblysettings,
 			});
 			candidateHcp = sessionAssembly.hcp;
 			packageDiagnostics.push(...packageInput.toolDiagnostics.map(packageDiagnosticToResourceDiagnostic));
@@ -1146,6 +1160,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 			}
 			const fallback = await HcpClientbuildsession({
 				repoRoot: this.cwd,
+				settings: HcpClientsessionassemblysettings,
 			});
 			packageDiagnostics.push(...fallback.diagnostics.map(packageDiagnosticToResourceDiagnostic));
 			return {

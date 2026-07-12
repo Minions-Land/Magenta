@@ -68,3 +68,47 @@ describe("worker isolation guard", () => {
 		expect(result.durationMs).toBe(0);
 	});
 });
+
+describe("worker host invocation", () => {
+	const original = process.env.PI_MAORCH_DEPTH;
+	const originalPath = process.env.PATH;
+	afterEach(() => {
+		if (original === undefined) delete process.env.PI_MAORCH_DEPTH;
+		else process.env.PI_MAORCH_DEPTH = original;
+		if (originalPath === undefined) delete process.env.PATH;
+		else process.env.PATH = originalPath;
+	});
+
+	it("uses the host resolver without PATH pi and preserves package arguments", async () => {
+		delete process.env.PI_MAORCH_DEPTH;
+		process.env.PATH = "";
+		let requestedArgs: string[] = [];
+		const fixture = [
+			"const event = {",
+			'type: "message_end",',
+			'message: { role: "assistant", content: [{ type: "text", text: "worker-ok" }] },',
+			"};",
+			'process.stdout.write(JSON.stringify(event) + "\\n");',
+		].join("\n");
+
+		const result = await spawnWorker(
+			{
+				workerId: "package-worker",
+				prompt: "use the package",
+				packages: [" ClaudeScience ", "", "paper-analysis:review"],
+				timeoutMs: 5_000,
+			},
+			undefined,
+			(args) => {
+				requestedArgs = [...args];
+				return { command: process.execPath, args: ["-e", fixture] };
+			},
+		);
+
+		expect(result).toMatchObject({ success: true, text: "worker-ok" });
+		expect(requestedArgs).toEqual(
+			expect.arrayContaining(["--harness-package", "ClaudeScience", "paper-analysis:review"]),
+		);
+		expect(requestedArgs.filter((arg) => arg === "--harness-package")).toHaveLength(2);
+	});
+});

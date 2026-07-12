@@ -21,7 +21,14 @@ import type {
 	WorkflowModule,
 } from "../../HcpServer.ts";
 import { aggregateWorkerUsage } from "../../HcpServer.ts";
-import { parallel, parallelAgents, pipeline, type SpawnWorkerOptions, spawnWorker } from "./worker.ts";
+import {
+	parallel,
+	parallelAgents,
+	pipeline,
+	type SpawnWorkerOptions,
+	spawnWorker,
+	type WorkerInvocationResolver,
+} from "./worker.ts";
 
 /**
  * The two primitives every pattern needs to run workers. Abstracted so the
@@ -33,7 +40,12 @@ export type WorkerRunner = {
 	parallel(specs: SpawnWorkerOptions[], maxConcurrent: number, signal?: AbortSignal): Promise<WorkerResult[]>;
 };
 
-const defaultRunner: WorkerRunner = { spawn: spawnWorker, parallel };
+function createDefaultRunner(resolveInvocation?: WorkerInvocationResolver): WorkerRunner {
+	return {
+		spawn: (options, signal) => spawnWorker(options, signal, resolveInvocation),
+		parallel: (specs, maxConcurrent, signal) => parallel(specs, maxConcurrent, signal, resolveInvocation),
+	};
+}
 
 const DEFAULT_MAX_CONCURRENT = 8;
 export const TARGET = "multiagent://local";
@@ -139,6 +151,7 @@ function buildWorkflowContext(
 	workflowId: string,
 	cwd: string,
 	spawned: WorkerResult[],
+	defaults: Pick<CommonOptions, "model" | "tools" | "packages">,
 	signal?: AbortSignal,
 ): WorkflowContext {
 	const stateDir = workflowStateDir(cwd, workflowId);
@@ -164,10 +177,11 @@ function buildWorkflowContext(
 				workerId: label,
 				prompt,
 				systemPrompt,
-				model: options?.model,
+				model: options?.model ?? defaults.model,
 				provider: options?.provider,
 				thinking: options?.thinking,
-				tools: options?.tools,
+				tools: options?.tools ?? defaults.tools,
+				packages: options?.packages ?? defaults.packages,
 				schema: options?.schema,
 				cwd,
 				timeoutMs: options?.timeoutSeconds !== undefined ? options.timeoutSeconds * 1000 : undefined,
@@ -218,11 +232,12 @@ async function runWorkflowModule(
 	args: unknown,
 	runner: WorkerRunner,
 	cwd: string,
+	defaults: Pick<CommonOptions, "model" | "tools" | "packages">,
 	signal?: AbortSignal,
 ): Promise<{ workflowId: string; spawned: WorkerResult[]; returned: unknown; success: boolean; error?: string }> {
 	const workflowId = nextWorkflowId();
 	const spawned: WorkerResult[] = [];
-	const context = buildWorkflowContext(runner, workflowId, cwd, spawned, signal);
+	const context = buildWorkflowContext(runner, workflowId, cwd, spawned, defaults, signal);
 	const stateDir = workflowStateDir(cwd, workflowId);
 
 	try {
@@ -346,10 +361,12 @@ export class MultiAgentOrchestrator {
 	private readonly defaultCwd: string;
 	private readonly runner: WorkerRunner;
 
-	constructor(options: { cwd?: string; runner?: WorkerRunner } = {}) {
+	constructor(
+		options: { cwd?: string; runner?: WorkerRunner; resolveWorkerInvocation?: WorkerInvocationResolver } = {},
+	) {
 		this.defaultCwd = options.cwd ?? process.cwd();
 		// Injectable so deterministic skeletons can be tested without spawning pi.
-		this.runner = options.runner ?? defaultRunner;
+		this.runner = options.runner ?? createDefaultRunner(options.resolveWorkerInvocation);
 	}
 
 	discover(): MultiAgentDiscoverResult {
@@ -363,7 +380,7 @@ export class MultiAgentOrchestrator {
 		const scriptPath = resolveScriptPath(req);
 		const args = req.pattern === "script" ? (req as ScriptWorkflowRequest).args : req;
 		const cwd = (req as CommonOptions).cwd ?? this.defaultCwd;
-		const result = await runWorkflowModule(scriptPath, args, this.runner, cwd, signal);
+		const result = await runWorkflowModule(scriptPath, args, this.runner, cwd, req, signal);
 		return assembleResult(req.pattern, result);
 	}
 }

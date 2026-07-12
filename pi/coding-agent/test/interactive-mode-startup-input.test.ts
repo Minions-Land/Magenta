@@ -25,6 +25,7 @@ type SubmitContext = {
 	pendingUserInputs: string[];
 	showFloatingMenu: (...args: unknown[]) => unknown;
 	showMcpManager: () => void;
+	mcpMenuView: () => { items: FloatingMenuItem[]; description: string };
 };
 
 type InputContext = {
@@ -35,7 +36,9 @@ type InputContext = {
 type InteractiveModePrivate = {
 	setupEditorSubmitHandler(this: SubmitContext): void;
 	getUserInput(this: InputContext): Promise<string>;
+	mcpMenuView(this: SubmitContext): { items: FloatingMenuItem[]; description: string };
 	showMcpManager(this: SubmitContext): void;
+	mcpDockParentItem(this: SubmitContext): FloatingMenuItem;
 	applyCommandDockFilter(this: { commandDockBody?: FloatingMenuBody }, filter: string): void;
 	skillDockParentItem(this: {
 		settingsManager: { getEnableSkillCommands: () => boolean };
@@ -56,7 +59,7 @@ type InteractiveModePrivate = {
 const interactiveModePrototype = InteractiveMode.prototype as unknown as InteractiveModePrivate;
 
 function createSubmitContext(): SubmitContext {
-	return {
+	const context: SubmitContext = {
 		defaultEditor: {
 			transformImageTokenInput: (text) => text,
 		},
@@ -77,7 +80,10 @@ function createSubmitContext(): SubmitContext {
 		pendingUserInputs: [],
 		showFloatingMenu: vi.fn(),
 		showMcpManager: vi.fn(),
+		mcpMenuView: () => ({ items: [], description: "" }),
 	};
+	context.mcpMenuView = () => interactiveModePrototype.mcpMenuView.call(context);
+	return context;
 }
 
 describe("InteractiveMode startup input", () => {
@@ -127,6 +133,41 @@ describe("InteractiveMode startup input", () => {
 		expect(vi.mocked(context.showFloatingMenu).mock.calls[0]?.[2]).toEqual([
 			expect.objectContaining({ label: "managed", description: "2 tools loaded" }),
 			expect.objectContaining({ label: "second", description: "1 tool loaded" }),
+		]);
+	});
+
+	it("shows loaded MCP servers in the command dock submenu", () => {
+		const context = createSubmitContext();
+		context.session.resourceLoader.getUserMcpTools = vi.fn(() => ({
+			tools: [
+				{ name: "alpha", provenance: { kind: "mcp", server: "remote" } },
+				{ name: "beta", provenance: { kind: "mcp", server: "remote" } },
+			],
+			diagnostics: [],
+		}));
+
+		const item = interactiveModePrototype.mcpDockParentItem.call(context);
+
+		expect(item).toMatchObject({
+			value: "command:mcp",
+			description: "1 server · 2 tools loaded",
+			children: [expect.objectContaining({ label: "remote", description: "2 tools loaded" })],
+		});
+	});
+
+	it("does not claim MCP is unconfigured when configured servers failed to load", () => {
+		const context = createSubmitContext();
+		context.session.resourceLoader.getUserMcpTools = vi.fn(() => ({
+			tools: [],
+			diagnostics: [{ type: "error" as const, message: "connection failed" }],
+		}));
+
+		const item = interactiveModePrototype.mcpDockParentItem.call(context);
+
+		expect(item.description).toBe("No tools loaded · 1 diagnostic");
+		expect(item.children).toEqual([
+			expect.objectContaining({ label: "No MCP tools loaded", description: expect.stringContaining("diagnostics") }),
+			expect.objectContaining({ label: "⚠ error", description: "connection failed" }),
 		]);
 	});
 

@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { getModel } from "@earendil-works/pi-ai/compat";
 import { MessageStore } from "@magenta/harness";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -232,6 +233,53 @@ describe("AgentSession peer messaging", () => {
 		}
 	});
 
+	it("requeues only the priority group whose injection fails", async () => {
+		const session = await makeSession();
+		try {
+			const peerStore = new MessageStore(join(agentDir, "messages.db"));
+			try {
+				peerStore.send("urgent-peer", session.sessionId, "retry urgent", "urgent");
+				peerStore.send("normal-peer", session.sessionId, "deliver normal", "normal");
+			} finally {
+				peerStore.close();
+			}
+
+			const sendSpy = vi
+				.spyOn(session, "sendCustomMessage")
+				.mockRejectedValueOnce(new Error("steer failed"))
+				.mockResolvedValueOnce(undefined);
+			await (session as any)._injectPeerMessages();
+
+			expect(sendSpy).toHaveBeenCalledTimes(2);
+			const retried = (session as any)._peerMessages.drainForInjection();
+			expect(retried.map((message: { content: string }) => message.content)).toEqual(["retry urgent"]);
+		} finally {
+			await session.dispose();
+		}
+	});
+
+	it("requeues pending peer messages when the live queue is cleared", async () => {
+		const session = await makeSession();
+		try {
+			vi.spyOn(session, "isStreaming", "get").mockReturnValue(true);
+			const peerStore = new MessageStore(join(agentDir, "messages.db"));
+			try {
+				peerStore.send("peer", session.sessionId, "restore after dequeue", "urgent");
+			} finally {
+				peerStore.close();
+			}
+
+			await (session as any)._injectPeerMessages();
+			expect((session as any)._peerMessages.drainForInjection()).toHaveLength(0);
+
+			session.clearQueue();
+			const retried = (session as any)._peerMessages.drainForInjection();
+			expect(retried.map((message: { content: string }) => message.content)).toEqual(["restore after dequeue"]);
+		} finally {
+			await session.dispose();
+		}
+	});
+
 	// Fallback: with no host claiming the turn-runner (headless / sub-agent), an
 	// idle wake must NOT emit external_activation — it self-runs instead.
 	it("does not emit external_activation when no host claims the turn-runner", async () => {
@@ -262,6 +310,89 @@ describe("AgentSession peer messaging", () => {
 			expect(activations).toHaveLength(0);
 
 			unsub();
+		} finally {
+			await session.dispose();
+		}
+	});
+
+	it("keeps urgent and normal on separate tracks for a headless idle wake", async () => {
+		const session = await makeSession();
+		try {
+			const followUpSpy = vi.spyOn(session.agent, "followUp");
+			const triggerSpy = vi.spyOn(session, "sendCustomMessage").mockResolvedValue(undefined);
+			const peerStore = new MessageStore(join(agentDir, "messages.db"));
+			try {
+				peerStore.send("urgent-peer", session.sessionId, "headless urgent", "urgent");
+				peerStore.send("normal-peer", session.sessionId, "headless normal", "normal");
+			} finally {
+				peerStore.close();
+			}
+
+			(session as any)._wakeForPeerMessages();
+			await vi.waitFor(() => expect(triggerSpy).toHaveBeenCalledTimes(1));
+
+			const normalPayload = followUpSpy.mock.calls[0]?.[0] as { content: string };
+			expect(normalPayload.content).toContain("headless normal");
+			expect(normalPayload.content).not.toContain("headless urgent");
+			const triggerPayload = triggerSpy.mock.calls[0]?.[0] as { content: string };
+			expect(triggerPayload.content).toContain("headless urgent");
+			expect(triggerPayload.content).not.toContain("headless normal");
+			expect((session as any)._peerMessages.drainForInjection()).toHaveLength(0);
+		} finally {
+			await session.dispose();
+		}
+	});
+
+	// Magenta feature: on an idle wake, urgent and normal are two separate pending
+	// tracks. The urgent group triggers the turn (host external_activation), while
+	// any queued normal messages are deferred to the follow-up queue so they land
+	// when the woken loop would otherwise end — never merged into the urgent block.
+	it("defers normal messages to follow-up while the urgent group triggers the wake", async () => {
+		const session = await makeSession();
+		try {
+			const release = session.claimExternalTurnRunner();
+			const followUpSpy = vi.spyOn(session.agent, "followUp");
+			const peerStore = new MessageStore(join(agentDir, "messages.db"));
+			try {
+				peerStore.send("urgent-peer", session.sessionId, "interrupt now", "urgent");
+				peerStore.send("normal-peer", session.sessionId, "whenever you finish", "normal");
+			} finally {
+				peerStore.close();
+			}
+
+			(session as any)._wakeForPeerMessages();
+
+			// Normal message went to the follow-up queue, not the trigger payload.
+			expect(followUpSpy).toHaveBeenCalledTimes(1);
+			const followUpArg = followUpSpy.mock.calls[0]?.[0] as { content: string };
+			expect(followUpArg.content).toContain("whenever you finish");
+			expect(followUpArg.content).not.toContain("interrupt now");
+			const normalIds = (followUpArg as { details?: { ids?: string[] } }).details?.ids ?? [];
+			expect(normalIds).toHaveLength(1);
+			const normalId = normalIds[0];
+			if (!normalId) throw new Error("normal peer message did not include a delivery id");
+			const db = new DatabaseSync(join(agentDir, "messages.db"));
+			try {
+				const status = () =>
+					(db.prepare("SELECT status FROM messages WHERE id = ?").get(normalId) as { status: string }).status;
+				expect(status()).toBe("pending");
+				await (session as any)._handleAgentEvent({ type: "message_end", message: followUpArg });
+				expect(status()).toBe("read");
+			} finally {
+				db.close();
+			}
+
+			// The urgent group is the turn trigger, appended to state for the host to run.
+			const messages = session.agent.state.messages;
+			const last = messages[messages.length - 1];
+			expect((last as any).content).toContain("interrupt now");
+			expect((last as any).content).not.toContain("whenever you finish");
+
+			// Both tracks fully drained (nothing left pending/unread).
+			expect((session as any)._peerMessages.drainForInjection()).toHaveLength(0);
+
+			followUpSpy.mockRestore();
+			release();
 		} finally {
 			await session.dispose();
 		}

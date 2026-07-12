@@ -12,6 +12,7 @@ import type { ExtensionContext } from "../src/core/extensions/types.ts";
 import {
 	buildOrchestrationRequest,
 	SubAgentController,
+	type SubAgentEventSnapshot,
 	type SubAgentReturnMessage,
 	type SubAgentSpawn,
 	type SubAgentWorkflowProvider,
@@ -212,6 +213,76 @@ describe("built-in sub_agent tool", () => {
 		// Exactly one delivery — it must not fire again.
 		await new Promise((resolve) => setTimeout(resolve, 50));
 		expect(returned).toHaveLength(1);
+	});
+
+	it("bounds model-visible return output while retaining the full expandable snapshot", async () => {
+		controller.shutdown();
+		const largeOutput = `${"x".repeat(20_000)}TAIL-MARKER`;
+		controller = new SubAgentController(manager, {
+			sendMessage: (message, options) => {
+				returned.push({ message, options: options ?? {} });
+			},
+			spawnAgent: createFakeSpawn(spawnRecords, { output: largeOutput }),
+		});
+		const tool = controller.createToolDefinition();
+		const ctx = createContext(tempDir);
+
+		await tool.execute(
+			"call-start-large",
+			{ action: "start", task: "Return a large result", returnToMain: true },
+			undefined,
+			undefined,
+			ctx,
+		);
+		await waitUntil(() => returned.length === 1);
+
+		const returnedMessage = returned[0]?.message;
+		expect(Buffer.byteLength(returnedMessage?.content ?? "", "utf8")).toBeLessThan(12 * 1024);
+		expect(returnedMessage?.content).toContain("TAIL-MARKER");
+		expect(returnedMessage?.content).toContain("Output shortened");
+		const eventData = (returnedMessage?.details as { eventData?: SubAgentEventSnapshot[] } | undefined)?.eventData;
+		expect(Buffer.byteLength(eventData?.[0]?.tail ?? "", "utf8")).toBeGreaterThan(20_000);
+	});
+
+	it("caps the complete aggregate return including huge tasks and instructions", async () => {
+		controller.shutdown();
+		const largeOutput = `${"o".repeat(20_000)}AGGREGATE-TAIL`;
+		controller = new SubAgentController(manager, {
+			sendMessage: (message, options) => {
+				returned.push({ message, options: options ?? {} });
+			},
+			spawnAgent: createFakeSpawn(spawnRecords, { output: largeOutput }),
+		});
+		const tool = controller.createToolDefinition();
+		const ctx = createContext(tempDir);
+		const tasks = Array.from({ length: 8 }, (_, index) => ({
+			task: `task-${index}-${"t".repeat(20_000)}`,
+			label: `label-${index}-${"l".repeat(10_000)}`,
+		}));
+
+		await tool.execute(
+			"call-start-many-large",
+			{
+				action: "start",
+				tasks,
+				returnToMain: true,
+				returnInstruction: `instruction-${"i".repeat(40_000)}`,
+			},
+			undefined,
+			undefined,
+			ctx,
+		);
+		await waitUntil(() => returned.length === 1);
+
+		const returnedMessage = returned[0]?.message;
+		expect(Buffer.byteLength(returnedMessage?.content ?? "", "utf8")).toBeLessThanOrEqual(32 * 1024);
+		expect(returnedMessage?.content).toContain("Model-visible result shortened");
+		const details = returnedMessage?.details as
+			| { instruction?: string; eventData?: SubAgentEventSnapshot[] }
+			| undefined;
+		expect(Buffer.byteLength(details?.instruction ?? "", "utf8")).toBeLessThanOrEqual(8 * 1024);
+		expect(details?.eventData).toHaveLength(8);
+		expect(details?.eventData?.every((event) => event.tail.includes("AGGREGATE-TAIL"))).toBe(true);
 	});
 
 	it("inherits the parent model when a task has no explicit model", async () => {
@@ -460,9 +531,10 @@ describe("built-in sub_agent tool", () => {
 			"call-package-wf",
 			{
 				action: "start",
+				packages: [" shared-workflow-package "],
 				workflow: {
 					pattern: "fan_out_synthesize",
-					workers: [{ task: "inspect" }],
+					workers: [{ task: "inspect", packages: ["worker-workflow-package"] }],
 					synthesizer: { task: "summarize" },
 				},
 			},
@@ -481,7 +553,12 @@ describe("built-in sub_agent tool", () => {
 		expect(defaultOrchestrate).not.toHaveBeenCalled();
 		expect(packageOrchestrate).toHaveBeenCalledOnce();
 		expect(packageOrchestrate).toHaveBeenCalledWith(
-			expect.objectContaining({ pattern: "fan_out_synthesize", cwd: tempDir }),
+			expect.objectContaining({
+				pattern: "fan_out_synthesize",
+				cwd: tempDir,
+				packages: ["shared-workflow-package"],
+				workers: [expect.objectContaining({ packages: ["worker-workflow-package"] })],
+			}),
 			expect.any(AbortSignal),
 		);
 	});
