@@ -10,6 +10,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "n
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { HcpClientisbunbinaryurl } from "../../../HcpClient.ts";
 
 const PLATFORM = process.platform;
 const ARCH = process.arch;
@@ -17,7 +18,8 @@ const ARCH = process.arch;
 type ToolName = "fd" | "rg";
 
 function getHarnessRoot(): string {
-	const isBunBinary = typeof (globalThis as any).Bun !== "undefined" && import.meta.url.includes("/$bunfs/root/");
+	const isBunBinary =
+		typeof (globalThis as any).Bun !== "undefined" && HcpClientisbunbinaryurl(import.meta.url);
 	return isBunBinary ? dirname(process.execPath) : fileURLToPath(new URL("../../..", import.meta.url));
 }
 

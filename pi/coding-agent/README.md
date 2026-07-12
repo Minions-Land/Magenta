@@ -19,11 +19,19 @@ Magenta supports interactive TUI, one-shot text output, JSON event output, RPC i
 
 ### One-line installation (Recommended)
 
+macOS / Linux:
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Minions-Land/Magenta-CLI/main/install.sh | bash
 ```
 
-This downloads the pre-compiled binary for your platform and sets up all runtime resources.
+Windows PowerShell 5.1 or later:
+
+```powershell
+irm https://github.com/Minions-Land/Magenta-CLI/releases/latest/download/install.ps1 | iex
+```
+
+The installers download the pre-compiled binary and its version-matched runtime resources. Windows installation also runs a startup check before replacing an existing installation.
 
 ### Manual installation
 
