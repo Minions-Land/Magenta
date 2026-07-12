@@ -88,8 +88,8 @@ export interface ResourceLoader {
 	getPackageTools(): { tools: AgentTool[]; diagnostics: ResourceDiagnostic[] };
 	getDefaultToolNames?(): string[];
 	getUserMcpTools(): { tools: AgentTool[]; diagnostics: ResourceDiagnostic[] };
-	getHarnessPackageSelectors?(): string[];
-	setHarnessPackageSelectors?(selectors: string[]): void;
+	HcpClientgetharnesspackageselectors?(): string[];
+	HcpClientsetharnesspackageselectors?(selectors: string[]): void;
 	HcpClientgetharnesspackagesroot?(): string | undefined;
 	getAgentsFiles(): { agentsFiles: Array<{ path: string; content: string }> };
 	getSystemPrompt(): string | undefined;
@@ -536,11 +536,11 @@ export class DefaultResourceLoader implements ResourceLoader {
 		return this.sessionHcp;
 	}
 
-	getHarnessPackageSelectors(): string[] {
+	HcpClientgetharnesspackageselectors(): string[] {
 		return [...this.harnessPackages];
 	}
 
-	setHarnessPackageSelectors(selectors: string[]): void {
+	HcpClientsetharnesspackageselectors(selectors: string[]): void {
 		this.harnessPackages = normalizeHarnessPackageSelectors(selectors);
 	}
 
@@ -1038,11 +1038,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 			const github = HcpClientparsegithubpackageselector(raw);
 			if (!github) {
 				if (raw.startsWith("github:")) {
-					packageDiagnostics.push({
-						type: "error",
-						message: `Invalid GitHub package selector: ${raw}`,
-					});
-					continue;
+					throw new Error(`Invalid GitHub package selector: ${raw}`);
 				}
 				// Local selector: resolve under the packages root as before.
 				selections.push(raw);
@@ -1057,8 +1053,12 @@ export class DefaultResourceLoader implements ResourceLoader {
 				}
 			}
 			if (result.diagnostics.some((diagnostic) => diagnostic.type === "error")) {
-				// Acquisition failed; skip this package rather than loading a broken cache.
-				continue;
+				throw new Error(
+					result.diagnostics
+						.filter((diagnostic) => diagnostic.type === "error")
+						.map((diagnostic) => diagnostic.message)
+						.join("; "),
+				);
 			}
 			selections.push({
 				packageId: github.package,
@@ -1122,6 +1122,12 @@ export class DefaultResourceLoader implements ResourceLoader {
 			const packageResources = [...new Set(packageResourceAddresses)]
 				.map((address) => sessionAssembly.hcp.resolveInstance<HcpMagnetResource>(address))
 				.filter((resource): resource is HcpMagnetResource => resource !== undefined);
+			const packageErrors = packageDiagnostics.filter((diagnostic) => diagnostic.type === "error");
+			if (packageErrors.length > 0) {
+				throw new Error(
+					`Harness Package assembly reported errors: ${packageErrors.map((diagnostic) => diagnostic.message).join("; ")}`,
+				);
+			}
 			candidateHcp = undefined;
 			return {
 				hcp: sessionAssembly.hcp,
@@ -1133,10 +1139,11 @@ export class DefaultResourceLoader implements ResourceLoader {
 			};
 		} catch (error) {
 			await candidateHcp?.dispose();
-			packageDiagnostics.push({
-				type: "error",
-				message: error instanceof Error ? error.message : String(error),
-			});
+			const message = error instanceof Error ? error.message : String(error);
+			packageDiagnostics.push({ type: "error", message });
+			if (this.harnessPackages.length > 0) {
+				throw new Error(`Failed to load selected Harness Package(s): ${message}`, { cause: error });
+			}
 			const fallback = await HcpClientbuildsession({
 				repoRoot: this.cwd,
 			});

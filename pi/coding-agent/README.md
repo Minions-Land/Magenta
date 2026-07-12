@@ -248,12 +248,14 @@ The loader does not scan sibling directories and does not require a
 `github:owner/repo/Package@version`, Magenta downloads the current platform's
 release archive and checksum, validates both the archive and schema-v2
 manifest, and caches the verified package before passing its root into the same
-loader.
+loader. `/harness package` also discovers official releases; selecting
+**Download & load** performs this acquisition automatically and keeps the
+verified cache when the Package is later unloaded.
 
 ```bash
 magenta --harness-list
 magenta --harness-packages-root /verified/cache/root --harness-package ExamplePackage
-magenta --harness-package github:Minions-Land/MagentaPackages/AutOmicScience@1.0.0
+magenta --harness-package github:Minions-Land/Magenta-CLI/ClaudeScience@0.1.0
 ```
 
 See [docs/packages.md](docs/packages.md) for extension packages. Harness package architecture is documented with `@magenta/harness`.

@@ -1,0 +1,176 @@
+name: Promote Harness Package Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      package:
+        description: Package id from the private MagentaPackages Release
+        required: true
+        type: string
+      version:
+        description: Strict semantic version without a leading v
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  promote:
+    name: Verify and promote Package artifacts
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    env:
+      PACKAGE: ${{ inputs.package }}
+      VERSION: ${{ inputs.version }}
+      SOURCE_REPO: Minions-Land/MagentaPackages
+      TARGET_REPO: Minions-Land/Magenta-CLI
+
+    steps:
+      - name: Checkout trusted promotion verifier
+        uses: actions/checkout@v4
+        with:
+          ref: refs/heads/main
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.19.0"
+
+      - name: Install verifier dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Validate release identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module -e '
+            import { HcpClientassertreleaseidentity } from "./scripts/verify-package-release-assets.mjs";
+            HcpClientassertreleaseidentity(process.env.PACKAGE, process.env.VERSION);
+          '
+
+      - name: Verify cross-repository token access
+        shell: bash
+        env:
+          # Must have Contents:read on the private source repo and
+          # Contents:write on the public distribution repo.
+          GH_TOKEN: ${{ secrets.MAGENTA_CLI_RELEASE_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh api "repos/${SOURCE_REPO}" --silent || {
+            echo "::error::MAGENTA_CLI_RELEASE_TOKEN needs Contents:read on ${SOURCE_REPO}"
+            exit 1
+          }
+          gh api "repos/${TARGET_REPO}" --silent || {
+            echo "::error::MAGENTA_CLI_RELEASE_TOKEN needs Contents:write on ${TARGET_REPO}"
+            exit 1
+          }
+
+      - name: Download the private source Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.MAGENTA_CLI_RELEASE_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${PACKAGE}-v${VERSION}"
+          mkdir source-assets
+          gh release download "$tag" \
+            --repo "$SOURCE_REPO" \
+            --dir source-assets
+
+      - name: Verify the private source Release
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/verify-package-release-assets.mjs \
+            --package "$PACKAGE" \
+            --version "$VERSION" \
+            --assets-dir source-assets > source-verification.json
+
+      - name: Record the current CLI latest Release
+        id: latest
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.MAGENTA_CLI_RELEASE_TOKEN }}
+        run: |
+          set -euo pipefail
+          echo "tag=$(gh api "repos/${TARGET_REPO}/releases/latest" --jq .tag_name)" >> "$GITHUB_OUTPUT"
+
+      - name: Promote or download the public Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.MAGENTA_CLI_RELEASE_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${PACKAGE}-v${VERSION}"
+
+          if release_json="$(gh api "repos/${TARGET_REPO}/releases/tags/${tag}" 2>/dev/null)"; then
+            jq -e \
+              --arg tag "$tag" \
+              --arg name "${PACKAGE} v${VERSION}" \
+              '.tag_name == $tag and .name == $name and .draft == false and .prerelease == false' \
+              <<< "$release_json" >/dev/null || {
+                echo "::error::Existing public Release metadata does not match $tag"
+                exit 1
+              }
+            echo "Public Release already exists; verifying it without overwriting assets."
+          else
+            if gh api "repos/${TARGET_REPO}/git/ref/tags/${tag}" --silent 2>/dev/null; then
+              echo "::error::Target tag $tag exists without a matching public Release"
+              exit 1
+            fi
+            gh release create "$tag" source-assets/* \
+              --repo "$TARGET_REPO" \
+              --target main \
+              --title "${PACKAGE} v${VERSION}" \
+              --latest=false \
+              --notes "Official ${PACKAGE} Harness Package release. Magenta downloads the matching platform archive, verifies its SHA-256 file, and installs it under ~/.magenta/harness-packages before HCP assembly."
+          fi
+
+          tag_object="$(gh api "repos/${TARGET_REPO}/git/ref/tags/${tag}")"
+          tag_type="$(jq -r '.object.type' <<< "$tag_object")"
+          tag_sha="$(jq -r '.object.sha' <<< "$tag_object")"
+          if [ "$tag_type" = "tag" ]; then
+            tag_sha="$(gh api "repos/${TARGET_REPO}/git/tags/${tag_sha}" --jq .object.sha)"
+          elif [ "$tag_type" != "commit" ]; then
+            echo "::error::Target tag $tag points to unsupported object type $tag_type"
+            exit 1
+          fi
+          comparison="$(gh api "repos/${TARGET_REPO}/compare/${tag_sha}...main" --jq .status)"
+          if [ "$comparison" != "ahead" ] && [ "$comparison" != "identical" ]; then
+            echo "::error::Target tag $tag is not on the ${TARGET_REPO} main history"
+            exit 1
+          fi
+
+          mkdir public-assets
+          gh release download "$tag" \
+            --repo "$TARGET_REPO" \
+            --dir public-assets
+
+      - name: Verify the public Release matches the private source
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/verify-package-release-assets.mjs \
+            --package "$PACKAGE" \
+            --version "$VERSION" \
+            --assets-dir public-assets > public-verification.json
+          cmp source-verification.json public-verification.json
+
+      - name: Verify Package promotion did not replace CLI latest
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.MAGENTA_CLI_RELEASE_TOKEN }}
+          LATEST_BEFORE: ${{ steps.latest.outputs.tag }}
+        run: |
+          set -euo pipefail
+          latest_after="$(gh api "repos/${TARGET_REPO}/releases/latest" --jq .tag_name)"
+          if [ "$latest_after" != "$LATEST_BEFORE" ]; then
+            echo "::error::Package promotion changed CLI latest from $LATEST_BEFORE to $latest_after"
+            exit 1
+          fi
+
+      - name: Promotion complete
+        run: |
+          echo "Verified public Package Release:"
+          echo "https://github.com/${TARGET_REPO}/releases/tag/${PACKAGE}-v${VERSION}"

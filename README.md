@@ -214,8 +214,18 @@ version, and platform:
 
 ```bash
 magenta --harness-package \
-  github:Minions-Land/MagentaPackages/AutOmicScience@1.0.0
+  github:Minions-Land/Magenta-CLI/ClaudeScience@0.1.0
 ```
+
+In the TUI, `/harness package` discovers verified releases from the public
+distribution repository. Choosing **Download & load** pins the exact release
+selector, downloads it into `~/.magenta/harness-packages`, and reloads the
+current HCP session. A failed download or validation restores the previous
+Package selection.
+
+ClaudeScience is skill-only, so its platform `.tar.gz` is the Release payload,
+not a standalone executable. Packages that declare native Tools may embed a
+platform executable inside the same verified archive.
 
 For local development, an external package root can still be supplied
 explicitly:

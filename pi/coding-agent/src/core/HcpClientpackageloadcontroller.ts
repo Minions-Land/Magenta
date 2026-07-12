@@ -8,15 +8,14 @@ import type { BackgroundEventManager, MonitoredEvent } from "./background-events
  * may spawn MCP servers (or, for process tools, trigger a cargo build) — a
  * multi-hundred-millisecond-to-multi-second step that was previously silent.
  *
- * The controller owns one event ("assembly") that runs for the duration of a
- * reload's assembly phase. It is driven purely by the {@link HcpClientpackageassemblyprogress}
- * callback threaded into `assemblePackageSources`: each component start
- * advances the progress fraction (index/total) and updates the label to name the
- * component currently being built.
+ * One event is retained for the activity gallery, while `active` identifies
+ * whether the current reload actually emitted Package assembly progress. This
+ * prevents an unrelated reload failure from rewriting an older Package event.
  */
-export class PackageLoadController {
+export class HcpClientpackageloadcontroller {
 	private readonly monitor: { update: () => void };
 	private event: MonitoredEvent | undefined;
+	private active = false;
 
 	constructor(manager: BackgroundEventManager) {
 		this.monitor = manager.registerSource({
@@ -26,11 +25,9 @@ export class PackageLoadController {
 		});
 	}
 
-	/**
-	 * Begin a fresh assembly event. Any prior event is replaced so the overlay
-	 * only ever shows the current reload.
-	 */
+	/** Begin a fresh assembly event, replacing any event from an earlier reload. */
 	begin(total: number): void {
+		this.active = true;
 		this.event = {
 			id: "assembly",
 			status: "running",
@@ -42,12 +39,11 @@ export class PackageLoadController {
 	}
 
 	/**
-	 * The callback handed to `assemblePackageSources`. `start` moves the bar
-	 * to the fraction of components already finished and names the one now being
-	 * built; `assembled` advances the fraction to include it.
+	 * The callback handed to Package assembly. The first callback of every reload
+	 * starts a new event, including after an earlier event has completed or failed.
 	 */
 	readonly onProgress = (progress: HcpClientpackageassemblyprogress): void => {
-		if (!this.event) this.begin(progress.total);
+		if (!this.active) this.begin(progress.total);
 		const event = this.event;
 		if (!event) return;
 		const total = progress.total || 1;
@@ -59,12 +55,24 @@ export class PackageLoadController {
 		this.monitor.update();
 	};
 
-	/** Mark the assembly event finished. Called once the reload's assembly returns. */
+	/** Mark this reload's Package assembly event finished, if it emitted one. */
 	finish(): void {
-		if (!this.event) return;
+		if (!this.active || !this.event) return;
 		this.event.status = "exited";
 		this.event.endedAt = Date.now();
 		this.event.progress = { value: 1, source: "output" };
+		this.active = false;
+		this.monitor.update();
+	}
+
+	/** Mark this reload's Package assembly event failed, if it emitted one. */
+	fail(error?: unknown): void {
+		if (!this.active || !this.event) return;
+		this.event.status = "failed";
+		this.event.endedAt = Date.now();
+		const message = error instanceof Error ? error.message : error === undefined ? undefined : String(error);
+		this.event.label = message ? `Package load failed: ${message}` : "Package load failed";
+		this.active = false;
 		this.monitor.update();
 	}
 }

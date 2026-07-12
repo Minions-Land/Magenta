@@ -111,7 +111,11 @@ import { extensionForImageMimeType, readClipboardImage } from "../../utils/clipb
 import { parseGitUrl } from "../../utils/git.ts";
 import type { UpdateCheckResult } from "../../utils/github-release-update.ts";
 import { type checkForMagentaUpdate, recompileMagenta, runMagentaUpdate } from "../../utils/magenta-update.ts";
-import { HcpClientparsegithubpackageselector } from "../../utils/package-acquisition.ts";
+import {
+	HcpClientdiscoverofficialpackages,
+	type HcpClientpackagecatalogresult,
+	HcpClientparsegithubpackageselector,
+} from "../../utils/package-acquisition.ts";
 import { getCwdRelativePath } from "../../utils/paths.ts";
 import { getPiUserAgent } from "../../utils/pi-user-agent.ts";
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
@@ -185,12 +189,12 @@ interface Expandable {
 	setExpanded(expanded: boolean): void;
 }
 
-interface HarnessPackagesView {
+type HcpClientpackagesview = {
 	packagesRoot?: string;
 	packages: HcpClientharnesspackage[];
 	diagnostics: HcpClientpackagediagnostic[];
 	error?: string;
-}
+};
 
 function isExpandable(obj: unknown): obj is Expandable {
 	return typeof obj === "object" && obj !== null && "setExpanded" in obj && typeof obj.setExpanded === "function";
@@ -271,7 +275,7 @@ function decodeMenuValuePart(value: string | undefined): string {
 	}
 }
 
-function packageIdFromSelector(selector: string): string {
+function HcpClientpackageidfromselector(selector: string): string {
 	const github = HcpClientparsegithubpackageselector(selector);
 	if (github) return github.package;
 	return HcpClientparsepackageselector(selector).packageId;
@@ -398,7 +402,8 @@ export class InteractiveMode {
 
 	// Serializes harness package selection changes so overlapping toggles cannot
 	// start concurrent reloads (each change awaits the previous one).
-	private harnessPackageMutation: Promise<void> = Promise.resolve();
+	private HcpClientpackagemutation: Promise<void> = Promise.resolve();
+	private HcpClientpackagecatalogcache: { expiresAt: number; result: HcpClientpackagecatalogresult } | undefined;
 
 	// Status line tracking (for mutating immediately-sequential status updates)
 	private lastStatusSpacer: Spacer | undefined = undefined;
@@ -4535,7 +4540,7 @@ export class InteractiveMode {
 		return buildHarnessComponentsView(this.session.resourceLoader.HcpClientgetsession?.());
 	}
 
-	private async loadHarnessPackagesView(): Promise<HarnessPackagesView> {
+	private async HcpClientloadpackagesview(): Promise<HcpClientpackagesview> {
 		try {
 			const result = await HcpClientdiscoverharnesspackages({
 				repoRoot: this.sessionManager.getCwd(),
@@ -4553,6 +4558,21 @@ export class InteractiveMode {
 				error: error instanceof Error ? error.message : String(error),
 			};
 		}
+	}
+
+	private async HcpClientloadpackagecatalogview(): Promise<HcpClientpackagecatalogresult> {
+		const now = Date.now();
+		if (this.HcpClientpackagecatalogcache && this.HcpClientpackagecatalogcache.expiresAt > now) {
+			return this.HcpClientpackagecatalogcache.result;
+		}
+		const result = await HcpClientdiscoverofficialpackages();
+		const successful =
+			result.packages.length > 0 && !result.diagnostics.some((diagnostic) => diagnostic.type === "warning");
+		this.HcpClientpackagecatalogcache = {
+			expiresAt: now + (successful ? 5 * 60_000 : 30_000),
+			result,
+		};
+		return result;
 	}
 
 	private getHarnessModule(snapshot: HarnessRuntimeSnapshot, id: string) {
@@ -4577,10 +4597,10 @@ export class InteractiveMode {
 		return toolSource === implementationSource;
 	}
 
-	private getHarnessPackageSelectors(): string[] {
+	private HcpClientgetharnesspackageselectors(): string[] {
 		const loader = this.session.resourceLoader;
-		if (loader.getHarnessPackageSelectors) {
-			return loader.getHarnessPackageSelectors();
+		if (loader.HcpClientgetharnesspackageselectors) {
+			return loader.HcpClientgetharnesspackageselectors();
 		}
 		// Fallback for loaders without the accessor: reconstruct one selector per
 		// profile (id, id:profile, id:*) so the forms match what the menu emits and
@@ -4607,7 +4627,7 @@ export class InteractiveMode {
 			loadedSkills: this.session.resourceLoader.getSkills().skills.length,
 			loadedExtensions: this.session.extensionRunner.getExtensionPaths().length,
 			tools: buildHarnessToolSwitches(this.session.getAllTools(), this.session.getActiveToolNames()),
-			harnessPackages: this.getHarnessPackageSelectors(),
+			harnessPackages: this.HcpClientgetharnesspackageselectors(),
 			packageToolCount: packageTools.tools.length,
 			packageDiagnosticCount: packageTools.diagnostics.length,
 			activeHookEvents: this.getHarnessActiveHookEvents(),
@@ -4683,30 +4703,35 @@ export class InteractiveMode {
 		return true;
 	}
 
-	private async setHarnessPackageSelectors(selectors: string[]): Promise<void> {
-		await this.enqueueHarnessPackageMutation(() => selectors);
+	private async HcpClientsetharnesspackageselectors(selectors: string[]): Promise<void> {
+		await this.HcpClientenqueuepackagemutation(() => selectors);
 	}
 
-	private async toggleHarnessPackageSelector(selector: string): Promise<void> {
-		await this.enqueueHarnessPackageMutation((current) =>
+	private async HcpClienttogglepackageselector(selector: string): Promise<void> {
+		await this.HcpClientenqueuepackagemutation((current) =>
 			current.includes(selector) ? current.filter((candidate) => candidate !== selector) : [...current, selector],
 		);
 	}
 
-	private async setHarnessPackageSelectorEnabled(selector: string, enabled: boolean): Promise<void> {
-		await this.enqueueHarnessPackageMutation((current) => {
-			const next = current.filter((candidate) => candidate !== selector);
+	private async HcpClientsetpackageselectorenabled(selector: string, enabled: boolean): Promise<void> {
+		await this.HcpClientenqueuepackagemutation((current) => {
+			const requestedGitHub = HcpClientparsegithubpackageselector(selector);
+			const next = current.filter((candidate) => {
+				if (candidate === selector) return false;
+				const activeGitHub = HcpClientparsegithubpackageselector(candidate);
+				return !(enabled && requestedGitHub && activeGitHub?.package === requestedGitHub.package);
+			});
 			if (enabled) next.push(selector);
 			return next;
 		});
 	}
 
-	private async clearHarnessPackageSelectors(packageId: string): Promise<void> {
-		await this.enqueueHarnessPackageMutation((current) =>
+	private async HcpClientclearpackageselectors(packageId: string): Promise<void> {
+		await this.HcpClientenqueuepackagemutation((current) =>
 			current.filter(
 				(candidate) =>
 					HcpClientparsegithubpackageselector(candidate) !== undefined ||
-					packageIdFromSelector(candidate) !== packageId,
+					HcpClientpackageidfromselector(candidate) !== packageId,
 			),
 		);
 	}
@@ -4714,32 +4739,42 @@ export class InteractiveMode {
 	// Serializes package selection changes: each mutation awaits the previous one
 	// and computes its next selectors from the state left by that mutation, so
 	// overlapping toggles cannot start concurrent reloads or clobber each other.
-	private enqueueHarnessPackageMutation(compute: (current: string[]) => string[]): Promise<void> {
-		const run = this.harnessPackageMutation.then(() => this.applyHarnessPackageSelectors(compute));
-		this.harnessPackageMutation = run.catch(() => undefined);
+	private HcpClientenqueuepackagemutation(compute: (current: string[]) => string[]): Promise<void> {
+		const run = this.HcpClientpackagemutation.then(() => this.HcpClientapplypackageselectors(compute));
+		this.HcpClientpackagemutation = run.catch(() => undefined);
 		return run;
 	}
 
-	private async applyHarnessPackageSelectors(compute: (current: string[]) => string[]): Promise<void> {
+	private async HcpClientapplypackageselectors(compute: (current: string[]) => string[]): Promise<void> {
 		const loader = this.session.resourceLoader;
-		if (!loader.setHarnessPackageSelectors) {
+		if (!loader.HcpClientsetharnesspackageselectors) {
 			this.showWarning("Current resource loader does not support runtime harness package selection.");
 			return;
 		}
 		if (!this.canReloadRuntime()) return;
 
-		const previousSelectors = this.getHarnessPackageSelectors();
+		const previousSelectors = this.HcpClientgetharnesspackageselectors();
 		const previousOverlay = loader.getPackageOverlay();
 		const requestedSelectors = compute(previousSelectors);
-		loader.setHarnessPackageSelectors(requestedSelectors);
-		const reloaded = await this.handleReloadCommand();
+		loader.HcpClientsetharnesspackageselectors(requestedSelectors);
+		const newlySelectedGitHubPackages = requestedSelectors.filter(
+			(selector) => !previousSelectors.includes(selector) && HcpClientparsegithubpackageselector(selector),
+		);
+		const reloaded = await this.handleReloadCommand(
+			newlySelectedGitHubPackages.length > 0
+				? `Downloading and loading ${newlySelectedGitHubPackages.map(HcpClientpackageidfromselector).join(", ")}...`
+				: undefined,
+			{ HcpClienttrackpackageload: true },
+		);
 		if (!reloaded) {
 			// The reload failed after loadHarnessPackageResources already rebuilt the
 			// overlay/tools for the new selection. Restoring the selector array alone
 			// would leave runtime state on the failed selection, so reload again with
 			// the previous selectors to bring loaded state back in sync.
-			loader.setHarnessPackageSelectors(previousSelectors);
-			const restored = await this.handleReloadCommand();
+			loader.HcpClientsetharnesspackageselectors(previousSelectors);
+			const restored = await this.handleReloadCommand("Restoring the previous Harness Package selection...", {
+				HcpClientpreservepackageloadevent: true,
+			});
 			if (!restored) {
 				this.showError(
 					"Harness package reload failed and the previous selection could not be restored; " +
@@ -4748,17 +4783,43 @@ export class InteractiveMode {
 			}
 			return;
 		}
-		const nextSelectors = this.getHarnessPackageSelectors();
+		const nextSelectors = this.HcpClientgetharnesspackageselectors();
 		const nextOverlay = loader.getPackageOverlay();
 		const packageTools = loader.getPackageTools();
+		const packageErrors = packageTools.diagnostics
+			.filter((diagnostic) => diagnostic.type === "error")
+			.map((diagnostic) => diagnostic.message);
+		const loadedPackageIds = new Set(nextOverlay?.packages.map((pkg) => pkg.id) ?? []);
+		if (nextOverlay?.packageId) loadedPackageIds.add(nextOverlay.packageId);
+		const missingSelectors = requestedSelectors.filter(
+			(selector) => !loadedPackageIds.has(HcpClientpackageidfromselector(selector)),
+		);
+		if (missingSelectors.length > 0 || packageErrors.length > 0) {
+			loader.HcpClientsetharnesspackageselectors(previousSelectors);
+			const restored = await this.handleReloadCommand("Restoring the previous Harness Package selection...", {
+				HcpClientpreservepackageloadevent: true,
+			});
+			this.showError(
+				[
+					missingSelectors.length > 0
+						? `Harness Package load failed: ${missingSelectors.join(", ")}`
+						: "Harness Package load reported errors.",
+					...packageErrors.map((message) => `- ${message}`),
+					...(restored
+						? ["The previous Harness Package selection was restored."]
+						: ["The previous Harness Package selection could not be restored; retry /refresh."]),
+				].join("\n"),
+			);
+			return;
+		}
 		const bundleDiagnostics = packageTools.diagnostics.filter((diagnostic) => /\bbundle\b/i.test(diagnostic.message));
 		this.showSystemMessage(
 			[
 				"Harness package selection changed.",
 				"Before:",
-				this.formatHarnessPackageSelection(previousSelectors, previousOverlay),
+				this.HcpClientformatpackageselection(previousSelectors, previousOverlay),
 				"After:",
-				this.formatHarnessPackageSelection(nextSelectors, nextOverlay),
+				this.HcpClientformatpackageselection(nextSelectors, nextOverlay),
 				`Package tools: ${packageTools.tools.length ? packageTools.tools.map((tool) => tool.name).join(", ") : "none"}`,
 				`Diagnostics: ${packageTools.diagnostics.length}`,
 				...(bundleDiagnostics.length
@@ -4769,7 +4830,7 @@ export class InteractiveMode {
 		);
 	}
 
-	private formatHarnessPackageSelection(selectors: string[], overlay: HcpClientpackageoverlay | undefined): string {
+	private HcpClientformatpackageselection(selectors: string[], overlay: HcpClientpackageoverlay | undefined): string {
 		if (selectors.length === 0) return "- none";
 		// Keep every successfully loaded package visible. The primary fields exist
 		// for compatibility, while `packages` is the complete multi-package view.
@@ -4779,7 +4840,7 @@ export class InteractiveMode {
 		}
 		return selectors
 			.map((selector) => {
-				const packageId = packageIdFromSelector(selector);
+				const packageId = HcpClientpackageidfromselector(selector);
 				return `- ${selector} -> ${packageDirs.get(packageId) ?? "not loaded"}`;
 			})
 			.join("\n");
@@ -4964,14 +5025,14 @@ export class InteractiveMode {
 			const selector = args[1];
 			const enabled = this.parseHarnessToggle(args[2]);
 			if (!selector) {
-				await this.openHarnessPackageMenu();
+				await this.HcpClientopenpackagemenu();
 				return;
 			}
 			if (enabled === undefined) {
 				this.showWarning("Usage: /harness package <selector> <on|off>");
 				return;
 			}
-			await this.setHarnessPackageSelectorEnabled(selector, enabled);
+			await this.HcpClientsetpackageselectorenabled(selector, enabled);
 			return;
 		}
 
@@ -5415,7 +5476,7 @@ export class InteractiveMode {
 			};
 		});
 		const moduleItems = this.harnessModuleMenuItems(snapshot);
-		const packageItems = await this.harnessPackageMenuItems(snapshot);
+		const packageItems = await this.HcpClientpackagemenuitems(snapshot);
 
 		return {
 			value: "harness",
@@ -5571,8 +5632,13 @@ export class InteractiveMode {
 		];
 	}
 
-	private async harnessPackageMenuItems(snapshot: HarnessRuntimeSnapshot): Promise<FloatingMenuItem[]> {
-		const view = await this.loadHarnessPackagesView();
+	private async HcpClientpackagemenuitems(snapshot: HarnessRuntimeSnapshot): Promise<FloatingMenuItem[]> {
+		const [view, catalog] = await Promise.all([
+			this.HcpClientloadpackagesview(),
+			typeof this.HcpClientloadpackagecatalogview === "function"
+				? this.HcpClientloadpackagecatalogview()
+				: Promise.resolve({ packages: [], diagnostics: [] }),
+		]);
 		const activeSelectors = snapshot.harnessPackages;
 		const activeByPackage = new Map<string, string[]>();
 		const activeGitHubSelectors: Array<{
@@ -5596,7 +5662,7 @@ export class InteractiveMode {
 				});
 				continue;
 			}
-			const packageId = packageIdFromSelector(selector);
+			const packageId = HcpClientpackageidfromselector(selector);
 			const selectors = activeByPackage.get(packageId) ?? [];
 			selectors.push(selector);
 			activeByPackage.set(packageId, selectors);
@@ -5619,6 +5685,19 @@ export class InteractiveMode {
 				children: view.diagnostics.slice(0, 20).map((diagnostic, index) => ({
 					value: `harness:packages:diagnostic:${index}`,
 					label: `${diagnostic.type}: ${diagnostic.code}`,
+					description: diagnostic.message,
+					disabled: true,
+				})),
+			});
+		}
+		if (catalog.diagnostics.length > 0) {
+			children.push({
+				value: "harness:package-catalog:diagnostics",
+				label: "Official Package diagnostics",
+				description: `${catalog.diagnostics.length} remote discovery issue(s)`,
+				children: catalog.diagnostics.slice(0, 20).map((diagnostic, index) => ({
+					value: `harness:package-catalog:diagnostic:${index}`,
+					label: `${diagnostic.type}: ${diagnostic.code ?? "package_catalog"}`,
 					description: diagnostic.message,
 					disabled: true,
 				})),
@@ -5674,10 +5753,41 @@ export class InteractiveMode {
 			});
 		}
 
+		const catalogSelectors = new Set(catalog.packages.map((pkg) => pkg.selector));
+		for (const pkg of catalog.packages) {
+			const selected = activeSelectors.includes(pkg.selector);
+			const encodedSelector = encodeMenuValuePart(pkg.selector);
+			children.push({
+				value: `harness:official-package:${encodedSelector}`,
+				label: `${pkg.package} (Official)`,
+				description: `${selected ? "selected" : "available"} · v${pkg.version} · ${pkg.owner}/${pkg.repo}`,
+				active: selected,
+				children: [
+					{
+						value: `harness:package-selector:${encodedSelector}:reload`,
+						label: selected ? "Reload package" : "Download & load",
+						description: selected
+							? "Reload this exact version through the verified Package cache"
+							: "Download the verified release into ~/.magenta/harness-packages, then load it",
+					},
+					...(selected
+						? [
+								{
+									value: `harness:package-selector:${encodedSelector}:disable`,
+									label: "Unload package",
+									description: "Unload this Package from the current session; keep the verified cache",
+								},
+							]
+						: []),
+				],
+			});
+		}
+
 		// GitHub selectors are already versioned acquisition inputs, not local
 		// discovery rows. Keep each exact selector manageable even when no matching
 		// directory exists under packagesRoot (or a local package has the same id).
 		for (const github of activeGitHubSelectors) {
+			if (catalogSelectors.has(github.selector)) continue;
 			const encodedSelector = encodeMenuValuePart(github.selector);
 			children.push({
 				value: `harness:package-selector:${encodedSelector}`,
@@ -5720,7 +5830,11 @@ export class InteractiveMode {
 			{
 				value: "harness:packages",
 				label: "Packages",
-				description: `${activeSelectors.length} selected · ${view.packages.length} local available`,
+				description: [
+					`${activeSelectors.length} selected`,
+					`${view.packages.length} local available`,
+					...(catalog.packages.length > 0 ? [`${catalog.packages.length} official available`] : []),
+				].join(" · "),
 				children,
 			},
 		];
@@ -5733,9 +5847,9 @@ export class InteractiveMode {
 		);
 	}
 
-	private async openHarnessPackageMenu(): Promise<void> {
+	private async HcpClientopenpackagemenu(): Promise<void> {
 		const snapshot = await this.createHarnessRuntimeSnapshot();
-		const root = (await this.harnessPackageMenuItems(snapshot))[0];
+		const root = (await this.HcpClientpackagemenuitems(snapshot))[0];
 		this.showFloatingMenu("harness packages", "package / selector", root?.children ?? [], (item) =>
 			this.handleHarnessMenuItem(item),
 		);
@@ -5794,30 +5908,30 @@ export class InteractiveMode {
 		if (parts[1] === "package-selector" && parts[2] && parts[3]) {
 			const selector = decodeMenuValuePart(parts[2]);
 			if (parts[3] === "reload") {
-				void this.setHarnessPackageSelectorEnabled(selector, true);
+				void this.HcpClientsetpackageselectorenabled(selector, true);
 				return true;
 			}
 			if (parts[3] === "disable") {
-				void this.setHarnessPackageSelectorEnabled(selector, false);
+				void this.HcpClientsetpackageselectorenabled(selector, false);
 				return true;
 			}
 		}
 		if (parts[1] === "package" && parts[2] && parts[3]) {
 			const packageId = decodeMenuValuePart(parts[2]);
 			if (parts[3] === "enable") {
-				void this.setHarnessPackageSelectorEnabled(packageId, true);
+				void this.HcpClientsetpackageselectorenabled(packageId, true);
 				return true;
 			}
 			if (parts[3] === "disable") {
-				void this.clearHarnessPackageSelectors(packageId);
+				void this.HcpClientclearpackageselectors(packageId);
 				return true;
 			}
 			if (parts[3] === "all-profiles") {
-				void this.toggleHarnessPackageSelector(`${packageId}:*`);
+				void this.HcpClienttogglepackageselector(`${packageId}:*`);
 				return true;
 			}
 			if (parts[3] === "profile" && parts[4]) {
-				void this.toggleHarnessPackageSelector(`${packageId}:${decodeMenuValuePart(parts[4])}`);
+				void this.HcpClienttogglepackageselector(`${packageId}:${decodeMenuValuePart(parts[4])}`);
 				return true;
 			}
 		}
@@ -7072,7 +7186,13 @@ export class InteractiveMode {
 	// Command handlers
 	// =========================================================================
 
-	private async handleReloadCommand(): Promise<boolean> {
+	private async handleReloadCommand(
+		message = "Reloading Magenta runtime...",
+		options?: {
+			HcpClienttrackpackageload?: boolean;
+			HcpClientpreservepackageloadevent?: boolean;
+		},
+	): Promise<boolean> {
 		if (!this.canReloadRuntime()) {
 			return false;
 		}
@@ -7084,7 +7204,7 @@ export class InteractiveMode {
 		const borderColor = (s: string) => theme.fg("border", s);
 		reloadBox.addChild(new DynamicBorder(borderColor));
 		reloadBox.addChild(new Spacer(1));
-		reloadBox.addChild(new Text(theme.fg("muted", "Reloading Magenta runtime..."), 1, 0));
+		reloadBox.addChild(new Text(theme.fg("muted", message), 1, 0));
 		reloadBox.addChild(new Spacer(1));
 		reloadBox.addChild(new DynamicBorder(borderColor));
 
@@ -7142,7 +7262,7 @@ export class InteractiveMode {
 		};
 
 		try {
-			await this.session.reload({ beforeSessionStart: restoreChatBeforeSessionStart });
+			await this.session.reload({ beforeSessionStart: restoreChatBeforeSessionStart, ...options });
 			restoreChatBeforeSessionStart();
 			configureHttpDispatcher(this.settingsManager.getHttpIdleTimeoutMs());
 			this.keybindings.reload();

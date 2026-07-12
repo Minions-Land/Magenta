@@ -8,6 +8,7 @@ import lockfile from "proper-lockfile";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	HcpClientacquiregithubpackage as acquireGitHubPackage,
+	HcpClientdiscoverofficialpackages as discoverOfficialPackages,
 	HcpClientgetpackagecacheroot as getPackageCacheRoot,
 	HcpClientgetpackageplatformid as getPackagePlatformId,
 	HcpClientparsegithubpackageselector as parseGitHubPackageSelector,
@@ -163,6 +164,113 @@ describe("parseGitHubPackageSelector", () => {
 describe("getPackageCacheRoot", () => {
 	it("points under ~/.magenta/harness-packages", () => {
 		expect(getPackageCacheRoot()).toMatch(/\.magenta[/\\]harness-packages$/);
+	});
+});
+
+describe("discoverOfficialPackages", () => {
+	it("uses the project's truthy offline semantics", async () => {
+		const fetchMock = vi.fn(async () => Response.json([]));
+		try {
+			vi.stubEnv("PI_OFFLINE", "0");
+			const onlineResult = await discoverOfficialPackages({ fetch: fetchMock });
+			expect(onlineResult.packages).toEqual([]);
+			expect(fetchMock).toHaveBeenCalledOnce();
+
+			fetchMock.mockClear();
+			vi.stubEnv("PI_OFFLINE", "true");
+			const offlineResult = await discoverOfficialPackages({ fetch: fetchMock });
+			expect(offlineResult.diagnostics).toContainEqual(
+				expect.objectContaining({ code: "package_catalog_offline", type: "info" }),
+			);
+			expect(fetchMock).not.toHaveBeenCalled();
+		} finally {
+			vi.unstubAllEnvs();
+		}
+	});
+
+	it("returns the newest release that has a verified artifact pair for this platform", async () => {
+		const platformId = getPackagePlatformId();
+		const release = (tag: string, assets: string[], extra: Record<string, unknown> = {}) => ({
+			tag_name: tag,
+			name: tag,
+			published_at: "2026-07-13T00:00:00Z",
+			draft: false,
+			prerelease: false,
+			assets: assets.map((name) => ({ name })),
+			...extra,
+		});
+		const artifact = (version: string) => `ClaudeScience-v${version}-${platformId}.tar.gz`;
+		const fetchMock = vi.fn(async () =>
+			Response.json([
+				release("ClaudeScience-v0.1.0", [artifact("0.1.0"), `${artifact("0.1.0")}.sha256`]),
+				release("ClaudeScience-v0.2.0", [artifact("0.2.0"), `${artifact("0.2.0")}.sha256`]),
+				release("ClaudeScience-v0.3.0", [artifact("0.3.0")]),
+				release(
+					"Biomni-v0.1.0",
+					[`Biomni-v0.1.0-${platformId}.tar.gz`, `Biomni-v0.1.0-${platformId}.tar.gz.sha256`],
+					{ draft: true },
+				),
+			]),
+		);
+
+		const result = await discoverOfficialPackages({ fetch: fetchMock });
+
+		expect(result.packages).toEqual([
+			expect.objectContaining({
+				package: "ClaudeScience",
+				version: "0.2.0",
+				selector: "github:Minions-Land/Magenta-CLI/ClaudeScience@0.2.0",
+			}),
+		]);
+		expect(result.diagnostics).toEqual([
+			expect.objectContaining({ code: "package_catalog_assets_missing", type: "warning" }),
+		]);
+		expect(fetchMock).toHaveBeenCalledWith(
+			"https://api.github.com/repos/Minions-Land/Magenta-CLI/releases?per_page=100",
+			expect.objectContaining({
+				headers: expect.objectContaining({ "User-Agent": "Magenta-Package-Catalog" }),
+			}),
+		);
+	});
+
+	it("reports GitHub catalog failures without throwing", async () => {
+		const result = await discoverOfficialPackages({
+			fetch: async () => new Response(null, { status: 503, statusText: "Unavailable" }),
+		});
+
+		expect(result.packages).toEqual([]);
+		expect(result.diagnostics).toEqual([
+			expect.objectContaining({
+				code: "package_catalog_http_error",
+				type: "warning",
+				message: expect.stringContaining("503 Unavailable"),
+			}),
+		]);
+	});
+
+	it("times out a stalled GitHub catalog request", async () => {
+		vi.useFakeTimers();
+		try {
+			const pending = discoverOfficialPackages({
+				fetch: (_input, init) =>
+					new Promise<Response>((_resolve, reject) => {
+						init?.signal?.addEventListener("abort", () => reject(new Error("catalog request aborted")));
+					}),
+			});
+			await vi.advanceTimersByTimeAsync(5_000);
+			const result = await pending;
+
+			expect(result.packages).toEqual([]);
+			expect(result.diagnostics).toEqual([
+				expect.objectContaining({
+					code: "package_catalog_failed",
+					type: "warning",
+					message: expect.stringContaining("catalog request aborted"),
+				}),
+			]);
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 });
 
