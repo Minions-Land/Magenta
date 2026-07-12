@@ -6,6 +6,7 @@ import {
 	type HcpClient,
 	HcpClientassemble,
 	type HcpClientcomponent,
+	type McpClientOptions,
 	type McpStdioManagedProcessInput,
 	type ProcessRuntimeProvider,
 	type SandboxProvider,
@@ -32,29 +33,43 @@ import type { ResourceDiagnostic } from "./diagnostics.ts";
  *       "env": { "API_KEY": "..." },
  *       "name_prefix": "mine",
  *       "timeout_ms": 30000
+ *     },
+ *     {
+ *       "name": "remote",
+ *       "type": "http",
+ *       "url": "https://host/mcp",
+ *       "headers": { "Authorization": "Bearer ..." }
  *     }
  *   ]
  * }
  * ```
  *
- * Security: entries name executables that are spawned as child processes with
- * the user's environment. The config file is user-owned; this is the same trust
- * model as the harness package path.
+ * Security: stdio entries name executables that are spawned as child processes
+ * with the user's environment; http entries open an outbound connection to the
+ * configured URL with any supplied headers (which may carry credentials). The
+ * config file is user-owned; this is the same trust model as the harness package
+ * path. Diagnostics never echo `headers` so bearer tokens are not logged.
  */
 export type McpServerConfig = {
 	/** Server name; also the default tool-name prefix. */
 	name: string;
-	/** Executable to spawn (absolute path or a command on PATH). */
-	command: string;
-	/** Arguments passed to the command. */
+	/** Transport. Absent or "stdio" spawns a local process; "http" is remote. */
+	type?: "stdio" | "http";
+	/** Executable to spawn (absolute path or a command on PATH). stdio only. */
+	command?: string;
+	/** Arguments passed to the command. stdio only. */
 	args?: string[];
-	/** Extra environment variables, merged over `process.env`. */
+	/** Extra environment variables, merged over `process.env`. stdio only. */
 	env?: Record<string, string>;
+	/** Endpoint URL for the streamable-HTTP transport. http only. */
+	url?: string;
+	/** Static request headers (e.g. `Authorization`). http only. */
+	headers?: Record<string, string>;
 	/** Tool-name prefix (`<prefix>_<remoteTool>`). Defaults to `name`. */
 	name_prefix?: string;
 	/** Per-request timeout in milliseconds. Default: 30000. */
 	timeout_ms?: number;
-	/** Selected sandbox profile. Explicit user MCP defaults to trusted for behavior parity. */
+	/** Selected sandbox profile (stdio only). Defaults to trusted for parity. */
 	sandbox?: string;
 };
 
@@ -122,15 +137,7 @@ export async function loadUserMcpTools(options: LoadUserMcpToolsOptions): Promis
 	}
 	const processRuntime = options.hcp.resolveCapability<ProcessRuntimeProvider>("runtime:process");
 	const sandboxProvider = options.hcp.resolveCapability<SandboxProvider>("sandbox");
-	if (!processRuntime || !sandboxProvider) {
-		diagnostics.push({
-			type: "error",
-			message:
-				"User MCP requires selected HCP capabilities runtime:process and sandbox before servers can be started.",
-			path,
-		});
-		return { tools: [], addresses: [], diagnostics };
-	}
+	const canStartStdio = processRuntime !== undefined && sandboxProvider !== undefined;
 	const descriptor = HCP_MAGNETS.find(
 		(component) => component.module === "tools" && component.source === "descriptor" && component.product === "tool",
 	) as HcpClientcomponent | undefined;
@@ -149,10 +156,44 @@ export async function loadUserMcpTools(options: LoadUserMcpToolsOptions): Promis
 	const seenNames = new Set<string>();
 
 	for (const server of servers) {
-		if (!server?.name || !server?.command) {
+		const rawType: unknown = (server as { type?: unknown } | null | undefined)?.type;
+		const type = rawType ?? "stdio";
+		if (type !== "stdio" && type !== "http") {
 			diagnostics.push({
 				type: "warning",
-				message: `Skipping MCP server entry missing "name" or "command": ${JSON.stringify(server)}`,
+				message: `Skipping MCP server entry with unsupported type ${JSON.stringify(type)}.`,
+				path,
+			});
+			continue;
+		}
+		if (!server?.name) {
+			diagnostics.push({
+				type: "warning",
+				message: `Skipping MCP server entry missing "name" (type=${type}).`,
+				path,
+			});
+			continue;
+		}
+		if (type === "stdio" && !server.command) {
+			diagnostics.push({
+				type: "warning",
+				message: `Skipping stdio MCP server "${server.name}": missing "command".`,
+				path,
+			});
+			continue;
+		}
+		if (type === "stdio" && !canStartStdio) {
+			diagnostics.push({
+				type: "warning",
+				message: `Skipping stdio MCP server "${server.name}": selected HCP capabilities runtime:process and sandbox are required.`,
+				path,
+			});
+			continue;
+		}
+		if (type === "http" && !server.url) {
+			diagnostics.push({
+				type: "warning",
+				message: `Skipping http MCP server "${server.name}": missing "url".`,
 				path,
 			});
 			continue;
@@ -168,7 +209,46 @@ export async function loadUserMcpTools(options: LoadUserMcpToolsOptions): Promis
 		seenNames.add(server.name);
 
 		try {
-			const sandbox = sandboxProvider.resolve({ profile: server.sandbox ?? "trusted" });
+			let client: McpClientOptions;
+			if (type === "http") {
+				client = {
+					transport: "http",
+					url: server.url as string,
+					headers: server.headers,
+					requestTimeoutMs: server.timeout_ms,
+				};
+			} else {
+				// stdio: processRuntime + sandboxProvider are guaranteed present here
+				// because unavailable stdio entries were skipped above.
+				const sandbox = sandboxProvider!.resolve({ profile: server.sandbox ?? "trusted" });
+				client = {
+					command: server.command as string,
+					args: server.args,
+					env: server.env ? { ...process.env, ...server.env } : undefined,
+					requestTimeoutMs: server.timeout_ms,
+					spawnManaged: (input: McpStdioManagedProcessInput, signal?: AbortSignal) =>
+						processRuntime!.spawnManaged(
+							{
+								command: input.command,
+								args: input.args,
+								cwd: input.cwd ?? options.cwd,
+								workspace_root: options.cwd,
+								env_overrides: Object.fromEntries(
+									Object.entries(input.env ?? {}).filter(
+										(entry): entry is [string, string] => typeof entry[1] === "string",
+									),
+								),
+								sandbox,
+								tool: {
+									name: `mcp:${server.name}`,
+									operation: "serve",
+									tags: ["trusted"],
+								},
+							},
+							signal,
+						),
+				};
+			}
 			components.push({
 				...descriptor,
 				name: server.name,
@@ -180,34 +260,9 @@ export async function loadUserMcpTools(options: LoadUserMcpToolsOptions): Promis
 					mcp: {
 						serverName: server.name,
 						namePrefix: server.name_prefix ?? server.name,
-						client: {
-							command: server.command,
-							args: server.args,
-							env: server.env ? { ...process.env, ...server.env } : undefined,
-							requestTimeoutMs: server.timeout_ms,
-							spawnManaged: (input: McpStdioManagedProcessInput, signal?: AbortSignal) =>
-								processRuntime.spawnManaged(
-									{
-										command: input.command,
-										args: input.args,
-										cwd: input.cwd ?? options.cwd,
-										workspace_root: options.cwd,
-										env_overrides: Object.fromEntries(
-											Object.entries(input.env ?? {}).filter(
-												(entry): entry is [string, string] => typeof entry[1] === "string",
-											),
-										),
-										sandbox,
-										tool: {
-											name: `mcp:${server.name}`,
-											operation: "serve",
-											tags: ["trusted"],
-										},
-									},
-									signal,
-								),
-						},
-						cache: { dir: cacheDir, descriptorEnv: server.env },
+						client,
+						// Remote servers enumerate live each assembly; only stdio caches.
+						cache: type === "http" ? undefined : { dir: cacheDir, descriptorEnv: server.env },
 					},
 				},
 			});

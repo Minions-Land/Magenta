@@ -124,6 +124,8 @@ export type WorkerSlot = {
 	provider?: string;
 	/** Tool whitelist for this worker. Defaults to read-only (optional). */
 	tools?: string[];
+	/** Harness package selectors granted to this worker (optional). */
+	packages?: string[];
 	/** Thinking level for this worker (optional). */
 	thinking?: ThinkingLevel;
 	/** Per-worker wall-clock timeout in seconds (optional). */
@@ -136,6 +138,8 @@ export type CommonOptions = {
 	model?: string;
 	/** Worker tool whitelist. Defaults to read-only tools. */
 	tools?: string[];
+	/** Default Harness package selectors granted to workflow workers. */
+	packages?: string[];
 	/** Max workers running concurrently. Defaults to 8. */
 	maxConcurrent?: number;
 	/** Worker isolation. Defaults to "process". */
@@ -288,6 +292,8 @@ export type ScriptAgentOptions = {
 	thinking?: ThinkingLevel;
 	/** Tool whitelist (still sanitized: sub_agent/bg_shell always stripped). */
 	tools?: string[];
+	/** Harness package selectors granted to this worker. */
+	packages?: string[];
 	/** A guard string prepended to the system prompt (the pattern's soul step). */
 	guard?: string;
 	/** Per-call wall-clock timeout in seconds. */

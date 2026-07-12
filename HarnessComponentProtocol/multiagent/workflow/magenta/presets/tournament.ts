@@ -32,7 +32,7 @@ export default async function tournament(args: unknown, ctx: any) {
 
 	// Generate all approaches in parallel.
 	const approaches = await ctx.parallelAgents(
-		req.approaches.map((slot: any, i: number) => () => ctx.agent(slot.task, { label: `appr-${i}` })),
+		req.approaches.map((slot: any, i: number) => () => ctx.agent(slot.task, { ...slot, label: `appr-${i}` })),
 		req.maxConcurrent,
 	);
 
@@ -50,6 +50,7 @@ export default async function tournament(args: unknown, ctx: any) {
 				continue;
 			}
 			const verdict = await ctx.agent(`${req.judge.task}\n\nCandidate 0:\n${a.text}\n\nCandidate 1:\n${b.text}`, {
+				...req.judge,
 				label: `judge-${matchNo++}`,
 				guard: ctx.guards.judge,
 				schema: WINNER_SCHEMA,

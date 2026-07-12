@@ -41,6 +41,6 @@ describe("embedded process-tools installation", () => {
 		writeFileSync(target, "stale helper");
 		initProcessToolsBinary(root);
 
-		expect(readFileSync(target)).toEqual(readFileSync(getProcessToolsBinaryPath()));
+		expect(readFileSync(target).equals(readFileSync(getProcessToolsBinaryPath()))).toBe(true);
 	});
 });

@@ -201,6 +201,7 @@ describe("ImagesModels", () => {
 		const list = models.getModels("openrouter");
 		expect(list.length).toBeGreaterThan(0);
 		expect(list.every((m) => m.api === "openrouter-images")).toBe(true);
+		expect(list.find((m) => m.id === "openrouter/auto")).toMatchObject({ variablePricing: true });
 
 		expect((await models.getAuth(list[0]))?.auth.apiKey).toBe("or-key");
 	});

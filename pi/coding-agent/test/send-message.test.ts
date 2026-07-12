@@ -2,7 +2,12 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { formatPeerMessages, SendMessageController } from "../src/core/tools/send-message.ts";
+import {
+	formatPeerMessages,
+	MAX_PEER_MESSAGE_BATCH_BYTES,
+	MAX_PEER_MESSAGE_CONTENT_BYTES,
+	SendMessageController,
+} from "../src/core/tools/send-message.ts";
 
 /**
  * Magenta feature: peer messaging controller. Verifies send validation, sender
@@ -74,6 +79,17 @@ describe("SendMessageController", () => {
 		try {
 			await expect(call(alice, { to: "", content: "x" })).rejects.toThrow();
 			await expect(call(alice, { to: "bob", content: "  " })).rejects.toThrow();
+		} finally {
+			alice.shutdown();
+		}
+	});
+
+	it("rejects a single message that could flood recipient context", async () => {
+		const alice = controller("alice");
+		try {
+			await expect(
+				call(alice, { to: "bob", content: "x".repeat(MAX_PEER_MESSAGE_CONTENT_BYTES + 1) }),
+			).rejects.toThrow(/maximum/);
 		} finally {
 			alice.shutdown();
 		}
@@ -233,6 +249,53 @@ describe("SendMessageController", () => {
 		}
 	});
 
+	it("caps a drain at 10 messages by default, delivering the backlog across drains", async () => {
+		const alice = controller("alice");
+		const bob = controller("bob");
+		try {
+			for (let i = 0; i < 12; i++) await call(alice, { to: "bob", content: `m${i}` });
+			const first = bob.drainForInjection();
+			expect(first).toHaveLength(10);
+			const second = bob.drainForInjection();
+			expect(second).toHaveLength(2);
+			expect(bob.drainForInjection()).toHaveLength(0);
+		} finally {
+			alice.shutdown();
+			bob.shutdown();
+		}
+	});
+
+	it("honors a custom drainCap", async () => {
+		const alice = controller("alice");
+		const bob = new SendMessageController({ dbPath, getSessionId: () => "bob", drainCap: 3 });
+		try {
+			for (let i = 0; i < 5; i++) await call(alice, { to: "bob", content: `m${i}` });
+			expect(bob.drainForInjection()).toHaveLength(3);
+			expect(bob.drainForInjection()).toHaveLength(2);
+		} finally {
+			alice.shutdown();
+			bob.shutdown();
+		}
+	});
+
+	it("requeues byte-budget overflow for the next drain without reordering", async () => {
+		const alice = controller("alice");
+		const bob = controller("bob");
+		try {
+			for (let index = 0; index < 3; index++) {
+				await call(alice, { to: "bob", content: `${index}:${"x".repeat(12 * 1024)}` });
+			}
+			const first = bob.drainForInjection();
+			expect(first.map((message) => message.content.slice(0, 2))).toEqual(["0:", "1:"]);
+			expect(Buffer.byteLength(formatPeerMessages(first), "utf8")).toBeLessThanOrEqual(MAX_PEER_MESSAGE_BATCH_BYTES);
+			const second = bob.drainForInjection();
+			expect(second.map((message) => message.content.slice(0, 2))).toEqual(["2:"]);
+		} finally {
+			alice.shutdown();
+			bob.shutdown();
+		}
+	});
+
 	it("formats a single message and multiple messages distinctly", () => {
 		const one = formatPeerMessages([
 			{
@@ -265,5 +328,19 @@ describe("SendMessageController", () => {
 		expect(many).toContain("offline");
 
 		expect(formatPeerMessages([])).toBe("");
+	});
+
+	it("defensively bounds legacy oversized mailbox rows", () => {
+		const formatted = formatPeerMessages([
+			{
+				id: "legacy-large",
+				sender: "legacy",
+				content: `${"x".repeat(100_000)}LEGACY-TAIL`,
+				createdAt: "2026-01-01T00:00:00Z",
+			},
+		]);
+		expect(Buffer.byteLength(formatted, "utf8")).toBeLessThanOrEqual(MAX_PEER_MESSAGE_BATCH_BYTES);
+		expect(formatted).toContain("Peer message block shortened");
+		expect(formatted).toContain("LEGACY-TAIL");
 	});
 });

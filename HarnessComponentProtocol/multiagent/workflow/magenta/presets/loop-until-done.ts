@@ -29,6 +29,7 @@ export default async function loopUntilDone(args: unknown, ctx: any) {
 			? `\n\nAlready-found (exclude these):\n${findings.map((f, i) => `${i + 1}. ${f}`).join("\n")}`
 			: "";
 		const result = await ctx.agent(`${req.refine.task}\n\nStarting content:\n${req.initial}${priorBlock}`, {
+			...req.refine,
 			label: `refine-${iterations}`,
 			guard: ctx.guards.refine,
 		});

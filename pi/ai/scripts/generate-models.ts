@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
-import { readdirSync, rmSync, writeFileSync } from "fs";
-import { join, dirname } from "path";
+import { existsSync, readdirSync, rmSync } from "fs";
+import { join, dirname, resolve } from "path";
 import { fileURLToPath } from "url";
 import {
 	CLOUDFLARE_AI_GATEWAY_ANTHROPIC_BASE_URL,
@@ -10,10 +10,15 @@ import {
 	CLOUDFLARE_WORKERS_AI_BASE_URL,
 } from "../src/api/cloudflare.ts";
 import type { AnthropicMessagesCompat, Api, KnownProvider, Model, OpenAICompletionsCompat } from "../src/types.ts";
+import {
+	assertMinimumCatalogSize,
+	fetchRequiredJson,
+	writeGeneratedFilesAtomically,
+} from "./generation-io.ts";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const packageRoot = join(__dirname, "..");
+const packageRoot = process.env.PI_AI_GENERATION_ROOT ? resolve(process.env.PI_AI_GENERATION_ROOT) : join(__dirname, "..");
 
 interface ModelsDevModel {
 	id: string;
@@ -125,13 +130,24 @@ const TOGETHER_TOGGLE_REASONING_LEVEL_MAP = {
 	medium: null,
 } as const;
 
-const AI_GATEWAY_MODELS_URL = "https://ai-gateway.vercel.sh/v1";
+const MODELS_DEV_CATALOG_URL = process.env.PI_MODELS_DEV_CATALOG_URL ?? "https://models.dev/api.json";
+const OPENROUTER_MODELS_CATALOG_URL =
+	process.env.PI_OPENROUTER_MODELS_CATALOG_URL ?? "https://openrouter.ai/api/v1/models";
+const AI_GATEWAY_MODELS_URL = process.env.PI_AI_GATEWAY_MODELS_URL ?? "https://ai-gateway.vercel.sh/v1";
 const AI_GATEWAY_BASE_URL = "https://ai-gateway.vercel.sh";
 const VERTEX_BASE_URL = "https://{location}-aiplatform.googleapis.com";
 const NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1";
+const NVIDIA_MODELS_CATALOG_URL =
+	process.env.PI_NVIDIA_MODELS_CATALOG_URL ?? `${NVIDIA_BASE_URL}/models`;
 const NVIDIA_HEADERS = {
 	"NVCF-POLL-SECONDS": "3600",
 } as const;
+const MIN_MODELS_DEV_TOOL_MODELS = 300;
+const MIN_OPENROUTER_TOOL_MODELS = 100;
+const MIN_AI_GATEWAY_TOOL_MODELS = 50;
+// Intentional provider removals must be explicit and reviewed. Leaving this
+// empty makes a partial upstream response fail before it can delete a catalog.
+const ALLOWED_REMOVED_PROVIDER_CATALOGS = new Set<string>();
 const NVIDIA_OPENAI_COMPAT: OpenAICompletionsCompat = {
 	supportsStore: false,
 	supportsDeveloperRole: false,
@@ -727,31 +743,71 @@ function roundCost(value: number): number {
 	return Number(value.toFixed(6));
 }
 
-async function fetchNvidiaNimModelIds(): Promise<Map<string, string>> {
+function assertGeneratedModelIntegrity(model: Model<any>, index: number): void {
+	for (const [field, value] of [
+		["id", model.id],
+		["name", model.name],
+		["api", model.api],
+		["provider", model.provider],
+	] as const) {
+		if (typeof value !== "string" || value.length === 0) {
+			throw new Error(`Generated model[${index}] has invalid ${field}`);
+		}
+	}
+	if (model.baseUrl !== undefined && typeof model.baseUrl !== "string") {
+		throw new Error(`Generated model ${model.provider}/${model.id} has invalid baseUrl`);
+	}
+	for (const [field, value] of Object.entries(model.cost)) {
+		if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+			throw new Error(`Generated model ${model.provider}/${model.id} has invalid cost.${field}`);
+		}
+	}
+	if (!Number.isFinite(model.contextWindow) || model.contextWindow <= 0) {
+		throw new Error(`Generated model ${model.provider}/${model.id} has invalid contextWindow`);
+	}
+	if (!Number.isFinite(model.maxTokens) || model.maxTokens <= 0) {
+		throw new Error(`Generated model ${model.provider}/${model.id} has invalid maxTokens`);
+	}
+}
+
+async function fetchNvidiaNimModelIds(): Promise<Map<string, string> | undefined> {
 	try {
 		console.log("Fetching models from NVIDIA NIM API...");
-		const response = await fetch(`${NVIDIA_BASE_URL}/models`);
-		const data = (await response.json()) as { data?: NvidiaNimModelListItem[] };
+		const data = await fetchRequiredJson<{ data?: NvidiaNimModelListItem[] }>({
+			label: "NVIDIA NIM",
+			url: NVIDIA_MODELS_CATALOG_URL,
+		});
+		if (!Array.isArray(data.data) || data.data.length === 0) {
+			throw new Error("NVIDIA NIM catalog has no model ids");
+		}
 		const modelIds = new Map<string, string>();
 
-		for (const model of data.data ?? []) {
+		for (const model of data.data) {
+			if (!model || typeof model.id !== "string" || model.id.length === 0) continue;
 			modelIds.set(model.id, model.id);
 			modelIds.set(normalizeNvidiaModelId(model.id), model.id);
 		}
 
-		console.log(`Fetched ${data.data?.length ?? 0} model IDs from NVIDIA NIM`);
+		console.log(`Fetched ${data.data.length} model IDs from NVIDIA NIM`);
 		return modelIds;
 	} catch (error) {
-		console.error("Failed to fetch NVIDIA NIM models:", error);
-		return new Map();
+		console.warn(
+			`NVIDIA NIM live validation is unavailable; preserving the existing generated NVIDIA catalog: ${
+				error instanceof Error ? error.message : String(error)
+			}`,
+		);
+		return undefined;
 	}
 }
 
 async function fetchOpenRouterModels(): Promise<Model<any>[]> {
 	try {
 		console.log("Fetching models from OpenRouter API...");
-		const response = await fetch("https://openrouter.ai/api/v1/models");
-		const data = await response.json();
+		const data = await fetchRequiredJson<{ data?: any[] }>({
+			label: "OpenRouter",
+			url: OPENROUTER_MODELS_CATALOG_URL,
+		});
+		if (!Array.isArray(data.data)) throw new Error("Required OpenRouter catalog has no data array");
 
 		const models: Model<any>[] = [];
 
@@ -776,6 +832,11 @@ async function fetchOpenRouterModels(): Promise<Model<any>[]> {
 			const outputCost = roundCost(parseFloat(model.pricing?.completion || "0") * 1_000_000);
 			const cacheReadCost = roundCost(parseFloat(model.pricing?.input_cache_read || "0") * 1_000_000);
 			const cacheWriteCost = roundCost(parseFloat(model.pricing?.input_cache_write || "0") * 1_000_000);
+			// OpenRouter uses -1 as a sentinel for the auto router because the final
+			// charge depends on the selected downstream model. Keep the router in the
+			// catalog without leaking the sentinel into the public non-negative cost
+			// contract. Any negative price from another model still fails integrity.
+			const variableRouterCost = model.id === "openrouter/auto" && inputCost === -1_000_000 && outputCost === -1_000_000;
 
 			const normalizedModel: Model<any> = {
 				id: modelKey,
@@ -786,30 +847,39 @@ async function fetchOpenRouterModels(): Promise<Model<any>[]> {
 				reasoning: model.supported_parameters?.includes("reasoning") || false,
 				input,
 				cost: {
-					input: inputCost,
-					output: outputCost,
+					input: variableRouterCost ? 0 : inputCost,
+					output: variableRouterCost ? 0 : outputCost,
 					cacheRead: cacheReadCost,
 					cacheWrite: cacheWriteCost,
 				},
+				...(variableRouterCost ? { variablePricing: true } : {}),
 				contextWindow: model.context_length || 4096,
 				maxTokens: model.top_provider?.max_completion_tokens || 4096,
 			};
 			models.push(normalizedModel);
 		}
 
+		assertMinimumCatalogSize(
+			"OpenRouter unique tool-capable model",
+			new Set(models.map((model) => model.id)).size,
+			MIN_OPENROUTER_TOOL_MODELS,
+		);
 		console.log(`Fetched ${models.length} tool-capable models from OpenRouter`);
 		return models;
 	} catch (error) {
-		console.error("Failed to fetch OpenRouter models:", error);
-		return [];
+		throw new Error(`Failed to load required OpenRouter models: ${error instanceof Error ? error.message : String(error)}`, {
+			cause: error,
+		});
 	}
 }
 
 async function fetchAiGatewayModels(): Promise<Model<any>[]> {
 	try {
 		console.log("Fetching models from Vercel AI Gateway API...");
-		const response = await fetch(`${AI_GATEWAY_MODELS_URL}/models`);
-		const data = await response.json();
+		const data = await fetchRequiredJson<{ data?: AiGatewayModel[] }>({
+			label: "Vercel AI Gateway",
+			url: `${AI_GATEWAY_MODELS_URL}/models`,
+		});
 		const models: Model<any>[] = [];
 
 		const toNumber = (value: string | number | undefined): number => {
@@ -855,22 +925,41 @@ async function fetchAiGatewayModels(): Promise<Model<any>[]> {
 			});
 		}
 
+		assertMinimumCatalogSize(
+			"Vercel AI Gateway unique tool-capable model",
+			new Set(models.map((model) => model.id)).size,
+			MIN_AI_GATEWAY_TOOL_MODELS,
+		);
 		console.log(`Fetched ${models.length} tool-capable models from Vercel AI Gateway`);
 		return models;
 	} catch (error) {
-		console.error("Failed to fetch Vercel AI Gateway models:", error);
-		return [];
+		throw new Error(
+			`Failed to load required Vercel AI Gateway models: ${error instanceof Error ? error.message : String(error)}`,
+			{ cause: error },
+		);
 	}
 }
 
-async function loadModelsDevData(): Promise<Model<any>[]> {
+type ModelsDevLoadResult = {
+	models: Model<any>[];
+	preserveProviderCatalogs: Set<string>;
+};
+
+async function loadModelsDevData(): Promise<ModelsDevLoadResult> {
 	try {
 		console.log("Fetching models from models.dev API...");
-		const response = await fetch("https://models.dev/api.json");
-		const data = await response.json();
+		const data = await fetchRequiredJson<Record<string, any>>({
+			label: "models.dev",
+			url: MODELS_DEV_CATALOG_URL,
+		});
+		if (!data || typeof data !== "object" || Array.isArray(data)) {
+			throw new Error("Required models.dev catalog must be an object");
+		}
 
 		const models: Model<any>[] = [];
+		const preserveProviderCatalogs = new Set<string>();
 		const nvidiaNimModelIds = data.nvidia?.models ? await fetchNvidiaNimModelIds() : new Map<string, string>();
+		if (data.nvidia?.models && nvidiaNimModelIds === undefined) preserveProviderCatalogs.add("nvidia");
 		if (data.openrouter?.models) {
 			for (const [modelId, model] of Object.entries(data.openrouter.models)) {
 				const declaredThinkingLevelMap = getModelsDevEffortThinkingLevelMap(model as ModelsDevModel);
@@ -1346,6 +1435,10 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 
 		// Process NVIDIA NIM models
 		if (data.nvidia?.models) {
+			if (nvidiaNimModelIds === undefined) {
+				// This endpoint is supplemental live validation, not a required source.
+				// Keep the checked-in NVIDIA catalog unchanged until validation returns.
+			} else {
 			for (const [modelId, model] of Object.entries(data.nvidia.models)) {
 				const m = model as ModelsDevModel;
 				if (m.tool_call !== true) continue;
@@ -1375,6 +1468,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					contextWindow: m.limit?.context || 4096,
 					maxTokens: m.limit?.output || 4096,
 				});
+			}
 			}
 		}
 
@@ -1743,11 +1837,17 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			}
 		}
 
+		assertMinimumCatalogSize(
+			"models.dev unique tool-capable model",
+			new Set(models.map((model) => `${model.provider}\0${model.id}`)).size,
+			MIN_MODELS_DEV_TOOL_MODELS,
+		);
 		console.log(`Loaded ${models.length} tool-capable models from models.dev`);
-		return models;
+		return { models, preserveProviderCatalogs };
 	} catch (error) {
-		console.error("Failed to load models.dev data:", error);
-		return [];
+		throw new Error(`Failed to load required models.dev data: ${error instanceof Error ? error.message : String(error)}`, {
+			cause: error,
+		});
 	}
 }
 
@@ -1756,7 +1856,7 @@ async function generateModels() {
 	// models.dev: Anthropic, Google, OpenAI, Groq, Cerebras
 	// OpenRouter: xAI and other providers (excluding Anthropic, Google, OpenAI)
 	// AI Gateway: OpenAI-compatible catalog with tool-capable models
-	const modelsDevModels = await loadModelsDevData();
+	const { models: modelsDevModels, preserveProviderCatalogs } = await loadModelsDevData();
 	const openRouterModels = await fetchOpenRouterModels();
 	const aiGatewayModels = await fetchAiGatewayModels();
 
@@ -2350,6 +2450,7 @@ async function generateModels() {
 				cacheRead:0,
 				cacheWrite:0,
 			},
+			variablePricing: true,
 			contextWindow: 2000000,
 			maxTokens: 30000,
 		});
@@ -2376,6 +2477,7 @@ async function generateModels() {
 				cacheRead: 0,
 				cacheWrite: 0,
 			},
+			variablePricing: true,
 			contextWindow: 1000000,
 			maxTokens: 30000,
 		});
@@ -2398,9 +2500,10 @@ async function generateModels() {
 		}));
 	allModels.push(...azureOpenAiModels);
 
-	for (const model of allModels) {
+	for (const [index, model] of allModels.entries()) {
 		applyThinkingLevelMetadata(model);
 		applyOpenAICompletionsCompatMetadata(model);
+		assertGeneratedModelIntegrity(model, index);
 	}
 
 	// Group by provider and deduplicate by model ID
@@ -2424,19 +2527,22 @@ async function generateModels() {
 	const catalogConstName = (providerId: string) => `${providerId.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}_MODELS`;
 
 	function emitModel(model: Model<any>, indent: string): string {
-		let output = `${indent}"${model.id}": {\n`;
-		output += `${indent}\tid: "${model.id}",\n`;
-		output += `${indent}\tname: "${model.name}",\n`;
-		output += `${indent}\tapi: "${model.api}",\n`;
-		output += `${indent}\tprovider: "${model.provider}",\n`;
+		let output = `${indent}${JSON.stringify(model.id)}: {\n`;
+		output += `${indent}\tid: ${JSON.stringify(model.id)},\n`;
+		output += `${indent}\tname: ${JSON.stringify(model.name)},\n`;
+		output += `${indent}\tapi: ${JSON.stringify(model.api)},\n`;
+		output += `${indent}\tprovider: ${JSON.stringify(model.provider)},\n`;
 		if (model.baseUrl !== undefined) {
-			output += `${indent}\tbaseUrl: "${model.baseUrl}",\n`;
+			output += `${indent}\tbaseUrl: ${JSON.stringify(model.baseUrl)},\n`;
 		}
 		if (model.headers) {
 			output += `${indent}\theaders: ${JSON.stringify(model.headers)},\n`;
 		}
 		if (model.compat) {
 			output += `${indent}\tcompat: ${JSON.stringify(model.compat)},\n`;
+		}
+		if (model.variablePricing) {
+			output += `${indent}\tvariablePricing: true,\n`;
 		}
 		output += `${indent}\treasoning: ${model.reasoning},\n`;
 		if (model.thinkingLevelMap) {
@@ -2451,22 +2557,26 @@ async function generateModels() {
 		output += `${indent}\t},\n`;
 		output += `${indent}\tcontextWindow: ${model.contextWindow},\n`;
 		output += `${indent}\tmaxTokens: ${model.maxTokens},\n`;
-		output += `${indent}} satisfies Model<"${model.api}">,\n`;
+		output += `${indent}} satisfies Model<${JSON.stringify(model.api)}>,\n`;
 		return output;
 	}
 
-	const sortedProviderIds = Object.keys(providers).sort();
 	const providersDir = join(packageRoot, "src/providers");
-
-	// Remove stale per-provider catalogs
-	for (const entry of readdirSync(providersDir)) {
-		if (entry.endsWith(".models.ts")) {
-			rmSync(join(providersDir, entry));
+	for (const providerId of preserveProviderCatalogs) {
+		const existingCatalog = join(providersDir, `${providerId}.models.ts`);
+		if (!existsSync(existingCatalog)) {
+			throw new Error(`Cannot preserve optional ${providerId} catalog because ${existingCatalog} does not exist`);
 		}
 	}
+	const sortedProviderIds = [...new Set([...Object.keys(providers), ...preserveProviderCatalogs])].sort();
+	const generatedFiles: Array<{ path: string; content: string }> = [];
+	const generatedCatalogNames = new Set<string>();
 
 	// Per-provider catalogs (sorted for deterministic output)
 	for (const providerId of sortedProviderIds) {
+		const catalogName = `${providerId}.models.ts`;
+		generatedCatalogNames.add(catalogName);
+		if (preserveProviderCatalogs.has(providerId)) continue;
 		const models = providers[providerId];
 		let output = generatedHeader;
 		output += `import type { Model } from "../types.ts";\n\n`;
@@ -2476,9 +2586,8 @@ async function generateModels() {
 			output += emitModel(models[modelId], "\t");
 		}
 		output += `} as const;\n`;
-		writeFileSync(join(providersDir, `${providerId}.models.ts`), output);
+		generatedFiles.push({ path: join(providersDir, catalogName), content: output });
 	}
-	console.log(`Generated ${sortedProviderIds.length} catalogs under src/providers/`);
 
 	// Aggregator
 	let output = generatedHeader;
@@ -2490,7 +2599,29 @@ async function generateModels() {
 		output += `\t${JSON.stringify(providerId)}: ${catalogConstName(providerId)},\n`;
 	}
 	output += `} as const;\n`;
-	writeFileSync(join(packageRoot, "src/models.generated.ts"), output);
+	generatedFiles.push({ path: join(packageRoot, "src/models.generated.ts"), content: output });
+
+	const existingCatalogNames = readdirSync(providersDir).filter((entry) => entry.endsWith(".models.ts"));
+	const unexpectedlyMissing = existingCatalogNames.filter(
+		(entry) => !generatedCatalogNames.has(entry) && !ALLOWED_REMOVED_PROVIDER_CATALOGS.has(entry),
+	);
+	if (unexpectedlyMissing.length > 0) {
+		throw new Error(
+			`Generated provider catalogs disappeared unexpectedly: ${unexpectedlyMissing.join(", ")}. ` +
+				"Treat this as a partial upstream response or add an intentional removal to ALLOWED_REMOVED_PROVIDER_CATALOGS.",
+		);
+	}
+
+	// No generated target is touched until every remote source, completeness
+	// guard, serialization, and staging write has succeeded.
+	writeGeneratedFilesAtomically(generatedFiles);
+	// Remove only explicitly approved stale catalogs after the replacement set is durable.
+	for (const entry of existingCatalogNames) {
+		if (!generatedCatalogNames.has(entry) && ALLOWED_REMOVED_PROVIDER_CATALOGS.has(entry)) {
+			rmSync(join(providersDir, entry));
+		}
+	}
+	console.log(`Generated ${sortedProviderIds.length} catalogs under src/providers/`);
 	console.log("Generated src/models.generated.ts");
 
 	// Print statistics
@@ -2504,7 +2635,14 @@ async function generateModels() {
 	for (const [provider, models] of Object.entries(providers)) {
 		console.log(`  ${provider}: ${Object.keys(models).length} models`);
 	}
+	for (const provider of preserveProviderCatalogs) {
+		console.log(`  ${provider}: preserved existing catalog (live validation unavailable)`);
+	}
 }
 
-// Run the generator
-generateModels().catch(console.error);
+// Run the generator. Required catalog failures must propagate as a non-zero
+// build/release result; silently logging here previously published partial files.
+generateModels().catch((error) => {
+	console.error(error);
+	process.exitCode = 1;
+});

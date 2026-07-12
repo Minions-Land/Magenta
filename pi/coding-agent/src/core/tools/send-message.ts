@@ -5,9 +5,9 @@
  * persist in a shared SQLite mailbox (the MessageStore kernel, ported from
  * MinionsOS2 and exposed via `@magenta/harness`). Delivery into a *running*
  * agent loop is the Magenta-specific half: the owning AgentSession drains this
- * session's unread messages at each turn boundary and injects them. Because
- * messages accumulate as unread rows, everything that piled up while a session
- * was busy arrives together the moment it next enters its loop.
+ * session's unread messages at each turn boundary and injects them. Backlogs are
+ * delivered in count- and byte-bounded batches across successive turns so a
+ * burst cannot flood one model request; overflow stays unread and ordered.
  *
  * Two delivery refinements sit on top of that base:
  *  - Priority: an `urgent` message is injected as a steering message (before the
@@ -28,6 +28,7 @@
 import { randomUUID } from "node:crypto";
 import { type MessagePriority, MessageStore, type PresenceState } from "@magenta/harness";
 import { type Static, Type } from "typebox";
+import { truncateModelText } from "../background-shell-utils.ts";
 import type { ToolDefinition } from "../extensions/types.ts";
 
 /** customType used for injected peer messages. Namespaced to mark it Magenta. */
@@ -41,13 +42,28 @@ export const PEER_MESSAGE_CUSTOM_TYPE = "magenta-peer-message";
  */
 export const WAKE_SIGNAL: NodeJS.Signals = "SIGUSR1";
 
+/**
+ * Default cap on how many peer messages a single drain injects. Chosen small so
+ * a burst of teammate messages cannot flood one turn's context; the overflow is
+ * not dropped but delivered on the next loop. Adjustable per session via
+ * {@link SendMessageControllerDeps.drainCap}.
+ */
+export const DEFAULT_PEER_MESSAGE_DRAIN_CAP = 10;
+/** Maximum body size accepted from one sender. */
+export const MAX_PEER_MESSAGE_CONTENT_BYTES = 24 * 1024;
+/** Maximum complete teammate-message block injected into one model turn. */
+export const MAX_PEER_MESSAGE_BATCH_BYTES = 32 * 1024;
+
+const PEER_MESSAGE_SHORTENED_MARKER =
+	"\n\n[Peer message block shortened to protect context; ask the sender to resend a smaller excerpt if needed.]\n\n";
+
 const sendMessageSchema = Type.Object({
 	to: Type.String({
 		description:
 			"Recipient session id (the identity of the agent to message). Use the session id shown for the teammate you want to reach.",
 	}),
 	content: Type.String({
-		description: "Message content to send (the text body of the message).",
+		description: `Message content to send (the text body of the message; maximum ${MAX_PEER_MESSAGE_CONTENT_BYTES / 1024} KiB).`,
 	}),
 	urgent: Type.Optional(
 		Type.Boolean({
@@ -87,6 +103,14 @@ export interface SendMessageControllerDeps {
 	 * to ignore self-directed wake signals that arrive while already active.
 	 */
 	isStreaming?: () => boolean;
+	/**
+	 * Max peer messages injected per drain. A large backlog is delivered in
+	 * bounded batches across successive loops rather than one oversized context
+	 * block; the remainder stays queued for the next drain. Defaults to
+	 * {@link DEFAULT_PEER_MESSAGE_DRAIN_CAP}. A non-positive value disables the
+	 * cap (claim everything at once).
+	 */
+	drainCap?: number;
 }
 
 /**
@@ -101,6 +125,7 @@ export class SendMessageController {
 	private readonly getSessionId: () => string;
 	private readonly wakeForMessages?: () => void;
 	private readonly isStreaming?: () => boolean;
+	private readonly drainCap: number;
 	/** Random id identifying THIS process instance, to guard wake against PID reuse. */
 	private readonly bootId: string;
 	private wakeHandler?: () => void;
@@ -110,6 +135,7 @@ export class SendMessageController {
 		this.getSessionId = deps.getSessionId;
 		this.wakeForMessages = deps.wakeForMessages;
 		this.isStreaming = deps.isStreaming;
+		this.drainCap = deps.drainCap ?? DEFAULT_PEER_MESSAGE_DRAIN_CAP;
 		this.bootId = randomUUID();
 
 		// Install the wake-signal handler BEFORE any presence row advertises our pid,
@@ -158,19 +184,42 @@ export class SendMessageController {
 		}
 	}
 
-	/** Drain this session's unread messages, claiming them as `pending`. */
+	/**
+	 * Drain this session's unread messages, claiming them as `pending`. The count
+	 * cap is followed by a byte cap over the complete rendered block; overflow is
+	 * immediately requeued in original order for the next loop.
+	 */
 	drainForInjection(): ReturnType<MessageStore["drainUnread"]> {
-		return this.store.drainUnread(this.getSessionId());
+		const drained = this.store.drainUnread(this.getSessionId(), this.drainCap, {
+			ownerId: this.bootId,
+			pid: process.pid,
+		});
+		if (drained.length <= 1) return drained;
+
+		let acceptedCount = drained.length;
+		for (let count = 1; count <= drained.length; count++) {
+			const renderedBytes = Buffer.byteLength(renderPeerMessages(drained.slice(0, count)), "utf8");
+			if (renderedBytes <= MAX_PEER_MESSAGE_BATCH_BYTES) continue;
+			acceptedCount = Math.max(1, count - 1);
+			break;
+		}
+		if (acceptedCount < drained.length) {
+			this.store.requeue(
+				drained.slice(acceptedCount).map((message) => message.id),
+				this.bootId,
+			);
+		}
+		return drained.slice(0, acceptedCount);
 	}
 
 	/** Confirm drained messages were injected; moves them to the terminal state. */
 	confirmDelivered(ids: string[]): void {
-		this.store.markDelivered(ids);
+		this.store.markDelivered(ids, this.bootId);
 	}
 
 	/** Return drained messages to `unread` so a later drain retries them. */
 	requeue(ids: string[]): void {
-		this.store.requeue(ids);
+		this.store.requeue(ids, this.bootId);
 	}
 
 	/**
@@ -202,6 +251,12 @@ export class SendMessageController {
 		}
 		if (!content || content.trim().length === 0) {
 			throw new Error("send_message requires non-empty `content`.");
+		}
+		const contentBytes = Buffer.byteLength(content, "utf8");
+		if (contentBytes > MAX_PEER_MESSAGE_CONTENT_BYTES) {
+			throw new Error(
+				`send_message content is ${contentBytes} bytes; the maximum is ${MAX_PEER_MESSAGE_CONTENT_BYTES} bytes. Send a smaller excerpt or split it into multiple messages.`,
+			);
 		}
 		if (to === from) {
 			throw new Error("send_message cannot target your own session.");
@@ -309,8 +364,7 @@ function presenceClause(msg: DrainedMessage): string {
 	return `offline, last seen ${p.lastSeen}`;
 }
 
-/** Format drained messages into a single injected context block. */
-export function formatPeerMessages(messages: DrainedMessage[]): string {
+function renderPeerMessages(messages: DrainedMessage[]): string {
 	if (messages.length === 0) return "";
 	const header =
 		messages.length === 1
@@ -320,4 +374,10 @@ export function formatPeerMessages(messages: DrainedMessage[]): string {
 		.map((m) => `— from session ${m.sender} (sent ${m.createdAt}, sender ${presenceClause(m)}):\n${m.content}`)
 		.join("\n\n");
 	return `${header}\n\n${body}`;
+}
+
+/** Format drained messages into one byte-bounded injected context block. */
+export function formatPeerMessages(messages: DrainedMessage[]): string {
+	return truncateModelText(renderPeerMessages(messages), MAX_PEER_MESSAGE_BATCH_BYTES, PEER_MESSAGE_SHORTENED_MARKER)
+		.text;
 }

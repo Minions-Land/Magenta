@@ -11,14 +11,17 @@ import {
 	detectProgressFromChunk,
 	detectProgressMarker,
 	formatDuration,
+	MODEL_RESULT_LIMIT_BYTES,
 	mergeProgress,
 	RESULT_LIMIT_BYTES,
 	renderProgressBar,
 	type ShellProgress,
 	shellQuote,
 	stripProgressMarkers,
+	TAIL_LIMIT_BYTES,
 	timeProgressFraction,
 	timestampForFile,
+	truncateModelText,
 	truncateTail,
 } from "../background-shell-utils.ts";
 import type { ExtensionContext, ToolDefinition } from "../extensions/types.ts";
@@ -230,9 +233,10 @@ function summarizeEvent(
 	event: BackgroundShellEvent | BackgroundShellEventSnapshot,
 	includeOutput = true,
 	collapsed = false,
+	outputLimitBytes = RESULT_LIMIT_BYTES,
 ): string {
 	const elapsedUntil = event.endedAt ?? Date.now();
-	const output = truncateTail(event.tail.trimEnd());
+	const output = truncateTail(event.tail.trimEnd(), outputLimitBytes);
 	if (collapsed) {
 		const head = `Background job ${event.id}${event.label ? ` (${event.label})` : ""}: ${event.status} (${formatDuration(elapsedUntil - event.startedAt)})`;
 		const lines = [head];
@@ -271,7 +275,9 @@ function summarizeEvent(
 	if (includeOutput) {
 		lines.push(
 			"",
-			output.truncated ? `[Output truncated to last ${RESULT_LIMIT_BYTES} bytes]` : "Output:",
+			output.truncated
+				? `[Output shortened to last ${outputLimitBytes} bytes; full output remains in the log]`
+				: "Output:",
 			output.text || "(no output yet)",
 		);
 	}
@@ -283,7 +289,15 @@ export function summarizeEventCollapsed(event: BackgroundShellEvent | Background
 }
 
 export function summarizeEventExpanded(event: BackgroundShellEvent | BackgroundShellEventSnapshot): string {
-	return summarizeEvent(event, true, false);
+	return summarizeEvent(event, true, false, TAIL_LIMIT_BYTES);
+}
+
+/** Bounded complete summary sent to the model; the TUI can still expand eventData. */
+function summarizeEventForModel(
+	event: BackgroundShellEvent | BackgroundShellEventSnapshot,
+	maxBytes = MODEL_RESULT_LIMIT_BYTES,
+): string {
+	return truncateModelText(summarizeEvent(event, true, false, maxBytes), maxBytes).text;
 }
 
 /**
@@ -453,19 +467,30 @@ export class BackgroundShellController {
 		const defaultInstruction =
 			"Background shell event has completed. Read this returned result, use it to continue the original task, and do not ask the user to manually inspect the event id unless more information is needed.";
 		const resolvedInstruction = instruction?.trim() || defaultInstruction;
+		const instructionBudget = Math.floor(MODEL_RESULT_LIMIT_BYTES / 4);
+		const boundedInstruction = truncateModelText(resolvedInstruction, instructionBudget).text;
+		const separatorBytes = Buffer.byteLength("\n\n", "utf8");
+		const summaryBudget = Math.max(
+			1024,
+			MODEL_RESULT_LIMIT_BYTES - Buffer.byteLength(boundedInstruction, "utf8") - separatorBytes,
+		);
+		const content = truncateModelText(
+			`${boundedInstruction}\n\n${summarizeEventForModel(event, summaryBudget)}`,
+			MODEL_RESULT_LIMIT_BYTES,
+		).text;
 		void this.sendMessage(
 			{
 				customType: "bg-shell-return",
-				// Keep the full result in model context. The TUI renderer regenerates a
-				// short default view from eventData and expands this with ctrl+o.
-				content: `${resolvedInstruction}\n\n${summarizeEventExpanded(event)}`,
+				// Keep only a bounded tail in model context. The TUI renderer regenerates
+				// the expandable view from eventData, and the log retains complete output.
+				content,
 				display: true,
 				details: {
 					id: event.id,
 					status: event.status,
 					exitCode: event.exitCode,
 					logPath: event.logPath,
-					instruction: resolvedInstruction,
+					instruction: boundedInstruction,
 					// A plain-data snapshot only — the live event holds a ChildProcess,
 					// WriteStream, Timer, and waiter callbacks that cannot be structured-cloned
 					// when this message is delivered to the main agent.
@@ -496,8 +521,9 @@ export class BackgroundShellController {
 			if (typeof params.defaultReturnToMain === "boolean")
 				this.shellConfig.defaultReturnToMain = params.defaultReturnToMain;
 			if (params.defaultReturnDelivery) this.shellConfig.defaultReturnDelivery = params.defaultReturnDelivery;
+			const content = truncateModelText(formatConfig(this.shellConfig), MODEL_RESULT_LIMIT_BYTES).text;
 			return {
-				content: [{ type: "text" as const, text: formatConfig(this.shellConfig) }],
+				content: [{ type: "text" as const, text: content }],
 				details: { ...this.shellConfig },
 			};
 		}
@@ -606,11 +632,15 @@ export class BackgroundShellController {
 
 		if (returnToMain) this.scheduleReturnToMain(event, returnDelivery, returnInstruction);
 
+		const content = truncateModelText(
+			`Started background event ${id}${returnToMain ? " with automatic return to main agent" : ""}\nCommand: ${params.command}\nCWD: ${cwd}\nLog: ${logPath}${timeoutSeconds ? `\nTimeout: ${timeoutSeconds}s` : ""}`,
+			MODEL_RESULT_LIMIT_BYTES,
+		).text;
 		return {
 			content: [
 				{
 					type: "text" as const,
-					text: `Started background event ${id}${returnToMain ? " with automatic return to main agent" : ""}\nCommand: ${params.command}\nCWD: ${cwd}\nLog: ${logPath}${timeoutSeconds ? `\nTimeout: ${timeoutSeconds}s` : ""}`,
+					text: content,
 				},
 			],
 			details: {
@@ -631,16 +661,23 @@ export class BackgroundShellController {
 				const elapsedUntil = event.endedAt ?? Date.now();
 				return `${event.id}\t${event.status}\t${formatDuration(elapsedUntil - event.startedAt)}\t${event.label ?? event.command}`;
 			});
+			const content = truncateModelText(
+				lines.length ? lines.join("\n") : "No background events.",
+				MODEL_RESULT_LIMIT_BYTES,
+			).text;
 			return {
-				content: [{ type: "text" as const, text: lines.length ? lines.join("\n") : "No background events." }],
+				content: [{ type: "text" as const, text: content }],
 				details: { events: lines.length },
 			};
 		}
 
 		const event = this.events.get(params.eventId);
-		if (!event) throw new Error(`Unknown background event: ${params.eventId}`);
+		if (!event)
+			throw new Error(
+				truncateModelText(`Unknown background event: ${params.eventId}`, MODEL_RESULT_LIMIT_BYTES).text,
+			);
 		return {
-			content: [{ type: "text" as const, text: summarizeEvent(event) }],
+			content: [{ type: "text" as const, text: summarizeEventForModel(event) }],
 			details: { id: event.id, status: event.status, exitCode: event.exitCode, logPath: event.logPath },
 		};
 	}
@@ -648,28 +685,39 @@ export class BackgroundShellController {
 	private async wait(params: BgShellInput, signal: AbortSignal | undefined) {
 		if (!params.eventId) throw new Error("bg_shell action=wait requires eventId");
 		const event = this.events.get(params.eventId);
-		if (!event) throw new Error(`Unknown background event: ${params.eventId}`);
+		if (!event)
+			throw new Error(
+				truncateModelText(`Unknown background event: ${params.eventId}`, MODEL_RESULT_LIMIT_BYTES).text,
+			);
 
 		const waitTimeoutSeconds =
 			positiveNumber(params.waitTimeoutSeconds) ?? this.shellConfig.defaultWaitTimeoutSeconds;
 		const result = await waitForEvent(event, waitTimeoutSeconds, signal);
 		if (result === "aborted") {
+			const content = truncateModelText(
+				`Wait cancelled. Event ${event.id} is still ${event.status}.\nLog: ${event.logPath}`,
+				MODEL_RESULT_LIMIT_BYTES,
+			).text;
 			return {
 				content: [
 					{
 						type: "text" as const,
-						text: `Wait cancelled. Event ${event.id} is still ${event.status}.\nLog: ${event.logPath}`,
+						text: content,
 					},
 				],
 				details: { id: event.id, status: event.status },
 			};
 		}
 		if (result === "timeout") {
+			const content = truncateModelText(
+				`Wait timed out. Event ${event.id} is still running.\n\n${summarizeEventForModel(event)}`,
+				MODEL_RESULT_LIMIT_BYTES,
+			).text;
 			return {
 				content: [
 					{
 						type: "text" as const,
-						text: `Wait timed out. Event ${event.id} is still running.\n\n${summarizeEvent(event)}`,
+						text: content,
 					},
 				],
 				details: { id: event.id, status: event.status, logPath: event.logPath },
@@ -677,7 +725,7 @@ export class BackgroundShellController {
 		}
 
 		return {
-			content: [{ type: "text" as const, text: summarizeEvent(event) }],
+			content: [{ type: "text" as const, text: summarizeEventForModel(event) }],
 			details: { id: event.id, status: event.status, exitCode: event.exitCode, logPath: event.logPath },
 		};
 	}
@@ -685,17 +733,28 @@ export class BackgroundShellController {
 	private cancel(params: BgShellInput, ctx: ExtensionContext) {
 		if (!params.eventId) throw new Error("bg_shell action=cancel requires eventId");
 		const event = this.events.get(params.eventId);
-		if (!event) throw new Error(`Unknown background event: ${params.eventId}`);
+		if (!event)
+			throw new Error(
+				truncateModelText(`Unknown background event: ${params.eventId}`, MODEL_RESULT_LIMIT_BYTES).text,
+			);
 		if (event.status !== "running") {
+			const content = truncateModelText(
+				`Event ${event.id} is already ${event.status}.`,
+				MODEL_RESULT_LIMIT_BYTES,
+			).text;
 			return {
-				content: [{ type: "text" as const, text: `Event ${event.id} is already ${event.status}.` }],
+				content: [{ type: "text" as const, text: content }],
 				details: { id: event.id, status: event.status },
 			};
 		}
 
 		this.cancelEvent(event.id, ctx);
+		const content = truncateModelText(
+			`Cancelled background event ${event.id}.\nLog: ${event.logPath}`,
+			MODEL_RESULT_LIMIT_BYTES,
+		).text;
 		return {
-			content: [{ type: "text" as const, text: `Cancelled background event ${event.id}.\nLog: ${event.logPath}` }],
+			content: [{ type: "text" as const, text: content }],
 			details: { id: event.id, status: event.status, logPath: event.logPath },
 		};
 	}

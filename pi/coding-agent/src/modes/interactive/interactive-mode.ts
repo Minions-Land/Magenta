@@ -5174,20 +5174,7 @@ export class InteractiveMode {
 			// inlines the skill markdown as the first turn payload.
 			...this.skillDockParentItem(),
 			{ value: "slash:settings", label: "Settings", aliases: ["settings"], description: "/settings" },
-			{
-				value: "command:mcp",
-				label: "MCP Servers",
-				aliases: ["mcp"],
-				description: `View MCP servers loaded from ~/${CONFIG_DIR_NAME}/agent/mcp-servers.json`,
-				children: [
-					{
-						value: "mcp:none",
-						label: "No MCP servers configured",
-						description: `Add servers in ~/${CONFIG_DIR_NAME}/agent/mcp-servers.json`,
-						disabled: true,
-					},
-				],
-			},
+			this.mcpDockParentItem(),
 			{ value: "slash:events", label: "Events", aliases: ["events"], description: "/events" },
 			{ value: "slash:side", label: "Side Chat", aliases: ["side", "btw", "s"], description: "/side" },
 			{
@@ -6657,23 +6644,29 @@ export class InteractiveMode {
 		});
 	}
 
-	private showMcpManager(): void {
-		// Read-only view of the tools loaded from the user MCP config.
-		// Surfaced through the shared dock menu so navigation matches every other
-		// panel. Editing servers is still done by hand in the config file.
+	private mcpMenuView(): { items: FloatingMenuItem[]; description: string } {
 		const mcpConfigPath = `~/${CONFIG_DIR_NAME}/agent/mcp-servers.json`;
 		const { tools, diagnostics } = this.session.resourceLoader.getUserMcpTools();
 		const items: FloatingMenuItem[] = [];
+		const byServer = new Map<string, number>();
 
 		if (tools.length === 0) {
-			items.push({
-				value: "mcp:none",
-				label: "No MCP servers configured",
-				description: `Add servers in ${mcpConfigPath}`,
-				disabled: true,
-			});
+			items.push(
+				diagnostics.length > 0
+					? {
+							value: "mcp:none",
+							label: "No MCP tools loaded",
+							description: `Review diagnostics or edit ${mcpConfigPath}`,
+							disabled: true,
+						}
+					: {
+							value: "mcp:none",
+							label: "No MCP servers configured",
+							description: `Add servers in ${mcpConfigPath}`,
+							disabled: true,
+						},
+			);
 		} else {
-			const byServer = new Map<string, number>();
 			for (const tool of tools) {
 				const server = tool.provenance?.kind === "mcp" ? tool.provenance.server : undefined;
 				const owner = server?.trim() || "unknown";
@@ -6697,8 +6690,36 @@ export class InteractiveMode {
 				disabled: true,
 			});
 		}
+		return {
+			items,
+			description:
+				tools.length > 0
+					? `${byServer.size} server${byServer.size === 1 ? "" : "s"} · ${tools.length} tool${tools.length === 1 ? "" : "s"} loaded`
+					: diagnostics.length > 0
+						? `No tools loaded · ${diagnostics.length} diagnostic${diagnostics.length === 1 ? "" : "s"}`
+						: `View MCP servers loaded from ${mcpConfigPath}`,
+		};
+	}
 
-		this.showFloatingMenu("mcp", `MCP servers (read-only; edit ${mcpConfigPath})`, items, () => false);
+	private mcpDockParentItem(): FloatingMenuItem {
+		const view = this.mcpMenuView();
+		return {
+			value: "command:mcp",
+			label: "MCP Servers",
+			aliases: ["mcp"],
+			description: view.description,
+			children: view.items,
+		};
+	}
+
+	private showMcpManager(): void {
+		// Read-only view of the tools loaded from the user MCP config.
+		// Surfaced through the shared dock menu so navigation matches every other
+		// panel. Editing servers is still done by hand in the config file.
+		const mcpConfigPath = `~/${CONFIG_DIR_NAME}/agent/mcp-servers.json`;
+		const view = this.mcpMenuView();
+
+		this.showFloatingMenu("mcp", `MCP servers (read-only; edit ${mcpConfigPath})`, view.items, () => false);
 	}
 
 	private showSessionSelector(): void {
@@ -7593,7 +7614,10 @@ export class InteractiveMode {
 		}
 		info += `${theme.fg("dim", "Total:")} ${stats.tokens.total.toLocaleString()}\n`;
 
-		if (stats.cost > 0) {
+		if (stats.costUnknown) {
+			info += `\n${theme.bold("Cost")}\n`;
+			info += `${theme.fg("dim", "Total:")} unknown (provider did not report a concrete price)`;
+		} else if (stats.cost > 0) {
 			info += `\n${theme.bold("Cost")}\n`;
 			info += `${theme.fg("dim", "Total:")} ${stats.cost.toFixed(4)}`;
 		}

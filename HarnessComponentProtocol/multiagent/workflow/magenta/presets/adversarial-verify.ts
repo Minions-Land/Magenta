@@ -31,7 +31,7 @@ export default async function adversarialVerify(args: unknown, ctx: any) {
 	const threshold = req.confidenceThreshold ?? 0.8;
 
 	// Generate candidates (wide net).
-	const generator = await ctx.agent(req.generator.task, { label: "generate" });
+	const generator = await ctx.agent(req.generator.task, { ...req.generator, label: "generate" });
 
 	// Independently verify, N times in parallel. Each returns a boolean verdict.
 	const verifiers = await ctx.parallelAgents(
@@ -39,6 +39,7 @@ export default async function adversarialVerify(args: unknown, ctx: any) {
 			{ length: verifyCount },
 			(_, i) => () =>
 				ctx.agent(`${req.verifier.task}\n\nCandidate(s) to verify:\n${generator.text}`, {
+					...req.verifier,
 					label: `verify-${i}`,
 					guard: ctx.guards.verifier,
 					schema: BOOLEAN_VERDICT_SCHEMA,

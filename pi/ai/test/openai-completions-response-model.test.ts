@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { complete } from "../src/compat.ts";
-import type { Model } from "../src/types.ts";
+import { complete, getModel } from "../src/compat.ts";
+import { calculateCost } from "../src/models.ts";
+import type { Model, Usage } from "../src/types.ts";
 
 // Router/virtual ids (e.g. OpenRouter `auto`) keep `model` pinned to the
 // requested id and surface the routed concrete id on `responseModel`.
@@ -47,6 +48,7 @@ function openRouterAuto(): Model<"openai-completions"> {
 		baseUrl: "https://openrouter.ai/api/v1",
 		reasoning: false,
 		input: ["text"],
+		variablePricing: true,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 		contextWindow: 200_000,
 		maxTokens: 8192,
@@ -136,5 +138,59 @@ describe("openai-completions responseModel", () => {
 
 		expect(message.model).toBe("openrouter/auto");
 		expect(message.responseModel).toBeUndefined();
+	});
+
+	it("marks auto-router usage unknown when no provider cost is reported", async () => {
+		mockState.chunks = [
+			{ id: "chatcmpl-cost-unknown", model: "openrouter/auto", choices: [{ index: 0, delta: { content: "hi" } }] },
+			{
+				id: "chatcmpl-cost-unknown",
+				model: "openrouter/auto",
+				choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+				usage: { prompt_tokens: 10, completion_tokens: 5 },
+			},
+		];
+		const message = await complete(
+			openRouterAuto(),
+			{ messages: [{ role: "user", content: "hi", timestamp: Date.now() }] },
+			{ apiKey: "test" },
+		);
+		expect(message.usage.cost.total).toBe(0);
+		expect(message.usage.cost.unknown).toBe(true);
+	});
+
+	it("uses the auto-router cost reported by OpenRouter", async () => {
+		mockState.chunks = [
+			{ id: "chatcmpl-cost", model: "openrouter/auto", choices: [{ index: 0, delta: { content: "hi" } }] },
+			{
+				id: "chatcmpl-cost",
+				model: "openrouter/auto",
+				choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+				usage: { prompt_tokens: 10, completion_tokens: 5, cost: 0.0075 },
+			},
+		];
+		const message = await complete(
+			openRouterAuto(),
+			{ messages: [{ role: "user", content: "hi", timestamp: Date.now() }] },
+			{ apiKey: "test" },
+		);
+		expect(message.usage.cost.total).toBe(0.0075);
+		expect(message.usage.cost.unknown).toBeUndefined();
+	});
+
+	it.each(["auto", "openrouter/fusion"] as const)("marks the %s router alias as variable-priced", (modelId) => {
+		const model = getModel("openrouter", modelId);
+		expect(model?.variablePricing).toBe(true);
+		const usage: Usage = {
+			input: 10,
+			output: 5,
+			cacheRead: 0,
+			cacheWrite: 0,
+			totalTokens: 15,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+		};
+		calculateCost(model!, usage);
+		expect(usage.cost.unknown).toBe(true);
+		expect(usage.cost.total).toBe(0);
 	});
 });

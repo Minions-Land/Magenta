@@ -4,7 +4,14 @@ import { join } from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { McpStdioClient } from "../_magenta/mcp/client.ts";
-import { createMcpTools, discoverMcpTools, McpConnection, McpTool } from "../_magenta/mcp/tool.ts";
+import {
+	createMcpTools,
+	discoverMcpTools,
+	MCP_MODEL_ERROR_LIMIT_BYTES,
+	MCP_MODEL_RESULT_LIMIT_BYTES,
+	McpConnection,
+	McpTool,
+} from "../_magenta/mcp/tool.ts";
 import { HcpClientloadpackageoverlay } from "../_magenta/packages/package-overlay-v2.ts";
 import { createManagedMcpSpawner } from "./mcp-test-utils.ts";
 import { HcpClientbuildpackagesessionfortest } from "./package-test-utils.ts";
@@ -205,6 +212,50 @@ describe("MCP tools", () => {
 			expect(result.content[0]).toMatchObject({ type: "text", text: "kaboom" });
 		} finally {
 			await discovered.connection.close();
+		}
+	});
+
+	it("bounds the complete model-visible MCP result", async () => {
+		const connection = new McpConnection("bounded", {
+			command: process.execPath,
+			spawnManaged: spawnManagedMcp,
+		});
+		vi.spyOn(connection, "callTool").mockResolvedValue({
+			content: [{ type: "text", text: `${"x".repeat(100_000)}RESULT-TAIL` }],
+		});
+		const product = new McpTool({ connection, tool: { name: "large", inputSchema: { type: "object" } } });
+		try {
+			const result = await product.toTool().execute("large-call", {});
+			const text = result.content.map((part) => (part.type === "text" ? part.text : "")).join("");
+			expect(Buffer.byteLength(text, "utf8")).toBeLessThanOrEqual(MCP_MODEL_RESULT_LIMIT_BYTES);
+			expect(text).toContain("MCP result shortened");
+			expect(text).toContain("RESULT-TAIL");
+		} finally {
+			await product.close();
+			await connection.close();
+		}
+	});
+
+	it("bounds MCP transport errors before the agent loop turns them into tool results", async () => {
+		const connection = new McpConnection("bounded-error", {
+			command: process.execPath,
+			spawnManaged: spawnManagedMcp,
+		});
+		vi.spyOn(connection, "callTool").mockRejectedValue(new Error(`ERROR-HEAD${"x".repeat(100_000)}ERROR-TAIL`));
+		const product = new McpTool({ connection, tool: { name: "large-error", inputSchema: { type: "object" } } });
+		try {
+			const error = await product
+				.toTool()
+				.execute("large-error-call", {})
+				.catch((caught: unknown) => caught);
+			const message = error instanceof Error ? error.message : String(error);
+			expect(Buffer.byteLength(message, "utf8")).toBeLessThanOrEqual(MCP_MODEL_ERROR_LIMIT_BYTES);
+			expect(message).toContain("ERROR-HEAD");
+			expect(message).toContain("MCP result shortened");
+			expect(message).toContain("ERROR-TAIL");
+		} finally {
+			await product.close();
+			await connection.close();
 		}
 	});
 

@@ -37,7 +37,7 @@ export function formatMessageUsageStats(usage: {
 	output: number;
 	cacheRead: number;
 	cacheWrite: number;
-	cost: { total: number };
+	cost: { total: number; unknown?: boolean };
 }): string {
 	const parts: string[] = [];
 
@@ -53,7 +53,9 @@ export function formatMessageUsageStats(usage: {
 		parts.push(`CH${hitRate.toFixed(1)}%`);
 	}
 
-	if (usage.cost.total > 0) {
+	if (usage.cost.unknown) {
+		parts.push("cost?");
+	} else if (usage.cost.total > 0) {
 		parts.push(`$${usage.cost.total.toFixed(3)}`);
 	}
 
@@ -121,6 +123,7 @@ export class FooterComponent implements Component {
 		let totalCacheRead = 0;
 		let totalCacheWrite = 0;
 		let totalCost = 0;
+		let costUnknown = false;
 		let assistantMessageCount = 0;
 
 		for (const entry of this.session.sessionManager.getEntries()) {
@@ -130,7 +133,11 @@ export class FooterComponent implements Component {
 				totalOutput += entry.message.usage.output;
 				totalCacheRead += entry.message.usage.cacheRead;
 				totalCacheWrite += entry.message.usage.cacheWrite;
-				totalCost += entry.message.usage.cost.total;
+				if (entry.message.usage.cost.unknown) {
+					costUnknown = true;
+				} else {
+					totalCost += entry.message.usage.cost.total;
+				}
 			}
 		}
 
@@ -180,7 +187,9 @@ export class FooterComponent implements Component {
 
 		// Show cost with "(sub)" indicator if using OAuth subscription
 		const usingSubscription = state.model ? this.session.modelRegistry.isUsingOAuth(state.model) : false;
-		if (totalCost || usingSubscription) {
+		if (costUnknown) {
+			statsParts.push("cost?");
+		} else if (totalCost || usingSubscription) {
 			const costStr = `$${totalCost.toFixed(3)}${usingSubscription ? " (sub)" : ""}`;
 			statsParts.push(costStr);
 		}

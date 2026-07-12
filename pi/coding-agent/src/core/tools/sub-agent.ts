@@ -15,8 +15,12 @@ import type { BackgroundEventManager } from "../background-events.ts";
 import {
 	appendTail as appendTailText,
 	formatDuration,
+	MODEL_RESULT_LIMIT_BYTES,
+	MODEL_RESULT_TOTAL_LIMIT_BYTES,
 	RESULT_LIMIT_BYTES,
+	TAIL_LIMIT_BYTES,
 	timestampForFile,
+	truncateModelText,
 	truncateTail,
 } from "../background-shell-utils.ts";
 import type { ExtensionContext, ToolDefinition } from "../extensions/types.ts";
@@ -183,6 +187,9 @@ const WorkflowSlotSchema = Type.Object({
 	tools: Type.Optional(
 		Type.Array(Type.String(), { description: `Tool whitelist for this worker. Defaults to read-only.` }),
 	),
+	packages: Type.Optional(
+		Type.Array(Type.String(), { description: "Harness package selectors granted to this workflow worker." }),
+	),
 	thinking: Type.Optional(StringEnum(THINKING_LEVELS)),
 	timeoutSeconds: Type.Optional(Type.Number({ description: "Per-worker wall-clock timeout in seconds." })),
 });
@@ -210,6 +217,9 @@ const WorkflowSchema = Type.Object({
 	),
 	model: Type.Optional(Type.String({ description: "Default model for all workers in this orchestration." })),
 	tools: Type.Optional(Type.Array(Type.String(), { description: "Default tool whitelist for all workers." })),
+	packages: Type.Optional(
+		Type.Array(Type.String(), { description: "Default Harness package selectors for all workflow workers." }),
+	),
 	maxConcurrent: Type.Optional(Type.Number({ description: "Max workers running concurrently. Defaults to 8." })),
 	// Pattern-specific slots (only the ones matching `pattern` are used):
 	classifier: Type.Optional(WorkflowSlotSchema),
@@ -319,6 +329,10 @@ function positiveNumber(value: unknown): number | undefined {
 	return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
 }
 
+function normalizePackageSelectors(values: string[] | undefined): string[] {
+	return values?.map((selector) => selector.trim()).filter((selector) => selector.length > 0) ?? [];
+}
+
 function compactValue(value: unknown, maxLength = 1200): string {
 	let text: string;
 	try {
@@ -388,10 +402,15 @@ function finishEvent(
 	for (const resolveWaiter of waiters) resolveWaiter();
 }
 
-function summarizeEvent(event: SubAgentEvent, includeOutput = true, collapsed = false): string {
-	if (event.kind === "workflow") return summarizeWorkflowEvent(event, includeOutput, collapsed);
+function summarizeEvent(
+	event: SubAgentEvent,
+	includeOutput = true,
+	collapsed = false,
+	outputLimitBytes = RESULT_LIMIT_BYTES,
+): string {
+	if (event.kind === "workflow") return summarizeWorkflowEvent(event, includeOutput, collapsed, outputLimitBytes);
 	const elapsedUntil = event.endedAt ?? Date.now();
-	const output = truncateTail(event.tail.trimEnd());
+	const output = truncateTail(event.tail.trimEnd(), outputLimitBytes);
 	if (collapsed) {
 		// Compact form for the chat return: one status line plus an output hint.
 		// Full metadata (cwd/tools/model/paths/task) is available on expand.
@@ -430,7 +449,9 @@ function summarizeEvent(event: SubAgentEvent, includeOutput = true, collapsed = 
 	if (includeOutput) {
 		lines.push(
 			"",
-			output.truncated ? `[Output truncated to last ${RESULT_LIMIT_BYTES} bytes]` : "Output:",
+			output.truncated
+				? `[Output shortened to last ${outputLimitBytes} bytes; full output remains in the log]`
+				: "Output:",
 			output.text || "(no output yet)",
 		);
 	}
@@ -444,7 +465,12 @@ export function summarizeSubAgentCollapsed(event: SubAgentEventSnapshot): string
 
 /** Full summary with all metadata and the captured output tail. */
 export function summarizeSubAgentExpanded(event: SubAgentEventSnapshot): string {
-	return summarizeEvent(event as SubAgentEvent, true, false);
+	return summarizeEvent(event as SubAgentEvent, true, false, TAIL_LIMIT_BYTES);
+}
+
+/** Bounded complete summary sent to the model; eventData retains the expandable tail. */
+function summarizeSubAgentForModel(event: SubAgentEvent, maxBytes = MODEL_RESULT_LIMIT_BYTES): string {
+	return truncateModelText(summarizeEvent(event, true, false, maxBytes), maxBytes).text;
 }
 
 /**
@@ -505,7 +531,12 @@ export function serializableSubAgentSnapshot(event: SubAgentEvent): SubAgentEven
 	};
 }
 
-function summarizeWorkflowEvent(event: SubAgentEvent, includeOutput: boolean, collapsed = false): string {
+function summarizeWorkflowEvent(
+	event: SubAgentEvent,
+	includeOutput: boolean,
+	collapsed = false,
+	outputLimitBytes = RESULT_LIMIT_BYTES,
+): string {
 	const elapsedUntil = event.endedAt ?? Date.now();
 	if (collapsed) {
 		const head = `Workflow ${event.id} (${event.label}) [${event.pattern}]: ${event.status} (${formatDuration(elapsedUntil - event.startedAt)})`;
@@ -530,7 +561,26 @@ function summarizeWorkflowEvent(event: SubAgentEvent, includeOutput: boolean, co
 	];
 	if (event.error) lines.push(`Error: ${event.error}`);
 	if (includeOutput) {
-		lines.push("", event.workflowResult ? formatWorkflowResult(event.workflowResult) : "(no result yet)");
+		if (event.workflowResult) {
+			const expanded = outputLimitBytes >= TAIL_LIMIT_BYTES;
+			const output = truncateTail(
+				formatWorkflowResult(
+					event.workflowResult,
+					expanded ? TAIL_LIMIT_BYTES : 120,
+					expanded ? TAIL_LIMIT_BYTES : 200,
+				),
+				outputLimitBytes,
+			);
+			lines.push(
+				"",
+				...(output.truncated
+					? [`[Result shortened to last ${outputLimitBytes} bytes; full result remains in the log]`]
+					: []),
+				output.text,
+			);
+		} else {
+			lines.push("", "(no result yet)");
+		}
 	}
 	return lines.join("\n");
 }
@@ -559,8 +609,12 @@ export function buildOrchestrationRequest(input: WorkflowInput): MultiAgentOrche
 	return request as unknown as MultiAgentOrchestrationRequest;
 }
 
-/** Render an OrchestrationResult as a compact structured tree for /events + returns. */
-function formatWorkflowResult(result: MultiAgentOrchestrationResult): string {
+/** Render an OrchestrationResult as a structured tree for /events + returns. */
+function formatWorkflowResult(
+	result: MultiAgentOrchestrationResult,
+	workerTextLimit = 120,
+	outcomeTextLimit = 200,
+): string {
 	const header = [`pattern: ${result.pattern}`, `terminatedBy: ${result.terminatedBy}`];
 	if (result.confidence !== undefined) header.push(`confidence: ${result.confidence.toFixed(2)}`);
 	if (result.iterations !== undefined) header.push(`iterations: ${result.iterations}`);
@@ -574,12 +628,12 @@ function formatWorkflowResult(result: MultiAgentOrchestrationResult): string {
 	workers.forEach((w, i) => {
 		const branch = i === workers.length - 1 && !result.outcome ? "└─" : "├─";
 		const status = w.success ? "ok" : "fail";
-		const text = compactValue(w.text ?? w.error ?? "", 120) ?? "";
+		const text = compactValue(w.text ?? w.error ?? "", workerTextLimit) ?? "";
 		lines.push(`${branch} ${w.workerId} [${status}] ${text}`);
 	});
 	if (result.outcome) {
 		const o = result.outcome;
-		const text = compactValue(o.text ?? o.error ?? "", 200) ?? "";
+		const text = compactValue(o.text ?? o.error ?? "", outcomeTextLimit) ?? "";
 		lines.push(`└─ outcome [${o.success ? "ok" : "fail"}] ${text}`);
 	}
 	return lines.join("\n");
@@ -846,14 +900,19 @@ export class SubAgentController {
 					`Cannot start a workflow: ${running} already running and the limit is ${MAX_START_MANY}. Wait or cancel some before starting more.`,
 				);
 			}
-			const event = this.startWorkflow(params.workflow as WorkflowInput, ctx.cwd);
+			const workflowPackages = normalizePackageSelectors(params.workflow.packages ?? params.packages);
+			const event = this.startWorkflow({ ...params.workflow, packages: workflowPackages } as WorkflowInput, ctx.cwd);
 			if (returnToMain) this.scheduleReturnToMain([event], returnDelivery, returnInstruction);
 			this.monitor.update(ctx);
+			const content = truncateModelText(
+				`Started workflow ${event.id} (${event.label})${returnToMain ? " with automatic return to main agent" : ""}\nPattern: ${event.pattern}\nCWD: ${event.cwd}\nLog: ${event.logPath}`,
+				MODEL_RESULT_LIMIT_BYTES,
+			).text;
 			return {
 				content: [
 					{
 						type: "text" as const,
-						text: `Started workflow ${event.id} (${event.label})${returnToMain ? " with automatic return to main agent" : ""}\nPattern: ${event.pattern}\nCWD: ${event.cwd}\nLog: ${event.logPath}`,
+						text: content,
 					},
 				],
 				details: {
@@ -872,9 +931,7 @@ export class SubAgentController {
 
 		const commonTimeoutSeconds = positiveNumber(params.timeoutSeconds) ?? this.config.defaultTimeoutSeconds;
 		const commonThinking = (params.thinking ?? this.config.defaultThinking) as ThinkingLevel;
-		const commonPackages = params.packages
-			?.map((selector) => selector.trim())
-			.filter((selector) => selector.length > 0);
+		const commonPackages = normalizePackageSelectors(params.packages);
 		const rawTasks = hasTasks ? (params.tasks as AgentTask[]) : [params as AgentTask];
 		const tasks = rawTasks.map((task) => ({
 			...task,
@@ -898,11 +955,15 @@ export class SubAgentController {
 
 		if (started.length === 1) {
 			const event = started[0]!;
+			const content = truncateModelText(
+				`Started sub-agent ${event.id}${event.label ? ` (${event.label})` : ""}${returnToMain ? " with automatic return to main agent" : ""}\nRole: ${event.role ?? "general"}\nCWD: ${event.cwd}\nTools: ${event.tools.join(",")}\nPrompt: ${event.promptPath}\nLog: ${event.logPath}\nParent progress: ${MAIN_PROGRESS_PATH}`,
+				MODEL_RESULT_LIMIT_BYTES,
+			).text;
 			return {
 				content: [
 					{
 						type: "text" as const,
-						text: `Started sub-agent ${event.id}${event.label ? ` (${event.label})` : ""}${returnToMain ? " with automatic return to main agent" : ""}\nRole: ${event.role ?? "general"}\nCWD: ${event.cwd}\nTools: ${event.tools.join(",")}\nPrompt: ${event.promptPath}\nLog: ${event.logPath}\nParent progress: ${MAIN_PROGRESS_PATH}`,
+						text: content,
 					},
 				],
 				details: {
@@ -919,11 +980,15 @@ export class SubAgentController {
 		const lines = started.map(
 			(event) => `${event.id}\t${event.status}\t${event.label ?? event.role ?? "sub-agent"}\t${event.logPath}`,
 		);
+		const content = truncateModelText(
+			`Started ${started.length} sub-agents concurrently${returnToMain ? " with automatic return to main agent" : ""}:\n${lines.join("\n")}\nParent progress: ${MAIN_PROGRESS_PATH}`,
+			MODEL_RESULT_TOTAL_LIMIT_BYTES,
+		).text;
 		return {
 			content: [
 				{
 					type: "text" as const,
-					text: `Started ${started.length} sub-agents concurrently${returnToMain ? " with automatic return to main agent" : ""}:\n${lines.join("\n")}\nParent progress: ${MAIN_PROGRESS_PATH}`,
+					text: content,
 				},
 			],
 			details: {
@@ -946,9 +1011,10 @@ export class SubAgentController {
 			// pending returnToMain auto-delivery for it would be redundant — cancel
 			// it. Polling a still-running agent must not cancel.
 			if (includeOutput && event.status !== "running") event.autoReturnPending = false;
-			return summarizeEvent(event, includeOutput);
+			return includeOutput ? summarizeSubAgentForModel(event) : summarizeEvent(event, false);
 		});
-		return { content: [{ type: "text" as const, text: summaries.join("\n\n---\n\n") }], details: { ids } };
+		const content = truncateModelText(summaries.join("\n\n---\n\n"), MODEL_RESULT_TOTAL_LIMIT_BYTES).text;
+		return { content: [{ type: "text" as const, text: content }], details: { ids } };
 	}
 
 	private async wait(params: SubAgentInput, signal: AbortSignal | undefined) {
@@ -959,7 +1025,10 @@ export class SubAgentController {
 		const knownEvents = ids
 			.map((id) => this.events.get(id))
 			.filter((event): event is SubAgentEvent => Boolean(event));
-		if (!knownEvents.length) throw new Error(`No known sub-agents found: ${ids.join(", ")}`);
+		if (!knownEvents.length)
+			throw new Error(
+				truncateModelText(`No known sub-agents found: ${ids.join(", ")}`, MODEL_RESULT_LIMIT_BYTES).text,
+			);
 
 		const waitTimeoutSeconds = positiveNumber(params.waitTimeoutSeconds) ?? this.config.defaultWaitTimeoutSeconds;
 		const deadline = waitTimeoutSeconds ? Date.now() + waitTimeoutSeconds * 1000 : undefined;
@@ -978,9 +1047,14 @@ export class SubAgentController {
 			if (event.status !== "running") event.autoReturnPending = false;
 		}
 
-		const summaries = knownEvents.map((event) => summarizeEvent(event));
+		const perEventLimit = Math.min(
+			MODEL_RESULT_LIMIT_BYTES,
+			Math.max(1024, Math.floor(MODEL_RESULT_TOTAL_LIMIT_BYTES / knownEvents.length)),
+		);
+		const summaries = knownEvents.map((event) => summarizeSubAgentForModel(event, perEventLimit));
+		const content = truncateModelText(summaries.join("\n\n---\n\n"), MODEL_RESULT_TOTAL_LIMIT_BYTES).text;
 		return {
-			content: [{ type: "text" as const, text: summaries.join("\n\n---\n\n") }],
+			content: [{ type: "text" as const, text: content }],
 			details: {
 				ids: knownEvents.map((event) => event.id),
 				statuses: knownEvents.map((event) => event.status),
@@ -1007,7 +1081,8 @@ export class SubAgentController {
 			this.cancelEvent(event.id, ctx);
 			lines.push(`${event.id} cancelled`);
 		}
-		return { content: [{ type: "text" as const, text: lines.join("\n") }], details: { ids } };
+		const content = truncateModelText(lines.join("\n"), MODEL_RESULT_TOTAL_LIMIT_BYTES).text;
+		return { content: [{ type: "text" as const, text: content }], details: { ids } };
 	}
 
 	private async startSubAgent(input: AgentTask, parentCwd: string): Promise<SubAgentEvent> {
@@ -1016,8 +1091,7 @@ export class SubAgentController {
 		const id = `agent_${String(this.nextAgentNumber++).padStart(3, "0")}`;
 		const cwd = resolve(parentCwd, input.cwd ?? ".");
 		const tools = input.tools?.length ? input.tools : DEFAULT_TOOLS;
-		const packages =
-			input.packages?.map((selector) => selector.trim()).filter((selector) => selector.length > 0) ?? [];
+		const packages = normalizePackageSelectors(input.packages);
 		const thinking = input.thinking ?? DEFAULT_THINKING;
 		const stamp = timestampForFile();
 		const promptPath = join(WORK_DIR, `${id}-${stamp}.prompt.md`);
@@ -1125,6 +1199,7 @@ export class SubAgentController {
 			pattern: input.pattern,
 			cwd,
 			tools: input.tools ?? [],
+			packages: normalizePackageSelectors(input.packages),
 			model: input.model,
 			thinking: DEFAULT_THINKING,
 			promptPath: logPath,
@@ -1151,7 +1226,15 @@ export class SubAgentController {
 				event.workflowResult = result;
 				const summary = formatWorkflowResult(result);
 				event.tail = appendTailText(event.tail, Buffer.from(`${summary}\n`));
-				if (!log.writableEnded && !log.destroyed) log.write(`${summary}\n`);
+				if (!log.writableEnded && !log.destroyed) {
+					let completeResult: string;
+					try {
+						completeResult = JSON.stringify(result, null, 2);
+					} catch {
+						completeResult = summary;
+					}
+					log.write(`${completeResult}\n`);
+				}
 				finishEvent(event, "exited", 0, null);
 				this.monitor.update();
 			})
@@ -1189,24 +1272,37 @@ export class SubAgentController {
 	): void {
 		if (this.shuttingDown || completedEvents.length === 0) return;
 
-		// content keeps the full per-event output so the main agent can synthesize
-		// the findings without re-fetching. The chat DISPLAY is collapsed by the
-		// sub-agent-return renderer (ctrl+o expands), using the eventData snapshots.
-		const summaries = completedEvents.map((event) => summarizeSubAgentExpanded(event)).join("\n\n---\n\n");
 		const defaultInstruction =
 			"Sub-agent work has completed. Read these returned results, synthesize the findings, and continue the original task. Do not ask the user to manually inspect event ids unless more information is needed.";
 		const resolvedInstruction = instruction?.trim() || defaultInstruction;
+		const boundedInstruction = truncateModelText(resolvedInstruction, MODEL_RESULT_LIMIT_BYTES).text;
+		const separatorBytes = Buffer.byteLength("\n\n", "utf8");
+		const summaryBudget = Math.max(
+			1024,
+			MODEL_RESULT_TOTAL_LIMIT_BYTES - Buffer.byteLength(boundedInstruction, "utf8") - separatorBytes,
+		);
+
+		// Model context receives a bounded complete payload per event. Full captured
+		// tails stay in eventData for Ctrl+O and in each event log for inspection.
+		const perEventLimit = Math.min(
+			MODEL_RESULT_LIMIT_BYTES,
+			Math.max(1024, Math.floor(summaryBudget / completedEvents.length)),
+		);
+		const summaries = completedEvents
+			.map((event) => summarizeSubAgentForModel(event, perEventLimit))
+			.join("\n\n---\n\n");
+		const content = truncateModelText(`${boundedInstruction}\n\n${summaries}`, MODEL_RESULT_TOTAL_LIMIT_BYTES).text;
 		void this.sendMessage(
 			{
 				customType: "sub-agent-return",
-				content: `${resolvedInstruction}\n\n${summaries}`,
+				content,
 				display: true,
 				details: {
 					ids: completedEvents.map((event) => event.id),
 					statuses: completedEvents.map((event) => event.status),
 					// Instruction is stored separately so the renderer can regenerate the
 					// collapsed/expanded body without fragile content parsing.
-					instruction: resolvedInstruction,
+					instruction: boundedInstruction,
 					// Plain-data snapshots so the renderer can regenerate collapsed/expanded
 					// views on ctrl+o without holding non-cloneable live event handles.
 					eventData: completedEvents.map((event) => serializableSubAgentSnapshot(event)),

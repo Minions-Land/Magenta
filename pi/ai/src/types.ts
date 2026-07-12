@@ -365,6 +365,8 @@ export interface Usage {
 		cacheRead: number;
 		cacheWrite: number;
 		total: number;
+		/** True when the provider did not expose a concrete price for this usage. */
+		unknown?: boolean;
 	};
 }
 
@@ -678,6 +680,8 @@ export interface Model<TApi extends Api> {
 		cacheRead: number; // $/million tokens
 		cacheWrite: number; // $/million tokens
 	};
+	/** The provider chooses the concrete model/price at request time. */
+	variablePricing?: boolean;
 	contextWindow: number;
 	maxTokens: number;
 	headers?: Record<string, string>;

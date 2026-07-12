@@ -3,13 +3,52 @@ import type { TextContent } from "@earendil-works/pi-ai";
 import { type TSchema, Type } from "typebox";
 import { type McpToolsCacheOptions, readMcpToolsCache, writeMcpToolsCache } from "./cache.ts";
 import {
-	McpStdioClient,
-	type McpStdioClientOptions,
+	type McpClient,
+	type McpClientOptions,
 	type McpToolCallResult,
 	type McpToolSchema,
 	validateMcpToolSchemas,
 } from "./client.ts";
 import type { JsonSchema } from "./schema.ts";
+import { createMcpClient } from "./transport.ts";
+
+export const MCP_MODEL_RESULT_LIMIT_BYTES = 32 * 1024;
+export const MCP_MODEL_ERROR_LIMIT_BYTES = 8 * 1024;
+const MCP_SHORTENED_MARKER =
+	"\n\n[MCP result shortened to protect model context; request a smaller or paginated result if needed.]\n\n";
+
+function takeUtf8Prefix(text: string, maxBytes: number): string {
+	let bytes = 0;
+	let output = "";
+	for (const character of text) {
+		const characterBytes = Buffer.byteLength(character, "utf8");
+		if (bytes + characterBytes > maxBytes) break;
+		output += character;
+		bytes += characterBytes;
+	}
+	return output;
+}
+
+function takeUtf8Suffix(text: string, maxBytes: number): string {
+	const characters = Array.from(text);
+	let bytes = 0;
+	let start = characters.length;
+	while (start > 0) {
+		const characterBytes = Buffer.byteLength(characters[start - 1]!, "utf8");
+		if (bytes + characterBytes > maxBytes) break;
+		start -= 1;
+		bytes += characterBytes;
+	}
+	return characters.slice(start).join("");
+}
+
+function truncateMcpModelText(text: string, maxBytes: number): string {
+	if (Buffer.byteLength(text, "utf8") <= maxBytes) return text;
+	const marker = takeUtf8Prefix(MCP_SHORTENED_MARKER, maxBytes);
+	const remaining = Math.max(0, maxBytes - Buffer.byteLength(marker, "utf8"));
+	const headBytes = Math.floor(remaining * 0.4);
+	return `${takeUtf8Prefix(text, headBytes)}${marker}${takeUtf8Suffix(text, remaining - headBytes)}`;
+}
 
 /**
  * Adapts one tool exposed by an external MCP server into a loop-ready
@@ -34,8 +73,8 @@ export type McpToolDetails = {
  * rather than re-spawning per call the way one-shot process tools do.
  */
 export class McpConnection {
-	private client?: McpStdioClient;
-	private readonly clientOptions: McpStdioClientOptions;
+	private client?: McpClient;
+	private readonly clientOptions: McpClientOptions;
 	private connectPromise?: Promise<void>;
 	private idleClosePromise?: Promise<void>;
 	private toolReferences = 0;
@@ -43,17 +82,17 @@ export class McpConnection {
 	private terminal = false;
 	readonly serverName: string;
 
-	constructor(serverName: string, options: McpStdioClientOptions) {
+	constructor(serverName: string, options: McpClientOptions) {
 		this.serverName = serverName;
 		this.clientOptions = options;
-		this.client = new McpStdioClient(options);
+		this.client = createMcpClient(options);
 	}
 
 	/** Connect once; concurrent callers await the same in-flight handshake. */
 	async ensureConnected(): Promise<void> {
 		await this.idleClosePromise;
 		if (this.terminal) throw new Error(`MCP connection ${this.serverName} has been closed`);
-		if (!this.client) this.client = new McpStdioClient(this.clientOptions);
+		if (!this.client) this.client = createMcpClient(this.clientOptions);
 		const client = this.client;
 		if (client.isConnected) return;
 		if (!this.connectPromise) {
@@ -138,16 +177,15 @@ export function mcpToolName(name: string, prefix?: string): string {
  * summarize any non-text parts so nothing is silently dropped.
  */
 function toToolContent(result: McpToolCallResult): TextContent[] {
-	const parts: TextContent[] = [];
+	const parts: string[] = [];
 	for (const item of result.content ?? []) {
 		if (item.type === "text" && typeof item.text === "string") {
-			parts.push({ type: "text", text: item.text });
+			parts.push(item.text);
 		} else {
-			parts.push({ type: "text", text: `[${item.type} content]` });
+			parts.push(`[${item.type} content]`);
 		}
 	}
-	if (parts.length === 0) parts.push({ type: "text", text: "" });
-	return parts;
+	return [{ type: "text", text: truncateMcpModelText(parts.join("\n\n"), MCP_MODEL_RESULT_LIMIT_BYTES) }];
 }
 
 export class McpTool {
@@ -193,16 +231,23 @@ export class McpTool {
 				remoteTool: this.remoteToolName,
 			},
 			execute: async (_toolCallId, params): Promise<AgentToolResult<McpToolDetails>> => {
-				const args = (params ?? {}) as Record<string, unknown>;
-				const result = await this.connection.callTool(this.remoteToolName, args);
-				return {
-					content: toToolContent(result),
-					details: {
-						server: this.connection.serverName,
-						remoteTool: this.remoteToolName,
-						isError: Boolean(result.isError),
-					},
-				};
+				try {
+					const args = (params ?? {}) as Record<string, unknown>;
+					const result = await this.connection.callTool(this.remoteToolName, args);
+					return {
+						content: toToolContent(result),
+						details: {
+							server: this.connection.serverName,
+							remoteTool: this.remoteToolName,
+							isError: Boolean(result.isError),
+						},
+					};
+				} catch (error) {
+					const original = error instanceof Error ? error : new Error(String(error));
+					const bounded = new Error(truncateMcpModelText(original.message, MCP_MODEL_ERROR_LIMIT_BYTES));
+					bounded.name = original.name;
+					throw bounded;
+				}
 			},
 		};
 	}
@@ -210,7 +255,7 @@ export class McpTool {
 
 export type CreateMcpToolsOptions = {
 	serverName: string;
-	client: McpStdioClientOptions;
+	client: McpClientOptions;
 	namePrefix?: string;
 	/**
 	 * Optional disk cache for the server's `tools/list` result. When provided and
@@ -247,18 +292,22 @@ export type DiscoverMcpToolsResult = {
 export async function discoverMcpTools(options: CreateMcpToolsOptions): Promise<DiscoverMcpToolsResult> {
 	const connection = new McpConnection(options.serverName, options.client);
 
-	const cacheOptions: McpToolsCacheOptions | undefined = options.cache
-		? {
-				cacheDir: options.cache.dir,
-				serverName: options.serverName,
-				client: {
-					command: options.client.command,
-					args: options.client.args,
-					env: options.cache.descriptorEnv,
-					cwd: options.client.cwd,
-				},
-			}
-		: undefined;
+	// The disk cache keys on the resolved command/binary identity, which only the
+	// stdio transport has. Remote (http) servers enumerate live every assembly —
+	// a single network round-trip — so they simply skip the cache.
+	const cacheOptions: McpToolsCacheOptions | undefined =
+		options.cache && options.client.transport !== "http"
+			? {
+					cacheDir: options.cache.dir,
+					serverName: options.serverName,
+					client: {
+						command: options.client.command,
+						args: options.client.args,
+						env: options.cache.descriptorEnv,
+						cwd: options.client.cwd,
+					},
+				}
+			: undefined;
 
 	try {
 		let tools: McpToolSchema[] | undefined;

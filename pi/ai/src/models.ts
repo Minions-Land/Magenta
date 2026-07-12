@@ -383,6 +383,19 @@ export function hasApi<TApi extends Api>(model: Model<Api>, api: TApi): model is
 }
 
 export function calculateCost<TApi extends Api>(model: Model<TApi>, usage: Usage): Usage["cost"] {
+	if (model.variablePricing) {
+		// Routers such as openrouter/auto select a downstream model at request
+		// time, so catalog pricing (which is represented by zeroes) must not be
+		// presented as a free request. Providers that report an actual charge
+		// can replace this marker after calculating token usage.
+		usage.cost.input = 0;
+		usage.cost.output = 0;
+		usage.cost.cacheRead = 0;
+		usage.cost.cacheWrite = 0;
+		usage.cost.total = 0;
+		usage.cost.unknown = true;
+		return usage.cost;
+	}
 	// Anthropic charges 2x base input for 1h cache writes.
 	const longWrite = usage.cacheWrite1h ?? 0;
 	const shortWrite = usage.cacheWrite - longWrite;
@@ -391,7 +404,26 @@ export function calculateCost<TApi extends Api>(model: Model<TApi>, usage: Usage
 	usage.cost.cacheRead = (model.cost.cacheRead / 1000000) * usage.cacheRead;
 	usage.cost.cacheWrite = (model.cost.cacheWrite * shortWrite + model.cost.input * 2 * longWrite) / 1000000;
 	usage.cost.total = usage.cost.input + usage.cost.output + usage.cost.cacheRead + usage.cost.cacheWrite;
+	delete usage.cost.unknown;
 	return usage.cost;
+}
+
+/** Apply a provider-reported total charge (USD) when catalog pricing is dynamic. */
+export function applyReportedCost(usage: Usage, reportedCost: unknown): boolean {
+	const cost =
+		typeof reportedCost === "number"
+			? reportedCost
+			: typeof reportedCost === "string" && reportedCost.trim().length > 0
+				? Number(reportedCost)
+				: Number.NaN;
+	if (!Number.isFinite(cost) || cost < 0) return false;
+	usage.cost.input = 0;
+	usage.cost.output = 0;
+	usage.cost.cacheRead = 0;
+	usage.cost.cacheWrite = 0;
+	usage.cost.total = cost;
+	delete usage.cost.unknown;
+	return true;
 }
 
 const EXTENDED_THINKING_LEVELS: ModelThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
