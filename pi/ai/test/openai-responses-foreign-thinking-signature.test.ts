@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { convertResponsesMessages } from "../src/api/openai-responses-shared.ts";
 import { getModel } from "../src/compat.ts";
-import type { AssistantMessage, Context, Usage } from "../src/types.ts";
+import type { AssistantMessage, Context, Model, Usage } from "../src/types.ts";
 
 /**
  * Regression: convertResponsesMessages replays OpenAI reasoning items by
@@ -35,8 +35,8 @@ const usage: Usage = {
 const NON_JSON_SIGNATURE = "Qf60tk4G9u5Ewh2/NioZWQ==";
 
 describe("OpenAI Responses non-JSON thinking signature handling", () => {
-	function sameModelContextWithBadSignature(): { model: NonNullable<ReturnType<typeof getModel>>; context: Context } {
-		const model = getModel("openai", "gpt-5-mini");
+	function sameModelContextWithBadSignature(): { model: Model<"openai-responses">; context: Context } {
+		const model: Model<"openai-responses"> = getModel("openai", "gpt-5-mini");
 		if (!model) throw new Error("expected openai/gpt-5-mini model");
 		const assistant: AssistantMessage = {
 			role: "assistant",

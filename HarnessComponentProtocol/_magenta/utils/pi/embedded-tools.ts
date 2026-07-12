@@ -18,8 +18,7 @@ const ARCH = process.arch;
 type ToolName = "fd" | "rg";
 
 function getHarnessRoot(): string {
-	const isBunBinary =
-		typeof (globalThis as any).Bun !== "undefined" && HcpClientisbunbinaryurl(import.meta.url);
+	const isBunBinary = typeof (globalThis as any).Bun !== "undefined" && HcpClientisbunbinaryurl(import.meta.url);
 	return isBunBinary ? dirname(process.execPath) : fileURLToPath(new URL("../../..", import.meta.url));
 }
 
