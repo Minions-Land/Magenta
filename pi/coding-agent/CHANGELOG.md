@@ -4,7 +4,7 @@ All notable changes to Magenta CLI are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## [0.0.10] - 2026-07-12
+## [0.0.11] - 2026-07-12
 
 ### Added
 - Added a PowerShell 5.1-compatible Windows installer that downloads version-matched runtime resources, verifies SHA-256 checksums, validates startup, and updates the user PATH
@@ -13,6 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Fixed
 - Windows Bun binaries now recognize `~BUN` and `%7EBUN` virtual module URLs, so HCP runtime paths resolve beside `magenta.exe` instead of attempting to create the filesystem root (`\`)
 - Windows installation now stages beside the destination for same-volume replacement, allowing downloads from a C: temporary directory to install safely on D: with rollback of the previous installation on failure
+- PowerShell 5.1 installation no longer attempts to recreate an existing drive root when the selected install directory is directly below it
 
 ## [0.0.9] - 2026-07-12
 
