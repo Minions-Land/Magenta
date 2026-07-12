@@ -25,6 +25,7 @@
 				"minimatch": "10.2.5",
 				"proper-lockfile": "4.1.2",
 				"semver": "7.8.0",
+				"smol-toml": "1.7.0",
 				"typebox": "1.1.38",
 				"undici": "8.5.0",
 				"yaml": "2.9.0"

@@ -2,7 +2,7 @@ import { HcpClientcapabilityprefix, type HcpServerDescription, type HcpServerReq
 
 /** Detect Bun's virtual module URLs on every supported compiled-binary target. */
 export function HcpClientisbunbinaryurl(url: string): boolean {
-	return url.includes("$bunfs") || url.includes("~BUN") || url.includes("%7EBUN");
+	return /(?:\$bunfs|~bun|%7ebun)/i.test(url);
 }
 
 /**
@@ -409,16 +409,21 @@ export class HcpClient {
 		if (module.server.describeSource) return module.server.describeSource(selector, magnet);
 
 		if (magnet.toTool) {
-			const tool = magnet.toTool() as { name?: unknown; description?: unknown };
+			const tool = magnet.toTool() as { name?: unknown; description?: unknown; provenance?: unknown };
 			if (typeof tool.name !== "string") {
 				throw new Error(`HcpClient(${module.server.moduleName}): tool magnet "${selector}" has no name`);
 			}
 			return {
 				target: `tool:${tool.name}`,
 				kind: "tool",
-				ops: ["describe", "call"],
+				ops: ["describe", "resolve"],
 				description: typeof tool.description === "string" ? tool.description : module.server.description,
-				metadata: { source: magnet.source },
+				metadata: {
+					name: tool.name,
+					implementation: magnet.kind,
+					source: magnet.source,
+					...(tool.provenance !== undefined ? { provenance: tool.provenance } : {}),
+				},
 			};
 		}
 		if (magnet.toCapability) {

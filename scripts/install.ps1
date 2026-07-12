@@ -29,6 +29,113 @@ function Test-MagentaPathEqual([string]$Left, [string]$Right) {
     }
 }
 
+function Test-MagentaResourceArchive([string]$ArchivePath) {
+    $archivePaths = @(& tar.exe -tzf $ArchivePath)
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to inspect Magenta runtime resources (tar.exe exit code $LASTEXITCODE)."
+    }
+    $archiveDetails = @(& tar.exe -tvzf $ArchivePath)
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to inspect Magenta runtime resource types (tar.exe exit code $LASTEXITCODE)."
+    }
+    if ($archivePaths.Count -eq 0 -or $archivePaths.Count -ne $archiveDetails.Count) {
+        throw "Magenta runtime resource archive has an empty or ambiguous listing."
+    }
+
+    $allowedDirectories = @(
+        "sandbox", "tools", "policy", "runtime", "skills", "theme",
+        "assets", "export-html", "docs", "examples"
+    )
+    $allowedFiles = @("package.json", "README.md", "CHANGELOG.md", "magenta-release.json")
+    $requiredPaths = @(
+        "theme/dark.json",
+        "tools/read/read.toml",
+        "skills/paper-analysis/pi/SKILL.md",
+        "photon_rs_bg.wasm"
+    )
+    $normalizedPaths = New-Object "System.Collections.Generic.HashSet[string]"
+    $caseFoldedPaths = New-Object "System.Collections.Generic.HashSet[string]"
+    $topLevelNames = New-Object "System.Collections.Generic.HashSet[string]"
+    $hasWasm = $false
+
+    for ($index = 0; $index -lt $archivePaths.Count; $index++) {
+        $entry = [string]$archivePaths[$index]
+        $detail = [string]$archiveDetails[$index]
+        if ([string]::IsNullOrEmpty($detail)) {
+            throw "Magenta runtime resource archive has an unreadable entry type."
+        }
+        $entryType = $detail.Substring(0, 1)
+        if ($entryType -ne "-" -and $entryType -ne "d") {
+            throw "Magenta runtime resource archive contains unsupported entry type '$entryType': $entry"
+        }
+        if ([string]::IsNullOrEmpty($entry) -or $entry -match '[\x00-\x1f\x7f]') {
+            throw "Magenta runtime resource archive contains an empty or control-character path."
+        }
+        if ($entry.Contains([char]92)) {
+            throw "Magenta runtime resource archive path uses a backslash: $entry"
+        }
+        if ($entry.StartsWith("/") -or $entry -match '^[A-Za-z]:') {
+            throw "Magenta runtime resource archive path is absolute: $entry"
+        }
+
+        $normalized = $entry.TrimEnd([char[]]@('/'))
+        $segments = @($normalized -split '/')
+        $unsafeSegments = @($segments | Where-Object { $_ -eq "" -or $_ -eq "." -or $_ -eq ".." })
+        if ([string]::IsNullOrEmpty($normalized) -or $unsafeSegments.Count -gt 0) {
+            throw "Magenta runtime resource archive path is unsafe: $entry"
+        }
+        foreach ($segment in $segments) {
+            if ($segment.Contains(":") -or $segment -match '[. ]$') {
+                throw "Magenta runtime resource archive path is not Windows-safe: $entry"
+            }
+            if ($segment -match '^(?i:aux|con|nul|prn|com[1-9]|lpt[1-9])(?:\..*)?$') {
+                throw "Magenta runtime resource archive uses a Windows reserved name: $entry"
+            }
+        }
+
+        $caseFolded = $normalized.Normalize([Text.NormalizationForm]::FormC).ToLowerInvariant()
+        if (-not $normalizedPaths.Add($normalized) -or -not $caseFoldedPaths.Add($caseFolded)) {
+            throw "Magenta runtime resource archive contains a duplicate path: $normalized"
+        }
+
+        $topLevel = $segments[0]
+        $isTopLevelWasm = $segments.Count -eq 1 -and $topLevel -match '^[A-Za-z0-9][A-Za-z0-9._-]*\.wasm$'
+        if (-not ($allowedDirectories -ccontains $topLevel) -and -not ($allowedFiles -ccontains $topLevel) -and -not $isTopLevelWasm) {
+            throw "Magenta runtime resource archive contains an unknown top-level path: $normalized"
+        }
+        if (($allowedDirectories -ccontains $topLevel) -and $segments.Count -eq 1 -and $entryType -ne "d") {
+            throw "Magenta runtime resource root is not a directory: $normalized"
+        }
+        if (($allowedFiles -ccontains $topLevel) -and ($segments.Count -ne 1 -or $entryType -ne "-")) {
+            throw "Magenta runtime top-level file has an invalid shape: $normalized"
+        }
+        if ($isTopLevelWasm -and $entryType -ne "-") {
+            throw "Magenta runtime WASM entry is not a regular file: $normalized"
+        }
+        [void]$topLevelNames.Add($topLevel)
+        if ($isTopLevelWasm) { $hasWasm = $true }
+    }
+
+    foreach ($directoryName in $allowedDirectories) {
+        if (-not $topLevelNames.Contains($directoryName)) {
+            throw "Magenta runtime resource archive is missing directory: $directoryName"
+        }
+    }
+    foreach ($fileName in $allowedFiles) {
+        if (-not $normalizedPaths.Contains($fileName)) {
+            throw "Magenta runtime resource archive is missing file: $fileName"
+        }
+    }
+    foreach ($requiredPath in $requiredPaths) {
+        if (-not $normalizedPaths.Contains($requiredPath)) {
+            throw "Magenta runtime resource archive is missing required file: $requiredPath"
+        }
+    }
+    if (-not $hasWasm) {
+        throw "Magenta runtime resource archive contains no top-level WASM asset."
+    }
+}
+
 if (-not [Environment]::Is64BitOperatingSystem) {
     throw "Magenta currently requires 64-bit Windows."
 }
@@ -102,6 +209,7 @@ try {
         }
     }
 
+    Test-MagentaResourceArchive $resourcesPath
     tar.exe -xzf $resourcesPath -C $stagingDir
     if ($LASTEXITCODE -ne 0) {
         throw "Failed to extract Magenta runtime resources (tar.exe exit code $LASTEXITCODE)."
@@ -110,13 +218,25 @@ try {
     $requiredResources = @(
         "theme\dark.json",
         "tools\read\read.toml",
-        "skills\paper-analysis\pi\SKILL.md"
+        "skills\paper-analysis\pi\SKILL.md",
+        "photon_rs_bg.wasm",
+        "magenta-release.json"
     )
     foreach ($relativePath in $requiredResources) {
         $resourcePath = Join-Path $stagingDir $relativePath
         if (-not (Test-Path $resourcePath -PathType Leaf)) {
             throw "Runtime resource is missing from the release: $relativePath"
         }
+    }
+
+    $releaseMarker = Get-Content -LiteralPath (Join-Path $stagingDir "magenta-release.json") -Raw | ConvertFrom-Json
+    if (-not $releaseMarker.version) {
+        throw "Magenta runtime resource marker has no version."
+    }
+    $versionOutput = @(& $binaryPath --version 2>&1)
+    $binaryVersion = (($versionOutput | ForEach-Object { "$_" }) -join [Environment]::NewLine).Trim()
+    if ($LASTEXITCODE -ne 0 -or $binaryVersion -ne [string]$releaseMarker.version) {
+        throw "Magenta binary/resource version mismatch. Binary: $binaryVersion Resources: $($releaseMarker.version)"
     }
 
     Write-Host "Verifying Magenta startup and embedded process-tools..."

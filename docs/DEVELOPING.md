@@ -198,13 +198,13 @@ Keep the two package mechanisms distinct:
 - Pi extension resources are managed by `magenta install/remove/list/config`.
 - Harness domain Packages are externally managed component bundles.
 
-Magenta3 currently accepts a local root containing already-downloaded domain
-Packages. External caches should pass it explicitly; without an override, the
-compatibility fallback checks only `<current-workspace>/packages`. Do not add
-concrete package contents, a submodule, or a hardcoded sibling path to this
-repository. Future GitHub download, verification, version selection, and
-caching should remain a host acquisition concern that feeds the existing
-local-root boundary.
+Magenta3 accepts local domain Package roots and versioned
+`github:owner/repo/Package@version` selectors. GitHub download, platform
+selection, SHA-256 verification, safe extraction, and caching are host
+acquisition concerns that feed the existing local-root boundary. Without a
+local-root override, local selectors check only `<current-workspace>/packages`.
+Do not add concrete package contents, a submodule, or a hardcoded sibling path
+to this repository.
 
 ## Documentation Changes
 

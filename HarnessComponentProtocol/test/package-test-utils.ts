@@ -5,20 +5,20 @@ import {
 	type HcpClientbuildsessionresult,
 } from "../.HCP/assembly/session-hcp.ts";
 import { HcpClientpackageinputfromoverlay } from "../_magenta/packages/hcp-client-components.ts";
-import type { PackageToolDiagnostic } from "../_magenta/packages/tool-diagnostic.ts";
 import type {
-	PackageAssemblyProgress,
-	PackageDiagnostic,
-	PackageOverlay,
+	HcpClientpackageassemblyprogress,
+	HcpClientpackagediagnostic,
+	HcpClientpackageoverlay,
 } from "../_magenta/packages/package-overlay-v2.ts";
+import type { HcpClientpackagetooldiagnostic } from "../_magenta/packages/tool-diagnostic.ts";
 
 export type HcpClientpackagetestbuildoptions = Omit<HcpClientbuildsessionoptions, "components"> & {
-	overlay: PackageOverlay;
-	onPackageAssemblyProgress?: (progress: PackageAssemblyProgress) => void;
+	overlay: HcpClientpackageoverlay;
+	onPackageAssemblyProgress?: (progress: HcpClientpackageassemblyprogress) => void;
 };
 
 export type HcpClientpackagetestbuildresult = Omit<HcpClientbuildsessionresult, "diagnostics"> & {
-	diagnostics: Array<PackageDiagnostic | HcpClientassemblydiagnostic | PackageToolDiagnostic>;
+	diagnostics: Array<HcpClientpackagediagnostic | HcpClientassemblydiagnostic | HcpClientpackagetooldiagnostic>;
 	packageToolAddresses: string[];
 	packageResourceAddresses: string[];
 };

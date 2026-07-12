@@ -159,12 +159,14 @@ supply components, but their origin is deliberately opaque to HCP assembly.
 
 Package parsing and selection live in `_magenta/packages/`. The overlay returns
 one canonical component list; it does not derive parallel Tool/Resource lookup
-systems. `HcpClientpackageinputfromoverlay()` maps supported declarations from
-the resolved, already-downloaded local root to the ordinary components and
-settings accepted by HCP assembly. External integration should supply
-`packagesRoot`; if omitted, discovery falls back only to `<repoRoot>/packages`.
-Package paths remain relative to that root, and integration must not infer a
-sibling repository, `MagentaPackages`, or submodule path.
+systems. `HcpClientpackageinputfromoverlay()` maps supported declarations from a
+validated local root to the ordinary components and settings accepted by HCP
+assembly. The coding-agent host may produce that root by acquiring a
+platform-specific `github:owner/repo/Package@version` release, or callers may
+supply `packagesRoot` explicitly. If omitted, local discovery falls back only
+to `<repoRoot>/packages`. Package paths remain relative to that root, and
+integration must not infer a sibling repository, `MagentaPackages`, or
+submodule path.
 
 The owning Module's repository-declared `tools/descriptor/HcpMagnet.ts`
 constructs both Package tool products and configured user MCP products. One MCP
@@ -173,10 +175,10 @@ each sibling still contains one product. MCP discovery and connection ownership
 remain behind that Source and `_magenta/mcp/`, never in `.HCP/assembly/`.
 
 Magenta3's root `packages/` retains only the generic contract and templates and
-does not depend on a fixed Package checkout. Concrete domain Packages will be
-maintained and published in independent GitHub repositories. A later acquisition
-layer will download, select versions, verify, and cache them; that layer is not implemented
-by this change and remains outside HCP.
+does not depend on a fixed Package checkout. Concrete domain Packages are
+maintained and published in independent GitHub repositories. Download, version
+selection, verification, safe extraction, and caching are implemented by the
+coding-agent host and remain outside HCP.
 
 Selection is consumed once. Consumers never name a Source and never fall back
 to a Source-specific import.

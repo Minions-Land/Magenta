@@ -4,6 +4,12 @@ All notable changes to Magenta CLI are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [Unreleased]
+
+### Fixed
+- Binary self-update now verifies the platform executable and runtime resource archive from the same GitHub release, then switches both together with rollback on Unix and Windows
+- A newly updated binary now repairs missing or version-mismatched runtime resources before theme or HCP initialization, including upgrades performed by older binary-only updaters
+
 ## [0.0.11] - 2026-07-12
 
 ### Added

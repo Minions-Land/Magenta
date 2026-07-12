@@ -1,8 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { formatPromptTemplateInvocation } from "../prompt-templates/pi/prompt-templates.ts";
-import { formatSkillInvocation } from "../skills/HcpServer.ts";
+import { formatSkillInvocation, HcpClientresolveharnessskillsdir } from "../skills/HcpServer.ts";
 
 describe("resource formatting helpers", () => {
+	it("resolves lowercase-encoded Bun skill URLs beside the executable", () => {
+		expect(
+			HcpClientresolveharnessskillsdir("file:///B:/%7eBun/root/skills/HcpServer.ts", "/opt/Magenta/magenta"),
+		).toBe("/opt/Magenta/skills");
+	});
+
 	it("formats skill invocations with additional instructions", () => {
 		const skill = {
 			name: "inspect",

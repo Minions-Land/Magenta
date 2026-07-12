@@ -7,8 +7,7 @@ import { HCP_MAGNETS, HCP_SERVERS } from "./sources.generated.ts";
 
 // Detect Bun compiled binary: import.meta.url uses a Bun virtual filesystem path.
 // In this case, resolve HCP_ROOT from the executable's directory instead.
-const HCP_IS_BUN_BINARY =
-	typeof (globalThis as any).Bun !== "undefined" && HcpClientisbunbinaryurl(import.meta.url);
+const HCP_IS_BUN_BINARY = typeof (globalThis as any).Bun !== "undefined" && HcpClientisbunbinaryurl(import.meta.url);
 const HCP_ROOT = HCP_IS_BUN_BINARY ? dirname(process.execPath) : fileURLToPath(new URL("../..", import.meta.url));
 
 type HcpMagnetproduct = {
@@ -28,6 +27,11 @@ type HcpMagnetclass = {
 	build(context: HcpMagnetBuildContext): unknown | Promise<unknown>;
 };
 
+type HcpServerclass = new () => {
+	readonly moduleName: string;
+	readonly description?: string;
+};
+
 export type HcpClientcomponent = {
 	module: string;
 	kind: string;
@@ -41,6 +45,12 @@ export type HcpClientcomponent = {
 	slot?: string;
 	requires: readonly string[];
 	HcpMagnet: HcpMagnetclass;
+	/** A dynamically supplied component keeps its real owning Module Server. */
+	HcpServer?: HcpServerclass;
+	/** Host metadata merged into Resource products without changing Source code. */
+	HcpClientresourcemetadata?: Readonly<Record<string, unknown>>;
+	/** Explicitly allow one descriptor component to expand into multiple Tool magnets. */
+	HcpClientallowfanout?: boolean;
 	settings?: unknown;
 	/** Explicit overlay precedence: replace an address owned by another Module. */
 	overrideExisting?: boolean;
@@ -54,6 +64,7 @@ export type HcpClientassemblydiagnostic = {
 		| "component_build_failed"
 		| "component_product_invalid"
 		| "component_server_missing"
+		| "component_server_collision"
 		| "component_source_unavailable"
 		| "component_address_collision"
 		| "component_routing_failed";
@@ -175,9 +186,10 @@ export async function HcpClientassemble(options: HcpClientassembleoptions): Prom
 		if (!result.magnets) continue;
 		const componentAddresses: string[] = [];
 		for (const magnet of result.magnets) {
-			const routed = HcpClientregistercomponent(options.hcp, component, magnet, options.replaceExisting !== false);
+			const product = HcpClientwithresourcemetadata(component, magnet);
+			const routed = HcpClientregistercomponent(options.hcp, component, product, options.replaceExisting !== false);
 			if (routed.diagnostic) {
-				await HcpClientdisposeproduct(magnet);
+				await HcpClientdisposeproduct(product);
 				diagnostics.push(routed.diagnostic);
 				continue;
 			}
@@ -215,6 +227,24 @@ export async function HcpClientassemble(options: HcpClientassembleoptions): Prom
 	}
 
 	return { hcp: options.hcp, addresses: [...new Set(addresses)], builtComponents, diagnostics };
+}
+
+function HcpClientwithresourcemetadata(component: HcpClientcomponent, magnet: HcpMagnetproduct): HcpMagnetproduct {
+	if (!component.HcpClientresourcemetadata || typeof magnet.toResource !== "function") return magnet;
+	const toResource = magnet.toResource.bind(magnet);
+	return {
+		kind: magnet.kind,
+		source: magnet.source,
+		hotSwappable: magnet.hotSwappable,
+		toResource: (): HcpMagnetResource => {
+			const resource = toResource();
+			return {
+				...resource,
+				metadata: { ...resource.metadata, ...component.HcpClientresourcemetadata },
+			};
+		},
+		...(typeof magnet.dispose === "function" ? { dispose: magnet.dispose.bind(magnet) } : {}),
+	};
 }
 
 async function HcpClientdisposeproduct(magnet: HcpMagnetproduct): Promise<void> {
@@ -416,7 +446,7 @@ function HcpClientregistercomponent(
 		};
 	}
 
-	const HcpServer = HCP_SERVERS.get(component.module);
+	const HcpServer = component.HcpServer ?? HCP_SERVERS.get(component.module);
 	if (!HcpServer) {
 		return {
 			addresses: [],
@@ -433,7 +463,26 @@ function HcpClientregistercomponent(
 
 	try {
 		HcpClientregisterparents(hcp, component.module);
-		const server = hcp.resolveModule(component.module) ?? new HcpServer();
+		const existingServer = hcp.resolveModule(component.module);
+		const candidateServer = new HcpServer();
+		if (
+			existingServer &&
+			existingServer.constructor !== candidateServer.constructor &&
+			(HcpClientserverhascustomrouting(existingServer) || HcpClientserverhascustomrouting(candidateServer))
+		) {
+			return {
+				addresses: [],
+				diagnostic: {
+					type: "error",
+					code: "component_server_collision",
+					message: `${component.module}:${component.name} declares a different HcpServer with custom Source routing, but that Module already has an owning HcpServer.`,
+					module: component.module,
+					name: component.name,
+					source: component.source,
+				},
+			};
+		}
+		const server = existingServer ?? candidateServer;
 		const selector = HcpClientcomponentselector(component, magnet);
 		const addresses = hcp.registerModule(server, new Map([[selector, magnet]]), {
 			merge: true,
@@ -459,13 +508,21 @@ function HcpClientregistercomponent(
 	}
 }
 
+function HcpClientserverhascustomrouting(server: object): boolean {
+	const candidate = server as Record<string, unknown>;
+	return ["describeSource", "sourceAddresses", "callSource"].some((method) => typeof candidate[method] === "function");
+}
+
 function HcpClientcomponentselector(component: HcpClientcomponent, magnet: HcpMagnetproduct): string {
 	if (component.product === "capability") return component.slot!;
 	if (component.product === "resource") {
 		const resource = magnet.toResource!();
 		return `${resource.kind}:${resource.name}`;
 	}
-	if (component.module.startsWith("tools/")) return component.source;
+	if (component.module.startsWith("tools/")) {
+		const tool = magnet.toTool!();
+		return `tool:${tool.name}`;
+	}
 	if (component.module !== "tools") return component.name;
 	const tool = magnet.toTool!();
 	return `tool:${tool.name}`;
@@ -477,7 +534,10 @@ function HcpClientcomponentaddress(component: HcpClientcomponent): string {
 }
 
 function HcpClientcomponentallowsfanout(component: HcpClientcomponent): boolean {
-	return component.product === "resource" || (component.product === "tool" && component.module === "tools");
+	return (
+		component.product === "resource" ||
+		(component.product === "tool" && (component.module === "tools" || component.HcpClientallowfanout === true))
+	);
 }
 
 function HcpClientregisterparents(hcp: HcpClient, module: string): void {

@@ -1,0 +1,500 @@
+import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+	consumePreviousWindowsUpdateError,
+	ensureCurrentReleaseResources,
+	shouldSkipConcurrentUpdateTransaction,
+} from "../src/utils/github-release-update.ts";
+import {
+	applyResourceUpdateTransaction,
+	applyUnixUpdateTransaction,
+	buildWindowsUpdateScript,
+	currentReleaseResourcesAreValid,
+	inspectReleaseResourceArchive,
+	NODE_UPDATE_TRANSACTION_FILE_SYSTEM,
+	parseReleaseChecksums,
+	quotePowerShellLiteral,
+	RELEASE_CHECKSUMS_ASSET_NAME,
+	RELEASE_RESOURCE_MARKER_NAME,
+	RELEASE_RESOURCES_ASSET_NAME,
+	RESOURCE_DIRECTORY_NAMES,
+	RESOURCE_FILE_NAMES,
+	type ReleaseArchiveEntry,
+	resolveReleaseAssetPlan,
+	validateExtractedReleaseResources,
+	validateReleaseArchiveEntries,
+	verifyReleaseArtifactChecksums,
+} from "../src/utils/github-release-update-support.ts";
+
+const temporaryDirectories: string[] = [];
+
+async function makeTemporaryDirectory(): Promise<string> {
+	const directory = await mkdtemp(join(tmpdir(), "magenta-release-update-"));
+	temporaryDirectories.push(directory);
+	return directory;
+}
+
+async function writeText(path: string, content: string): Promise<void> {
+	await mkdir(join(path, ".."), { recursive: true });
+	await writeFile(path, content, "utf8");
+}
+
+function makeValidArchiveEntries(): ReleaseArchiveEntry[] {
+	return [
+		...RESOURCE_DIRECTORY_NAMES.map((name) => ({ path: `${name}/`, type: "directory" as const })),
+		...RESOURCE_FILE_NAMES.map((name) => ({ path: name, type: "file" as const })),
+		{ path: RELEASE_RESOURCE_MARKER_NAME, type: "file" },
+		{ path: "theme/dark.json", type: "file" },
+		{ path: "tools/read/read.toml", type: "file" },
+		{ path: "skills/paper-analysis/pi/SKILL.md", type: "file" },
+		{ path: "photon_rs_bg.wasm", type: "file" },
+	];
+}
+
+async function makeValidResourceTree(root: string, version = "0.0.12"): Promise<void> {
+	for (const directoryName of RESOURCE_DIRECTORY_NAMES) {
+		await mkdir(join(root, directoryName), { recursive: true });
+	}
+	for (const fileName of RESOURCE_FILE_NAMES) {
+		await writeFile(join(root, fileName), `${fileName}\n`, "utf8");
+	}
+	await writeFile(join(root, RELEASE_RESOURCE_MARKER_NAME), `${JSON.stringify({ version })}\n`, "utf8");
+	await writeText(join(root, "theme", "dark.json"), "{}\n");
+	await writeText(join(root, "tools", "read", "read.toml"), 'name = "read"\n');
+	await writeText(join(root, "skills", "paper-analysis", "pi", "SKILL.md"), "# Skill\n");
+	await writeFile(join(root, "photon_rs_bg.wasm"), new Uint8Array([0, 97, 115, 109]));
+}
+
+async function createValidResourceArchive(root: string, version = "0.0.12"): Promise<string> {
+	const resourceRoot = join(root, "resources");
+	const archivePath = join(root, RELEASE_RESOURCES_ASSET_NAME);
+	await mkdir(resourceRoot, { recursive: true });
+	await makeValidResourceTree(resourceRoot, version);
+	const tarResult = spawnSync(
+		process.platform === "win32" ? "tar.exe" : "tar",
+		[
+			"-czf",
+			archivePath,
+			"-C",
+			resourceRoot,
+			...RESOURCE_DIRECTORY_NAMES,
+			...RESOURCE_FILE_NAMES,
+			RELEASE_RESOURCE_MARKER_NAME,
+			"photon_rs_bg.wasm",
+		],
+		{ encoding: "utf8", env: { ...process.env, COPYFILE_DISABLE: "1" } },
+	);
+	expect(tarResult.status, tarResult.stderr).toBe(0);
+	return archivePath;
+}
+
+afterEach(async () => {
+	vi.unstubAllGlobals();
+	await Promise.all(
+		temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })),
+	);
+});
+
+describe("release asset planning", () => {
+	it("requires the binary, resources, and checksums from one release response", () => {
+		const assets = [
+			{ name: "magenta-windows-x64.exe", browser_download_url: "https://example.test/v1/magenta.exe" },
+			{ name: RELEASE_RESOURCES_ASSET_NAME, browser_download_url: "https://example.test/v1/resources" },
+			{ name: RELEASE_CHECKSUMS_ASSET_NAME, browser_download_url: "https://example.test/v1/checksums" },
+		];
+
+		expect(resolveReleaseAssetPlan(assets, "magenta-windows-x64.exe")).toEqual({
+			binary: { name: "magenta-windows-x64.exe", downloadUrl: "https://example.test/v1/magenta.exe" },
+			resources: { name: RELEASE_RESOURCES_ASSET_NAME, downloadUrl: "https://example.test/v1/resources" },
+			checksums: { name: RELEASE_CHECKSUMS_ASSET_NAME, downloadUrl: "https://example.test/v1/checksums" },
+		});
+	});
+
+	it("rejects missing or ambiguous release assets", () => {
+		const binary = { name: "magenta-linux-x64", browser_download_url: "https://example.test/binary" };
+		const resources = { name: RELEASE_RESOURCES_ASSET_NAME, browser_download_url: "https://example.test/resources" };
+		const checksums = { name: RELEASE_CHECKSUMS_ASSET_NAME, browser_download_url: "https://example.test/checksums" };
+
+		expect(() => resolveReleaseAssetPlan([binary, checksums], binary.name)).toThrow(/missing required asset/i);
+		expect(() => resolveReleaseAssetPlan([binary, resources, checksums, checksums], binary.name)).toThrow(
+			/duplicate assets/i,
+		);
+	});
+});
+
+describe("release checksums", () => {
+	it("parses strict sha256sum output and accepts the binary marker", () => {
+		const first = "a".repeat(64);
+		const second = "B".repeat(64);
+		const checksums = parseReleaseChecksums(
+			`${first}  magenta-linux-x64\n${second} *${RELEASE_RESOURCES_ASSET_NAME}\n`,
+		);
+
+		expect(checksums.get("magenta-linux-x64")).toBe(first);
+		expect(checksums.get(RELEASE_RESOURCES_ASSET_NAME)).toBe(second.toLowerCase());
+	});
+
+	it.each([
+		["malformed", "not-a-checksum  magenta-linux-x64\n"],
+		["parent traversal", `${"a".repeat(64)}  ../magenta-linux-x64\n`],
+		["backslash", `${"a".repeat(64)}  folder\\magenta-linux-x64\n`],
+		["duplicate", `${"a".repeat(64)}  magenta-linux-x64\n${"b".repeat(64)}  magenta-linux-x64\n`],
+	])("rejects %s checksum input", (_label, content) => {
+		expect(() => parseReleaseChecksums(content)).toThrow();
+	});
+
+	it("rejects a mismatched artifact before any installed files are touched", async () => {
+		const root = await makeTemporaryDirectory();
+		const installedBinary = join(root, "install", "magenta");
+		const downloadedBinary = join(root, "download", "magenta-linux-x64");
+		await writeText(installedBinary, "old binary");
+		await writeText(downloadedBinary, "new binary");
+		const wrongChecksum = createHash("sha256").update("different bytes").digest("hex");
+
+		await expect(
+			verifyReleaseArtifactChecksums(new Map([["magenta-linux-x64", wrongChecksum]]), [
+				{ name: "magenta-linux-x64", path: downloadedBinary },
+			]),
+		).rejects.toThrow(/checksum verification failed/i);
+		expect(await readFile(installedBinary, "utf8")).toBe("old binary");
+	});
+});
+
+describe("release resource archive validation", () => {
+	it("accepts the complete release resource layout", () => {
+		const topLevelNames = validateReleaseArchiveEntries(makeValidArchiveEntries());
+		expect(topLevelNames).toEqual(expect.arrayContaining([...RESOURCE_DIRECTORY_NAMES, ...RESOURCE_FILE_NAMES]));
+		expect(topLevelNames).toContain("photon_rs_bg.wasm");
+	});
+
+	it.each([
+		["parent traversal", { path: "tools/../../escape", type: "file" as const }],
+		["absolute path", { path: "/tmp/escape", type: "file" as const }],
+		["backslash", { path: "tools\\escape", type: "file" as const }],
+		["symlink", { path: "tools/link", type: "symlink" as const }],
+		["hardlink", { path: "tools/link", type: "hardlink" as const }],
+		["unknown root", { path: "magenta-windows-x64.exe", type: "file" as const }],
+		["Windows reserved name", { path: "tools/CON.txt", type: "file" as const }],
+	])("rejects an archive containing %s", (_label, maliciousEntry) => {
+		expect(() => validateReleaseArchiveEntries([...makeValidArchiveEntries(), maliciousEntry])).toThrow();
+	});
+
+	it("rejects case-insensitive duplicate paths", () => {
+		expect(() =>
+			validateReleaseArchiveEntries([...makeValidArchiveEntries(), { path: "theme/DARK.json", type: "file" }]),
+		).toThrow(/duplicate path/i);
+	});
+
+	it("parses a real gzip tar and verifies extracted marker files", async () => {
+		const root = await makeTemporaryDirectory();
+		const resourceRoot = join(root, "resources");
+		const archivePath = await createValidResourceArchive(root);
+
+		const topLevelNames = await inspectReleaseResourceArchive(archivePath);
+		await expect(validateExtractedReleaseResources(resourceRoot, topLevelNames)).resolves.toBeUndefined();
+	});
+
+	it("adds a version marker when repairing resources from a legacy archive", async () => {
+		const root = await makeTemporaryDirectory();
+		await makeValidResourceTree(root, "0.0.11");
+		await rm(join(root, RELEASE_RESOURCE_MARKER_NAME));
+		const entries = makeValidArchiveEntries().filter((entry) => entry.path !== RELEASE_RESOURCE_MARKER_NAME);
+		const topLevelNames = validateReleaseArchiveEntries(entries);
+
+		await validateExtractedReleaseResources(root, topLevelNames, "0.0.11");
+		expect(await readFile(join(root, RELEASE_RESOURCE_MARKER_NAME), "utf8")).toBe('{"version":"0.0.11"}\n');
+	});
+});
+
+describe("startup resource bootstrap", () => {
+	it("repairs resources from the exact current-version release before startup", async () => {
+		const root = await makeTemporaryDirectory();
+		const installDirectory = join(root, "install");
+		const archivePath = await createValidResourceArchive(join(root, "release"), "0.0.12");
+		const archiveBytes = await readFile(archivePath);
+		const archiveChecksum = createHash("sha256").update(archiveBytes).digest("hex");
+		await writeText(join(installDirectory, "theme", "dark.json"), "old theme");
+		await writeText(join(installDirectory, "other-program"), "do not touch");
+
+		const assetBaseUrl = "https://example.test/releases/download/v0.0.12";
+		const fetchMock = vi.fn(async (input: string | URL | Request) => {
+			const url = String(input);
+			if (url === `${assetBaseUrl}/${RELEASE_CHECKSUMS_ASSET_NAME}`) {
+				return new Response(`${archiveChecksum}  ${RELEASE_RESOURCES_ASSET_NAME}\n`);
+			}
+			if (url === `${assetBaseUrl}/${RELEASE_RESOURCES_ASSET_NAME}`) {
+				return new Response(archiveBytes);
+			}
+			return new Response("not found", { status: 404 });
+		});
+		vi.stubGlobal("fetch", fetchMock);
+
+		await expect(
+			ensureCurrentReleaseResources({
+				force: true,
+				installDirectory,
+				version: "0.0.12",
+				assetBaseUrl,
+			}),
+		).resolves.toBe(true);
+
+		expect(await readFile(join(installDirectory, RELEASE_RESOURCE_MARKER_NAME), "utf8")).toBe(
+			'{"version":"0.0.12"}\n',
+		);
+		expect(await readFile(join(installDirectory, "theme", "dark.json"), "utf8")).toBe("{}\n");
+		expect(await readFile(join(installDirectory, "other-program"), "utf8")).toBe("do not touch");
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+
+		await expect(
+			ensureCurrentReleaseResources({
+				force: true,
+				installDirectory,
+				version: "0.0.12",
+				assetBaseUrl,
+			}),
+		).resolves.toBe(false);
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+	});
+
+	it("does not continue with mismatched resources in offline mode", async () => {
+		const root = await makeTemporaryDirectory();
+		const installDirectory = join(root, "install");
+		await writeText(join(installDirectory, "theme", "dark.json"), "old theme");
+
+		await expect(
+			ensureCurrentReleaseResources({
+				force: true,
+				offline: true,
+				installDirectory,
+				version: "0.0.12",
+			}),
+		).rejects.toThrow(/offline prevents repair/i);
+		expect(await readFile(join(installDirectory, "theme", "dark.json"), "utf8")).toBe("old theme");
+	});
+
+	it("rejects a version-matched resource tree when a required root or WASM asset is missing", async () => {
+		const root = await makeTemporaryDirectory();
+		const installDirectory = join(root, "install");
+		await makeValidResourceTree(installDirectory, "0.0.12");
+
+		await rm(join(installDirectory, "policy"), { recursive: true });
+		expect(await currentReleaseResourcesAreValid(installDirectory, "0.0.12")).toBe(false);
+
+		await mkdir(join(installDirectory, "policy"));
+		await rm(join(installDirectory, "photon_rs_bg.wasm"));
+		expect(await currentReleaseResourcesAreValid(installDirectory, "0.0.12")).toBe(false);
+	});
+
+	it("rolls back a resource-only startup repair when verification fails", async () => {
+		const root = await makeTemporaryDirectory();
+		const installDirectory = join(root, "install");
+		const stagingDirectory = join(installDirectory, ".resource-staging");
+		const backupDirectory = join(installDirectory, ".resource-backup");
+		await writeText(join(installDirectory, "theme", "dark.json"), "old theme");
+		await writeText(join(installDirectory, RELEASE_RESOURCE_MARKER_NAME), '{"version":"0.0.11"}\n');
+		await writeText(join(installDirectory, "other-program"), "do not touch");
+		await writeText(join(stagingDirectory, "theme", "dark.json"), "new theme");
+		await writeText(join(stagingDirectory, RELEASE_RESOURCE_MARKER_NAME), '{"version":"0.0.12"}\n');
+
+		await expect(
+			applyResourceUpdateTransaction({
+				installDirectory,
+				stagingDirectory,
+				backupDirectory,
+				resourceNames: ["theme", RELEASE_RESOURCE_MARKER_NAME],
+				verifyInstalled: () => {
+					throw new Error("injected marker verification failure");
+				},
+			}),
+		).rejects.toThrow(/previous resources were restored/i);
+
+		expect(await readFile(join(installDirectory, "theme", "dark.json"), "utf8")).toBe("old theme");
+		expect(await readFile(join(installDirectory, RELEASE_RESOURCE_MARKER_NAME), "utf8")).toBe(
+			'{"version":"0.0.11"}\n',
+		);
+		expect(await readFile(join(installDirectory, "other-program"), "utf8")).toBe("do not touch");
+	});
+});
+
+describe("Unix update transaction", () => {
+	it("only skips a concurrent same-version install when its resources are complete", async () => {
+		const root = await makeTemporaryDirectory();
+		const installDirectory = join(root, "bin");
+		await makeValidResourceTree(installDirectory, "0.0.12");
+
+		await expect(shouldSkipConcurrentUpdateTransaction(installDirectory, "0.0.12", "0.0.12")).resolves.toBe(true);
+		await rm(join(installDirectory, "photon_rs_bg.wasm"));
+		await expect(shouldSkipConcurrentUpdateTransaction(installDirectory, "0.0.12", "0.0.12")).resolves.toBe(false);
+	});
+
+	it("never lets an older concurrent transaction replace a newer incomplete release", async () => {
+		const root = await makeTemporaryDirectory();
+		const installDirectory = join(root, "bin");
+		await makeValidResourceTree(installDirectory, "0.0.13");
+
+		await expect(shouldSkipConcurrentUpdateTransaction(installDirectory, "0.0.13", "0.0.12")).resolves.toBe(true);
+		await rm(join(installDirectory, RELEASE_RESOURCE_MARKER_NAME));
+		await expect(shouldSkipConcurrentUpdateTransaction(installDirectory, "0.0.13", "0.0.12")).rejects.toThrow(
+			/newer v0\.0\.13.*resources are incomplete.*older v0\.0\.12/i,
+		);
+	});
+
+	it("replaces the binary and resources while leaving unrelated programs untouched", async () => {
+		const root = await makeTemporaryDirectory();
+		const installDirectory = join(root, "bin");
+		const stagingDirectory = join(installDirectory, ".magenta-update-staging-test");
+		const backupDirectory = join(installDirectory, ".magenta-update-backup-test");
+		const currentBinary = join(installDirectory, "magenta");
+		await mkdir(stagingDirectory, { recursive: true });
+		await writeText(currentBinary, "old binary");
+		await writeText(join(installDirectory, "theme", "dark.json"), "old theme");
+		await writeText(join(installDirectory, "package.json"), "old package");
+		await writeText(join(installDirectory, "other-program"), "do not touch");
+		await writeText(join(stagingDirectory, "magenta"), "new binary");
+		await writeText(join(stagingDirectory, "theme", "dark.json"), "new theme");
+		await writeText(join(stagingDirectory, "package.json"), "new package");
+
+		const cleanupWarnings = await applyUnixUpdateTransaction({
+			currentBinary,
+			stagingDirectory,
+			backupDirectory,
+			resourceNames: ["theme", "package.json"],
+			verifyInstalled: async () => {
+				expect(await readFile(currentBinary, "utf8")).toBe("new binary");
+				expect(await readFile(join(installDirectory, "theme", "dark.json"), "utf8")).toBe("new theme");
+			},
+		});
+
+		expect(cleanupWarnings).toEqual([]);
+		expect(await readFile(currentBinary, "utf8")).toBe("new binary");
+		expect(await readFile(join(installDirectory, "package.json"), "utf8")).toBe("new package");
+		expect(await readFile(join(installDirectory, "other-program"), "utf8")).toBe("do not touch");
+		expect(existsSync(stagingDirectory)).toBe(false);
+		expect(existsSync(backupDirectory)).toBe(false);
+	});
+
+	it("restores every old item when a resource rename fails", async () => {
+		const root = await makeTemporaryDirectory();
+		const installDirectory = join(root, "bin");
+		const stagingDirectory = join(installDirectory, ".magenta-update-staging-test");
+		const backupDirectory = join(installDirectory, ".magenta-update-backup-test");
+		const currentBinary = join(installDirectory, "magenta");
+		await mkdir(stagingDirectory, { recursive: true });
+		await writeText(currentBinary, "old binary");
+		await writeText(join(installDirectory, "theme", "dark.json"), "old theme");
+		await writeText(join(installDirectory, "other-program"), "do not touch");
+		await writeText(join(stagingDirectory, "magenta"), "new binary");
+		await writeText(join(stagingDirectory, "theme", "dark.json"), "new theme");
+		await writeText(join(stagingDirectory, "package.json"), "new package");
+
+		await expect(
+			applyUnixUpdateTransaction({
+				currentBinary,
+				stagingDirectory,
+				backupDirectory,
+				resourceNames: ["theme", "package.json"],
+				verifyInstalled: () => undefined,
+				fileSystem: {
+					...NODE_UPDATE_TRANSACTION_FILE_SYSTEM,
+					async movePath(source, destination) {
+						if (source === join(stagingDirectory, "package.json")) {
+							throw new Error("injected rename failure");
+						}
+						await NODE_UPDATE_TRANSACTION_FILE_SYSTEM.movePath(source, destination);
+					},
+				},
+			}),
+		).rejects.toThrow(/previous installation was restored/i);
+
+		expect(await readFile(currentBinary, "utf8")).toBe("old binary");
+		expect(await readFile(join(installDirectory, "theme", "dark.json"), "utf8")).toBe("old theme");
+		expect(existsSync(join(installDirectory, "package.json"))).toBe(false);
+		expect(await readFile(join(installDirectory, "other-program"), "utf8")).toBe("do not touch");
+	});
+
+	it("rolls back a fully switched update when installed binary verification fails", async () => {
+		const root = await makeTemporaryDirectory();
+		const installDirectory = join(root, "bin");
+		const stagingDirectory = join(installDirectory, ".magenta-update-staging-test");
+		const backupDirectory = join(installDirectory, ".magenta-update-backup-test");
+		const currentBinary = join(installDirectory, "magenta");
+		await mkdir(stagingDirectory, { recursive: true });
+		await writeText(currentBinary, "old binary");
+		await writeText(join(installDirectory, "theme", "dark.json"), "old theme");
+		await writeText(join(stagingDirectory, "magenta"), "bad binary");
+		await writeText(join(stagingDirectory, "theme", "dark.json"), "new theme");
+		await writeText(join(stagingDirectory, "package.json"), "new package");
+
+		await expect(
+			applyUnixUpdateTransaction({
+				currentBinary,
+				stagingDirectory,
+				backupDirectory,
+				resourceNames: ["theme", "package.json"],
+				verifyInstalled: () => {
+					throw new Error("version mismatch");
+				},
+			}),
+		).rejects.toThrow(/previous installation was restored/i);
+
+		expect(await readFile(currentBinary, "utf8")).toBe("old binary");
+		expect(await readFile(join(installDirectory, "theme", "dark.json"), "utf8")).toBe("old theme");
+		expect(existsSync(join(installDirectory, "package.json"))).toBe(false);
+	});
+});
+
+describe("Windows update helper", () => {
+	it("waits for the current PID and includes resource, binary, verification, and rollback steps", () => {
+		const script = buildWindowsUpdateScript({
+			parentProcessId: 4242,
+			currentBinary: "/Users/O'Brien/Magenta/magenta.exe",
+			stagingDirectory: "/Users/O'Brien/Magenta/.staging",
+			backupDirectory: "/Users/O'Brien/Magenta/.backup",
+			resourceNames: ["theme", "tools", "package.json", "photon_rs_bg.wasm"],
+			targetVersion: "0.0.12",
+			scriptPath: "/Users/O'Brien/Magenta/.update.ps1",
+			errorLogPath: "/Users/O'Brien/Magenta/.update-error.log",
+		});
+
+		expect(script).toContain("Get-Process -Id $parentProcessId");
+		expect(script).toContain("$parentProcessId = 4242");
+		expect(script).not.toContain("tasklist");
+		expect(script).toContain(".magenta-install-update.lock");
+		expect(script).toContain("New-Item -ItemType Directory -Path $lockDirectory");
+		expect(script).toContain("Timed out waiting for another Magenta install/update transaction");
+		expect(script).toContain("$requiredResourceDirectories");
+		expect(script).toContain("Test-MagentaResourceDirectory");
+		expect(script).toContain("Test-MagentaResourceFile");
+		expect(script).toContain("ConvertFrom-Json");
+		expect(script).toContain("if ($currentResourcesValid)");
+		expect(script).toContain("refusing to overwrite it with older $targetVersion");
+		expect(script).toContain("Move-Item -LiteralPath $stagedPath -Destination $installedPath");
+		expect(script).toContain("Move-Item -LiteralPath $stagedBinary -Destination $currentBinary");
+		expect(script).toContain("$env:PI_PACKAGE_DIR = $installDirectory");
+		expect(script).toContain("for ($index = $movedNewResources.Count - 1; $index -ge 0; $index--)");
+		expect(script).toContain("for ($index = $movedOldResources.Count - 1; $index -ge 0; $index--)");
+		expect(script).toContain("O''Brien");
+	});
+
+	it("quotes PowerShell single-quoted path literals", () => {
+		expect(quotePowerShellLiteral("C:\\Users\\O'Brien\\Magenta")).toBe("'C:\\Users\\O''Brien\\Magenta'");
+	});
+
+	it("reports and clears a failed asynchronous helper on the next launch", async () => {
+		const root = await makeTemporaryDirectory();
+		const currentBinary = join(root, "magenta.exe");
+		const errorLog = `${currentBinary}.update-error.log`;
+		await writeFile(errorLog, "\uFEFFUpdate failed: access denied\r\n", "utf8");
+
+		await expect(consumePreviousWindowsUpdateError({ currentBinary, force: true })).resolves.toBe(
+			"Update failed: access denied",
+		);
+		expect(existsSync(errorLog)).toBe(false);
+		await expect(consumePreviousWindowsUpdateError({ currentBinary, force: true })).resolves.toBeUndefined();
+	});
+});

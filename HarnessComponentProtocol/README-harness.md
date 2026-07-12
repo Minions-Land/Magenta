@@ -122,15 +122,14 @@ packages/
   templates/harness-package/
 ```
 
-Concrete domain expert packages will be maintained and published in independent
-GitHub repositories. Acquisition will later download, verify, and cache them;
-the download, version, cache, and verification layer is not implemented in this
-change. The support API in
-`_magenta/packages/package-overlay.ts` parses Package manifests, profiles,
-resources, and tool descriptors. `discoverHarnessPackages()` and `loadPackageOverlay()`
-accept an optional `packagesRoot`, so external integration can supply an
-already-downloaded local root. If omitted, the API falls back only to
-`<repoRoot>/packages`; it does not scan a sibling repository or submodule.
+Concrete domain expert packages are maintained and published in independent
+GitHub repositories. The coding-agent host resolves
+`github:owner/repo/Package@version`, downloads and SHA-256 verifies the current
+platform artifact, rejects unsafe archives, validates the schema-v2 manifest,
+and supplies the cached local root to
+`_magenta/packages/package-overlay-v2.ts`. Local development may instead pass
+an explicit `packagesRoot`; if omitted, local discovery falls back only to
+`<repoRoot>/packages` and never scans a sibling repository or submodule.
 
 `_magenta/packages/hcp-client-components.ts` maps the selected declarations from
 the resolved local root into the ordinary component inputs consumed by

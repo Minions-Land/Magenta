@@ -71,6 +71,89 @@ describe("capability products through HcpClient assembly", () => {
 		expect(hcp.resolveModule("compaction")?.moduleName).toBe("compaction");
 	});
 
+	it("rejects different HcpServer constructors when either one owns custom Source routing", async () => {
+		// biome-ignore lint/complexity/noStaticOnlyClass: fixture models the static package HcpMagnet role.
+		class DynamicHcpMagnet {
+			static readonly module = "dynamic/fixture";
+			static readonly kind = "fixture";
+			static readonly source = "fixture";
+			static build(context: HcpMagnetBuildContext) {
+				return new FixtureHcpMagnet(context);
+			}
+		}
+		class FirstHcpServer {
+			readonly moduleName = "dynamic/fixture";
+			callSource() {
+				return "first";
+			}
+		}
+		class PlainHcpServer {
+			readonly moduleName = "dynamic/fixture";
+		}
+		class SecondHcpServer {
+			readonly moduleName = "dynamic/fixture";
+			callSource() {
+				return "second";
+			}
+		}
+		const hcp = new HcpClient();
+		const result = await HcpClientassemble({
+			hcp,
+			repoRoot: process.cwd(),
+			includeAutoload: false,
+			components: [
+				component({
+					module: "dynamic/fixture",
+					name: "first",
+					slot: "fixture:first",
+					HcpMagnet: DynamicHcpMagnet,
+					HcpServer: FirstHcpServer,
+				}),
+				component({
+					module: "dynamic/fixture",
+					name: "second",
+					slot: "fixture:second",
+					HcpMagnet: DynamicHcpMagnet,
+					HcpServer: PlainHcpServer,
+				}),
+			],
+		});
+
+		expect(result.diagnostics).toEqual([
+			expect.objectContaining({ code: "component_server_collision", name: "second" }),
+		]);
+		expect(hcp.resolveCapability("fixture:first")).toBeDefined();
+		expect(hcp.resolveCapability("fixture:second")).toBeUndefined();
+		expect(hcp.resolveModule("dynamic/fixture")).toBeInstanceOf(FirstHcpServer);
+
+		const reverseHcp = new HcpClient();
+		const reverse = await HcpClientassemble({
+			hcp: reverseHcp,
+			repoRoot: process.cwd(),
+			includeAutoload: false,
+			components: [
+				component({
+					module: "dynamic/fixture",
+					name: "plain",
+					slot: "fixture:plain",
+					HcpMagnet: DynamicHcpMagnet,
+					HcpServer: PlainHcpServer,
+				}),
+				component({
+					module: "dynamic/fixture",
+					name: "custom",
+					slot: "fixture:custom",
+					HcpMagnet: DynamicHcpMagnet,
+					HcpServer: SecondHcpServer,
+				}),
+			],
+		});
+		expect(reverse.diagnostics).toEqual([
+			expect.objectContaining({ code: "component_server_collision", name: "custom" }),
+		]);
+		expect(reverseHcp.resolveModule("dynamic/fixture")).toBeInstanceOf(PlainHcpServer);
+	});
+
 	it("waits for declared capability dependencies before building dependants", async () => {
 		const order: string[] = [];
 		class OrderedHcpMagnet extends FixtureHcpMagnet {

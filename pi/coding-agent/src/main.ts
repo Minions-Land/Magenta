@@ -48,9 +48,15 @@ import { migrateLegacyPiAgentDirToCurrentConfigDir, runMigrations, showDeprecati
 import { InteractiveMode, runPrintMode, runRpcMode } from "./modes/index.ts";
 import { initTheme, stopThemeWatcher } from "./modes/interactive/theme/theme.ts";
 import { handleConfigCommand, handlePackageCommand } from "./package-manager-cli.ts";
+import {
+	backgroundUpdateNotification,
+	checkForUpdate,
+	consumePreviousWindowsUpdateError,
+	ensureCurrentReleaseResources,
+	installUpdate,
+} from "./utils/github-release-update.ts";
 import { isLocalPath, normalizePath, resolvePath } from "./utils/paths.ts";
 import { cleanupWindowsSelfUpdateQuarantine } from "./utils/windows-self-update.ts";
-import { checkForUpdate, installUpdate, backgroundUpdateNotification } from "./utils/github-release-update.ts";
 
 const EXTENSION_LOAD_FAILURE_HINT = 'Hint: Start without extensions using "pi -ne".';
 
@@ -488,6 +494,26 @@ export async function main(args: string[], options?: MainOptions) {
 	const bootstrapSettingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted: false });
 	applyHttpProxySettings(bootstrapSettingsManager.getGlobalSettings().httpProxy);
 	configureHttpDispatcher();
+	try {
+		const previousUpdateError = await consumePreviousWindowsUpdateError();
+		if (previousUpdateError) {
+			console.error(chalk.red(`The previous Magenta update did not complete:\n${previousUpdateError}`));
+		}
+	} catch (error) {
+		console.warn(
+			chalk.yellow(
+				`Unable to read the previous Windows update status: ${error instanceof Error ? error.message : String(error)}`,
+			),
+		);
+	}
+	try {
+		await ensureCurrentReleaseResources({ offline: offlineMode });
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		console.error(chalk.red(`Failed to repair Magenta runtime resources: ${message}`));
+		process.exit(1);
+		return;
+	}
 
 	if (await handlePackageCommand(args, { extensionFactories: options?.extensionFactories })) {
 		const exitCode = process.exitCode ?? 0;
@@ -522,36 +548,41 @@ export async function main(args: string[], options?: MainOptions) {
 		// Handle --update flag
 		console.log("🔍 Checking for updates...");
 		const result = await checkForUpdate({ force: true });
-		
+
 		if (result.error) {
 			console.error(chalk.red(`Update check failed: ${result.error}`));
 			process.exit(1);
 		}
-		
+
 		if (!result.updateAvailable) {
 			console.log(chalk.green(`✓ Already on latest version (${result.currentVersion})`));
 			process.exit(0);
 		}
-		
+
 		console.log(chalk.cyan(`\n📦 New version available: ${result.latestVersion}`));
 		if (result.releaseNotes) {
 			console.log(chalk.dim("\nRelease notes:"));
 			console.log(result.releaseNotes.split("\n").slice(0, 10).join("\n"));
 		}
-		
+
 		console.log(chalk.cyan("\nDownloading and installing..."));
 		const installResult = await installUpdate();
-		
+
 		if (!installResult.success) {
 			console.error(chalk.red(`\n✗ Update failed: ${installResult.error}`));
 			process.exit(1);
 		}
-		
-		console.log(chalk.green(`\n✓ Updated to v${installResult.newVersion}`));
-		console.log(chalk.dim("Please restart magenta to use the new version"));
+
+		if (installResult.pending) {
+			console.log(chalk.green(`\n✓ Magenta v${installResult.newVersion} is scheduled for installation`));
+			console.log(chalk.dim("The verified update will be installed after this process exits"));
+		} else {
+			console.log(chalk.green(`\n✓ Updated to v${installResult.newVersion}`));
+			console.log(chalk.dim("Please restart magenta to use the new version"));
+		}
 		process.exit(0);
 	}
-	
+
 	if (parsed.version) {
 		console.log(VERSION);
 		process.exit(0);
@@ -910,12 +941,12 @@ export async function main(args: string[], options?: MainOptions) {
 		}
 
 		printTimings();
-		
+
 		// Background update check (non-blocking)
 		if (!offlineMode) {
 			backgroundUpdateNotification().catch(() => {});
 		}
-		
+
 		await interactiveMode.run();
 	} else {
 		printTimings();

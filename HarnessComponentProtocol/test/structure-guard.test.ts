@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 
 type SourceLocation = { line: number; column: number };
@@ -90,10 +91,23 @@ describe("HCP structure guard syntax checks", () => {
 		]);
 	});
 
+	it("keeps Client-owned Package Tool support under the Hcp entity tree", async () => {
+		const files = [
+			"../tools/descriptor/package-tool.ts",
+			"../tools/descriptor/HcpMagnet.ts",
+			"../_magenta/packages/hcp-client-components.ts",
+			"../_magenta/packages/tool-diagnostic.ts",
+		];
+		for (const file of files) {
+			const source = await readFile(new URL(file, import.meta.url), "utf8");
+			expect(HcpClientinspectsyntax(source, file).unprefixedTopLevelDeclarations, file).toEqual([]);
+		}
+	});
+
 	it("detects Package and MCP details crossing into .HCP even through aliased imports", () => {
 		const inspected = HcpClientinspectsyntax(`
 			import type { PackageOverlay as Overlay } from "../../_magenta/packages/package-overlay-v2.ts";
-			import type { PackageToolBuildSettings } from "../../tools/descriptor/package-tool.ts";
+			import type { HcpClientpackagetoolbuildsettings } from "../../tools/descriptor/package-tool.ts";
 			import type { McpConnection as Connection } from "../../_magenta/mcp/tool.ts";
 			const HcpClientsettings = value.mcp.connection;
 		`);
@@ -104,9 +118,9 @@ describe("HCP structure guard syntax checks", () => {
 			"../../_magenta/mcp/tool.ts",
 		]);
 		expect(inspected.forbiddenInfrastructureIdentifiers.map(({ name }) => name).sort()).toEqual([
+			"HcpClientpackagetoolbuildsettings",
 			"McpConnection",
 			"PackageOverlay",
-			"PackageToolBuildSettings",
 			"mcp",
 		]);
 	});

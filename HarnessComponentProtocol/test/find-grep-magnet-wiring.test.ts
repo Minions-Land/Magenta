@@ -48,7 +48,7 @@ describe("find/grep HCP Magnet executable wiring", () => {
 		const magnet = FindMagnet.build({ repoRoot: dir, cwd: dir } as never);
 		const tool = magnet.toTool() as AgentTool;
 
-		const result = (await tool.execute("call-find", { pattern: "*.txt" }, undefined, undefined, {} as never)) as {
+		const result = (await tool.execute("call-find", { pattern: "*.txt" }, undefined, undefined)) as {
 			content: Array<{ type: string; text?: string }>;
 		};
 
@@ -61,13 +61,7 @@ describe("find/grep HCP Magnet executable wiring", () => {
 		const magnet = GrepMagnet.build({ repoRoot: dir, cwd: dir } as never);
 		const tool = magnet.toTool() as AgentTool;
 
-		const result = (await tool.execute(
-			"call-grep",
-			{ pattern: "embedded" },
-			undefined,
-			undefined,
-			{} as never,
-		)) as {
+		const result = (await tool.execute("call-grep", { pattern: "embedded" }, undefined, undefined)) as {
 			content: Array<{ type: string; text?: string }>;
 		};
 

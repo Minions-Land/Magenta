@@ -184,22 +184,24 @@ existing Capability slots. All are mapped to the ordinary component input
 shape accepted by HCP session assembly:
 
 ```text
-local Package root (explicit cache or workspace packages/ fallback)
+GitHub release or local Package root
+  -> platform selection, SHA-256 verification, safe cache (GitHub only)
   -> _magenta Package parser/overlay
   -> HcpClient component inputs
   -> ordinary HCP assembly
 ```
 
-The acquisition step is intentionally outside HCP. The future production
-direction is to download, select, verify, and cache independent GitHub-hosted
-Packages, then pass the resulting local root into the existing boundary. That
-download pipeline is not implemented today.
+The acquisition step is intentionally outside HCP. The coding-agent host can
+resolve `github:owner/repo/Package@version`, download the matching
+platform-specific release archive and checksum, reject unsafe archive paths or
+entry types, validate the manifest, and publish the verified tree into its
+origin/version/platform-scoped cache. The resulting local root then enters the
+same Package boundary as a local selector.
 
-An external acquisition/cache layer should pass its root explicitly. Without
-one, the current compatibility behavior checks only the active workspace's
-`packages/` directory. The repository root `packages/` contains only the
-contract and template; Magenta3 does not scan a sibling Package checkout or
-depend on a Git submodule.
+Local development may pass an external root explicitly. Without one, local
+selectors check only the active workspace's `packages/` directory. The
+repository root `packages/` contains only the contract and template; Magenta3
+does not scan a sibling Package checkout or depend on a Git submodule.
 
 ### Pi Extension Resources
 

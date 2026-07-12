@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { HcpClientbuildsession } from "../.HCP/assembly/session-hcp.ts";
 import { HCP_MAGNETS } from "../.HCP/assembly/sources.generated.ts";
 import type { HcpMagnetResource } from "../.HCP/HcpMagnetTypes.ts";
-import { loadPackageOverlay } from "../_magenta/packages/package-overlay-v2.ts";
+import { HcpClientloadpackageoverlay } from "../_magenta/packages/package-overlay-v2.ts";
 import { SystemPromptProvider } from "../system-prompt/pi/provider.ts";
 import { HcpClientbuildpackagesessionfortest } from "./package-test-utils.ts";
 import { writeFixturePackage } from "./package-v2-fixtures.ts";
@@ -46,7 +46,7 @@ describe("system-prompt code and content products", () => {
 					},
 				],
 			});
-			const overlay = await loadPackageOverlay({ packagesRoot, selections: ["AutOmicScience"] });
+			const overlay = await HcpClientloadpackageoverlay({ packagesRoot, selections: ["AutOmicScience"] });
 			const session = await HcpClientbuildpackagesessionfortest({ repoRoot: packagesRoot, overlay });
 			try {
 				expect(session.diagnostics.filter((d) => "type" in d && d.type === "error")).toEqual([]);
@@ -64,11 +64,10 @@ describe("system-prompt code and content products", () => {
 				// metadata should reference the structure, but the exact path shape is
 				// an implementation detail. The key test is that the resource resolves.
 				expect(resource).toBeDefined();
-				const slots = session.hcp.resolveModule("system-prompt")?.describe().metadata?.slots as string[] | undefined;
-				expect(slots?.slice().sort()).toEqual([
-					"system-prompt",
-					"system-prompt:system-prompt",
-				]);
+				const slots = session.hcp.resolveModule("system-prompt")?.describe().metadata?.slots as
+					| string[]
+					| undefined;
+				expect(slots?.slice().sort()).toEqual(["system-prompt", "system-prompt:system-prompt"]);
 			} finally {
 				await session.hcp.dispose();
 			}
@@ -101,7 +100,7 @@ describe("system-prompt code and content products", () => {
 					},
 				],
 			});
-			const overlay = await loadPackageOverlay({ packagesRoot, selections: ["DuplicateTest"] });
+			const overlay = await HcpClientloadpackageoverlay({ packagesRoot, selections: ["DuplicateTest"] });
 			const session = await HcpClientbuildpackagesessionfortest({ repoRoot: packagesRoot, overlay });
 			try {
 				// Both components have the same name "system-prompt", so only one

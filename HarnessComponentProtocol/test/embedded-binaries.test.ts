@@ -2,14 +2,15 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { HcpClientisbunbinaryurl } from "../HcpClient.ts";
 import { getProcessToolsBinaryPath, initProcessToolsBinary } from "../_magenta/process-tools/embedded-binaries.ts";
+import { HcpClientisbunbinaryurl } from "../HcpClient.ts";
 
 describe("Bun compiled-binary URL detection", () => {
 	it.each([
 		"file:///$bunfs/root/HarnessComponentProtocol/HcpClient.ts",
 		"file:///B:/~BUN/root/magenta-windows-x64.exe",
 		"file:///B:/%7EBUN/root/magenta-windows-x64.exe",
+		"file:///B:/%7eBun/root/magenta-windows-x64.exe",
 	])("recognizes Bun virtual URL %s", (url) => {
 		expect(HcpClientisbunbinaryurl(url)).toBe(true);
 	});

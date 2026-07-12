@@ -35,11 +35,19 @@ for a single lightweight tool.
 
 ```
 <Name>/
-  package.toml              — schema_version, id, name, kind, domain, [[components]]
-  skills/<skill>/SKILL.md   — packaged skills (flat: no <source> subdir inside a package)
-  tools/<tool>/<tool>.toml  — packaged tool descriptors (+ python/, rust/, pixi.toml, ...)
-  system-prompt/            — packaged resources (append-system-prompt, etc.)
-  brands/<Name>             — optional brand resource
+  package.toml                         — schema v2 manifest + [[components]]
+  skills/<skill>/HcpServer.ts          — real Module Server
+  skills/<skill>/<source>/             — Source identity lives in the path
+    HcpMagnet.ts
+    SKILL.md
+  tools/<tool>/HcpServer.ts
+  tools/<tool>/<source>/
+    HcpMagnet.ts
+    <tool>.toml                         — plus python/, rust/, pixi assets
+  system-prompt/HcpServer.ts
+  system-prompt/<source>/HcpMagnet.ts  — plus SYSTEM.md
+  brand/HcpServer.ts                   — optional
+  brand/<source>/HcpMagnet.ts
 ```
 
 Key rules:
@@ -51,21 +59,24 @@ Key rules:
 - **Integration is explicit.** `HarnessComponentProtocol/_magenta/packages` is
   the generic boundary for a Package root supplied as `packagesRoot`. It does not
   own, discover by fixed filesystem convention, or release domain packages.
-  A future acquisition layer will download, verify, and cache GitHub Packages;
-  today this API receives an already-downloaded local root.
+  Production can acquire `github:owner/repo/Package@version`; the coding-agent
+  host selects the platform artifact, verifies SHA-256, validates and safely
+  extracts it, then supplies the cached local root. Local development may pass
+  `packagesRoot` directly.
   Use the existing API rather than adding a repository-specific loader:
 
   ```typescript
-  await discoverHarnessPackages({ repoRoot, packagesRoot });
-  await loadPackageOverlay({ repoRoot, packagesRoot, selections });
+  await HcpClientdiscoverharnesspackages({ repoRoot, packagesRoot });
+  await HcpClientloadpackageoverlay({ repoRoot, packagesRoot, selections });
   ```
 
   Harness TOML still generates `HCP_SERVERS` and `HCP_MAGNETS`; selected Package
   rows enter that same assembly through the overlay. A Package manifest does
   not create or hand-edit another generated list.
-- **Package components use a flat `tools/<tool>/` / `skills/<skill>/` layout.**
-  The `<name>/<source>/` split is for harness-owned components, not inside a
-  package — the package itself is the source scope.
+- **Package layout is HCP-isomorphic.** Every package Module owns a bare
+  `HcpServer.ts`, and every Source owns a bare `HcpMagnet.ts`. Tools and skills
+  therefore use `<module>/<item>/<source>/`; direct Resources use
+  `<module>/<source>/`. The package id does not erase the Source entity.
 - **Ship manifest + lock, not built environments.** `pixi.toml` + `pixi.lock`
   are tracked; `.pixi/`, conda envs, and `runs/` outputs are gitignored.
   References inside a package are package-local relative paths only.
@@ -96,15 +107,19 @@ Heavy runtimes do not create another HCP role or infrastructure-owned Module:
    becomes harness-owned. Default: keep the domain-specific body packaged;
    only genuinely generic pieces migrate into `HarnessComponentProtocol/`.
 3. **Scaffold the package in its own GitHub repository.** Write `package.toml`
-   (`schema_version`, `id`, `name`, `kind`, `domain`, `[[components]]`). Use
+   with `schema_version = "magenta.package.v2"`, `id`, `version`, `source`,
+   profiles, and `[[components]]`. Add each real Module `HcpServer.ts` and Source
+   `HcpMagnet.ts`. Use
    Magenta3's `packages/templates/harness-package/` only as the generic
    compatibility reference; do not create the domain package under Magenta3.
 4. **Bring the runtime.** For Python: `pixi.toml` + `pixi.lock`, code under
    `tools/<tool>/python/`. For Rust: the crate under the tool dir. Keep built
    artifacts out of git.
-5. **Declare tools/skills/resources** with package-local relative paths. Tools
-   get process/runtime metadata; skills are flat `SKILL.md`; resources get
-   `content_path`. Packaged tools, skills, and resources do **not** carry
+5. **Declare tools/skills/resources** with package-local paths to their Source
+   directories. Tool magnets expose `toTool()` and use the host-injected
+   `HcpClientbuildtools` setting during static `build()`; Resource magnets expose
+   `toResource()` with `contentPath` or inline content. Packaged tools, skills,
+   and resources do **not** carry
    `[assumption]` (see the decision matrix in `docs/assumption-metadata.md`);
    only a packaged Capability product would, following the same assumption
    rule as a harness-owned Capability product.
@@ -113,10 +128,9 @@ Heavy runtimes do not create another HCP role or infrastructure-owned Module:
    `magenta`.
 7. **Gate in the owning repository.** Run that repository's documented package
    checks. Run Magenta3's HCP build/test/inspect gates only when an explicit
-   integration change is made here. Pass an already-downloaded local root
-   explicitly as `packagesRoot` to the generic discovery/overlay API. Tests
-   should use a temporary external root. GitHub download, version selection,
-   verification, and caching remain the future acquisition layer's job.
+   integration change is made here. For local tests, pass a temporary external
+   root explicitly as `packagesRoot`; for released packages, use the versioned
+   GitHub selector and publish all four platform archives plus checksums.
 
 ## Guardrails
 

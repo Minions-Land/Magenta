@@ -1,4 +1,4 @@
-import { dirname, resolve } from "node:path";
+import { delimiter, dirname, resolve } from "node:path";
 import type { TSchema } from "typebox";
 import { ProcessTool, type ProcessToolSpec } from "./process-tool.ts";
 
@@ -116,7 +116,7 @@ function kebabCase(value: string): string {
 }
 
 function prependPath(current: string | undefined, next: string): string {
-	return current ? `${next}:${current}` : next;
+	return current ? `${next}${delimiter}${current}` : next;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
