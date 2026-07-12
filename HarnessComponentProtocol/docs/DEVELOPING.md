@@ -284,13 +284,13 @@ packages/
   templates/harness-package/
 ```
 
-Concrete domain expert packages will be maintained and published in independent
+Concrete domain expert packages are maintained and published in independent
 GitHub repositories. Do not vendor them into Magenta3 or infer a sibling
-checkout. A future acquisition layer will own download, version selection, verification,
-and caching; it is intentionally out of scope here. For now, external callers
-can provide a local directory containing Packages that have already been
-downloaded. `discoverHarnessPackages()` and `loadPackageOverlay()` accept an
-optional `packagesRoot` for this purpose. If omitted, they fall back only to
+checkout. Production selectors use
+`github:owner/repo/Package@version`; the coding-agent host selects the matching
+platform artifact, verifies its SHA-256, validates and safely extracts it, and
+passes the cached root to `HcpClientloadpackageoverlay()`. Local development may
+pass an explicit `packagesRoot`. If omitted, local selectors fall back only to
 `<repoRoot>/packages`; they never scan a sibling checkout, `MagentaPackages`, or
 a git submodule.
 
@@ -299,16 +299,23 @@ The generic package shape remains:
 ```text
 <PackageName>/
   package.toml
-  system-prompt/system-prompt.toml (+ SYSTEM.md)
-  brands/<brand>/
-  skills/<skill>/SKILL.md
-  tools/<tool>/<tool>.toml
+  system-prompt/HcpServer.ts
+  system-prompt/<source>/HcpMagnet.ts (+ SYSTEM.md)
+  brand/HcpServer.ts
+  brand/<source>/HcpMagnet.ts
+  skills/<skill>/HcpServer.ts
+  skills/<skill>/<source>/HcpMagnet.ts (+ SKILL.md)
+  tools/<tool>/HcpServer.ts
+  tools/<tool>/<source>/HcpMagnet.ts (+ <tool>.toml)
 ```
 
-`package.toml` lists each component with `kind`, `name`, and a package-local
-`path`. Process, Python, and MCP package tools still converge on ordinary HCP
-products through the package overlay. The template documents the schema; it is
-not a concrete package or an instruction to create domain content in Magenta3.
+`package.toml` declares `schema_version = "magenta.package.v2"` and lists each
+component with `kind`, `name`, `source`, and a package-local path to its Source
+directory. Every Module exports bare `class HcpServer`; every Source exports
+bare `class HcpMagnet`. Process, Python, and MCP package tools still converge on
+ordinary HCP products through the package overlay. The template documents the
+schema; it is not a concrete package or an instruction to create domain content
+in Magenta3.
 
 ---
 

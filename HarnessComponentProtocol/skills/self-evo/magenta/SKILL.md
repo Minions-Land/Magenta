@@ -138,9 +138,9 @@ Harness-owned components land through the HCP chain below. Domain Packages are
 published from their own GitHub repositories and use the compatible package
 manifest described by `package-forge`. Magenta3 retains `packages/` as its
 generic Package boundary, schema, template, and API, but no concrete domain
-Package lives there. A future acquisition layer will download and verify
-packages. Current integration receives an explicit `packagesRoot` containing
-already-downloaded content and must not infer a sibling path. Full rules are in
+Package lives there. The coding-agent host can download and verify a versioned
+GitHub package, while local development can supply an explicit `packagesRoot`.
+Neither path may infer a sibling checkout. Full rules are in
 `HarnessComponentProtocol/docs/DEVELOPING.md` and
 `HarnessComponentProtocol/docs/governance/contract.md`. The short version:
 
@@ -148,8 +148,9 @@ already-downloaded content and must not infer a sibling path. Full rules are in
 
 Under the correct Module and Source:
 - Harness-owned: `HarnessComponentProtocol/tools/<name>/<source>/` or `HarnessComponentProtocol/skills/<name>/<source>/`
-- Domain package: `<package-repository>/tools/<tool>/` or
-  `<package-repository>/skills/<skill>/`
+- Domain package: `<package-repository>/tools/<tool>/<source>/` or
+  `<package-repository>/skills/<skill>/<source>/`, with a real
+  `<module>/HcpServer.ts` beside the Source directories
 
 **Source = origin agent name** (`pi`, `magenta`, `codex`), not a language.
 

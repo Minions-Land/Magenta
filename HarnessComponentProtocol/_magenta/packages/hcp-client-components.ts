@@ -1,24 +1,29 @@
-import { dirname } from "node:path";
+import { realpath } from "node:fs/promises";
+import { dirname, isAbsolute, relative, resolve } from "node:path";
 import type { HcpClientcomponent } from "../../.HCP/assembly/session-hcp.ts";
-import { HCP_MAGNETS } from "../../.HCP/assembly/sources.generated.ts";
-import type { PackageToolBuildSettings } from "../../tools/descriptor/package-tool.ts";
-import type { PackageOverlay, PackageDiagnostic } from "./package-overlay-v2.ts";
-import type { LoadedPackageMagnet } from "./runtime-magnet-loader.ts";
-import type { PackageToolDiagnostic } from "./tool-diagnostic.ts";
+import type { HcpMagnetBuildContext } from "../../.HCP/HcpMagnetTypes.ts";
+import {
+	HcpClientbuildpackagetoolproducts,
+	type HcpClientpackagetoolbuildsettings,
+	type HcpClientpackagetoolcontext,
+	type HcpClientpackagetoolproduct,
+} from "../../tools/descriptor/package-tool.ts";
+import type { HcpClientpackagediagnostic, HcpClientpackageoverlay } from "./package-overlay-v2.ts";
+import type { HcpClientpackageloadedmagnet } from "./runtime-magnet-loader.ts";
+import type { HcpClientpackagetooldiagnostic } from "./tool-diagnostic.ts";
 
 export type HcpClientpackageinputresult = {
 	components: HcpClientcomponent[];
-	diagnostics: PackageDiagnostic[];
-	toolDiagnostics: PackageToolDiagnostic[];
+	diagnostics: HcpClientpackagediagnostic[];
+	toolDiagnostics: HcpClientpackagetooldiagnostic[];
 };
 
 /**
- * Tool magnet's descriptor() output shape (contract with MagentaPackages).
- * Package tool magnets are descriptor providers: they declare identity and
- * hand over the path to their tool descriptor toml. The host builds the
- * AgentTool via createPackageToolProduct, reusing sandbox/runtime/mcp infra.
+ * Client-owned Tool build request passed by a real package HcpMagnet to the
+ * injected host builder. It carries identity and the package-local TOML path;
+ * the returned product remains wrapped by that same package HcpMagnet.
  */
-type PackageToolDescriptor = {
+type HcpClientpackagetooldescriptor = {
 	kind: "tool";
 	name: string;
 	source: string;
@@ -32,31 +37,26 @@ type PackageToolDescriptor = {
  * Resource and capability magnets are self-sufficient — they pass straight
  * through to assembly, which calls their build()/toResource()/toCapability().
  *
- * Tool magnets are descriptor providers: their build().descriptor() yields a
- * pointer to the tool's toml, which is routed through the host's tools/descriptor
- * magnet + createPackageToolProduct chain so the AgentTool is built by the same
- * host infrastructure (sandbox/runtime/mcp) as built-in package tools. Unlike v1,
- * the source label is the package's real source (e.g. "AutOmicScience"), not the
- * hard-coded "descriptor".
+ * Tool magnets keep their real package identity. Their static build() calls the
+ * Client-owned builder injected in settings, which routes the TOML through the
+ * shared sandbox/runtime/MCP product chain and returns host-backed products for
+ * the package Magnet to wrap with toTool().
  */
-export async function HcpClientpackageinputfromoverlay(overlay: PackageOverlay): Promise<HcpClientpackageinputresult> {
+export async function HcpClientpackageinputfromoverlay(
+	overlay: HcpClientpackageoverlay,
+): Promise<HcpClientpackageinputresult> {
 	const components: HcpClientcomponent[] = [];
-	const diagnostics: PackageDiagnostic[] = [...overlay.diagnostics];
-	const toolDiagnostics: PackageToolDiagnostic[] = [];
-
-	// The host descriptor magnet that owns package tool construction.
-	const toolDescriptorEntry = (HCP_MAGNETS as readonly HcpClientcomponent[]).find(
-		(entry) => entry.product === "tool" && entry.kind === "tool" && entry.source === "descriptor",
-	);
+	const diagnostics: HcpClientpackagediagnostic[] = [...overlay.diagnostics];
+	const toolDiagnostics: HcpClientpackagetooldiagnostic[] = [];
 
 	const packageContext = {
-		components: overlay.components,
+		components: [...overlay.components, ...overlay.infrastructure],
 		diagnostics: toolDiagnostics,
 	};
 
 	for (const component of overlay.components) {
 		if (component.kind === "tool") {
-			const toolComponent = buildToolComponent(component, overlay, toolDescriptorEntry, packageContext, diagnostics);
+			const toolComponent = HcpClientbuildpackagetoolcomponent(component, packageContext);
 			if (toolComponent) components.push(toolComponent);
 			continue;
 		}
@@ -64,116 +64,155 @@ export async function HcpClientpackageinputfromoverlay(overlay: PackageOverlay):
 		// Resource / capability: the package's own magnet is self-sufficient.
 		// It carries static build() + toResource()/toCapability(); assembly calls
 		// them directly. We pass the loaded component through unchanged.
-		components.push(stripLoaderFields(component));
+		components.push(HcpClientstrippackageloaderfields(component));
 	}
 
 	return { components, diagnostics, toolDiagnostics };
 }
 
-/**
- * Build a tool component by extracting the descriptor path from the package's
- * tool magnet and routing it through the host descriptor magnet + build chain.
- */
-function buildToolComponent(
-	component: LoadedPackageMagnet,
-	overlay: PackageOverlay,
-	toolDescriptorEntry: HcpClientcomponent | undefined,
-	packageContext: { components: readonly LoadedPackageMagnet[]; diagnostics: PackageToolDiagnostic[] },
-	diagnostics: PackageDiagnostic[],
-): HcpClientcomponent | undefined {
-	if (!toolDescriptorEntry) {
-		diagnostics.push({
-			type: "error",
-			code: "package_tool_host_descriptor_missing",
-			message: `No host tools/descriptor magnet available to build package tool ${component.name}.`,
-			path: component.descriptorPath,
-			packageId: component.packageId,
-		});
-		return undefined;
-	}
+type HcpClientpackagetoolcontextinput = {
+	components: ReadonlyArray<
+		| Pick<HcpClientpackageloadedmagnet, "packageId" | "packageRoot" | "kind" | "name" | "descriptorPath">
+		| {
+				packageId: string;
+				packageRoot: string;
+				kind: string;
+				name: string;
+				path: string;
+				sourcePath: string;
+		  }
+	>;
+	diagnostics: HcpClientpackagetooldiagnostic[];
+};
 
-	// Instantiate the package tool magnet and read its descriptor() pointer.
-	let descriptorPath: string;
-	let toolName: string;
-	try {
-		const built = component.HcpMagnet.build({
-			repoRoot: overlay.packageRoot,
-			cwd: overlay.packageRoot,
-			kind: component.kind,
-			name: component.name,
-			source: component.source,
-		}) as { descriptor?: () => PackageToolDescriptor };
-		if (typeof built?.descriptor !== "function") {
-			diagnostics.push({
-				type: "error",
-				code: "package_tool_descriptor_missing",
-				message: `Package tool magnet ${component.name} does not implement descriptor().`,
-				path: component.descriptorPath,
-				packageId: component.packageId,
-			});
-			return undefined;
-		}
-		const descriptor = built.descriptor();
-		descriptorPath = descriptor.descriptorPath;
-		toolName = descriptor.name;
-	} catch (error) {
-		diagnostics.push({
-			type: "error",
-			code: "package_tool_magnet_build_failed",
-			message: `Package tool magnet ${component.name} build/descriptor failed: ${error instanceof Error ? error.message : String(error)}`,
-			path: component.descriptorPath,
-			packageId: component.packageId,
-		});
-		return undefined;
-	}
-
-	// Construct the PackageToolBuildSettings the host descriptor magnet expects.
-	// The descriptor toml's own name field is authoritative for the final tool
-	// name (createPackageToolProduct uses descriptor.name ?? component.name).
-	const settings: PackageToolBuildSettings = {
-		component: {
-			packageId: component.packageId,
-			packageDir: overlay.packageRoot,
-			kind: "tool",
-			name: toolName,
-			description: undefined,
-			path: descriptorPath,
-			sourcePath: dirname(descriptorPath),
-		},
-		components: packageContext.components.map((c) => ({
-			packageId: c.packageId,
-			packageDir: overlay.packageRoot,
-			kind: c.kind,
-			name: c.name,
-			path: c.descriptorPath,
-			sourcePath: c.descriptorPath,
-		})),
-		componentMap: new Map(),
-		diagnostics: packageContext.diagnostics,
-	};
-
+/** Keep the package's real HcpMagnet and inject only the host-owned Tool builder. */
+function HcpClientbuildpackagetoolcomponent(
+	component: HcpClientpackageloadedmagnet,
+	packageContext: HcpClientpackagetoolcontextinput,
+): HcpClientcomponent {
+	const clientComponent = HcpClientstrippackageloaderfields(component);
 	return {
-		...toolDescriptorEntry,
-		module: component.module,
-		kind: "tool",
-		name: component.name,
-		// Real package source, not the host "descriptor" placeholder.
-		source: component.source,
-		selected: true,
-		autoload: false,
-		descriptorPath,
-		requires: ["runtime:process", "sandbox"],
-		settings,
-		overrideExisting: true,
+		...clientComponent,
+		settings: {
+			HcpClientbuildtools: async (
+				descriptor: HcpClientpackagetooldescriptor,
+				buildContext: HcpMagnetBuildContext,
+			): Promise<HcpClientpackagetoolproduct[]> => {
+				const validated = await HcpClientvalidatepackagetooldescriptor(
+					component,
+					descriptor,
+					packageContext.diagnostics,
+				);
+				if (!validated) return [];
+				const settings = HcpClientcreatepackagetoolbuildsettings(component, validated, packageContext);
+				const context: HcpClientpackagetoolcontext = {
+					repoRoot: buildContext.repoRoot,
+					components: settings.components,
+					componentMap: settings.componentMap,
+					resolveCapability: buildContext.resolveCapability ?? (() => undefined),
+				};
+				return HcpClientbuildpackagetoolproducts(settings, context);
+			},
+		},
+		HcpClientallowfanout: true,
 	};
 }
 
+async function HcpClientvalidatepackagetooldescriptor(
+	component: HcpClientpackageloadedmagnet,
+	descriptor: HcpClientpackagetooldescriptor,
+	diagnostics: HcpClientpackagetooldiagnostic[],
+): Promise<HcpClientpackagetooldescriptor | undefined> {
+	if (
+		descriptor?.kind !== "tool" ||
+		typeof descriptor.name !== "string" ||
+		!descriptor.name ||
+		descriptor.source !== component.source ||
+		typeof descriptor.descriptorPath !== "string" ||
+		!descriptor.descriptorPath
+	) {
+		diagnostics.push({
+			type: "error",
+			code: "package_tool_descriptor_invalid",
+			message: `Package tool ${component.packageId}:${component.name} supplied an invalid host build descriptor.`,
+			path: component.descriptorPath,
+			packageId: component.packageId,
+		});
+		return undefined;
+	}
+
+	const descriptorPath = isAbsolute(descriptor.descriptorPath)
+		? resolve(descriptor.descriptorPath)
+		: resolve(component.descriptorPath, descriptor.descriptorPath);
+	try {
+		const [actualRoot, actualDescriptor] = await Promise.all([
+			realpath(component.packageRoot),
+			realpath(descriptorPath),
+		]);
+		if (!HcpClientiswithinpackageroot(actualRoot, actualDescriptor)) {
+			throw new Error(`descriptor path escapes the package root: ${descriptor.descriptorPath}`);
+		}
+		return { ...descriptor, descriptorPath: actualDescriptor };
+	} catch (error) {
+		diagnostics.push({
+			type: "error",
+			code: "package_tool_descriptor_invalid",
+			message: `Package tool ${component.packageId}:${component.name} descriptor is invalid: ${
+				error instanceof Error ? error.message : String(error)
+			}`,
+			path: descriptorPath,
+			packageId: component.packageId,
+		});
+		return undefined;
+	}
+}
+
+function HcpClientcreatepackagetoolbuildsettings(
+	component: HcpClientpackageloadedmagnet,
+	descriptor: HcpClientpackagetooldescriptor,
+	packageContext: HcpClientpackagetoolcontextinput,
+): HcpClientpackagetoolbuildsettings {
+	const packageComponents = packageContext.components
+		.filter(
+			(candidate) => candidate.packageId === component.packageId && candidate.packageRoot === component.packageRoot,
+		)
+		.map((candidate) => ({
+			packageId: candidate.packageId,
+			packageDir: candidate.packageRoot,
+			kind: candidate.kind,
+			name: candidate.name,
+			path: "path" in candidate ? candidate.path : candidate.descriptorPath,
+		}));
+	return {
+		component: {
+			packageId: component.packageId,
+			packageDir: component.packageRoot,
+			kind: "tool",
+			name: descriptor.name,
+			path: descriptor.descriptorPath,
+			sourcePath: dirname(descriptor.descriptorPath),
+		},
+		components: packageComponents,
+		componentMap: new Map(packageComponents.map((candidate) => [`${candidate.kind}:${candidate.name}`, candidate])),
+		diagnostics: packageContext.diagnostics,
+	};
+}
+
+function HcpClientiswithinpackageroot(packageRoot: string, candidate: string): boolean {
+	const pathFromRoot = relative(packageRoot, candidate);
+	return pathFromRoot === "" || (!pathFromRoot.startsWith("..") && !isAbsolute(pathFromRoot));
+}
+
 /** Strip loader-only fields so the entry matches HcpClientcomponent exactly. */
-function stripLoaderFields(component: LoadedPackageMagnet): HcpClientcomponent {
-	const { packageId, packageVersion, profiles, includeInContext, ...clientComponent } = component;
+function HcpClientstrippackageloaderfields(component: HcpClientpackageloadedmagnet): HcpClientcomponent {
+	const { packageId, packageVersion, packageRoot, profiles, includeInContext, key, profile, ...clientComponent } =
+		component;
 	void packageId;
 	void packageVersion;
+	void packageRoot;
 	void profiles;
 	void includeInContext;
+	void key;
+	void profile;
 	return clientComponent;
 }

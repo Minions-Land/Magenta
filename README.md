@@ -206,10 +206,18 @@ Two different mechanisms use the word "package" and must not be confused:
 2. A Harness domain Package is an external bundle mapped into ordinary HCP
    component inputs.
 
-Concrete domain Packages are managed outside this repository and will
-eventually be downloaded from GitHub. That acquisition, version selection,
-verification, and caching flow is not implemented yet. The current loader only
-consumes Packages already present on disk. An external cache should be passed
+Concrete domain Packages are managed outside this repository. Magenta can load
+an already-present package root, or acquire a versioned release directly from
+GitHub. GitHub artifacts are selected for the host platform, SHA-256 verified,
+validated as schema-v2 packages, and cached by owner, repository, package,
+version, and platform:
+
+```bash
+magenta --harness-package \
+  github:Minions-Land/MagentaPackages/AutOmicScience@1.0.0
+```
+
+For local development, an external package root can still be supplied
 explicitly:
 
 ```bash
@@ -218,11 +226,11 @@ explicitly:
   --harness-package <selector>
 ```
 
-Without `--harness-packages-root`, the compatibility fallback checks only
+Without `--harness-packages-root`, local selectors use only
 `<current-workspace>/packages`. The root [`packages/`](./packages/) directory
 remains intentionally small: it documents the integration contract and
 supplies a template. No sibling checkout or Git submodule is scanned or
-assumed.
+assumed, and GitHub acquisition remains host infrastructure outside HCP.
 
 ## Repository Layout
 

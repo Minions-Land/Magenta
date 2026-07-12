@@ -1,4 +1,4 @@
-import type { PackageAssemblyProgress } from "@magenta/harness";
+import type { HcpClientpackageassemblyprogress } from "@magenta/harness";
 import type { BackgroundEventManager, MonitoredEvent } from "./background-events.ts";
 
 /**
@@ -9,7 +9,7 @@ import type { BackgroundEventManager, MonitoredEvent } from "./background-events
  * multi-hundred-millisecond-to-multi-second step that was previously silent.
  *
  * The controller owns one event ("assembly") that runs for the duration of a
- * reload's assembly phase. It is driven purely by the {@link PackageAssemblyProgress}
+ * reload's assembly phase. It is driven purely by the {@link HcpClientpackageassemblyprogress}
  * callback threaded into `assemblePackageSources`: each component start
  * advances the progress fraction (index/total) and updates the label to name the
  * component currently being built.
@@ -46,7 +46,7 @@ export class PackageLoadController {
 	 * to the fraction of components already finished and names the one now being
 	 * built; `assembled` advances the fraction to include it.
 	 */
-	readonly onProgress = (progress: PackageAssemblyProgress): void => {
+	readonly onProgress = (progress: HcpClientpackageassemblyprogress): void => {
 		if (!this.event) this.begin(progress.total);
 		const event = this.event;
 		if (!event) return;

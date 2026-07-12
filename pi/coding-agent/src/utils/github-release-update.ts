@@ -1,45 +1,46 @@
 /**
  * GitHub Releases-based auto-update mechanism for Magenta.
- * 
+ *
  * This module checks GitHub Releases for new versions and downloads the binary
  * when updates are available. Binaries are published to a PUBLIC repository
  * (Minions-Land/Magenta-CLI) so downloads work anonymously with no token.
- * 
+ *
  * Unlike magenta-update.ts (git-based), this works with distributed binaries.
  */
 
 import { spawn, spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { createWriteStream, existsSync } from "node:fs";
-import { chmod, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { arch, homedir, platform } from "node:os";
 import { basename, dirname, join } from "node:path";
+import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { VERSION, isBunBinary } from "../config.ts";
+import lockfile from "proper-lockfile";
+import { isBunBinary, VERSION } from "../config.ts";
+import {
+	applyResourceUpdateTransaction,
+	applyUnixUpdateTransaction,
+	buildWindowsUpdateScript,
+	currentReleaseResourcesAreValid,
+	inspectReleaseResourceArchive,
+	parseReleaseChecksums,
+	RELEASE_CHECKSUMS_ASSET_NAME,
+	RELEASE_INSTALL_LOCK_NAME,
+	RELEASE_RESOURCE_MARKER_NAME,
+	RELEASE_RESOURCES_ASSET_NAME,
+	type ReleaseAssetPlan,
+	resolveReleaseAssetPlan,
+	validateExtractedReleaseResources,
+	verifyReleaseArtifactChecksums,
+} from "./github-release-update-support.ts";
 
-// ============================================================================
-// Configuration - Set these before building the binary
-// ============================================================================
-
-/** GitHub repository in format "owner/repo" */
 const GITHUB_REPO = process.env.MAGENTA_GITHUB_REPO || "Minions-Land/Magenta-CLI";
-
-/** 
- * GitHub Personal Access Token (optional).
- * For public repositories, no token is needed - downloads work anonymously.
- * Set MAGENTA_GITHUB_TOKEN environment variable only if using a private repo.
- */
 const GITHUB_TOKEN = process.env.MAGENTA_GITHUB_TOKEN || "";
-
-/** Check for updates at most once per day */
 const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
-
-/** Timeout for network requests */
 const FETCH_TIMEOUT_MS = 30_000;
-const DOWNLOAD_TIMEOUT_MS = 300_000; // 5 minutes for binary downloads
-
-// ============================================================================
-// Types
-// ============================================================================
+const DOWNLOAD_TIMEOUT_MS = 300_000;
+const BINARY_VERIFICATION_TIMEOUT_MS = 30_000;
 
 interface GitHubRelease {
 	tag_name: string;
@@ -61,41 +62,67 @@ export interface UpdateCheckResult {
 	latestVersion?: string;
 	releaseNotes?: string;
 	downloadUrl?: string;
-	/** Human-readable reason when check fails */
+	releaseAssets?: ReleaseAssetPlan;
 	error?: string;
 }
 
 export interface UpdateInstallResult {
 	success: boolean;
 	newVersion?: string;
-	/** Human-readable reason when installation fails */
+	pending?: boolean;
 	error?: string;
 }
 
-// ============================================================================
-// Version Comparison
-// ============================================================================
+export interface PreviousWindowsUpdateErrorOptions {
+	currentBinary?: string;
+	force?: boolean;
+}
 
-/**
- * Compare two semantic version strings.
- * @returns positive if v1 > v2, negative if v1 < v2, 0 if equal
- */
+/** Return and clear the asynchronous Windows helper failure from the previous launch. */
+export async function consumePreviousWindowsUpdateError(
+	options: PreviousWindowsUpdateErrorOptions = {},
+): Promise<string | undefined> {
+	if (platform() !== "win32" && !options.force) return undefined;
+	const currentBinary = options.currentBinary ?? process.execPath;
+	const errorLogPath = `${currentBinary}.update-error.log`;
+	try {
+		const message = (await readFile(errorLogPath, "utf8")).replace(/^\uFEFF/, "").trim();
+		await rm(errorLogPath, { force: true });
+		return message || "The previous Magenta update failed without an error message.";
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+		throw error;
+	}
+}
+
 function compareVersions(v1: string, v2: string): number {
-	const normalize = (v: string) => v.replace(/^v/, "").split(".").map(Number);
+	const normalize = (version: string): number[] => version.replace(/^v/, "").split(".").map(Number);
 	const parts1 = normalize(v1);
 	const parts2 = normalize(v2);
 
-	for (let i = 0; i < Math.max(parts1.length, parts2.length); i++) {
-		const a = parts1[i] || 0;
-		const b = parts2[i] || 0;
-		if (a !== b) return a - b;
+	for (let index = 0; index < Math.max(parts1.length, parts2.length); index++) {
+		const left = parts1[index] || 0;
+		const right = parts2[index] || 0;
+		if (left !== right) return left - right;
 	}
 	return 0;
 }
 
-// ============================================================================
-// Update Check Tracking
-// ============================================================================
+export async function shouldSkipConcurrentUpdateTransaction(
+	installDirectory: string,
+	installedVersion: string,
+	targetVersion: string,
+): Promise<boolean> {
+	const versionComparison = compareVersions(installedVersion, targetVersion);
+	if (versionComparison < 0) return false;
+	if (await currentReleaseResourcesAreValid(installDirectory, installedVersion)) return true;
+	if (versionComparison > 0) {
+		throw new Error(
+			`Another Magenta process installed newer v${installedVersion}, but its runtime resources are incomplete; refusing to overwrite it with older v${targetVersion}. Restart Magenta with network access to repair the installed release.`,
+		);
+	}
+	return false;
+}
 
 function getLastCheckFile(): string {
 	return join(homedir(), ".magenta", "last-update-check");
@@ -106,7 +133,7 @@ async function shouldCheckForUpdate(): Promise<boolean> {
 	if (!existsSync(checkFile)) return true;
 
 	try {
-		const lastCheck = Number.parseInt(await readFile(checkFile, "utf8"));
+		const lastCheck = Number.parseInt(await readFile(checkFile, "utf8"), 10);
 		return Date.now() - lastCheck > UPDATE_CHECK_INTERVAL_MS;
 	} catch {
 		return true;
@@ -119,20 +146,19 @@ async function recordUpdateCheck(): Promise<void> {
 	await writeFile(checkFile, Date.now().toString(), "utf8");
 }
 
-// ============================================================================
-// GitHub API
-// ============================================================================
-
-async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs: number = FETCH_TIMEOUT_MS): Promise<Response> {
+async function fetchWithTimeout(
+	url: string,
+	options: RequestInit,
+	timeoutMs: number = FETCH_TIMEOUT_MS,
+): Promise<Response> {
 	const controller = new AbortController();
 	const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
 	try {
-		const response = await fetch(url, {
+		return await fetch(url, {
 			...options,
 			signal: controller.signal,
 		});
-		return response;
 	} finally {
 		clearTimeout(timeout);
 	}
@@ -146,60 +172,247 @@ async function getLatestRelease(): Promise<GitHubRelease | null> {
 		});
 
 		if (!response.ok) {
-			if (response.status === 404) {
-				// No releases published yet
-				return null;
-			}
+			if (response.status === 404) return null;
 			throw new Error(`GitHub API returned ${response.status}: ${response.statusText}`);
 		}
 
-		return await response.json() as GitHubRelease;
-	} catch (error) {
-		// Network errors, timeouts, etc. - silently fail
+		return (await response.json()) as GitHubRelease;
+	} catch {
 		return null;
 	}
 }
 
-/**
- * Resolve the release asset name for the current platform + architecture.
- * Naming must match the assets produced by `npm run build:release-all`:
- *   magenta-macos-arm64, magenta-macos-x64,
- *   magenta-linux-x64, magenta-windows-x64.exe
- */
 function getBinaryAssetName(): string {
-	const plat = platform();
-	const a = arch(); // "arm64" | "x64" | ...
-	if (plat === "darwin") return a === "arm64" ? "magenta-macos-arm64" : "magenta-macos-x64";
-	if (plat === "linux") return "magenta-linux-x64";
-	if (plat === "win32") return "magenta-windows-x64.exe";
+	const currentPlatform = platform();
+	const currentArchitecture = arch();
+	if (currentPlatform === "darwin") {
+		return currentArchitecture === "arm64" ? "magenta-macos-arm64" : "magenta-macos-x64";
+	}
+	if (currentPlatform === "linux") return "magenta-linux-x64";
+	if (currentPlatform === "win32") return "magenta-windows-x64.exe";
 	return "magenta";
 }
 
-/**
- * Build GitHub request headers. Includes Authorization only when a token is
- * configured (private repos). Public repos download anonymously.
- */
 function buildGitHubHeaders(accept: string): Record<string, string> {
 	const headers: Record<string, string> = {
 		Accept: accept,
 		"User-Agent": "Magenta-Auto-Update",
 	};
-	if (GITHUB_TOKEN) {
-		headers.Authorization = `Bearer ${GITHUB_TOKEN}`;
-	}
+	if (GITHUB_TOKEN) headers.Authorization = `Bearer ${GITHUB_TOKEN}`;
 	return headers;
 }
 
-// ============================================================================
-// Public API
-// ============================================================================
+async function downloadReleaseAsset(
+	asset: ReleaseAssetPlan[keyof ReleaseAssetPlan],
+	destination: string,
+): Promise<void> {
+	const controller = new AbortController();
+	const timeout = setTimeout(() => controller.abort(), DOWNLOAD_TIMEOUT_MS);
 
-/**
- * Check if a new version is available on GitHub Releases.
- * This is a lightweight check that respects the daily check interval.
- */
+	try {
+		const response = await fetch(asset.downloadUrl, {
+			headers: buildGitHubHeaders("application/octet-stream"),
+			signal: controller.signal,
+		});
+		if (!response.ok) {
+			throw new Error(`Download failed for ${asset.name}: ${response.status} ${response.statusText}`);
+		}
+		if (!response.body) throw new Error(`Download returned no body for ${asset.name}`);
+
+		const webStream = response.body as unknown as Parameters<typeof Readable.fromWeb>[0];
+		await pipeline(Readable.fromWeb(webStream), createWriteStream(destination, { flags: "wx" }));
+	} finally {
+		clearTimeout(timeout);
+	}
+}
+
+function runBinary(binaryPath: string, args: readonly string[], packageDirectory: string) {
+	return spawnSync(binaryPath, [...args], {
+		cwd: packageDirectory,
+		encoding: "utf8",
+		env: {
+			...process.env,
+			PI_PACKAGE_DIR: packageDirectory,
+		},
+		maxBuffer: 4 * 1024 * 1024,
+		timeout: BINARY_VERIFICATION_TIMEOUT_MS,
+	});
+}
+
+function readBinaryVersion(binaryPath: string, packageDirectory: string): string {
+	const result = runBinary(binaryPath, ["--version"], packageDirectory);
+	if (result.error) throw result.error;
+	if (result.status !== 0) {
+		throw new Error(`Binary version verification failed with exit code ${String(result.status)}`);
+	}
+	return result.stdout.trim();
+}
+
+function assertBinaryVersion(binaryPath: string, expectedVersion: string, packageDirectory: string): void {
+	const actualVersion = readBinaryVersion(binaryPath, packageDirectory);
+	if (actualVersion !== expectedVersion) {
+		throw new Error(`Binary version mismatch: expected ${expectedVersion}, got ${actualVersion || "no output"}`);
+	}
+}
+
+function assertBinaryHelp(binaryPath: string, packageDirectory: string): void {
+	const result = runBinary(binaryPath, ["--help"], packageDirectory);
+	if (result.error) throw result.error;
+	if (result.status !== 0) {
+		const detail = result.stderr.trim();
+		throw new Error(
+			`Binary startup verification failed with exit code ${String(result.status)}${detail ? `: ${detail}` : ""}`,
+		);
+	}
+}
+
+function extractReleaseResources(archivePath: string, stagingDirectory: string): void {
+	const tarCommand = platform() === "win32" ? "tar.exe" : "tar";
+	const result = spawnSync(tarCommand, ["-xzf", archivePath, "-C", stagingDirectory], {
+		encoding: "utf8",
+		maxBuffer: 8 * 1024 * 1024,
+		timeout: DOWNLOAD_TIMEOUT_MS,
+	});
+	if (result.error) throw result.error;
+	if (result.status !== 0) {
+		throw new Error(
+			`Failed to extract runtime resources (tar exit ${String(result.status)}): ${result.stderr.trim()}`,
+		);
+	}
+}
+
+async function launchWindowsUpdateHelper(
+	scriptPath: string,
+	stagingDirectory: string,
+	backupDirectory: string,
+	resourceNames: readonly string[],
+	currentBinary: string,
+	targetVersion: string,
+): Promise<void> {
+	const errorLogPath = `${currentBinary}.update-error.log`;
+	await rm(errorLogPath, { force: true });
+	const script = buildWindowsUpdateScript({
+		parentProcessId: process.pid,
+		currentBinary,
+		stagingDirectory,
+		backupDirectory,
+		resourceNames,
+		targetVersion,
+		scriptPath,
+		errorLogPath,
+	});
+	await writeFile(scriptPath, script, "utf8");
+
+	try {
+		const child = spawn(
+			"powershell.exe",
+			["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", scriptPath],
+			{
+				detached: true,
+				stdio: "ignore",
+				windowsHide: true,
+			},
+		);
+		await new Promise<void>((resolve, reject) => {
+			child.once("spawn", resolve);
+			child.once("error", reject);
+		});
+		child.unref();
+	} catch (error) {
+		await rm(scriptPath, { force: true });
+		throw error;
+	}
+}
+
+async function lockInstallMutation(installDirectory: string): Promise<() => Promise<void>> {
+	return lockfile.lock(installDirectory, {
+		realpath: false,
+		lockfilePath: join(installDirectory, RELEASE_INSTALL_LOCK_NAME),
+		retries: { retries: 120, factor: 1, minTimeout: 250, maxTimeout: 250 },
+		stale: DOWNLOAD_TIMEOUT_MS * 3,
+		update: 10_000,
+	});
+}
+
+export interface EnsureCurrentReleaseResourcesOptions {
+	offline?: boolean;
+	force?: boolean;
+	installDirectory?: string;
+	version?: string;
+	assetBaseUrl?: string;
+}
+
+export async function ensureCurrentReleaseResources(
+	options: EnsureCurrentReleaseResourcesOptions = {},
+): Promise<boolean> {
+	if (!isBunBinary && !options.force) return false;
+	const version = options.version ?? VERSION;
+	const installDirectory = options.installDirectory ?? dirname(process.execPath);
+	if (await currentReleaseResourcesAreValid(installDirectory, version)) return false;
+	const releaseLock = await lockInstallMutation(installDirectory);
+	try {
+		if (await currentReleaseResourcesAreValid(installDirectory, version)) return false;
+		if (options.offline) {
+			throw new Error(
+				`Magenta ${version} runtime resources are missing or version-mismatched, and --offline prevents repair. Start Magenta once with network access to repair the installation.`,
+			);
+		}
+
+		const operationId = randomUUID().replaceAll("-", "");
+		const stagingDirectory = join(installDirectory, `.magenta-resource-staging-${operationId}`);
+		const backupDirectory = join(installDirectory, `.magenta-resource-backup-${operationId}`);
+		const checksumsPath = join(stagingDirectory, RELEASE_CHECKSUMS_ASSET_NAME);
+		const resourcesPath = join(stagingDirectory, RELEASE_RESOURCES_ASSET_NAME);
+		const assetBaseUrl =
+			options.assetBaseUrl?.replace(/\/$/, "") ?? `https://github.com/${GITHUB_REPO}/releases/download/v${version}`;
+
+		console.log(`📦 Repairing version-matched Magenta ${version} runtime resources...`);
+		try {
+			await mkdir(stagingDirectory, { mode: 0o700 });
+			await downloadReleaseAsset(
+				{
+					name: RELEASE_CHECKSUMS_ASSET_NAME,
+					downloadUrl: `${assetBaseUrl}/${RELEASE_CHECKSUMS_ASSET_NAME}`,
+				},
+				checksumsPath,
+			);
+			await downloadReleaseAsset(
+				{
+					name: RELEASE_RESOURCES_ASSET_NAME,
+					downloadUrl: `${assetBaseUrl}/${RELEASE_RESOURCES_ASSET_NAME}`,
+				},
+				resourcesPath,
+			);
+
+			const checksums = parseReleaseChecksums(await readFile(checksumsPath, "utf8"));
+			await verifyReleaseArtifactChecksums(checksums, [{ name: RELEASE_RESOURCES_ASSET_NAME, path: resourcesPath }]);
+			const archiveResourceNames = await inspectReleaseResourceArchive(resourcesPath);
+			extractReleaseResources(resourcesPath, stagingDirectory);
+			await validateExtractedReleaseResources(stagingDirectory, archiveResourceNames, version);
+			const resourceNames = [...new Set([...archiveResourceNames, RELEASE_RESOURCE_MARKER_NAME])];
+			const cleanupWarnings = await applyResourceUpdateTransaction({
+				installDirectory,
+				stagingDirectory,
+				backupDirectory,
+				resourceNames,
+				verifyInstalled: async () => {
+					if (!(await currentReleaseResourcesAreValid(installDirectory, version))) {
+						throw new Error(`Installed runtime resources do not match Magenta ${version}`);
+					}
+				},
+			});
+			for (const warning of cleanupWarnings) console.warn(`Resource cleanup warning: ${warning}`);
+			console.log(`✅ Repaired Magenta ${version} runtime resources.`);
+			return true;
+		} finally {
+			await rm(stagingDirectory, { recursive: true, force: true }).catch(() => undefined);
+		}
+	} finally {
+		await releaseLock();
+	}
+}
+
 export async function checkForUpdate(options: { force?: boolean } = {}): Promise<UpdateCheckResult> {
-	// Respect check interval unless forced
 	if (!options.force && !(await shouldCheckForUpdate())) {
 		return {
 			updateAvailable: false,
@@ -220,7 +433,6 @@ export async function checkForUpdate(options: { force?: boolean } = {}): Promise
 
 	const latestVersion = release.tag_name.replace(/^v/, "");
 	const updateAvailable = compareVersions(latestVersion, VERSION) > 0;
-
 	if (!updateAvailable) {
 		return {
 			updateAvailable: false,
@@ -229,262 +441,139 @@ export async function checkForUpdate(options: { force?: boolean } = {}): Promise
 		};
 	}
 
-	// Find the binary asset for current platform
-	const assetName = getBinaryAssetName();
-	const asset = release.assets.find((a) => a.name === assetName);
-
-	if (!asset) {
-		return {
-			updateAvailable: true,
-			currentVersion: VERSION,
-			latestVersion,
-			error: `No binary found for ${platform()} (expected asset: ${assetName})`,
-		};
-	}
-
+	try {
+		const releaseAssets = resolveReleaseAssetPlan(release.assets, getBinaryAssetName());
 		return {
 			updateAvailable: true,
 			currentVersion: VERSION,
 			latestVersion,
 			releaseNotes: release.body,
-			// Public repo: anonymous download via browser_download_url
-			downloadUrl: asset.browser_download_url,
-		};
-}
-
-/**
- * Background check that prints a notification if an update is available.
- * Non-blocking, never throws, suitable for calling at startup.
- */
-export async function backgroundUpdateNotification(): Promise<void> {
-	try {
-		const result = await checkForUpdate();
-		if (result.updateAvailable && result.latestVersion) {
-			console.log(`\n💡 New version v${result.latestVersion} available. Run 'magenta --update' to upgrade.\n`);
-		}
-	} catch {
-		// Silent failure - don't interrupt the user
-	}
-}
-
-/**
- * Download and install the latest version from GitHub Releases.
- * This replaces the current binary with the new one.
- */
-export async function installUpdate(): Promise<UpdateInstallResult> {
-	// Safety guard: self-update only works for the compiled single-file binary.
-	// When running via Node.js (e.g. `node dist/cli.js`), process.execPath points
-	// to the Node.js executable itself — overwriting it would corrupt the host
-	// Node.js installation. Refuse to update in that case.
-	if (!isBunBinary) {
-		return {
-			success: false,
-			error:
-				"Self-update only works for compiled Magenta binaries. Currently running via Node.js; skipping self-update to avoid overwriting Node.js.",
-		};
-	}
-
-	// Force check for latest version
-	const checkResult = await checkForUpdate({ force: true });
-
-	if (checkResult.error) {
-		return {
-			success: false,
-			error: checkResult.error,
-		};
-	}
-
-	if (!checkResult.updateAvailable) {
-		return {
-			success: false,
-			error: `Already on latest version (${VERSION})`,
-		};
-	}
-
-	if (!checkResult.downloadUrl || !checkResult.latestVersion) {
-		return {
-			success: false,
-			error: "Update information incomplete",
-		};
-	}
-
-	console.log(`📦 正在下载 Magenta v${checkResult.latestVersion}...`);
-
-	try {
-		// Download the new binary (use longer timeout for large files)
-		const response = await fetchWithTimeout(checkResult.downloadUrl, {
-			headers: buildGitHubHeaders("application/octet-stream"),
-		}, DOWNLOAD_TIMEOUT_MS);
-
-		if (!response.ok) {
-			throw new Error(`Download failed: ${response.status} ${response.statusText}`);
-		}
-
-		// Get the path to the currently running binary
-		const currentBinary = process.execPath;
-		const backupPath = `${currentBinary}.backup`;
-		const tempPath = `${currentBinary}.new`;
-
-		// Save downloaded binary to temp location
-		if (!response.body) {
-			throw new Error("Response body is null");
-		}
-		
-		const fileStream = createWriteStream(tempPath);
-		
-		// Convert Web ReadableStream to Node.js stream and add progress
-		const contentLength = parseInt(response.headers.get("content-length") || "0", 10);
-		let downloadedBytes = 0;
-		const startTime = Date.now();
-		
-		const reader = response.body.getReader();
-		const writeChunk = async (): Promise<void> => {
-			const { done, value } = await reader.read();
-			if (done) {
-				fileStream.end();
-				return;
-			}
-			
-			if (contentLength > 0) {
-				downloadedBytes += value.length;
-				const percent = Math.floor((downloadedBytes / contentLength) * 100);
-				const elapsed = Math.max(1, (Date.now() - startTime) / 1000);
-				const speed = (downloadedBytes / elapsed / 1024 / 1024).toFixed(2);
-				process.stdout.write(`\r📥 下载中: ${percent}% (${speed} MB/s)`);
-			}
-			
-			fileStream.write(value);
-			await writeChunk();
-		};
-		
-		await writeChunk();
-		if (contentLength > 0) {
-			console.log(""); // New line after progress
-		}
-		
-		// Wait for stream to finish
-		await new Promise<void>((resolve, reject) => {
-			fileStream.on("finish", resolve);
-			fileStream.on("error", reject);
-		});
-
-		// Make it executable (Unix only, no-op on Windows)
-		await chmod(tempPath, 0o755);
-
-		// Test that the new binary works
-		const testResult = spawnSync(tempPath, ["--version"], {
-			encoding: "utf8",
-			timeout: 5000,
-		});
-
-		if (testResult.status !== 0) {
-			await unlink(tempPath);
-			throw new Error("Downloaded binary failed verification");
-		}
-
-		// Windows: cannot rename a running .exe. Generate a batch script to do it after exit.
-		if (platform() === "win32") {
-			return await installUpdateWindows(tempPath, currentBinary, backupPath, checkResult);
-		}
-
-		// Unix: atomic rename (backup old → install new)
-		if (existsSync(backupPath)) {
-			await unlink(backupPath);
-		}
-		await rename(currentBinary, backupPath);
-		await rename(tempPath, currentBinary);
-
-		console.log(`✅ 已更新到 v${checkResult.latestVersion}`);
-		if (checkResult.releaseNotes) {
-			console.log(`\n更新内容:\n${checkResult.releaseNotes}\n`);
-		}
-		console.log(`旧版本已备份为 ${basename(backupPath)}`);
-		console.log("\n请重新启动 magenta 使用新版本");
-
-		return {
-			success: true,
-			newVersion: checkResult.latestVersion,
+			downloadUrl: releaseAssets.binary.downloadUrl,
+			releaseAssets,
 		};
 	} catch (error) {
 		return {
-			success: false,
+			updateAvailable: true,
+			currentVersion: VERSION,
+			latestVersion,
+			releaseNotes: release.body,
 			error: error instanceof Error ? error.message : String(error),
 		};
 	}
 }
 
-/**
- * Windows-specific update installer.
- * 
- * Windows cannot rename a running .exe, so we:
- *  1. Write the new binary to a temp location
- *  2. Generate a batch script to replace the exe after magenta exits
- *  3. Launch the batch script in detached mode
- *  4. Instruct the user to exit magenta
- */
-async function installUpdateWindows(
-	tempPath: string,
-	currentBinary: string,
-	backupPath: string,
-	checkResult: UpdateCheckResult,
-): Promise<UpdateInstallResult> {
-	const batchScript = `${currentBinary}.update.bat`;
+export async function backgroundUpdateNotification(): Promise<void> {
+	try {
+		const result = await checkForUpdate();
+		if (result.updateAvailable && result.latestVersion && !result.error) {
+			console.log(`\n💡 New version v${result.latestVersion} available. Run 'magenta --update' to upgrade.\n`);
+		}
+	} catch {
+		return;
+	}
+}
 
-	// Generate a batch script that:
-	//  - Waits for magenta.exe to exit (loop checking process list)
-	//  - Backs up the old exe
-	//  - Copies new exe into place
-	//  - Cleans up temp files
-	const batchContent = `@echo off
-echo Waiting for Magenta to exit...
-:wait
-tasklist /FI "IMAGENAME eq ${basename(currentBinary)}" 2>NUL | find /I /N "${basename(currentBinary)}">NUL
-if "%ERRORLEVEL%"=="0" (
-  timeout /t 1 /nobreak >NUL
-  goto wait
-)
+export async function installUpdate(): Promise<UpdateInstallResult> {
+	if (!isBunBinary) {
+		return {
+			success: false,
+			error: "Self-update only works for compiled Magenta binaries. Currently running via Node.js; skipping self-update to avoid overwriting Node.js.",
+		};
+	}
 
-echo Updating Magenta to v${checkResult.latestVersion}...
-if exist "${backupPath}" del /f "${backupPath}"
-if exist "${currentBinary}" ren "${currentBinary}" "${basename(backupPath)}"
-move /y "${tempPath}" "${currentBinary}" >NUL
-if exist "${tempPath}" del /f "${tempPath}"
+	const checkResult = await checkForUpdate({ force: true });
+	if (checkResult.error) return { success: false, error: checkResult.error };
+	if (!checkResult.updateAvailable) {
+		return { success: false, error: `Already on latest version (${VERSION})` };
+	}
+	if (!checkResult.releaseAssets || !checkResult.latestVersion) {
+		return { success: false, error: "Update information incomplete" };
+	}
 
-echo Update complete. You can restart magenta.exe now.
-timeout /t 3 /nobreak >NUL
-del /f "%~f0"
-`;
+	const currentBinary = process.execPath;
+	const installDirectory = dirname(currentBinary);
+	const operationId = randomUUID().replaceAll("-", "");
+	const stagingDirectory = join(installDirectory, `.magenta-update-staging-${operationId}`);
+	const backupDirectory = join(installDirectory, `.magenta-update-backup-${operationId}`);
+	const scriptPath = join(installDirectory, `.magenta-update-${operationId}.ps1`);
+	const stagedBinary = join(stagingDirectory, basename(currentBinary));
+	const checksumsPath = join(stagingDirectory, RELEASE_CHECKSUMS_ASSET_NAME);
+	const resourcesPath = join(stagingDirectory, RELEASE_RESOURCES_ASSET_NAME);
+	let windowsHelperOwnsStaging = false;
+
+	console.log(`📦 Downloading Magenta v${checkResult.latestVersion} and runtime resources...`);
 
 	try {
-		await writeFile(batchScript, batchContent, "utf8");
+		await mkdir(stagingDirectory, { mode: 0o700 });
+		await downloadReleaseAsset(checkResult.releaseAssets.checksums, checksumsPath);
+		await downloadReleaseAsset(checkResult.releaseAssets.binary, stagedBinary);
+		await downloadReleaseAsset(checkResult.releaseAssets.resources, resourcesPath);
 
-		// Launch the batch script in detached mode so it survives magenta's exit
-		const child = spawn("cmd.exe", ["/c", batchScript], {
-			detached: true,
-			stdio: "ignore",
-		});
-		// Unref so the parent (magenta) can exit without waiting for the updater
-		child.unref();
+		const checksums = parseReleaseChecksums(await readFile(checksumsPath, "utf8"));
+		await verifyReleaseArtifactChecksums(checksums, [
+			{ name: checkResult.releaseAssets.binary.name, path: stagedBinary },
+			{ name: checkResult.releaseAssets.resources.name, path: resourcesPath },
+		]);
 
-		console.log(`✅ 已下载 Magenta v${checkResult.latestVersion}`);
-		if (checkResult.releaseNotes) {
-			console.log(`\n更新内容:\n${checkResult.releaseNotes}\n`);
+		const archiveResourceNames = await inspectReleaseResourceArchive(resourcesPath);
+		extractReleaseResources(resourcesPath, stagingDirectory);
+		await validateExtractedReleaseResources(stagingDirectory, archiveResourceNames, checkResult.latestVersion);
+		const resourceNames = [...new Set([...archiveResourceNames, RELEASE_RESOURCE_MARKER_NAME])];
+		if (platform() !== "win32") await chmod(stagedBinary, 0o755);
+		assertBinaryVersion(stagedBinary, checkResult.latestVersion, stagingDirectory);
+		assertBinaryHelp(stagedBinary, stagingDirectory);
+
+		if (platform() === "win32") {
+			await launchWindowsUpdateHelper(
+				scriptPath,
+				stagingDirectory,
+				backupDirectory,
+				resourceNames,
+				currentBinary,
+				checkResult.latestVersion,
+			);
+			windowsHelperOwnsStaging = true;
+			console.log(`✅ Magenta v${checkResult.latestVersion} is verified and ready to install.`);
+			console.log("The update will complete automatically after this Magenta process exits.");
+			return { success: true, newVersion: checkResult.latestVersion, pending: true };
 		}
-		console.log(
-			`⚠️  Windows 更新需要退出当前进程。\n` +
-				`   更新脚本已在后台启动，请关闭此窗口或按 Ctrl+C 退出。\n` +
-				`   退出后，更新将自动完成（旧版本备份为 ${basename(backupPath)}）。`,
-		);
 
-		return {
-			success: true,
-			newVersion: checkResult.latestVersion,
-		};
+		const installLock = await lockInstallMutation(installDirectory);
+		let cleanupWarnings: string[];
+		try {
+			const installedVersion = readBinaryVersion(currentBinary, installDirectory);
+			if (
+				await shouldSkipConcurrentUpdateTransaction(installDirectory, installedVersion, checkResult.latestVersion)
+			) {
+				console.log(`Another Magenta process already installed v${installedVersion}; skipping this transaction.`);
+				return { success: true, newVersion: installedVersion };
+			}
+			cleanupWarnings = await applyUnixUpdateTransaction({
+				currentBinary,
+				stagingDirectory,
+				backupDirectory,
+				resourceNames,
+				verifyInstalled: () =>
+					assertBinaryVersion(currentBinary, checkResult.latestVersion as string, installDirectory),
+			});
+		} finally {
+			await installLock();
+		}
+		for (const warning of cleanupWarnings) console.warn(`Update cleanup warning: ${warning}`);
+
+		console.log(`✅ Updated to v${checkResult.latestVersion}`);
+		if (checkResult.releaseNotes) console.log(`\nRelease notes:\n${checkResult.releaseNotes}\n`);
+		console.log("Please restart Magenta to use the new version.");
+		return { success: true, newVersion: checkResult.latestVersion };
 	} catch (error) {
-		// Clean up batch script if spawn failed
-		if (existsSync(batchScript)) {
-			await unlink(batchScript);
+		return {
+			success: false,
+			error: error instanceof Error ? error.message : String(error),
+		};
+	} finally {
+		if (!windowsHelperOwnsStaging) {
+			await rm(stagingDirectory, { recursive: true, force: true }).catch(() => undefined);
+			await rm(scriptPath, { force: true }).catch(() => undefined);
 		}
-		throw error;
 	}
 }

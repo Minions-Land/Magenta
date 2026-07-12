@@ -1,11 +1,7 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { HcpMagnetBuildContext } from "../../.HCP/HcpMagnetTypes.ts";
 import { type CreateMcpToolsOptions, discoverMcpTools, McpTool, type McpToolOptions } from "../../_magenta/mcp/tool.ts";
-import {
-	createPackageToolProduct,
-	expandPackageToolBuildSettings,
-	type PackageToolBuildSettings,
-} from "./package-tool.ts";
+import { HcpClientbuildpackagetoolproducts, type HcpClientpackagetoolbuildsettings } from "./package-tool.ts";
 
 type HcpMagnettoolproduct = {
 	readonly kind: string;
@@ -32,25 +28,10 @@ export class HcpMagnet {
 			componentMap: context.settings.componentMap,
 			resolveCapability: context.resolveCapability ?? (() => undefined),
 		};
-		const expanded = await expandPackageToolBuildSettings(context.settings, packageContext);
-		const magnets: HcpMagnet[] = [];
-		try {
-			for (const settings of expanded) {
-				if (settings.mcp) {
-					magnets.push(HcpMagnetfrommcp(settings.mcp));
-					continue;
-				}
-				const result = await createPackageToolProduct({ component: settings.component, context: packageContext });
-				context.settings.diagnostics.push(...result.diagnostics);
-				if (result.product) magnets.push(new HcpMagnet(result.product));
-			}
-			if (magnets.length === 0) return undefined;
-			return magnets.length === 1 ? magnets[0] : magnets;
-		} catch (error) {
-			await Promise.allSettled(magnets.map((magnet) => magnet.dispose()));
-			await HcpMagnetcloseexpandedmcp(expanded);
-			throw error;
-		}
+		const products = await HcpClientbuildpackagetoolproducts(context.settings, packageContext);
+		const magnets = products.map((product) => new HcpMagnet(product));
+		if (magnets.length === 0) return undefined;
+		return magnets.length === 1 ? magnets[0] : magnets;
 	}
 
 	readonly source = "descriptor";
@@ -119,21 +100,6 @@ function HcpMagnetismcpdiscoverysettings(value: unknown): value is { mcp: Create
 	return typeof settings.serverName === "string" && settings.client !== undefined;
 }
 
-function HcpMagnetispackagesettings(value: unknown): value is PackageToolBuildSettings {
+function HcpMagnetispackagesettings(value: unknown): value is HcpClientpackagetoolbuildsettings {
 	return value !== null && typeof value === "object" && "component" in value && "componentMap" in value;
-}
-
-async function HcpMagnetcloseexpandedmcp(settings: readonly PackageToolBuildSettings[]): Promise<void> {
-	const connections = new Set(
-		settings.map((entry) => entry.mcp?.connection).filter((connection) => connection !== undefined),
-	);
-	await Promise.all(
-		[...connections].map(async (connection) => {
-			try {
-				await connection.close();
-			} catch {
-				// Preserve the Source build error; cleanup is best-effort.
-			}
-		}),
-	);
 }

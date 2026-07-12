@@ -1,6 +1,6 @@
 import { accessSync, constants, existsSync, readFileSync, realpathSync } from "fs";
 import { homedir } from "os";
-import { basename, dirname, join, resolve, sep, win32 } from "path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep, win32 } from "path";
 import { fileURLToPath } from "url";
 import { spawnProcessSync } from "./utils/child-process.ts";
 import { normalizePath } from "./utils/paths.ts";
@@ -16,8 +16,11 @@ const __dirname = dirname(__filename);
  * Detect if we're running as a Bun compiled binary.
  * Bun binaries have import.meta.url containing "$bunfs", "~BUN", or "%7EBUN" (Bun's virtual filesystem path)
  */
-export const isBunBinary =
-	import.meta.url.includes("$bunfs") || import.meta.url.includes("~BUN") || import.meta.url.includes("%7EBUN");
+export function isBunBinaryUrl(url: string): boolean {
+	return /(?:\$bunfs|~bun|%7ebun)/i.test(url);
+}
+
+export const isBunBinary = isBunBinaryUrl(import.meta.url);
 
 /** Detect if Bun is the runtime (compiled binary or bun run) */
 export const isBunRuntime = !!process.versions.bun;
@@ -388,6 +391,36 @@ export function getPackageDir(): string {
 }
 
 /**
+ * Resolve the code/assets root without assuming that getPackageDir() is always
+ * the package parent. Distributed Node builds may place package.json directly
+ * inside dist/, in which case appending another "dist" produces dist/dist.
+ */
+export function resolvePackageCodeDir(packageDir: string, moduleDir: string = __dirname): string {
+	const resolvedPackageDir = resolve(packageDir);
+	const resolvedModuleDir = resolve(moduleDir);
+	const fromPackage = relative(resolvedPackageDir, resolvedModuleDir);
+	const firstSegment = fromPackage.split(sep)[0];
+	const moduleCandidate =
+		fromPackage === ""
+			? resolvedPackageDir
+			: !isAbsolute(fromPackage) && fromPackage !== ".." && !fromPackage.startsWith(`..${sep}`)
+				? firstSegment === "src" || firstSegment === "dist"
+					? join(resolvedPackageDir, firstSegment)
+					: resolvedPackageDir
+				: undefined;
+	const candidates = [
+		moduleCandidate,
+		resolvedPackageDir,
+		join(resolvedPackageDir, "src"),
+		join(resolvedPackageDir, "dist"),
+	];
+	for (const candidate of candidates) {
+		if (candidate && existsSync(join(candidate, "modes"))) return candidate;
+	}
+	return moduleCandidate ?? resolvedPackageDir;
+}
+
+/**
  * Get path to built-in themes directory (shipped with package)
  * - For Bun binary: theme/ next to executable
  * - For Node.js (dist/): dist/modes/interactive/theme/
@@ -397,10 +430,7 @@ export function getThemesDir(): string {
 	if (isBunBinary) {
 		return join(getPackageDir(), "theme");
 	}
-	// Theme is in modes/interactive/theme/ relative to src/ or dist/
-	const packageDir = getPackageDir();
-	const srcOrDist = existsSync(join(packageDir, "src")) ? "src" : "dist";
-	return join(packageDir, srcOrDist, "modes", "interactive", "theme");
+	return join(resolvePackageCodeDir(getPackageDir()), "modes", "interactive", "theme");
 }
 
 /**
@@ -413,9 +443,7 @@ export function getExportTemplateDir(): string {
 	if (isBunBinary) {
 		return join(getPackageDir(), "export-html");
 	}
-	const packageDir = getPackageDir();
-	const srcOrDist = existsSync(join(packageDir, "src")) ? "src" : "dist";
-	return join(packageDir, srcOrDist, "core", "export-html");
+	return join(resolvePackageCodeDir(getPackageDir()), "core", "export-html");
 }
 
 /** Get path to package.json */
@@ -453,9 +481,7 @@ export function getInteractiveAssetsDir(): string {
 	if (isBunBinary) {
 		return join(getPackageDir(), "assets");
 	}
-	const packageDir = getPackageDir();
-	const srcOrDist = existsSync(join(packageDir, "src")) ? "src" : "dist";
-	return join(packageDir, srcOrDist, "modes", "interactive", "assets");
+	return join(resolvePackageCodeDir(getPackageDir()), "modes", "interactive", "assets");
 }
 
 /** Get path to a bundled interactive asset */
@@ -491,6 +517,7 @@ export const APP_NAME: string = piConfigName || "Magenta";
 export const APP_TITLE: string = APP_NAME;
 export const APP_BINARY_NAME: string = pkg.piConfig?.binaryName || APP_NAME.toLowerCase();
 export const CONFIG_DIR_NAME: string = pkg.piConfig?.configDir || ".magenta";
+
 // VERSION should reflect the product version (Magenta), not the infrastructure version (Pi)
 // Generated at build time from the active brand configuration
 import { BRAND_VERSION } from "./brand-version.generated.ts";

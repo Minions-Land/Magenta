@@ -270,6 +270,70 @@ additionalProperties = true
 	}
 }
 
+function writeLateToolDescriptorDiagnosticPackage(repoRoot: string): void {
+	const packageDir = join(repoRoot, "packages", "LateDiagnosticDomain");
+	const moduleDir = join(packageDir, "tools", "late-tool");
+	const sourceDir = join(moduleDir, "LateDiagnosticDomain");
+	const outsideDescriptor = join(repoRoot, "outside-package-tool.toml");
+	mkdirSync(sourceDir, { recursive: true });
+	writeFileSync(
+		join(packageDir, "package.toml"),
+		`schema_version = "magenta.package.v2"
+id = "LateDiagnosticDomain"
+name = "Late Diagnostic Domain"
+version = "1.0.0"
+source = "LateDiagnosticDomain"
+
+[[components]]
+kind = "tool"
+name = "late_tool"
+source = "LateDiagnosticDomain"
+path = "tools/late-tool/LateDiagnosticDomain"
+`,
+	);
+	writeFileSync(
+		join(moduleDir, "HcpServer.ts"),
+		`export class HcpServer { readonly moduleName = "tools/late-tool"; }
+`,
+	);
+	writeFileSync(
+		join(sourceDir, "HcpMagnet.ts"),
+		`export class HcpMagnet {
+	static readonly module = "tools/late-tool";
+	static readonly kind = "tool";
+	static readonly source = "LateDiagnosticDomain";
+	static async build(context: any) {
+		const products = await context.settings.HcpClientbuildtools(
+			{
+				kind: "tool",
+				name: "late_tool",
+				source: "LateDiagnosticDomain",
+				descriptorPath: ${JSON.stringify(outsideDescriptor)},
+			},
+			context,
+		);
+		const magnets = products.map((product: any) => new HcpMagnet(product));
+		return magnets.length === 0 ? undefined : magnets.length === 1 ? magnets[0] : magnets;
+	}
+	readonly kind: string;
+	readonly source = "LateDiagnosticDomain";
+	constructor(private readonly product: any) { this.kind = product.kind; }
+	toTool() { return this.product.toTool(); }
+	async dispose() { await this.product.close?.(); }
+}
+`,
+	);
+	writeFileSync(
+		outsideDescriptor,
+		`kind = "tool"
+name = "late_tool"
+description = "Must be rejected before host product construction."
+runtime = "process"
+command = "node"
+`,
+	);
+}
+
 describe("DefaultResourceLoader", () => {
 	let tempDir: string;
 	let agentDir: string;
@@ -405,6 +469,21 @@ describe("DefaultResourceLoader", () => {
 			expect(loader.getAppendSystemPrompt()).toContain("Package append prompt.");
 		});
 
+		it("retains Tool descriptor containment diagnostics produced during HCP assembly", async () => {
+			writeLateToolDescriptorDiagnosticPackage(cwd);
+			const loader = createLoader({ harnessPackages: ["LateDiagnosticDomain"] });
+
+			await loader.reload();
+
+			expect(loader.getPackageTools().tools).toEqual([]);
+			expect(loader.getPackageTools().diagnostics).toContainEqual(
+				expect.objectContaining({
+					type: "error",
+					message: expect.stringMatching(/descriptor is invalid.*escapes the package root/i),
+				}),
+			);
+		});
+
 		it("loads selected harness package resources from an explicit external root", async () => {
 			const packagesRoot = join(tempDir, "external-packages");
 			writeHarnessPackageFixture(cwd, packagesRoot);
@@ -415,7 +494,7 @@ describe("DefaultResourceLoader", () => {
 			});
 			await loader.reload();
 
-			expect(loader.getHarnessPackagesRoot()).toBe(packagesRoot);
+			expect(loader.HcpClientgetharnesspackagesroot()).toBe(packagesRoot);
 			expect(loader.getPackageOverlay()?.packagesRoot).toBe(packagesRoot);
 			expect(loader.getPackageTools().tools.map((tool) => tool.name)).toEqual(["test_package_tool"]);
 			expect(loader.getSkills().skills.some((skill) => skill.name === "test-domain")).toBe(true);
@@ -518,6 +597,19 @@ describe("DefaultResourceLoader", () => {
 			expect(loader.getPackageOverlay()).toBeUndefined();
 			expect(loader.getPackageTools().tools).toEqual([]);
 			expect(loader.getSkills().skills.some((skill) => skill.name === "test-domain")).toBe(false);
+		});
+
+		it("diagnoses malformed GitHub selectors instead of treating them as local package ids", async () => {
+			const selector = "github:owner/repo/PackageWithoutVersion";
+			const loader = createLoader({ harnessPackages: [selector] });
+
+			await loader.reload();
+
+			expect(loader.getHarnessPackageSelectors()).toEqual([selector]);
+			expect(loader.getPackageOverlay()).toBeUndefined();
+			expect(loader.getPackageTools().diagnostics).toContainEqual(
+				expect.objectContaining({ type: "error", message: `Invalid GitHub package selector: ${selector}` }),
+			);
 		});
 
 		it("exposes a session HCP that resolves the compaction capability with and without a package", async () => {
@@ -723,7 +815,7 @@ lines.on("line", (line) => {
 			);
 			expect(firstDescriptions.get("tool:test_package_tool")).toMatchObject({
 				kind: "tool",
-				metadata: { implementation: "process", source: "descriptor" },
+				metadata: { implementation: "process", source: "TestDomain" },
 			});
 			expect(firstDescriptions.get("tool:live_one")).toMatchObject({
 				kind: "tool",

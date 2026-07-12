@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import ts from "typescript";
 import { afterEach, describe, expect, it } from "vitest";
-import { loadPackageOverlay } from "../_magenta/packages/package-overlay-v2.ts";
+import { HcpClientloadpackageoverlay } from "../_magenta/packages/package-overlay-v2.ts";
 import { HcpClientbuildpackagesessionfortest } from "./package-test-utils.ts";
 import { writeFixturePackage } from "./package-v2-fixtures.ts";
 
@@ -75,7 +75,7 @@ ${closeMarker ? `\n[env]\nCLOSE_MARKER = ${JSON.stringify(closeMarker)}\n` : ""}
 			},
 		],
 	});
-	return loadPackageOverlay({ packagesRoot, selections: ["MockMcp"] });
+	return HcpClientloadpackageoverlay({ packagesRoot, selections: ["MockMcp"] });
 }
 
 describe("package MCP HCP assembly (v2)", () => {
@@ -96,7 +96,7 @@ describe("package MCP HCP assembly (v2)", () => {
 		]);
 
 		expect(countMcpToolConstructions(descriptorSource, descriptorPath.pathname)).toBe(1);
-		expect(countMcpToolConstructions(packageFactorySource, packageFactoryPath.pathname)).toBe(0);
+		expect(countMcpToolConstructions(packageFactorySource, packageFactoryPath.pathname)).toBe(1);
 		expect(countMcpToolConstructions(userLoaderSource, userLoaderPath.pathname)).toBe(0);
 		expect(packageFactorySource).not.toContain("settings.product");
 		expect(userLoaderSource).not.toContain("settings: product");

@@ -4,6 +4,7 @@ import ignore from "ignore";
 import { parse } from "yaml";
 import type { HcpMagnetResource } from "../.HCP/HcpMagnetTypes.ts";
 import { type ExecutionEnv, type FileInfo, type Result, type Skill, toError } from "../_magenta/types/types.ts";
+import { HcpClientisbunbinaryurl } from "../HcpClient.ts";
 import { parseCommandArgs, substituteArgs } from "../prompt-templates/HcpServer.ts";
 
 const MAX_NAME_LENGTH = 64;
@@ -12,8 +13,6 @@ const MAX_DESCRIPTION_LENGTH = 1024;
 const STANDARD_FRONTMATTER_KEYS = new Set(["name", "description", "disable-model-invocation", "argument-hint", "tags"]);
 const IGNORE_FILE_NAMES = [".gitignore", ".ignore", ".fdignore"];
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const isBunBinary =
-	import.meta.url.includes("$bunfs") || import.meta.url.includes("~BUN") || import.meta.url.includes("%7EBUN");
 
 type IgnoreMatcher = ReturnType<typeof ignore>;
 
@@ -92,10 +91,11 @@ export function formatSkillInvocation(skill: Skill, additionalInstructions?: str
  * harness is simply a capability that lives here.
  */
 export function getHarnessSkillsDir(): string {
-	if (isBunBinary) {
-		return join(dirname(process.execPath), "skills");
-	}
-	return __dirname;
+	return HcpClientresolveharnessskillsdir(import.meta.url, process.execPath);
+}
+
+export function HcpClientresolveharnessskillsdir(moduleUrl: string, executablePath: string): string {
+	return HcpClientisbunbinaryurl(moduleUrl) ? join(dirname(executablePath), "skills") : __dirname;
 }
 
 /** Canonical harness implementation sources; a skill's identity is its slot dir, not its source dir. */

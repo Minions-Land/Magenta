@@ -11,24 +11,21 @@ export type { ResourceCollision, ResourceDiagnostic } from "./diagnostics.ts";
 
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import {
-	getHarnessPackagesRoot,
 	type Skill as HarnessSkill,
 	type HcpClient,
 	HcpClientbuildsession,
+	HcpClientgetharnesspackagesroot,
+	HcpClientloadpackageoverlay,
+	type HcpClientpackageassemblyprogress,
+	type HcpClientpackagediagnostic,
 	HcpClientpackageinputfromoverlay,
+	type HcpClientpackageoverlay,
+	type HcpClientpackageprofileselection,
 	type HcpMagnetResource,
 	initProcessToolsBinary,
-	loadPackageOverlay,
-	type PackageAssemblyProgress,
-	type PackageDiagnostic,
-	type PackageOverlay,
-	type PackageProfileSelection,
 } from "@magenta/harness";
 import { closeWatcher, watchWithErrorHandler } from "../utils/fs-watch.ts";
-import {
-	acquireGitHubPackage,
-	parseGitHubPackageSelector,
-} from "../utils/package-acquisition.ts";
+import { HcpClientacquiregithubpackage, HcpClientparsegithubpackageselector } from "../utils/package-acquisition.ts";
 import { canonicalizePath, isLocalPath, resolvePath } from "../utils/paths.ts";
 import { createEventBus, type EventBus } from "./event-bus.ts";
 import {
@@ -61,7 +58,7 @@ export interface ResourceLoaderReloadOptions {
 	 * to a {@link BackgroundEventManager} source so the TUI shows a live bar while
 	 * package components (including MCP server spawns) are assembled.
 	 */
-	onPackageAssemblyProgress?: (progress: PackageAssemblyProgress) => void;
+	onPackageAssemblyProgress?: (progress: HcpClientpackageassemblyprogress) => void;
 }
 
 export interface ResourceLoader {
@@ -87,13 +84,13 @@ export interface ResourceLoader {
 	onSkillsReloaded?(callback: () => void): () => void;
 	getPrompts(): { prompts: PromptTemplate[]; diagnostics: ResourceDiagnostic[] };
 	getThemes(): { themes: Theme[]; diagnostics: ResourceDiagnostic[] };
-	getPackageOverlay(): PackageOverlay | undefined;
+	getPackageOverlay(): HcpClientpackageoverlay | undefined;
 	getPackageTools(): { tools: AgentTool[]; diagnostics: ResourceDiagnostic[] };
 	getDefaultToolNames?(): string[];
 	getUserMcpTools(): { tools: AgentTool[]; diagnostics: ResourceDiagnostic[] };
 	getHarnessPackageSelectors?(): string[];
 	setHarnessPackageSelectors?(selectors: string[]): void;
-	getHarnessPackagesRoot?(): string | undefined;
+	HcpClientgetharnesspackagesroot?(): string | undefined;
 	getAgentsFiles(): { agentsFiles: Array<{ path: string; content: string }> };
 	getSystemPrompt(): string | undefined;
 	getAppendSystemPrompt(): string[];
@@ -105,7 +102,7 @@ export interface ResourceLoader {
 
 type HcpClientsessioncandidate = {
 	hcp: HcpClient;
-	overlay?: PackageOverlay;
+	overlay?: HcpClientpackageoverlay;
 	packageToolAddresses: string[];
 	defaultToolAddresses: string[];
 	packageResources: HcpMagnetResource[];
@@ -220,7 +217,7 @@ function normalizeHarnessPackageSelectors(selectors: string[]): string[] {
 }
 
 function packageDiagnosticToResourceDiagnostic(
-	diagnostic: Pick<PackageDiagnostic, "type" | "message" | "path">,
+	diagnostic: Pick<HcpClientpackagediagnostic, "type" | "message" | "path">,
 ): ResourceDiagnostic {
 	return {
 		type: diagnostic.type,
@@ -374,7 +371,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 	private promptDiagnostics: ResourceDiagnostic[];
 	private themes: Theme[];
 	private themeDiagnostics: ResourceDiagnostic[];
-	private packageOverlay?: PackageOverlay;
+	private packageOverlay?: HcpClientpackageoverlay;
 	private packageToolAddresses: string[];
 	/**
 	 * The one session HCP with default sources and any selected package overlays.
@@ -428,7 +425,10 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.additionalPromptTemplatePaths = options.additionalPromptTemplatePaths ?? [];
 		this.additionalThemePaths = options.additionalThemePaths ?? [];
 		this.harnessPackages = normalizeHarnessPackageSelectors(options.harnessPackages ?? parseHarnessPackageEnv());
-		this.harnessPackagesRoot = resolvePath(options.harnessPackagesRoot ?? getHarnessPackagesRoot(this.cwd), this.cwd);
+		this.harnessPackagesRoot = resolvePath(
+			options.harnessPackagesRoot ?? HcpClientgetharnesspackagesroot(this.cwd),
+			this.cwd,
+		);
 		this.extensionFactories = options.extensionFactories ?? [];
 		this.noExtensions = options.noExtensions ?? false;
 		this.noSkills = options.noSkills ?? false;
@@ -491,7 +491,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		return { themes: this.themes, diagnostics: this.themeDiagnostics };
 	}
 
-	getPackageOverlay(): PackageOverlay | undefined {
+	getPackageOverlay(): HcpClientpackageoverlay | undefined {
 		return this.packageOverlay;
 	}
 
@@ -544,7 +544,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.harnessPackages = normalizeHarnessPackageSelectors(selectors);
 	}
 
-	getHarnessPackagesRoot(): string {
+	HcpClientgetharnesspackagesroot(): string {
 		return this.harnessPackagesRoot;
 	}
 
@@ -1032,16 +1032,23 @@ export class DefaultResourceLoader implements ResourceLoader {
 	private async HcpClientresolvepackageselections(
 		rawSelectors: readonly string[],
 		packageDiagnostics: ResourceDiagnostic[],
-	): Promise<Array<string | PackageProfileSelection>> {
-		const selections: Array<string | PackageProfileSelection> = [];
+	): Promise<Array<string | HcpClientpackageprofileselection>> {
+		const selections: Array<string | HcpClientpackageprofileselection> = [];
 		for (const raw of rawSelectors) {
-			const github = parseGitHubPackageSelector(raw);
+			const github = HcpClientparsegithubpackageselector(raw);
 			if (!github) {
+				if (raw.startsWith("github:")) {
+					packageDiagnostics.push({
+						type: "error",
+						message: `Invalid GitHub package selector: ${raw}`,
+					});
+					continue;
+				}
 				// Local selector: resolve under the packages root as before.
 				selections.push(raw);
 				continue;
 			}
-			const result = await acquireGitHubPackage(github);
+			const result = await HcpClientacquiregithubpackage(github);
 			for (const diagnostic of result.diagnostics) {
 				if (diagnostic.type === "error") {
 					packageDiagnostics.push({ type: "error", message: diagnostic.message });
@@ -1053,13 +1060,17 @@ export class DefaultResourceLoader implements ResourceLoader {
 				// Acquisition failed; skip this package rather than loading a broken cache.
 				continue;
 			}
-			selections.push({ packageId: github.package, packageRoot: result.packageRoot });
+			selections.push({
+				packageId: github.package,
+				packageRoot: result.packageRoot,
+				...(github.profiles?.length ? { profiles: github.profiles } : {}),
+			});
 		}
 		return selections;
 	}
 
 	private async HcpClientbuildcandidate(
-		onAssemblyProgress?: (progress: PackageAssemblyProgress) => void,
+		onAssemblyProgress?: (progress: HcpClientpackageassemblyprogress) => void,
 	): Promise<HcpClientsessioncandidate> {
 		const packageDiagnostics: ResourceDiagnostic[] = [];
 		let candidateHcp: HcpClient | undefined;
@@ -1071,7 +1082,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 			const overlay =
 				selections.length === 0
 					? undefined
-					: await loadPackageOverlay({
+					: await HcpClientloadpackageoverlay({
 							repoRoot: this.cwd,
 							packagesRoot: this.harnessPackagesRoot,
 							selections,

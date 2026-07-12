@@ -284,7 +284,7 @@ ${chalk.bold("Options:")}
   --no-extensions, -ne           Disable extension discovery (explicit -e paths still work)
   --skill <path>                 Load a skill file or directory (can be used multiple times)
   --harness-list                 List generated Harness components and Source selections
-  --harness-package <selector>   Load a harness package, e.g. AutOmicScience
+  --harness-package <selector>   Load local Pkg[:profile] or github:owner/repo/Pkg@version[:profile]
   --harness-packages-root <dir>  Read Harness Packages from this explicit root
   --no-skills, -ns               Disable skills discovery and loading
   --prompt-template <path>       Load a prompt template file or directory (can be used multiple times)

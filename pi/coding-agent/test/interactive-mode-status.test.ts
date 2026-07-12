@@ -162,7 +162,7 @@ name = "External Domain"
 			const fakeThis = {
 				sessionManager: { getCwd: () => repoRoot },
 				session: {
-					resourceLoader: { getHarnessPackagesRoot: () => packagesRoot },
+					resourceLoader: { HcpClientgetharnesspackagesroot: () => packagesRoot },
 				},
 			};
 
@@ -174,6 +174,106 @@ name = "External Domain"
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}
+	});
+
+	test("shows an active GitHub package that is absent from local discovery and preserves its exact selector", async () => {
+		const selector = "github:Minions-Land/MagentaPackages/AutOmicScience@1.0.0:single-cell";
+		const fakeThis: any = {
+			loadHarnessPackagesView: async () => ({
+				packagesRoot: "/workspace/packages",
+				packages: [],
+				diagnostics: [],
+			}),
+		};
+
+		const [root] = await (InteractiveMode as any).prototype.harnessPackageMenuItems.call(fakeThis, {
+			harnessPackages: [selector],
+		});
+		const githubPackage = root.children.find((item: any) => item.label === "AutOmicScience (GitHub)");
+
+		expect(root.description).toBe("1 selected · 0 local available");
+		expect(githubPackage).toMatchObject({ active: true });
+		expect(githubPackage.description).toContain(selector);
+		expect(githubPackage.children.find((item: any) => item.label === "Profiles")).toMatchObject({
+			disabled: true,
+			description: "Active: single-cell",
+		});
+
+		const setHarnessPackageSelectorEnabled = vi.fn();
+		const actionContext = { setHarnessPackageSelectorEnabled };
+		const reload = githubPackage.children.find((item: any) => item.label === "Reload package");
+		const unload = githubPackage.children.find((item: any) => item.label === "Unload selector");
+
+		expect((InteractiveMode as any).prototype.handleHarnessMenuItem.call(actionContext, reload)).toBe(true);
+		expect(setHarnessPackageSelectorEnabled).toHaveBeenLastCalledWith(selector, true);
+		expect((InteractiveMode as any).prototype.handleHarnessMenuItem.call(actionContext, unload)).toBe(true);
+		expect(setHarnessPackageSelectorEnabled).toHaveBeenLastCalledWith(selector, false);
+	});
+
+	test("keeps a same-id GitHub selector separate from local package profile controls", async () => {
+		const selector = "github:owner/packages/SharedDomain@2.0.0";
+		const fakeThis: any = {
+			loadHarnessPackagesView: async () => ({
+				packagesRoot: "/workspace/packages",
+				packages: [
+					{
+						id: "SharedDomain",
+						dir: "/workspace/packages/SharedDomain",
+						manifest: {
+							components: [],
+							profiles: [{ name: "local-profile", description: "Local-only profile" }],
+						},
+					},
+				],
+				diagnostics: [],
+			}),
+		};
+
+		const [root] = await (InteractiveMode as any).prototype.harnessPackageMenuItems.call(fakeThis, {
+			harnessPackages: [selector],
+		});
+		const localPackage = root.children.find((item: any) => item.value === "harness:package:SharedDomain");
+		const githubPackage = root.children.find((item: any) => item.label === "SharedDomain (GitHub)");
+
+		expect(localPackage).toMatchObject({ active: false });
+		expect(localPackage.description).toContain("not selected");
+		expect(localPackage.children.find((item: any) => item.label === "local-profile")).toMatchObject({
+			active: false,
+		});
+		expect(githubPackage).toMatchObject({ active: true });
+	});
+
+	test("unloading a local package leaves a same-id GitHub selector active", async () => {
+		const githubSelector = "github:owner/packages/SharedDomain@2.0.0";
+		let nextSelectors: string[] | undefined;
+		const fakeThis = {
+			enqueueHarnessPackageMutation: async (compute: (current: string[]) => string[]) => {
+				nextSelectors = compute(["SharedDomain", "SharedDomain:local-profile", githubSelector, "OtherDomain"]);
+			},
+		};
+
+		await (InteractiveMode as any).prototype.clearHarnessPackageSelectors.call(fakeThis, "SharedDomain");
+
+		expect(nextSelectors).toEqual([githubSelector, "OtherDomain"]);
+	});
+
+	test("formats every loaded package in a multi-package overlay", () => {
+		const formatted = (InteractiveMode as any).prototype.formatHarnessPackageSelection.call(
+			{},
+			["FirstDomain", "github:owner/packages/SecondDomain@2.0.0", "MissingDomain"],
+			{
+				packageId: "FirstDomain",
+				packageRoot: "/cache/FirstDomain",
+				packages: [
+					{ id: "FirstDomain", dir: "/cache/FirstDomain" },
+					{ id: "SecondDomain", dir: "/cache/SecondDomain" },
+				],
+			},
+		);
+
+		expect(formatted).toContain("- FirstDomain -> /cache/FirstDomain");
+		expect(formatted).toContain("- github:owner/packages/SecondDomain@2.0.0 -> /cache/SecondDomain");
+		expect(formatted).toContain("- MissingDomain -> not loaded");
 	});
 
 	test("shows Magenta and Pi Sources from generated HCP data", async () => {

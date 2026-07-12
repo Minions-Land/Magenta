@@ -46,9 +46,9 @@ second Server map, Magnet list, or product-specific builder table.
 
 The repository-level `../packages/` directory intentionally retains only the
 generic Package integration contract and template. Concrete domain packages
-will be published independently on GitHub. A future host acquisition layer will
-download, version, verify, and cache them. External integration should pass its
-already-downloaded local root through `packagesRoot` or
+are published independently on GitHub. The coding-agent host can acquire a
+versioned platform archive, verify and safely extract it, and pass its cached
+root into this boundary. Local integration may instead pass `packagesRoot` or
 `--harness-packages-root <dir>`.
 
 When callers omit `packagesRoot`, the support API falls back only to

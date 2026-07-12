@@ -9,8 +9,8 @@
  *     ...plus descriptor tomls / content files beside each magnet
  *
  * The generated HcpMagnet.ts files are real bare classes (spec §2) matching the
- * canonical shapes from MagentaPackages: tools emit descriptor(), resources emit
- * toResource() with import.meta.url-relative content paths.
+ * canonical shapes from MagentaPackages: tools expose toTool() and receive the
+ * host builder through HcpClient settings; resources expose toResource().
  */
 
 import { chmod, mkdir, writeFile } from "node:fs/promises";
@@ -19,6 +19,17 @@ import { dirname, join } from "node:path";
 async function writeText(path: string, content: string): Promise<void> {
 	await mkdir(dirname(path), { recursive: true });
 	await writeFile(path, content, "utf-8");
+}
+
+async function writeServer(packageDir: string, module: string): Promise<void> {
+	await writeText(
+		join(packageDir, module, "HcpServer.ts"),
+		`export class HcpServer {
+	readonly moduleName = ${JSON.stringify(module)};
+	readonly description = ${JSON.stringify(`Package Module ${module}`)};
+}
+`,
+	);
 }
 
 /** A component to include in a fixture package. */
@@ -72,39 +83,73 @@ export type FixturePackage = {
 	version?: string;
 	source: string;
 	domain?: string;
-	profiles?: { name: string; description?: string }[];
+	profiles?: { name: string; description?: string; extends?: string[] }[];
+	defaultProfiles?: string[];
 	components: FixtureComponent[];
+	infrastructure?: FixtureInfrastructureComponent[];
 };
 
-/** Generate a tool magnet matching the canonical descriptor-provider shape. */
+export type FixtureInfrastructureComponent = {
+	kind: "python-runtime" | "runtime-tests" | "env" | "env-lock";
+	name: string;
+	source: string;
+	path: string;
+	content?: string;
+};
+
+/** Generate a Tool Source that keeps its real package HcpMagnet ownership. */
 function toolMagnetSource(item: string, name: string, source: string): string {
 	return `import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+
+type HcpMagnettoolproduct = {
+	readonly kind: string;
+	toTool(): unknown;
+	close?(): void | Promise<void>;
+};
 
 export class HcpMagnet {
 	static readonly module = "tools/${item}";
 	static readonly kind = "tool";
 	static readonly source = "${source}";
-	static build(context: unknown) {
-		return new HcpMagnet(context);
-	}
-
-	readonly kind = "tool";
-	readonly source = "${source}";
-	readonly descriptorPath = join(dirname(fileURLToPath(import.meta.url)), "${item}.toml");
-	private readonly context: unknown;
-
-	constructor(context: unknown) {
-		this.context = context;
-	}
-
-	descriptor() {
-		return {
-			kind: "tool" as const,
-			name: "${name}",
-			source: "${source}",
-			descriptorPath: this.descriptorPath,
+	static async build(context: unknown) {
+		const typed = context as {
+			settings?: {
+				HcpClientbuildtools?: (descriptor: unknown, buildContext: unknown) => Promise<HcpMagnettoolproduct[]>;
+			};
 		};
+		if (typeof typed.settings?.HcpClientbuildtools !== "function") {
+			throw new Error("Package Tool Source requires HcpClientbuildtools.");
+		}
+		const products = await typed.settings.HcpClientbuildtools(
+			{
+				kind: "tool",
+				name: "${name}",
+				source: "${source}",
+				descriptorPath: join(dirname(fileURLToPath(import.meta.url)), "${item}.toml"),
+			},
+			context,
+		);
+		const magnets = products.map((product) => new HcpMagnet(product));
+		if (magnets.length === 0) return undefined;
+		return magnets.length === 1 ? magnets[0] : magnets;
+	}
+
+	readonly kind: string;
+	readonly source = "${source}";
+	private readonly product: HcpMagnettoolproduct;
+
+	constructor(product: HcpMagnettoolproduct) {
+		this.product = product;
+		this.kind = product.kind;
+	}
+
+	toTool() {
+		return this.product.toTool();
+	}
+
+	async dispose() {
+		await this.product.close?.();
 	}
 }
 `;
@@ -188,7 +233,7 @@ export class HcpMagnet {
 			name: "${name}",
 			source: "${source}",
 			mergeMode: "${mergeMode}" as const,
-			descriptorPath: join(dirname(fileURLToPath(import.meta.url)), "system-prompt.toml"),
+			contentPath: join(dirname(fileURLToPath(import.meta.url)), "SYSTEM.md"),
 		};
 	}
 }
@@ -202,9 +247,11 @@ export class HcpMagnet {
 export async function writeFixturePackage(packagesRoot: string, pkg: FixturePackage): Promise<string> {
 	const packageDir = join(packagesRoot, pkg.id);
 	const componentDecls: string[] = [];
+	const modules = new Set<string>();
 
 	for (const component of pkg.components) {
 		if (component.kind === "tool") {
+			modules.add(`tools/${component.item}`);
 			const dir = join(packageDir, "tools", component.item, component.source);
 			await writeText(join(dir, "HcpMagnet.ts"), toolMagnetSource(component.item, component.name, component.source));
 			await writeText(join(dir, `${component.item}.toml`), component.descriptorToml);
@@ -219,15 +266,23 @@ export async function writeFixturePackage(packagesRoot: string, pkg: FixturePack
 				}\n`,
 			);
 		} else if (component.kind === "skill") {
+			modules.add(`skills/${component.item}`);
 			const dir = join(packageDir, "skills", component.item, component.source);
-			await writeText(join(dir, "HcpMagnet.ts"), skillMagnetSource(component.item, component.name, component.source));
-			await writeText(join(dir, "SKILL.md"), component.skillMarkdown ?? `# ${component.name}\n\nFixture skill content.\n`);
+			await writeText(
+				join(dir, "HcpMagnet.ts"),
+				skillMagnetSource(component.item, component.name, component.source),
+			);
+			await writeText(
+				join(dir, "SKILL.md"),
+				component.skillMarkdown ?? `# ${component.name}\n\nFixture skill content.\n`,
+			);
 			componentDecls.push(
 				`[[components]]\nkind = "skill"\nname = "${component.name}"\nsource = "${component.source}"\npath = "skills/${component.item}/${component.source}"${
 					component.includeInContext ? `\ninclude_in_context = true` : ""
 				}${component.profiles ? `\nprofiles = [${component.profiles.map((p) => `"${p}"`).join(", ")}]` : ""}\n`,
 			);
 		} else if (component.kind === "brand") {
+			modules.add("brand");
 			const dir = join(packageDir, "brand", component.source);
 			await writeText(join(dir, "HcpMagnet.ts"), brandMagnetSource(component.name, component.source));
 			await writeText(
@@ -238,12 +293,17 @@ export async function writeFixturePackage(packagesRoot: string, pkg: FixturePack
 				`[[components]]\nkind = "brand"\nname = "${component.name}"\nsource = "${component.source}"\npath = "brand/${component.source}"\n`,
 			);
 		} else if (component.kind === "system-prompt") {
+			modules.add("system-prompt");
 			const mergeMode = component.mergeMode ?? "append";
 			const dir = join(packageDir, "system-prompt", component.source);
-			await writeText(join(dir, "HcpMagnet.ts"), systemPromptMagnetSource(component.name, component.source, mergeMode));
+			await writeText(
+				join(dir, "HcpMagnet.ts"),
+				systemPromptMagnetSource(component.name, component.source, mergeMode),
+			);
 			await writeText(
 				join(dir, "system-prompt.toml"),
-				component.systemPromptToml ?? `kind = "system-prompt"\nname = "${component.name}"\ncontent_path = "SYSTEM.md"\n`,
+				component.systemPromptToml ??
+					`kind = "system-prompt"\nname = "${component.name}"\ncontent_path = "SYSTEM.md"\n`,
 			);
 			await writeText(join(dir, "SYSTEM.md"), `Fixture system prompt for ${component.name}.\n`);
 			componentDecls.push(
@@ -251,9 +311,19 @@ export async function writeFixturePackage(packagesRoot: string, pkg: FixturePack
 			);
 		}
 	}
+	for (const module of modules) await writeServer(packageDir, module);
+	for (const component of pkg.infrastructure ?? []) {
+		await writeText(join(packageDir, component.path), component.content ?? "fixture\n");
+		componentDecls.push(
+			`[[components]]\nkind = "${component.kind}"\nname = "${component.name}"\nsource = "${component.source}"\npath = "${component.path}"\n`,
+		);
+	}
 
 	const profilesToml = (pkg.profiles ?? [])
-		.map((p) => `[[profiles]]\nname = "${p.name}"${p.description ? `\ndescription = "${p.description}"` : ""}\nextends = []\n`)
+		.map(
+			(p) =>
+				`[[profiles]]\nname = "${p.name}"${p.description ? `\ndescription = "${p.description}"` : ""}\nextends = [${(p.extends ?? []).map((parent) => `"${parent}"`).join(", ")}]\n`,
+		)
 		.join("\n");
 
 	const manifest = `schema_version = "magenta.package.v2"
@@ -263,7 +333,7 @@ version = "${pkg.version ?? "1.0.0"}"
 kind = "domain"
 domain = "${pkg.domain ?? "test"}"
 source = "${pkg.source}"
-default_profiles = []
+default_profiles = [${(pkg.defaultProfiles ?? []).map((profile) => `"${profile}"`).join(", ")}]
 
 ${profilesToml}
 ${componentDecls.join("\n")}`;

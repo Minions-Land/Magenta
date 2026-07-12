@@ -2,17 +2,20 @@ import { readFile } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { parametersFromToml } from "../../_magenta/mcp/schema.ts";
-import { discoverMcpTools, type McpToolOptions, mcpToolName } from "../../_magenta/mcp/tool.ts";
-import type { PackageToolDiagnostic } from "../../_magenta/packages/tool-diagnostic.ts";
+import { discoverMcpTools, McpTool, type McpToolOptions, mcpToolName } from "../../_magenta/mcp/tool.ts";
+import type { HcpClientpackagetooldiagnostic } from "../../_magenta/packages/tool-diagnostic.ts";
 import { parseToml, type TomlTable } from "../../_magenta/utils/pi/toml.ts";
 import type { ProcessRuntimeProvider, ScriptRuntimeProvider } from "../../runtime/HcpServer.ts";
 import type { SandboxProvider } from "../../sandbox/HcpServer.ts";
 import { ProcessTool } from "../process-tool.ts";
 import { type PythonLauncherResolver, PythonModuleTool } from "../python-module-tool.ts";
 
-export type { PackageToolDiagnostic, PackageToolDiagnosticCode } from "../../_magenta/packages/tool-diagnostic.ts";
+export type {
+	HcpClientpackagetooldiagnostic,
+	HcpClientpackagetooldiagnosticcode,
+} from "../../_magenta/packages/tool-diagnostic.ts";
 
-export type PackageToolComponent = {
+export type HcpClientpackagetoolcomponent = {
 	packageId: string;
 	packageDir: string;
 	profile?: string;
@@ -23,7 +26,7 @@ export type PackageToolComponent = {
 	sourcePath: string;
 };
 
-export type PackageToolRuntimeComponent = {
+export type HcpClientpackagetoolruntimecomponent = {
 	packageId: string;
 	packageDir: string;
 	kind: string;
@@ -31,51 +34,96 @@ export type PackageToolRuntimeComponent = {
 	path?: string;
 };
 
-export type PackageToolContext = {
+export type HcpClientpackagetoolcontext = {
 	resolveCapability<T>(name: string): T | undefined;
 	repoRoot: string;
-	components: PackageToolRuntimeComponent[];
-	componentMap: Map<string, PackageToolRuntimeComponent>;
+	components: HcpClientpackagetoolruntimecomponent[];
+	componentMap: Map<string, HcpClientpackagetoolruntimecomponent>;
 };
 
-export type CreatePackageToolProductOptions = {
-	component: PackageToolComponent;
-	context: PackageToolContext;
+export type HcpClientpackagetoolproductoptions = {
+	component: HcpClientpackagetoolcomponent;
+	context: HcpClientpackagetoolcontext;
 };
 
-export type CreatePackageToolProductResult = {
-	product?: HcpMagnettoolproduct;
-	diagnostics: PackageToolDiagnostic[];
+export type HcpClientpackagetoolproductresult = {
+	product?: HcpClientpackagetoolproduct;
+	diagnostics: HcpClientpackagetooldiagnostic[];
 };
 
-export type HcpMagnettoolproduct = {
+export type HcpClientpackagetoolproduct = {
 	readonly kind: string;
 	readonly source?: string;
 	toTool(): AgentTool;
 	close?(): void | Promise<void>;
 };
 
-export type PackageToolBuildSettings = {
-	component: PackageToolComponent;
-	components: PackageToolRuntimeComponent[];
-	componentMap: Map<string, PackageToolRuntimeComponent>;
-	diagnostics: PackageToolDiagnostic[];
+export type HcpClientpackagetoolbuildsettings = {
+	component: HcpClientpackagetoolcomponent;
+	components: HcpClientpackagetoolruntimecomponent[];
+	componentMap: Map<string, HcpClientpackagetoolruntimecomponent>;
+	diagnostics: HcpClientpackagetooldiagnostic[];
 	mcp?: McpToolOptions;
 	toolName?: string;
 };
 
+/** Build host-backed Tool products while leaving Source ownership to the caller's real HcpMagnet. */
+export async function HcpClientbuildpackagetoolproducts(
+	settings: HcpClientpackagetoolbuildsettings,
+	context: HcpClientpackagetoolcontext,
+): Promise<HcpClientpackagetoolproduct[]> {
+	const expanded = await HcpClientexpandpackagetoolbuildsettings(settings, context);
+	const products: HcpClientpackagetoolproduct[] = [];
+	try {
+		for (const expandedSettings of expanded) {
+			if (expandedSettings.mcp) {
+				products.push(new McpTool({ ...expandedSettings.mcp, terminalOnLastRelease: true }));
+				continue;
+			}
+			const result = await HcpClientcreatepackagetoolproduct({
+				component: expandedSettings.component,
+				context,
+			});
+			settings.diagnostics.push(...result.diagnostics);
+			if (result.product) products.push(result.product);
+		}
+		return products;
+	} catch (error) {
+		await Promise.allSettled(products.map((product) => product.close?.()));
+		await HcpClientcloseexpandedpackageconnections(expanded);
+		throw error;
+	}
+}
+
+async function HcpClientcloseexpandedpackageconnections(
+	settings: readonly HcpClientpackagetoolbuildsettings[],
+): Promise<void> {
+	const connections = new Set(
+		settings.map((entry) => entry.mcp?.connection).filter((connection) => connection !== undefined),
+	);
+	await Promise.all(
+		[...connections].map(async (connection) => {
+			try {
+				await connection.close();
+			} catch {
+				// Preserve the Source build error; cleanup is best-effort.
+			}
+		}),
+	);
+}
+
 /** Expand one MCP server descriptor into one single-product build setting per remote tool. */
-export async function expandPackageToolBuildSettings(
-	settings: PackageToolBuildSettings,
-	context: PackageToolContext,
-): Promise<PackageToolBuildSettings[]> {
+export async function HcpClientexpandpackagetoolbuildsettings(
+	settings: HcpClientpackagetoolbuildsettings,
+	context: HcpClientpackagetoolcontext,
+): Promise<HcpClientpackagetoolbuildsettings[]> {
 	const { component, diagnostics } = settings;
-	const descriptor = await readPackageToolDescriptor(component, diagnostics);
+	const descriptor = await HcpClientreadpackagetooldescriptor(component, diagnostics);
 	if (!descriptor) return [];
-	const runtime = asString(descriptor.runtime) ?? asString(descriptor.kind);
+	const runtime = HcpClientasstring(descriptor.runtime) ?? HcpClientasstring(descriptor.kind);
 	if (runtime !== "mcp") return [settings];
 
-	const command = asString(descriptor.command);
+	const command = HcpClientpackagetoolcommand(descriptor);
 	if (!command) {
 		diagnostics.push({
 			type: "error",
@@ -87,26 +135,29 @@ export async function expandPackageToolBuildSettings(
 		});
 		return [];
 	}
-	const processRuntime = HcpMagnetpackagetoolprocessruntime(context, component, diagnostics);
-	const toolMetadata = toolMetadataFromDescriptor(asString(descriptor.name) ?? component.name, descriptor);
-	const sandbox = HcpMagnetpackagetoolsandbox(context, component, toolMetadata, diagnostics);
+	const processRuntime = HcpClientpackagetoolprocessruntime(context, component, diagnostics);
+	const toolMetadata = HcpClienttoolmetadatafromdescriptor(
+		HcpClientasstring(descriptor.name) ?? component.name,
+		descriptor,
+	);
+	const sandbox = HcpClientpackagetoolsandbox(context, component, toolMetadata, diagnostics);
 	if (!processRuntime || !sandbox || !component.path) return [];
 
-	const namePrefix = asString(descriptor.name_prefix) ?? asString(descriptor.namePrefix);
-	const descriptorEnv = mcpEnvFromDescriptor(descriptor.env);
+	const namePrefix = HcpClientasstring(descriptor.name_prefix) ?? HcpClientasstring(descriptor.namePrefix);
+	const descriptorEnv = HcpClientmcpenvfromdescriptor(descriptor.env);
 	const clientEnv = descriptorEnv ? { ...process.env, ...descriptorEnv } : process.env;
-	const resolvedCommand = resolvePackageCommand(component, command, diagnostics);
+	const resolvedCommand = HcpClientresolvepackagecommand(component, command, diagnostics);
 	if (!resolvedCommand) return [];
 	try {
 		const discovered = await discoverMcpTools({
-			serverName: asString(descriptor.name) ?? component.name,
+			serverName: HcpClientasstring(descriptor.name) ?? component.name,
 			namePrefix,
 			client: {
 				command: resolvedCommand,
-				args: asStringArray(descriptor.args),
+				args: HcpClientasstringarray(descriptor.args),
 				cwd: dirname(component.path),
 				env: clientEnv,
-				requestTimeoutMs: asNumber(descriptor.timeout_ms),
+				requestTimeoutMs: HcpClientasnumber(descriptor.timeout_ms),
 				spawnManaged: (input, signal) =>
 					processRuntime.spawnManaged(
 						{
@@ -140,7 +191,7 @@ export async function expandPackageToolBuildSettings(
 			toolName: mcpToolName(tool.name, namePrefix),
 		}));
 	} catch (error) {
-		const message = formatUnknownError(error);
+		const message = HcpClientformatunknownerror(error);
 		const notStarted = /ENOENT|not found|no such file|spawn\b/i.test(message);
 		diagnostics.push({
 			type: notStarted ? "warning" : "error",
@@ -156,25 +207,25 @@ export async function expandPackageToolBuildSettings(
 	}
 }
 
-export async function createPackageToolProduct(
-	options: CreatePackageToolProductOptions,
-): Promise<CreatePackageToolProductResult> {
+export async function HcpClientcreatepackagetoolproduct(
+	options: HcpClientpackagetoolproductoptions,
+): Promise<HcpClientpackagetoolproductresult> {
 	const { component, context } = options;
-	const diagnostics: PackageToolDiagnostic[] = [];
+	const diagnostics: HcpClientpackagetooldiagnostic[] = [];
 
-	const descriptor = await readPackageToolDescriptor(component, diagnostics);
+	const descriptor = await HcpClientreadpackagetooldescriptor(component, diagnostics);
 	if (!descriptor || !component.path) return { diagnostics };
 
-	const execution = asString(descriptor.execution);
+	const execution = HcpClientasstring(descriptor.execution);
 	if (execution === "declarative") {
 		return { diagnostics };
 	}
 
-	const name = asString(descriptor.name) ?? component.name;
-	const description = asString(descriptor.description) ?? component.description ?? name;
+	const name = HcpClientasstring(descriptor.name) ?? component.name;
+	const description = HcpClientasstring(descriptor.description) ?? component.description ?? name;
 	const parameters = parametersFromToml(descriptor.parameters);
-	const runtime = asString(descriptor.runtime) ?? asString(descriptor.kind);
-	const toolMetadata = toolMetadataFromDescriptor(name, descriptor);
+	const runtime = HcpClientasstring(descriptor.runtime) ?? HcpClientasstring(descriptor.kind);
+	const toolMetadata = HcpClienttoolmetadatafromdescriptor(name, descriptor);
 	if (!runtime) {
 		diagnostics.push({
 			type: "error",
@@ -187,7 +238,7 @@ export async function createPackageToolProduct(
 		return { diagnostics };
 	}
 
-	const sandbox = HcpMagnetpackagetoolsandbox(context, component, toolMetadata, diagnostics);
+	const sandbox = HcpClientpackagetoolsandbox(context, component, toolMetadata, diagnostics);
 	if (!sandbox) return { diagnostics };
 
 	if (runtime === "mcp") {
@@ -203,9 +254,9 @@ export async function createPackageToolProduct(
 	}
 
 	if (runtime === "process") {
-		const processRuntime = HcpMagnetpackagetoolprocessruntime(context, component, diagnostics);
+		const processRuntime = HcpClientpackagetoolprocessruntime(context, component, diagnostics);
 		if (!processRuntime) return { diagnostics };
-		const command = asString(descriptor.command);
+		const command = HcpClientpackagetoolcommand(descriptor);
 		if (!command) {
 			diagnostics.push({
 				type: "error",
@@ -217,9 +268,9 @@ export async function createPackageToolProduct(
 			});
 			return { diagnostics };
 		}
-		const resolvedCommand = resolvePackageCommand(component, command, diagnostics);
+		const resolvedCommand = HcpClientresolvepackagecommand(component, command, diagnostics);
 		if (!resolvedCommand) return { diagnostics };
-		const fixedArgs = asStringArray(descriptor.args);
+		const fixedArgs = HcpClientasstringarray(descriptor.args);
 		const descriptorPath = component.path;
 		const tool = new ProcessTool({
 			name,
@@ -227,10 +278,10 @@ export async function createPackageToolProduct(
 			parameters,
 			buildInvocation: (params) => ({
 				command: resolvedCommand,
-				args: [...fixedArgs, ...processArgsFromParams(params)],
+				args: [...fixedArgs, ...HcpClientprocessargsfromparams(params)],
 				cwd: dirname(descriptorPath),
 				workspaceRoot: component.packageDir,
-				timeoutMs: asNumber(descriptor.timeout_ms),
+				timeoutMs: HcpClientasnumber(descriptor.timeout_ms),
 			}),
 			toolMetadata,
 			sandbox,
@@ -244,13 +295,14 @@ export async function createPackageToolProduct(
 
 	const runtimeComponent = context.componentMap.get(`python-runtime:${runtime}`);
 	if (runtimeComponent) {
-		const processRuntime = HcpMagnetpackagetoolprocessruntime(context, component, diagnostics);
+		const processRuntime = HcpClientpackagetoolprocessruntime(context, component, diagnostics);
 		if (!processRuntime) return { diagnostics };
-		const pythonLauncher = resolvePythonLauncher(component, context, descriptor, diagnostics);
-		if (!asString(descriptor.python_bin) && !pythonLauncher) return { diagnostics };
-		const module = asString(descriptor.module) ?? runtime;
+		const pythonLauncher = HcpClientresolvepythonlauncher(component, context, descriptor, diagnostics);
+		if (!HcpClientasstring(descriptor.python_bin) && !pythonLauncher) return { diagnostics };
+		const module = HcpClientasstring(descriptor.module) ?? runtime;
 		const modulePath =
-			asString(descriptor.module_path) ?? runtimeComponentRelativePath(component.packageDir, runtimeComponent);
+			HcpClientasstring(descriptor.module_path) ??
+			HcpClientruntimecomponentrelativepath(component.packageDir, runtimeComponent);
 		const tool = new PythonModuleTool({
 			name,
 			description,
@@ -259,10 +311,10 @@ export async function createPackageToolProduct(
 			modulePath,
 			packageDir: component.packageDir,
 			descriptorPath: component.path,
-			pythonBin: asString(descriptor.python_bin),
+			pythonBin: HcpClientasstring(descriptor.python_bin),
 			pythonLauncher,
 			workspaceRoot: context.repoRoot,
-			timeoutMs: asNumber(descriptor.timeout_ms),
+			timeoutMs: HcpClientasnumber(descriptor.timeout_ms),
 			toolMetadata,
 			sandbox,
 			runtimeExec: processRuntime.exec.bind(processRuntime),
@@ -282,9 +334,9 @@ export async function createPackageToolProduct(
 		// Unsupported names fall through to the normal missing-runtime diagnostic.
 	}
 	if (scriptRuntime && scriptRuntimeDescription) {
-		const code = await scriptCodeFromDescriptor(component, descriptor, diagnostics);
+		const code = await HcpClientscriptcodefromdescriptor(component, descriptor, diagnostics);
 		if (!code) return { diagnostics };
-		const fixedArgs = asStringArray(descriptor.args);
+		const fixedArgs = HcpClientasstringarray(descriptor.args);
 		const descriptorPath = component.path;
 		const tool = new ProcessTool(
 			{
@@ -297,7 +349,7 @@ export async function createPackageToolProduct(
 					cwd: dirname(descriptorPath),
 					workspaceRoot: component.packageDir,
 					policyInput: params ?? {},
-					timeoutMs: asNumber(descriptor.timeout_ms),
+					timeoutMs: HcpClientasnumber(descriptor.timeout_ms),
 				}),
 				toolMetadata,
 				sandbox,
@@ -351,12 +403,12 @@ export async function createPackageToolProduct(
 	return { diagnostics };
 }
 
-async function scriptCodeFromDescriptor(
-	component: PackageToolComponent,
+async function HcpClientscriptcodefromdescriptor(
+	component: HcpClientpackagetoolcomponent,
 	descriptor: TomlTable,
-	diagnostics: PackageToolDiagnostic[],
+	diagnostics: HcpClientpackagetooldiagnostic[],
 ): Promise<string | undefined> {
-	const inline = asString(descriptor.code) ?? asString(descriptor.script);
+	const inline = HcpClientasstring(descriptor.code) ?? HcpClientasstring(descriptor.script);
 	if (inline !== undefined) {
 		if (inline.trim() === "") {
 			diagnostics.push({
@@ -372,7 +424,7 @@ async function scriptCodeFromDescriptor(
 		return inline;
 	}
 
-	const scriptPath = asString(descriptor.script_path) ?? asString(descriptor.scriptPath);
+	const scriptPath = HcpClientasstring(descriptor.script_path) ?? HcpClientasstring(descriptor.scriptPath);
 	if (!scriptPath) {
 		diagnostics.push({
 			type: "error",
@@ -398,7 +450,7 @@ async function scriptCodeFromDescriptor(
 
 	const packageDir = component.packageDir;
 	const resolvedScriptPath = resolve(dirname(component.path!), scriptPath);
-	if (!isWithinDir(packageDir, resolvedScriptPath)) {
+	if (!HcpClientiswithindir(packageDir, resolvedScriptPath)) {
 		diagnostics.push({
 			type: "error",
 			code: "package_tool_descriptor_invalid",
@@ -428,7 +480,7 @@ async function scriptCodeFromDescriptor(
 		diagnostics.push({
 			type: "error",
 			code: "package_tool_descriptor_read_failed",
-			message: `Unable to read package script ${resolvedScriptPath}: ${formatUnknownError(error)}`,
+			message: `Unable to read package script ${resolvedScriptPath}: ${HcpClientformatunknownerror(error)}`,
 			path: resolvedScriptPath,
 			packageId: component.packageId,
 			profile: component.profile,
@@ -437,26 +489,26 @@ async function scriptCodeFromDescriptor(
 	}
 }
 
-function isWithinDir(parentDir: string, childPath: string): boolean {
+function HcpClientiswithindir(parentDir: string, childPath: string): boolean {
 	const rel = relative(parentDir, childPath);
 	return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
 }
 
-function toolMetadataFromDescriptor(name: string, descriptor: TomlTable) {
+function HcpClienttoolmetadatafromdescriptor(name: string, descriptor: TomlTable) {
 	return {
 		name,
-		operation: asString(descriptor.operation),
-		read_only: asBoolean(descriptor.read_only) ?? false,
-		destructive: asBoolean(descriptor.destructive) ?? false,
-		tags: asStringArray(descriptor.tags),
+		operation: HcpClientasstring(descriptor.operation),
+		read_only: HcpClientasboolean(descriptor.read_only) ?? false,
+		destructive: HcpClientasboolean(descriptor.destructive) ?? false,
+		tags: HcpClientasstringarray(descriptor.tags),
 	};
 }
 
-function HcpMagnetpackagetoolsandbox(
-	context: PackageToolContext,
-	component: PackageToolComponent,
-	toolMetadata: ReturnType<typeof toolMetadataFromDescriptor>,
-	diagnostics: PackageToolDiagnostic[],
+function HcpClientpackagetoolsandbox(
+	context: HcpClientpackagetoolcontext,
+	component: HcpClientpackagetoolcomponent,
+	toolMetadata: ReturnType<typeof HcpClienttoolmetadatafromdescriptor>,
+	diagnostics: HcpClientpackagetooldiagnostic[],
 ): ReturnType<SandboxProvider["resolve"]> | undefined {
 	const provider = context.resolveCapability<SandboxProvider>("sandbox");
 	if (provider) return provider.resolve({ tool: toolMetadata });
@@ -471,10 +523,10 @@ function HcpMagnetpackagetoolsandbox(
 	return undefined;
 }
 
-function HcpMagnetpackagetoolprocessruntime(
-	context: PackageToolContext,
-	component: PackageToolComponent,
-	diagnostics: PackageToolDiagnostic[],
+function HcpClientpackagetoolprocessruntime(
+	context: HcpClientpackagetoolcontext,
+	component: HcpClientpackagetoolcomponent,
+	diagnostics: HcpClientpackagetooldiagnostic[],
 ): ProcessRuntimeProvider | undefined {
 	const provider = context.resolveCapability<ProcessRuntimeProvider>("runtime:process");
 	if (provider) return provider;
@@ -489,14 +541,14 @@ function HcpMagnetpackagetoolprocessruntime(
 	return undefined;
 }
 
-function resolvePythonLauncher(
-	component: PackageToolComponent,
-	context: PackageToolContext,
+function HcpClientresolvepythonlauncher(
+	component: HcpClientpackagetoolcomponent,
+	context: HcpClientpackagetoolcontext,
 	descriptor: TomlTable,
-	diagnostics: PackageToolDiagnostic[],
+	diagnostics: HcpClientpackagetooldiagnostic[],
 ): PythonLauncherResolver | undefined {
-	if (asString(descriptor.python_bin)) return undefined;
-	const pixiManifest = findPackageEnvComponent(context, component, "env", "pixi");
+	if (HcpClientasstring(descriptor.python_bin)) return undefined;
+	const pixiManifest = HcpClientfindpackageenvcomponent(context, component, "env", "pixi");
 	if (!pixiManifest?.path) {
 		diagnostics.push({
 			type: "error",
@@ -509,8 +561,8 @@ function resolvePythonLauncher(
 		return undefined;
 	}
 	const pixiManifestPath = pixiManifest.path;
-	const defaultEnvironment = pixiEnvironmentName(descriptor);
-	const environmentsByModality = pixiEnvironmentsByModality(descriptor);
+	const defaultEnvironment = HcpClientpixienvironmentname(descriptor);
+	const environmentsByModality = HcpClientpixienvironmentsbymodality(descriptor);
 	return (params) => {
 		const modality = typeof params.modality === "string" ? params.modality : undefined;
 		const environment = (modality ? environmentsByModality[modality] : undefined) ?? defaultEnvironment;
@@ -521,12 +573,12 @@ function resolvePythonLauncher(
 	};
 }
 
-function findPackageEnvComponent(
-	context: PackageToolContext,
-	component: PackageToolComponent,
+function HcpClientfindpackageenvcomponent(
+	context: HcpClientpackagetoolcontext,
+	component: HcpClientpackagetoolcomponent,
 	kind: string,
 	name: string,
-): PackageToolRuntimeComponent | undefined {
+): HcpClientpackagetoolruntimecomponent | undefined {
 	return context.components.find(
 		(candidate) =>
 			candidate.packageId === component.packageId &&
@@ -536,81 +588,88 @@ function findPackageEnvComponent(
 	);
 }
 
-function pixiEnvironmentName(descriptor: TomlTable): string | undefined {
-	const explicit = asString(descriptor.pixi_environment) ?? asString(descriptor.environment);
+function HcpClientpixienvironmentname(descriptor: TomlTable): string | undefined {
+	const explicit = HcpClientasstring(descriptor.pixi_environment) ?? HcpClientasstring(descriptor.environment);
 	if (explicit) return explicit;
-	const metadata = isPlainRecord(descriptor.metadata) ? descriptor.metadata : undefined;
-	return asString(metadata?.pixi_environment) ?? asString(metadata?.environment);
+	const metadata = HcpClientisplainrecord(descriptor.metadata) ? descriptor.metadata : undefined;
+	return HcpClientasstring(metadata?.pixi_environment) ?? HcpClientasstring(metadata?.environment);
 }
 
-function pixiEnvironmentsByModality(descriptor: TomlTable): Record<string, string> {
-	const table = isPlainRecord(descriptor.pixi_environment_by_modality)
+function HcpClientpixienvironmentsbymodality(descriptor: TomlTable): Record<string, string> {
+	const table = HcpClientisplainrecord(descriptor.pixi_environment_by_modality)
 		? descriptor.pixi_environment_by_modality
 		: undefined;
-	const metadata = isPlainRecord(descriptor.metadata) ? descriptor.metadata : undefined;
-	const metadataTable = isPlainRecord(metadata?.pixi_environment_by_modality)
+	const metadata = HcpClientisplainrecord(descriptor.metadata) ? descriptor.metadata : undefined;
+	const metadataTable = HcpClientisplainrecord(metadata?.pixi_environment_by_modality)
 		? metadata.pixi_environment_by_modality
 		: undefined;
 	const source = table ?? metadataTable ?? {};
 	const result: Record<string, string> = {};
 	for (const [key, value] of Object.entries(source)) {
-		const environment = asString(value);
+		const environment = HcpClientasstring(value);
 		if (environment) result[key] = environment;
 	}
 	return result;
 }
 
-function processArgsFromParams(params: unknown): string[] {
+function HcpClientprocessargsfromparams(params: unknown): string[] {
 	if (Array.isArray(params)) return params.map(String);
-	if (!isPlainRecord(params)) return [];
+	if (!HcpClientisplainrecord(params)) return [];
 	const rawArgs = params.args;
-	const args = Array.isArray(rawArgs) ? rawArgs.map(String) : isPlainRecord(rawArgs) ? flagsFromRecord(rawArgs) : [];
-	args.push(...flagsFromRecord(params, new Set(["args"])));
+	const args = Array.isArray(rawArgs)
+		? rawArgs.map(String)
+		: HcpClientisplainrecord(rawArgs)
+			? HcpClientflagsfromrecord(rawArgs)
+			: [];
+	args.push(...HcpClientflagsfromrecord(params, new Set(["args"])));
 	return args;
 }
 
-function flagsFromRecord(record: Record<string, unknown>, exclude = new Set<string>()): string[] {
+function HcpClientflagsfromrecord(record: Record<string, unknown>, exclude = new Set<string>()): string[] {
 	return Object.entries(record).flatMap(([key, value]) => {
 		if (exclude.has(key)) return [];
 		if (key === "args" || value === undefined || value === null) return [];
-		const flag = `--${kebabCase(key)}`;
+		const flag = `--${HcpClientkebabcase(key)}`;
 		if (typeof value === "boolean") return value ? [flag] : [];
 		if (Array.isArray(value)) return value.flatMap((item) => [flag, String(item)]);
 		return [flag, String(value)];
 	});
 }
 
-function runtimeComponentRelativePath(packageDir: string, component: PackageToolRuntimeComponent): string | undefined {
+function HcpClientruntimecomponentrelativepath(
+	packageDir: string,
+	component: HcpClientpackagetoolruntimecomponent,
+): string | undefined {
 	if (!component.path) return undefined;
 	const rel = relative(packageDir, dirname(component.path));
 	return rel.startsWith("..") ? undefined : rel;
 }
 
-function asString(value: unknown): string | undefined {
+function HcpClientasstring(value: unknown): string | undefined {
 	return typeof value === "string" ? value : undefined;
 }
 
-function asBoolean(value: unknown): boolean | undefined {
+function HcpClientasboolean(value: unknown): boolean | undefined {
 	return typeof value === "boolean" ? value : undefined;
 }
 
-function asNumber(value: unknown): number | undefined {
+function HcpClientasnumber(value: unknown): number | undefined {
 	return typeof value === "number" ? value : undefined;
 }
 
-function asStringArray(value: unknown): string[] {
+function HcpClientasstringarray(value: unknown): string[] {
 	if (typeof value === "string") return [value];
 	if (!Array.isArray(value)) return [];
 	return value.filter((item): item is string => typeof item === "string");
 }
 
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
+function HcpClientisplainrecord(value: unknown): value is Record<string, unknown> {
 	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-async function readPackageToolDescriptor(
-	component: PackageToolComponent,
-	diagnostics: PackageToolDiagnostic[],
+async function HcpClientreadpackagetooldescriptor(
+	component: HcpClientpackagetoolcomponent,
+	diagnostics: HcpClientpackagetooldiagnostic[],
 ): Promise<TomlTable | undefined> {
 	if (!component.path) {
 		diagnostics.push({
@@ -629,7 +688,7 @@ async function readPackageToolDescriptor(
 		diagnostics.push({
 			type: "error",
 			code: "package_tool_descriptor_read_failed",
-			message: `Unable to read package tool descriptor ${component.path}: ${formatUnknownError(error)}`,
+			message: `Unable to read package tool descriptor ${component.path}: ${HcpClientformatunknownerror(error)}`,
 			path: component.path,
 			packageId: component.packageId,
 			profile: component.profile,
@@ -639,15 +698,15 @@ async function readPackageToolDescriptor(
 }
 
 /** Resolve a package command without inventing a path from its manifest id. */
-function resolvePackageCommand(
-	component: PackageToolComponent,
+function HcpClientresolvepackagecommand(
+	component: HcpClientpackagetoolcomponent,
 	command: string,
-	diagnostics: PackageToolDiagnostic[],
+	diagnostics: HcpClientpackagetooldiagnostic[],
 ): string | undefined {
 	if (isAbsolute(command)) return command;
 	if (!(command.includes("/") || command.includes("\\"))) return command;
 	const resolvedCommand = resolve(dirname(component.path!), command);
-	if (isWithinDir(component.packageDir, resolvedCommand)) return resolvedCommand;
+	if (HcpClientiswithindir(component.packageDir, resolvedCommand)) return resolvedCommand;
 	diagnostics.push({
 		type: "error",
 		code: "package_tool_descriptor_invalid",
@@ -659,9 +718,29 @@ function resolvePackageCommand(
 	return undefined;
 }
 
+/** Select an optional host-platform command before falling back to `command`. */
+export function HcpClientpackagetoolcommand(
+	descriptor: TomlTable,
+	hostPlatform: NodeJS.Platform = process.platform,
+): string | undefined {
+	const platformKeys =
+		hostPlatform === "win32"
+			? ["command_windows", "commandWindows"]
+			: hostPlatform === "darwin"
+				? ["command_macos", "commandMacos"]
+				: hostPlatform === "linux"
+					? ["command_linux", "commandLinux"]
+					: [];
+	for (const key of platformKeys) {
+		const command = HcpClientasstring(descriptor[key]);
+		if (command) return command;
+	}
+	return HcpClientasstring(descriptor.command);
+}
+
 /** Read an optional `[env]` table from an MCP descriptor into string pairs. */
-function mcpEnvFromDescriptor(value: unknown): Record<string, string> | undefined {
-	if (!isPlainRecord(value)) return undefined;
+function HcpClientmcpenvfromdescriptor(value: unknown): Record<string, string> | undefined {
+	if (!HcpClientisplainrecord(value)) return undefined;
 	const env: Record<string, string> = {};
 	for (const [key, raw] of Object.entries(value)) {
 		if (typeof raw === "string") env[key] = raw;
@@ -670,13 +749,13 @@ function mcpEnvFromDescriptor(value: unknown): Record<string, string> | undefine
 	return Object.keys(env).length > 0 ? env : undefined;
 }
 
-function kebabCase(value: string): string {
+function HcpClientkebabcase(value: string): string {
 	return value
 		.replace(/_/g, "-")
 		.replace(/([a-z0-9])([A-Z])/g, "$1-$2")
 		.toLowerCase();
 }
 
-function formatUnknownError(error: unknown): string {
+function HcpClientformatunknownerror(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
 }

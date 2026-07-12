@@ -45,9 +45,8 @@ import {
 	TUI,
 	visibleWidth,
 } from "@earendil-works/pi-tui";
-import type { HarnessPackage, PackageDiagnostic, PackageOverlay } from "@magenta/harness";
-import { discoverHarnessPackages, parsePackageSelector } from "@magenta/harness";
-import { parseGitHubPackageSelector } from "../../utils/package-acquisition.ts";
+import type { HcpClientharnesspackage, HcpClientpackagediagnostic, HcpClientpackageoverlay } from "@magenta/harness";
+import { HcpClientdiscoverharnesspackages, HcpClientparsepackageselector } from "@magenta/harness";
 import chalk from "chalk";
 import { spawn, spawnSync } from "child_process";
 import {
@@ -112,6 +111,7 @@ import { extensionForImageMimeType, readClipboardImage } from "../../utils/clipb
 import { parseGitUrl } from "../../utils/git.ts";
 import type { UpdateCheckResult } from "../../utils/github-release-update.ts";
 import { type checkForMagentaUpdate, recompileMagenta, runMagentaUpdate } from "../../utils/magenta-update.ts";
+import { HcpClientparsegithubpackageselector } from "../../utils/package-acquisition.ts";
 import { getCwdRelativePath } from "../../utils/paths.ts";
 import { getPiUserAgent } from "../../utils/pi-user-agent.ts";
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
@@ -187,8 +187,8 @@ interface Expandable {
 
 interface HarnessPackagesView {
 	packagesRoot?: string;
-	packages: HarnessPackage[];
-	diagnostics: PackageDiagnostic[];
+	packages: HcpClientharnesspackage[];
+	diagnostics: HcpClientpackagediagnostic[];
 	error?: string;
 }
 
@@ -272,9 +272,9 @@ function decodeMenuValuePart(value: string | undefined): string {
 }
 
 function packageIdFromSelector(selector: string): string {
-	const github = parseGitHubPackageSelector(selector);
+	const github = HcpClientparsegithubpackageselector(selector);
 	if (github) return github.package;
-	return parsePackageSelector(selector).packageId;
+	return HcpClientparsepackageselector(selector).packageId;
 }
 
 function formatHarnessSourceLabel(source: string): string {
@@ -4537,9 +4537,9 @@ export class InteractiveMode {
 
 	private async loadHarnessPackagesView(): Promise<HarnessPackagesView> {
 		try {
-			const result = await discoverHarnessPackages({
+			const result = await HcpClientdiscoverharnesspackages({
 				repoRoot: this.sessionManager.getCwd(),
-				packagesRoot: this.session.resourceLoader.getHarnessPackagesRoot?.(),
+				packagesRoot: this.session.resourceLoader.HcpClientgetharnesspackagesroot?.(),
 			});
 			return {
 				packagesRoot: result.packagesRoot,
@@ -4703,7 +4703,11 @@ export class InteractiveMode {
 
 	private async clearHarnessPackageSelectors(packageId: string): Promise<void> {
 		await this.enqueueHarnessPackageMutation((current) =>
-			current.filter((candidate) => packageIdFromSelector(candidate) !== packageId),
+			current.filter(
+				(candidate) =>
+					HcpClientparsegithubpackageselector(candidate) !== undefined ||
+					packageIdFromSelector(candidate) !== packageId,
+			),
 		);
 	}
 
@@ -4765,13 +4769,13 @@ export class InteractiveMode {
 		);
 	}
 
-	private formatHarnessPackageSelection(selectors: string[], overlay: PackageOverlay | undefined): string {
+	private formatHarnessPackageSelection(selectors: string[], overlay: HcpClientpackageoverlay | undefined): string {
 		if (selectors.length === 0) return "- none";
-		// A v2 overlay resolves to a single primary package root; map its id to dir
-		// for display. Selectors for other packages show "not loaded".
-		const packageDirs = new Map<string, string>();
+		// Keep every successfully loaded package visible. The primary fields exist
+		// for compatibility, while `packages` is the complete multi-package view.
+		const packageDirs = new Map(overlay?.packages.map((pkg) => [pkg.id, pkg.dir]) ?? []);
 		if (overlay?.packageId && overlay.packageRoot) {
-			packageDirs.set(overlay.packageId, overlay.packageRoot);
+			if (!packageDirs.has(overlay.packageId)) packageDirs.set(overlay.packageId, overlay.packageRoot);
 		}
 		return selectors
 			.map((selector) => {
@@ -5571,7 +5575,27 @@ export class InteractiveMode {
 		const view = await this.loadHarnessPackagesView();
 		const activeSelectors = snapshot.harnessPackages;
 		const activeByPackage = new Map<string, string[]>();
+		const activeGitHubSelectors: Array<{
+			selector: string;
+			packageId: string;
+			owner: string;
+			repo: string;
+			version: string;
+			profiles?: string[];
+		}> = [];
 		for (const selector of activeSelectors) {
+			const github = HcpClientparsegithubpackageselector(selector);
+			if (github) {
+				activeGitHubSelectors.push({
+					selector,
+					packageId: github.package,
+					owner: github.owner,
+					repo: github.repo,
+					version: github.version,
+					profiles: github.profiles,
+				});
+				continue;
+			}
 			const packageId = packageIdFromSelector(selector);
 			const selectors = activeByPackage.get(packageId) ?? [];
 			selectors.push(selector);
@@ -5650,6 +5674,39 @@ export class InteractiveMode {
 			});
 		}
 
+		// GitHub selectors are already versioned acquisition inputs, not local
+		// discovery rows. Keep each exact selector manageable even when no matching
+		// directory exists under packagesRoot (or a local package has the same id).
+		for (const github of activeGitHubSelectors) {
+			const encodedSelector = encodeMenuValuePart(github.selector);
+			children.push({
+				value: `harness:package-selector:${encodedSelector}`,
+				label: `${github.packageId} (GitHub)`,
+				description: `selected: ${github.selector} · ${github.owner}/${github.repo}@${github.version}`,
+				active: true,
+				children: [
+					{
+						value: `harness:package-selector:${encodedSelector}:reload`,
+						label: "Reload package",
+						description: "Reload this exact versioned selector through the current acquisition/cache flow",
+					},
+					{
+						value: `harness:package-selector:${encodedSelector}:disable`,
+						label: "Unload selector",
+						description: "Remove only this exact GitHub selector from the current session",
+					},
+					{
+						value: `harness:package-selector:${encodedSelector}:profiles`,
+						label: "Profiles",
+						description: github.profiles?.length
+							? `Active: ${github.profiles.join(", ")}`
+							: "No explicit profiles; the package's declared defaults apply",
+						disabled: true,
+					},
+				],
+			});
+		}
+
 		if (children.length === 0) {
 			children.push({
 				value: "harness:packages:none",
@@ -5663,7 +5720,7 @@ export class InteractiveMode {
 			{
 				value: "harness:packages",
 				label: "Packages",
-				description: `${activeSelectors.length} selected · ${view.packages.length} available`,
+				description: `${activeSelectors.length} selected · ${view.packages.length} local available`,
 				children,
 			},
 		];
@@ -5733,6 +5790,17 @@ export class InteractiveMode {
 			}
 			void this.showHarnessModuleItem(moduleId, source);
 			return true;
+		}
+		if (parts[1] === "package-selector" && parts[2] && parts[3]) {
+			const selector = decodeMenuValuePart(parts[2]);
+			if (parts[3] === "reload") {
+				void this.setHarnessPackageSelectorEnabled(selector, true);
+				return true;
+			}
+			if (parts[3] === "disable") {
+				void this.setHarnessPackageSelectorEnabled(selector, false);
+				return true;
+			}
 		}
 		if (parts[1] === "package" && parts[2] && parts[3]) {
 			const packageId = decodeMenuValuePart(parts[2]);

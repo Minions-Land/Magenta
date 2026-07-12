@@ -54,15 +54,22 @@ jobs:
       - name: Create release tarball
         run: |
           cd pi/coding-agent/dist/release
-          tar -czf magenta-resources-universal.tar.gz \
+          test -f magenta-release.json
+          RESOURCE_VERSION=$(node -p "require('./magenta-release.json').version")
+          test "$RESOURCE_VERSION" = "${RELEASE_TAG#v}"
+          COPYFILE_DISABLE=1 tar -czf magenta-resources-universal.tar.gz \
             sandbox tools policy runtime skills theme assets \
             export-html docs examples package.json README.md \
+            magenta-release.json \
             CHANGELOG.md *.wasm
       
       - name: Calculate checksums
         run: |
           cd pi/coding-agent/dist/release
-          shasum -a 256 magenta-* > SHA256SUMS
+          shasum -a 256 \
+            magenta-macos-arm64 magenta-macos-x64 \
+            magenta-linux-x64 magenta-windows-x64.exe \
+            magenta-resources-universal.tar.gz > SHA256SUMS
           cat SHA256SUMS
 
       - name: Verify macOS release startup
@@ -135,6 +142,38 @@ jobs:
             }
             if (-not $serverReady) { throw "Timed out waiting for the local release asset server" }
             .\scripts\install.ps1 -InstallDir $installDir -AssetBaseUrl "http://127.0.0.1:8765"
+
+            # The installer must inspect the archive before extraction. A
+            # checksum-valid tar containing a top-level magenta.exe could
+            # otherwise overwrite the binary that was verified above.
+            $env:MAGENTA_MALICIOUS_ARCHIVE = Join-Path $PWD "release\magenta-resources-universal.tar.gz"
+            $maliciousArchiveScript = @'
+          import io
+          import os
+          import tarfile
+
+          payload = b"not the verified Magenta binary"
+          info = tarfile.TarInfo("magenta.exe")
+          info.size = len(payload)
+          with tarfile.open(os.environ["MAGENTA_MALICIOUS_ARCHIVE"], "w:gz") as archive:
+              archive.addfile(info, io.BytesIO(payload))
+          '@
+            $maliciousArchiveScript | python -
+            $binaryHash = (Get-FileHash -Algorithm SHA256 -Path "release\magenta-windows-x64.exe").Hash.ToLowerInvariant()
+            $resourceHash = (Get-FileHash -Algorithm SHA256 -Path $env:MAGENTA_MALICIOUS_ARCHIVE).Hash.ToLowerInvariant()
+            @(
+              "$binaryHash  magenta-windows-x64.exe",
+              "$resourceHash  magenta-resources-universal.tar.gz"
+            ) | Set-Content -LiteralPath "release\SHA256SUMS" -Encoding Ascii
+            $rejectedUnsafeArchive = $false
+            try {
+              $rejectedInstallDir = "$installDir-reject-unsafe-archive"
+              .\scripts\install.ps1 -InstallDir $rejectedInstallDir -AssetBaseUrl "http://127.0.0.1:8765"
+            } catch {
+              if ($_.Exception.Message -notmatch "unknown top-level path: magenta.exe") { throw }
+              $rejectedUnsafeArchive = $true
+            }
+            if (-not $rejectedUnsafeArchive) { throw "Windows installer accepted an unsafe resource archive" }
           } finally {
             Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue
           }

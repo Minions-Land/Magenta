@@ -241,13 +241,19 @@ export default function (pi: ExtensionAPI) {
 Two package surfaces must not be conflated:
 
 1. Extension packages bundle extensions, skills, prompts, and themes. `magenta install`, `remove`, `list`, `update`, and `config` manage these npm, git, HTTPS, SSH, or local sources. Their package manifest key remains `pi` for compatibility.
-2. Harness domain packages provide Harness components. The CLI selects them with `--harness-package`, `MAGENTA_HARNESS_PACKAGES`, or the compatibility variable `PI_HARNESS_PACKAGES`, then feeds their components into the ordinary Harness assembly path. `--harness-packages-root` should point at an externally prepared and verified cache root. Without it, Magenta falls back only to `<current-workspace>/packages`.
+2. Harness domain packages provide Harness components. The CLI selects them with `--harness-package`, `MAGENTA_HARNESS_PACKAGES`, or the compatibility variable `PI_HARNESS_PACKAGES`, then feeds their components into the ordinary Harness assembly path. A selector may name a local package or a versioned GitHub release. `--harness-packages-root` supplies an external root for local selectors; without it, Magenta falls back only to `<current-workspace>/packages`.
 
-The loader does not scan sibling directories and does not require a `MagentaPackages` checkout or submodule. Future domain-package acquisition is expected to download and verify GitHub-hosted packages into a local cache before passing that cache as the package root. That network acquisition layer is not implemented here yet.
+The loader does not scan sibling directories and does not require a
+`MagentaPackages` checkout or submodule. For
+`github:owner/repo/Package@version`, Magenta downloads the current platform's
+release archive and checksum, validates both the archive and schema-v2
+manifest, and caches the verified package before passing its root into the same
+loader.
 
 ```bash
 magenta --harness-list
 magenta --harness-packages-root /verified/cache/root --harness-package ExamplePackage
+magenta --harness-package github:Minions-Land/MagentaPackages/AutOmicScience@1.0.0
 ```
 
 See [docs/packages.md](docs/packages.md) for extension packages. Harness package architecture is documented with `@magenta/harness`.

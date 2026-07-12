@@ -45,7 +45,6 @@ curl -fsSL "$RES_URL" | tar -xz -C "$INSTALL_DIR/" || {
   echo "❌ 资源包下载失败，请检查网络或 GitHub 访问权限"
   exit 1
 }
-}
 
 echo "✅ 安装完成！"
 echo ""
