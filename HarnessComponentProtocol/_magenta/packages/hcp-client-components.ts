@@ -1,8 +1,9 @@
+import { dirname } from "node:path";
 import type { HcpClientcomponent } from "../../.HCP/assembly/session-hcp.ts";
 import { HCP_MAGNETS } from "../../.HCP/assembly/sources.generated.ts";
-import type { HcpMagnetResourcebuildsettings } from "../../.HCP/HcpMagnetTypes.ts";
 import type { PackageToolBuildSettings } from "../../tools/descriptor/package-tool.ts";
-import type { PackageDiagnostic, PackageOverlay } from "./package-overlay.ts";
+import type { PackageOverlay, PackageDiagnostic } from "./package-overlay-v2.ts";
+import type { LoadedPackageMagnet } from "./runtime-magnet-loader.ts";
 import type { PackageToolDiagnostic } from "./tool-diagnostic.ts";
 
 export type HcpClientpackageinputresult = {
@@ -11,144 +12,168 @@ export type HcpClientpackageinputresult = {
 	toolDiagnostics: PackageToolDiagnostic[];
 };
 
-/** Translate the generic Package contract into ordinary Client component inputs. */
-export function HcpClientpackageinputfromoverlay(overlay: PackageOverlay): HcpClientpackageinputresult {
+/**
+ * Tool magnet's descriptor() output shape (contract with MagentaPackages).
+ * Package tool magnets are descriptor providers: they declare identity and
+ * hand over the path to their tool descriptor toml. The host builds the
+ * AgentTool via createPackageToolProduct, reusing sandbox/runtime/mcp infra.
+ */
+type PackageToolDescriptor = {
+	kind: "tool";
+	name: string;
+	source: string;
+	descriptorPath: string;
+};
+
+/**
+ * Translate a v2 package overlay into ordinary Client component inputs.
+ *
+ * V2 packages carry their own real HcpMagnet classes (loaded at runtime).
+ * Resource and capability magnets are self-sufficient — they pass straight
+ * through to assembly, which calls their build()/toResource()/toCapability().
+ *
+ * Tool magnets are descriptor providers: their build().descriptor() yields a
+ * pointer to the tool's toml, which is routed through the host's tools/descriptor
+ * magnet + createPackageToolProduct chain so the AgentTool is built by the same
+ * host infrastructure (sandbox/runtime/mcp) as built-in package tools. Unlike v1,
+ * the source label is the package's real source (e.g. "AutOmicScience"), not the
+ * hard-coded "descriptor".
+ */
+export async function HcpClientpackageinputfromoverlay(overlay: PackageOverlay): Promise<HcpClientpackageinputresult> {
 	const components: HcpClientcomponent[] = [];
-	const diagnostics = [...overlay.diagnostics];
+	const diagnostics: PackageDiagnostic[] = [...overlay.diagnostics];
 	const toolDiagnostics: PackageToolDiagnostic[] = [];
-	const generatedComponents = HCP_MAGNETS as readonly HcpClientcomponent[];
+
+	// The host descriptor magnet that owns package tool construction.
+	const toolDescriptorEntry = (HCP_MAGNETS as readonly HcpClientcomponent[]).find(
+		(entry) => entry.product === "tool" && entry.kind === "tool" && entry.source === "descriptor",
+	);
+
 	const packageContext = {
 		components: overlay.components,
-		componentMap: overlay.componentMap,
 		diagnostics: toolDiagnostics,
 	};
-	const packageResourceTargets = new Set<string>();
 
 	for (const component of overlay.components) {
 		if (component.kind === "tool") {
-			const descriptor = generatedComponents.find(
-				(entry) => entry.product === "tool" && entry.kind === component.kind && entry.source === "descriptor",
-			);
-			if (!descriptor || !component.path) continue;
-			const settings: PackageToolBuildSettings = { component, ...packageContext };
-			components.push({
-				...descriptor,
-				name: component.name,
-				selected: true,
-				autoload: false,
-				descriptorPath: component.path,
-				requires: ["runtime:process", "sandbox"],
-				settings,
-				overrideExisting: true,
-			});
+			const toolComponent = buildToolComponent(component, overlay, toolDescriptorEntry, packageContext, diagnostics);
+			if (toolComponent) components.push(toolComponent);
 			continue;
 		}
 
-		const resourceKind = HcpClientpackagecomponentkind(component.kind);
-		const resourceDescriptor = generatedComponents.find(
-			(entry) => entry.product === "resource" && entry.kind === resourceKind && entry.source === "descriptor",
-		);
-		if (resourceDescriptor) {
-			if (!component.path) {
-				diagnostics.push({
-					type: "error",
-					code: "package_component_invalid",
-					message: `Package ${component.packageId} ${component.kind}:${component.name} must declare a content path.`,
-					path: component.sourcePath,
-					packageId: component.packageId,
-					profile: component.profile,
-				});
-				continue;
-			}
-			const target = `${resourceKind}:${component.name}`;
-			if (packageResourceTargets.has(target)) {
-				diagnostics.push({
-					type: "error",
-					code: "package_component_invalid",
-					message: `Package Resource address ${target} is declared more than once; append fragments need distinct names.`,
-					path: component.path,
-					packageId: component.packageId,
-					profile: component.profile,
-				});
-				continue;
-			}
-			packageResourceTargets.add(target);
-			const settings: HcpMagnetResourcebuildsettings = {
-				name: component.name,
-				source: component.source ?? component.packageId,
-				mergeMode: component.kind === "append-system-prompt" ? "append" : "replace",
-				...(resourceKind === "system-prompt"
-					? { descriptorPath: component.path }
-					: { contentPath: component.path }),
-				metadata: {
-					origin: "package",
-					packageId: component.packageId,
-					packageDir: component.packageDir,
-					...(component.profile ? { profile: component.profile } : {}),
-					sourcePath: component.sourcePath,
-					...(component.description ? { description: component.description } : {}),
-					...(component.includeInContext === undefined ? {} : { includeInContext: component.includeInContext }),
-				},
-			};
-			components.push({
-				...resourceDescriptor,
-				kind: resourceKind,
-				name: component.name,
-				selected: true,
-				autoload: true,
-				descriptorPath: component.path,
-				settings,
-				overrideExisting: true,
-			});
-			continue;
-		}
-
-		const kindCandidates = generatedComponents.filter(
-			(entry) => entry.product === "capability" && entry.kind === component.kind,
-		);
-		if (kindCandidates.length === 0) continue;
-		const candidates = kindCandidates.filter(
-			(entry) => entry.slot === component.key || entry.name === component.name,
-		);
-		if (candidates.length === 0) {
-			diagnostics.push({
-				type: "error",
-				code: "package_component_invalid",
-				message: `Package ${component.packageId} ${component.kind}:${component.name} has no matching HCP capability component.`,
-				path: component.path ?? component.sourcePath,
-				packageId: component.packageId,
-				profile: component.profile,
-			});
-			continue;
-		}
-		const source = component.source ?? candidates.find((entry) => entry.selected)?.source;
-		const selected = candidates.find((entry) => entry.source === source);
-		if (!selected) {
-			diagnostics.push({
-				type: "error",
-				code: "package_component_invalid",
-				message: `Package ${component.packageId} ${component.kind}:${component.name} selects unavailable source ${source ?? "<missing>"}.`,
-				path: component.path ?? component.sourcePath,
-				packageId: component.packageId,
-				profile: component.profile,
-			});
-			continue;
-		}
-		components.push({
-			...selected,
-			name: component.name,
-			selected: true,
-			autoload: true,
-			descriptorPath: component.path ?? selected.descriptorPath,
-			overrideExisting: true,
-		});
+		// Resource / capability: the package's own magnet is self-sufficient.
+		// It carries static build() + toResource()/toCapability(); assembly calls
+		// them directly. We pass the loaded component through unchanged.
+		components.push(stripLoaderFields(component));
 	}
 
 	return { components, diagnostics, toolDiagnostics };
 }
 
-function HcpClientpackagecomponentkind(kind: string): string {
-	if (kind === "prompt") return "prompt-template";
-	if (kind === "append-system-prompt") return "system-prompt";
-	return kind;
+/**
+ * Build a tool component by extracting the descriptor path from the package's
+ * tool magnet and routing it through the host descriptor magnet + build chain.
+ */
+function buildToolComponent(
+	component: LoadedPackageMagnet,
+	overlay: PackageOverlay,
+	toolDescriptorEntry: HcpClientcomponent | undefined,
+	packageContext: { components: readonly LoadedPackageMagnet[]; diagnostics: PackageToolDiagnostic[] },
+	diagnostics: PackageDiagnostic[],
+): HcpClientcomponent | undefined {
+	if (!toolDescriptorEntry) {
+		diagnostics.push({
+			type: "error",
+			code: "package_tool_host_descriptor_missing",
+			message: `No host tools/descriptor magnet available to build package tool ${component.name}.`,
+			path: component.descriptorPath,
+			packageId: component.packageId,
+		});
+		return undefined;
+	}
+
+	// Instantiate the package tool magnet and read its descriptor() pointer.
+	let descriptorPath: string;
+	let toolName: string;
+	try {
+		const built = component.HcpMagnet.build({
+			repoRoot: overlay.packageRoot,
+			cwd: overlay.packageRoot,
+			kind: component.kind,
+			name: component.name,
+			source: component.source,
+		}) as { descriptor?: () => PackageToolDescriptor };
+		if (typeof built?.descriptor !== "function") {
+			diagnostics.push({
+				type: "error",
+				code: "package_tool_descriptor_missing",
+				message: `Package tool magnet ${component.name} does not implement descriptor().`,
+				path: component.descriptorPath,
+				packageId: component.packageId,
+			});
+			return undefined;
+		}
+		const descriptor = built.descriptor();
+		descriptorPath = descriptor.descriptorPath;
+		toolName = descriptor.name;
+	} catch (error) {
+		diagnostics.push({
+			type: "error",
+			code: "package_tool_magnet_build_failed",
+			message: `Package tool magnet ${component.name} build/descriptor failed: ${error instanceof Error ? error.message : String(error)}`,
+			path: component.descriptorPath,
+			packageId: component.packageId,
+		});
+		return undefined;
+	}
+
+	// Construct the PackageToolBuildSettings the host descriptor magnet expects.
+	// The descriptor toml's own name field is authoritative for the final tool
+	// name (createPackageToolProduct uses descriptor.name ?? component.name).
+	const settings: PackageToolBuildSettings = {
+		component: {
+			packageId: component.packageId,
+			packageDir: overlay.packageRoot,
+			kind: "tool",
+			name: toolName,
+			description: undefined,
+			path: descriptorPath,
+			sourcePath: dirname(descriptorPath),
+		},
+		components: packageContext.components.map((c) => ({
+			packageId: c.packageId,
+			packageDir: overlay.packageRoot,
+			kind: c.kind,
+			name: c.name,
+			path: c.descriptorPath,
+			sourcePath: c.descriptorPath,
+		})),
+		componentMap: new Map(),
+		diagnostics: packageContext.diagnostics,
+	};
+
+	return {
+		...toolDescriptorEntry,
+		module: component.module,
+		kind: "tool",
+		name: component.name,
+		// Real package source, not the host "descriptor" placeholder.
+		source: component.source,
+		selected: true,
+		autoload: false,
+		descriptorPath,
+		requires: ["runtime:process", "sandbox"],
+		settings,
+		overrideExisting: true,
+	};
+}
+
+/** Strip loader-only fields so the entry matches HcpClientcomponent exactly. */
+function stripLoaderFields(component: LoadedPackageMagnet): HcpClientcomponent {
+	const { packageId, packageVersion, profiles, includeInContext, ...clientComponent } = component;
+	void packageId;
+	void packageVersion;
+	void profiles;
+	void includeInContext;
+	return clientComponent;
 }

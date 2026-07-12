@@ -9,7 +9,7 @@ import type {
 	PackageAssemblyProgress,
 	PackageDiagnostic,
 	PackageOverlay,
-} from "../_magenta/packages/package-overlay.ts";
+} from "../_magenta/packages/package-overlay-v2.ts";
 
 export type HcpClientpackagetestbuildoptions = Omit<HcpClientbuildsessionoptions, "components"> & {
 	overlay: PackageOverlay;
@@ -27,7 +27,7 @@ export async function HcpClientbuildpackagesessionfortest(
 	options: HcpClientpackagetestbuildoptions,
 ): Promise<HcpClientpackagetestbuildresult> {
 	const { overlay, onPackageAssemblyProgress, ...sessionOptions } = options;
-	const input = HcpClientpackageinputfromoverlay(overlay);
+	const input = await HcpClientpackageinputfromoverlay(overlay);
 	for (const [index, component] of overlay.components.entries()) {
 		onPackageAssemblyProgress?.({ phase: "start", index, total: overlay.components.length, component });
 	}
