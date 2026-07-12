@@ -4,11 +4,20 @@ All notable changes to Magenta CLI are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## [Unreleased]
+## [0.0.12] - 2026-07-12
+
+### Added
+- HCP-isomorphic v2 packages can be acquired from verified GitHub release artifacts and loaded through the shared resource pipeline
+
+### Changed
+- Package role modules now use content-derived cache keys, so TUI reloads observe edited HcpServer and HcpMagnet files without restarting Magenta
 
 ### Fixed
+- Legacy v1 package manifests, grouped components, and scalar default profiles now pass through the compatibility layer instead of being rejected as malformed v2 packages
 - Binary self-update now verifies the platform executable and runtime resource archive from the same GitHub release, then switches both together with rollback on Unix and Windows
 - A newly updated binary now repairs missing or version-mismatched runtime resources before theme or HCP initialization, including upgrades performed by older binary-only updaters
+- Concurrent self-updates only skip an installed release when its runtime resources and marker are complete, while older transactions cannot overwrite a newer incomplete release
+- Windows installation and self-update reject unsafe or colliding archive paths, preserve drive roots, and stage replacements on the destination volume
 
 ## [0.0.11] - 2026-07-12
 
