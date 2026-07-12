@@ -4,6 +4,26 @@ All notable changes to Magenta CLI are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.0.13] - 2026-07-13
+
+### Added
+- MCP servers can connect through Streamable HTTP with JSON or SSE responses, session recovery, bounded request bodies, strict redirect handling, and credential-safe diagnostics
+- Workflow workers accept Harness package selectors as shared defaults or per-worker overrides, including from the compiled Magenta binary
+- The TUI MCP menu now reflects loaded servers, tools, and connection diagnostics dynamically
+
+### Changed
+- All shipped and loaded tools are enabled by default while HCP remains able to switch the active set without rebuilding the binary
+- Sub-agent, background-shell, peer-message, and MCP model-visible results are byte-bounded while complete logs and Ctrl+O snapshots remain available
+- Send Message drains at most 10 messages and 32 KiB per turn, with a 24 KiB per-message limit and owner-aware pending claims for at-least-once delivery
+- Dynamic OpenRouter routers display unknown cost until the provider reports a concrete charge, including workflow aggregation and HTML exports
+
+### Fixed
+- Long-running provider streams no longer inherit the HTTP idle timeout as a whole-request deadline when switching between Claude and OpenAI models
+- Queue clearing requeues pending teammate messages instead of leaving live-owner claims stranded
+- Required model catalog generation now fails closed and publishes generated files atomically; optional NVIDIA validation failures preserve the previous catalog
+- Release builds now rebuild the Harness declarations before compiling binaries, and Windows smoke tests cover PowerShell 5.1, PowerShell 7, cross-drive installation, and Git Bash startup
+- MCP notification-body stalls, legal SSE line endings, oversized responses, session expiry races, and stripped Authorization credential echoes are handled safely
+
 ## [0.0.12] - 2026-07-12
 
 ### Added
