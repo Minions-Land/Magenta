@@ -74,4 +74,16 @@ describe("aggregateWorkerUsage", () => {
 		expect(agg?.output).toBe(200);
 		expect(agg?.cost.total).toBeCloseTo(0.04);
 	});
+
+	it("preserves unknown dynamic pricing while summing known worker costs", () => {
+		const agg = aggregateWorkerUsage([
+			worker(
+				"dynamic",
+				usage({ cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0, unknown: true } }),
+			),
+			worker("known", usage({ costTotal: 0.04 })),
+		]);
+		expect(agg?.cost.total).toBeCloseTo(0.04);
+		expect(agg?.cost.unknown).toBe(true);
+	});
 });

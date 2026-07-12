@@ -164,6 +164,8 @@ export type WorkerUsage = {
 		cacheRead: number;
 		cacheWrite: number;
 		total: number;
+		/** At least one provider-priced usage record had no concrete charge. */
+		unknown?: boolean;
 	};
 };
 
@@ -382,6 +384,7 @@ export function aggregateWorkerUsage(workers: WorkerResult[]): WorkerUsage | und
 		agg.cost.cacheRead += w.usage.cost.cacheRead;
 		agg.cost.cacheWrite += w.usage.cost.cacheWrite;
 		agg.cost.total += w.usage.cost.total;
+		if (w.usage.cost.unknown) agg.cost.unknown = true;
 	}
 	return hasAnyUsage ? agg : undefined;
 }
