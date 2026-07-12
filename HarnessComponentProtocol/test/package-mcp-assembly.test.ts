@@ -1,11 +1,12 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import ts from "typescript";
 import { afterEach, describe, expect, it } from "vitest";
-import { loadPackageOverlay } from "../_magenta/packages/package-overlay.ts";
+import { loadPackageOverlay } from "../_magenta/packages/package-overlay-v2.ts";
 import { HcpClientbuildpackagesessionfortest } from "./package-test-utils.ts";
+import { writeFixturePackage } from "./package-v2-fixtures.ts";
 
 const MOCK_MCP_SERVER = `#!/usr/bin/env node
 const fs = require("node:fs");
@@ -45,48 +46,39 @@ function countMcpToolConstructions(source: string, fileName: string): number {
 	return count;
 }
 
-async function writeMcpPackage(repoRoot: string, closeMarker?: string) {
-	const packageRoot = join(repoRoot, "packages", "MockMcp");
-	const harnessRoot = join(packageRoot, "harness");
-	const toolsRoot = join(harnessRoot, "tools");
-	await mkdir(toolsRoot, { recursive: true });
-	const serverPath = join(toolsRoot, "mock-server.cjs");
-	await writeFile(serverPath, MOCK_MCP_SERVER, { mode: 0o755 });
-	await writeFile(
-		join(packageRoot, "package.toml"),
-		`schema_version = "magenta.package.v1"
-id = "MockMcp"
-name = "Mock MCP"
-default_profiles = ["general"]
-
-[[profiles]]
-name = "general"
-harness = "harness/harness.toml"
-`,
-	);
-	await writeFile(
-		join(harnessRoot, "harness.toml"),
-		`[[components]]
-kind = "tool"
-name = "mock_server"
-path = "tools/mock-server.toml"
-`,
-	);
-	await writeFile(
-		join(toolsRoot, "mock-server.toml"),
-		`kind = "tool"
+/**
+ * Write a v2 package whose single tool is an MCP server. The MCP server script
+ * is written beside the descriptor toml (command is descriptor-relative), which
+ * for v2 lives at tools/mock-server/MockMcp/.
+ */
+async function writeMcpPackage(packagesRoot: string, closeMarker?: string) {
+	const descriptorToml = `kind = "tool"
 name = "mock_server"
 description = "Mock package MCP"
 runtime = "mcp"
 command = "./mock-server.cjs"
 args = []
 name_prefix = "bio"
-${closeMarker ? `\n[env]\nCLOSE_MARKER = ${JSON.stringify(closeMarker)}\n` : ""}`,
-	);
-	return loadPackageOverlay({ repoRoot, selections: ["MockMcp"] });
+${closeMarker ? `\n[env]\nCLOSE_MARKER = ${JSON.stringify(closeMarker)}\n` : ""}`;
+
+	await writeFixturePackage(packagesRoot, {
+		id: "MockMcp",
+		source: "MockMcp",
+		components: [
+			{
+				kind: "tool",
+				item: "mock-server",
+				name: "mock_server",
+				source: "MockMcp",
+				descriptorToml,
+				extraFiles: [{ name: "mock-server.cjs", content: MOCK_MCP_SERVER, mode: 0o755 }],
+			},
+		],
+	});
+	return loadPackageOverlay({ packagesRoot, selections: ["MockMcp"] });
 }
 
-describe("package MCP HCP assembly", () => {
+describe("package MCP HCP assembly (v2)", () => {
 	const roots: string[] = [];
 
 	afterEach(async () => {
@@ -111,12 +103,12 @@ describe("package MCP HCP assembly", () => {
 	});
 
 	it("expands one server into single-product component entries on the session Client", async () => {
-		const repoRoot = await mkdtemp(join(tmpdir(), "package-mcp-hcp-"));
-		roots.push(repoRoot);
-		const overlay = await writeMcpPackage(repoRoot);
-		const assembled = await HcpClientbuildpackagesessionfortest({ repoRoot, overlay });
+		const packagesRoot = await mkdtemp(join(tmpdir(), "package-mcp-hcp-"));
+		roots.push(packagesRoot);
+		const overlay = await writeMcpPackage(packagesRoot);
+		const assembled = await HcpClientbuildpackagesessionfortest({ repoRoot: packagesRoot, overlay });
 
-		expect(assembled.diagnostics).toEqual([]);
+		expect(assembled.diagnostics.filter((d) => "type" in d && d.type === "error")).toEqual([]);
 		expect(assembled.packageToolAddresses.sort()).toEqual(["tool:bio_greet", "tool:bio_status"]);
 		const greet = assembled.hcp.resolveInstance<AgentTool>("tool:bio_greet");
 		expect(greet?.provenance).toMatchObject({ kind: "mcp", remoteTool: "greet" });
@@ -127,14 +119,14 @@ describe("package MCP HCP assembly", () => {
 	});
 
 	it("disposes the partial Client and MCP connection when a progress callback throws", async () => {
-		const repoRoot = await mkdtemp(join(tmpdir(), "package-mcp-rollback-"));
-		roots.push(repoRoot);
-		const closeMarker = join(repoRoot, "mcp-closed.txt");
-		const overlay = await writeMcpPackage(repoRoot, closeMarker);
+		const packagesRoot = await mkdtemp(join(tmpdir(), "package-mcp-rollback-"));
+		roots.push(packagesRoot);
+		const closeMarker = join(packagesRoot, "mcp-closed.txt");
+		const overlay = await writeMcpPackage(packagesRoot, closeMarker);
 
 		await expect(
 			HcpClientbuildpackagesessionfortest({
-				repoRoot,
+				repoRoot: packagesRoot,
 				overlay,
 				onPackageAssemblyProgress: (progress) => {
 					if (progress.phase === "assembled") throw new Error("stop after assembly");

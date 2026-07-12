@@ -5,7 +5,7 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { McpStdioClient } from "../_magenta/mcp/client.ts";
 import { createMcpTools, discoverMcpTools, McpConnection, McpTool } from "../_magenta/mcp/tool.ts";
-import { loadPackageOverlay } from "../_magenta/packages/package-overlay.ts";
+import { loadPackageOverlay } from "../_magenta/packages/package-overlay-v2.ts";
 import { createManagedMcpSpawner } from "./mcp-test-utils.ts";
 import { HcpClientbuildpackagesessionfortest } from "./package-test-utils.ts";
 
@@ -337,35 +337,18 @@ describe("MCP tools", () => {
 	});
 });
 
-async function writeMcpPackage(descriptor: string): Promise<string> {
-	const repoRoot = await mkdtemp(join(tmpdir(), "magenta-mcp-package-"));
-	temporaryRoots.push(repoRoot);
-	const packageRoot = join(repoRoot, "packages", "MockPkg");
-	const harnessRoot = join(packageRoot, "harness");
-	const toolsRoot = join(harnessRoot, "tools");
-	await mkdir(toolsRoot, { recursive: true });
-	await writeFile(
-		join(packageRoot, "package.toml"),
-		`schema_version = "magenta.package.v1"
-id = "MockPkg"
-name = "Mock MCP Package"
-default_profiles = ["general"]
-
-[[profiles]]
-name = "general"
-harness = "harness/harness.toml"
-`,
-	);
-	await writeFile(
-		join(harnessRoot, "harness.toml"),
-		`[[components]]
-kind = "tool"
-name = "bio_api"
-path = "tools/bio-api.toml"
-`,
-	);
-	await writeFile(join(toolsRoot, "bio-api.toml"), descriptor);
-	return repoRoot;
+async function writeMcpPackage(descriptorToml: string): Promise<string> {
+	const packagesRoot = await mkdtemp(join(tmpdir(), "magenta-mcp-package-"));
+	temporaryRoots.push(packagesRoot);
+	const { writeFixturePackage } = await import("./package-v2-fixtures.ts");
+	await writeFixturePackage(packagesRoot, {
+		id: "MockPkg",
+		source: "MockPkg",
+		components: [{ kind: "tool", item: "bio-api", name: "bio_api", source: "MockPkg", descriptorToml }],
+	});
+	// Return the packages root; callers use it as both the overlay packagesRoot
+	// and the session repoRoot (the package is self-contained under it).
+	return packagesRoot;
 }
 
 describe("MCP package tool assembly", () => {
@@ -380,7 +363,7 @@ describe("MCP package tool assembly", () => {
 				`args = [${JSON.stringify(server)}]`,
 			].join("\n"),
 		);
-		const overlay = await loadPackageOverlay({ repoRoot, selections: ["MockPkg"] });
+		const overlay = await loadPackageOverlay({ packagesRoot: repoRoot, selections: ["MockPkg"] });
 		const assembled = await HcpClientbuildpackagesessionfortest({ repoRoot, overlay });
 
 		expect(assembled.diagnostics).toEqual([]);
@@ -410,7 +393,7 @@ describe("MCP package tool assembly", () => {
 				`args = [${JSON.stringify(server)}]`,
 			].join("\n"),
 		);
-		const overlay = await loadPackageOverlay({ repoRoot, selections: ["MockPkg"] });
+		const overlay = await loadPackageOverlay({ packagesRoot: repoRoot, selections: ["MockPkg"] });
 		const assembled = await HcpClientbuildpackagesessionfortest({ repoRoot, overlay });
 
 		expect(assembled.packageToolAddresses).toEqual([]);
@@ -432,7 +415,7 @@ describe("MCP package tool assembly", () => {
 				`args = [${JSON.stringify(server)}]`,
 			].join("\n"),
 		);
-		const overlay = await loadPackageOverlay({ repoRoot, selections: ["MockPkg"] });
+		const overlay = await loadPackageOverlay({ packagesRoot: repoRoot, selections: ["MockPkg"] });
 		const assembled = await HcpClientbuildpackagesessionfortest({ repoRoot, overlay, disabledModules: ["tools"] });
 
 		expect(assembled.packageToolAddresses).toEqual([]);
@@ -454,7 +437,7 @@ describe("MCP package tool assembly", () => {
 				"timeout_ms = 15000",
 			].join("\n"),
 		);
-		const overlay = await loadPackageOverlay({ repoRoot, selections: ["MockPkg"] });
+		const overlay = await loadPackageOverlay({ packagesRoot: repoRoot, selections: ["MockPkg"] });
 		const assembled = await HcpClientbuildpackagesessionfortest({ repoRoot, overlay });
 
 		expect(assembled.diagnostics).toEqual([]);
@@ -477,7 +460,7 @@ describe("MCP package tool assembly", () => {
 
 	it("reports a descriptor error when an MCP command is missing", async () => {
 		const repoRoot = await writeMcpPackage(['kind = "tool"', 'name = "bio_api"', 'runtime = "mcp"'].join("\n"));
-		const overlay = await loadPackageOverlay({ repoRoot, selections: ["MockPkg"] });
+		const overlay = await loadPackageOverlay({ packagesRoot: repoRoot, selections: ["MockPkg"] });
 		const assembled = await HcpClientbuildpackagesessionfortest({ repoRoot, overlay });
 
 		expect(assembled.packageToolAddresses).toEqual([]);

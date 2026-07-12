@@ -92,14 +92,14 @@ describe("HCP structure guard syntax checks", () => {
 
 	it("detects Package and MCP details crossing into .HCP even through aliased imports", () => {
 		const inspected = HcpClientinspectsyntax(`
-			import type { PackageOverlay as Overlay } from "../../_magenta/packages/package-overlay.ts";
+			import type { PackageOverlay as Overlay } from "../../_magenta/packages/package-overlay-v2.ts";
 			import type { PackageToolBuildSettings } from "../../tools/descriptor/package-tool.ts";
 			import type { McpConnection as Connection } from "../../_magenta/mcp/tool.ts";
 			const HcpClientsettings = value.mcp.connection;
 		`);
 
 		expect(inspected.moduleDependencies.map(({ source }) => source)).toEqual([
-			"../../_magenta/packages/package-overlay.ts",
+			"../../_magenta/packages/package-overlay-v2.ts",
 			"../../tools/descriptor/package-tool.ts",
 			"../../_magenta/mcp/tool.ts",
 		]);
@@ -140,7 +140,7 @@ describe("HCP structure guard syntax checks", () => {
 		expect(isAllowedInfrastructurePath("assembly/session-hcp.ts")).toBe(true);
 		expect(isAllowedInfrastructurePath("transport/hcp-process.ts")).toBe(true);
 		expect(isAllowedInfrastructurePath("mcp/client.ts")).toBe(false);
-		expect(isAllowedInfrastructurePath("packages/package-overlay.ts")).toBe(false);
+		expect(isAllowedInfrastructurePath("packages/package-overlay-v2.ts")).toBe(false);
 		expect(isAllowedInfrastructurePath("transport/client.ts")).toBe(false);
 	});
 });
