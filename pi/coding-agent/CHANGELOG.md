@@ -4,6 +4,19 @@ All notable changes to Magenta CLI are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.0.9] - 2026-07-12
+
+### Changed
+- All native application tools (`read`, `bash`, `edit`, `write`, `bg_shell`, `sub_agent`, `send_message`, `show`, `grep`, `find`, `ls`) are now active by default; `show`/`grep`/`find`/`ls`/`send_message` no longer require explicit `--tools` opt-in. The default active set is now a single source of truth (`DEFAULT_NATIVE_ACTIVE_TOOLS`) shared by the SDK and interactive session paths, so the two can no longer drift apart
+
+### Fixed
+- Send Message now records `idle` presence at session construction (right after the wake handler is installed), closing a startup blind window where a freshly launched session had no presence row and was invisible to peers — an urgent message could neither see it as idle nor wake it, silently falling back to mailbox-only delivery
+- The HCP `find` and `grep` Magnets now wire the embedded `fd`/`rg` resolvers, so HCP-resolved `find`/`grep` work in a clean environment instead of failing on a missing `ensureTool` dependency or a missing system `rg`
+- OpenAI Responses reasoning-item replay now guards against non-JSON thinking signatures with try/catch instead of a bare `JSON.parse`, so a stale or malformed signature drops just that reasoning item instead of failing the whole request during construction
+
+### Security
+- Bumped `shell-quote` to `^1.8.4` (from 1.8.3) in the sandbox example extension and `undici` to `^6.27.0` (from 6.26.0) in the gondolin example extension via `overrides`, resolving 5 Dependabot alerts (1 critical shell-quote newline escaping, 1 high undici WebSocket DoS, 1 medium undici Set-Cookie header injection, 2 low undici)
+
 ## [0.0.8] - 2026-07-12
 
 ### Added
