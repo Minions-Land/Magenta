@@ -2,6 +2,10 @@ node_modules/
 dist/
 *.log
 # Stray compiled artifacts emitted outside dist/ (source dirs must stay .ts-only)
+# Root-level process-tools build output (Mach-O/ELF binary emitted into cwd by the
+# build). Anchored to the repo root with a leading slash so the tracked source dir
+# HarnessComponentProtocol/_magenta/ is NOT affected.
+/_magenta/
 harness/**/*.js
 harness/**/*.js.map
 harness/**/*.d.ts
