@@ -22,8 +22,13 @@ import {
 	type PackageAssemblyProgress,
 	type PackageDiagnostic,
 	type PackageOverlay,
+	type PackageProfileSelection,
 } from "@magenta/harness";
 import { closeWatcher, watchWithErrorHandler } from "../utils/fs-watch.ts";
+import {
+	acquireGitHubPackage,
+	parseGitHubPackageSelector,
+} from "../utils/package-acquisition.ts";
 import { canonicalizePath, isLocalPath, resolvePath } from "../utils/paths.ts";
 import { createEventBus, type EventBus } from "./event-bus.ts";
 import {
@@ -1017,22 +1022,62 @@ export class DefaultResourceLoader implements ResourceLoader {
 		}
 	}
 
+	/**
+	 * Resolve raw harness-package selectors into overlay selections. Plain
+	 * selectors (`Pkg` or `Pkg:profile`) pass through as strings and resolve
+	 * under the packages root. `github:owner/repo/Pkg@ver` selectors are
+	 * acquired from GitHub releases into the local cache, then handed to the
+	 * overlay loader as explicit package roots.
+	 */
+	private async HcpClientresolvepackageselections(
+		rawSelectors: readonly string[],
+		packageDiagnostics: ResourceDiagnostic[],
+	): Promise<Array<string | PackageProfileSelection>> {
+		const selections: Array<string | PackageProfileSelection> = [];
+		for (const raw of rawSelectors) {
+			const github = parseGitHubPackageSelector(raw);
+			if (!github) {
+				// Local selector: resolve under the packages root as before.
+				selections.push(raw);
+				continue;
+			}
+			const result = await acquireGitHubPackage(github);
+			for (const diagnostic of result.diagnostics) {
+				if (diagnostic.type === "error") {
+					packageDiagnostics.push({ type: "error", message: diagnostic.message });
+				} else if (diagnostic.type === "warning") {
+					packageDiagnostics.push({ type: "warning", message: diagnostic.message });
+				}
+			}
+			if (result.diagnostics.some((diagnostic) => diagnostic.type === "error")) {
+				// Acquisition failed; skip this package rather than loading a broken cache.
+				continue;
+			}
+			selections.push({ packageId: github.package, packageRoot: result.packageRoot });
+		}
+		return selections;
+	}
+
 	private async HcpClientbuildcandidate(
 		onAssemblyProgress?: (progress: PackageAssemblyProgress) => void,
 	): Promise<HcpClientsessioncandidate> {
 		const packageDiagnostics: ResourceDiagnostic[] = [];
 		let candidateHcp: HcpClient | undefined;
 		try {
-			const overlay =
+			const selections =
 				this.harnessPackages.length === 0
+					? []
+					: await this.HcpClientresolvepackageselections(this.harnessPackages, packageDiagnostics);
+			const overlay =
+				selections.length === 0
 					? undefined
 					: await loadPackageOverlay({
 							repoRoot: this.cwd,
 							packagesRoot: this.harnessPackagesRoot,
-							selections: this.harnessPackages,
+							selections,
 						});
 			const packageInput = overlay
-				? HcpClientpackageinputfromoverlay(overlay)
+				? await HcpClientpackageinputfromoverlay(overlay)
 				: { components: [], diagnostics: [], toolDiagnostics: [] };
 			packageDiagnostics.push(...packageInput.diagnostics.map(packageDiagnosticToResourceDiagnostic));
 			if (overlay) {
