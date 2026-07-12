@@ -127,6 +127,15 @@ export class SendMessageController {
 				this.wakeHandler = undefined;
 			}
 		}
+
+		// Advertise presence immediately, before the first agent loop runs. A freshly
+		// started session that is just waiting for the user to type has not yet fired
+		// agent_start/turn_start, so without this it would have NO presence row at all
+		// and be invisible to peers: an urgent message could neither see it as idle nor
+		// wake it, and would silently fall back to mailbox-only delivery. Recording
+		// `idle` here (with our now-installed wake handler) closes that startup blind
+		// window so a wake-capable session is reachable from the moment it exists.
+		this.recordPresence("idle");
 	}
 
 	/** Whether this controller advertises a wake-capable pid (handler installed). */

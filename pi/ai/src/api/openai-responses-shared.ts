@@ -171,9 +171,29 @@ export function convertResponsesMessages<TApi extends Api>(
 
 			for (const block of msg.content) {
 				if (block.type === "thinking") {
+					// Reasoning replay: OpenAI reasoning items are round-tripped through the
+					// thinking signature as JSON.stringify(item), so this branch JSON.parses
+					// the signature back into a reasoning item to replay it.
+					//
+					// This used to be a bare JSON.parse with no error handling. Any signature
+					// that is not valid JSON made it throw a SyntaxError during request
+					// construction — before any network call — which surfaced to the user as a
+					// hard error on the very first input ("request ...", not a timeout). The
+					// signature reaches this point already parsed only for same-model turns
+					// (transformMessages keeps thinkingSignature only when provider+api+model
+					// all match; cross-provider thinking blocks are downgraded to text and
+					// lose their signature earlier). But a same-model signature can still be
+					// non-JSON: a stale/truncated signature from an older session, a foreign
+					// (e.g. base64) signature, or a format change across versions. Guard the
+					// parse so such a signature simply drops the reasoning item instead of
+					// tearing down the whole request; the rest of the turn still replays.
 					if (block.thinkingSignature) {
-						const reasoningItem = JSON.parse(block.thinkingSignature) as ResponseReasoningItem;
-						output.push(reasoningItem);
+						try {
+							const reasoningItem = JSON.parse(block.thinkingSignature) as ResponseReasoningItem;
+							output.push(reasoningItem);
+						} catch {
+							// Non-JSON signature (stale/foreign/truncated) — skip the reasoning item.
+						}
 					}
 				} else if (block.type === "text") {
 					const textBlock = block as TextContent;

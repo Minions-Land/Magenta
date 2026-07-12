@@ -7,7 +7,7 @@ import { resolvePath } from "../utils/paths.ts";
 import { AgentSession } from "./agent-session.ts";
 import { formatNoModelsAvailableMessage } from "./auth-guidance.ts";
 import { AuthStorage } from "./auth-storage.ts";
-import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
+import { DEFAULT_NATIVE_ACTIVE_TOOLS, DEFAULT_THINKING_LEVEL } from "./defaults.ts";
 import type { ExtensionRunner, LoadExtensionsResult, SessionStartEvent, ToolDefinition } from "./extensions/index.ts";
 import { HcpClientassembletools } from "./HcpClienttools.ts";
 import { convertToLlm } from "./messages.ts";
@@ -257,7 +257,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		thinkingLevel = clampThinkingLevel(model, thinkingLevel) as ThinkingLevel;
 	}
 
-	const defaultActiveToolNames: string[] = ["read", "bash", "edit", "write", "bg_shell", "sub_agent"];
+	const defaultActiveToolNames: string[] = [...DEFAULT_NATIVE_ACTIVE_TOOLS];
 	const sessionHcp = resourceLoader.HcpClientgetsession?.();
 	if (sessionHcp && !HcpClientprepared) {
 		try {

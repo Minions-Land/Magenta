@@ -190,6 +190,49 @@ describe("SendMessageController", () => {
 		}
 	});
 
+	// Regression: a freshly constructed wakeable session must advertise itself as
+	// idle+online immediately, before it has ever run an agent loop. Previously
+	// presence was only recorded from agent_start/turn_start/agent_end, so a session
+	// that was open but had never been prompted had NO presence row and was invisible
+	// to peers — an urgent message could neither see it nor wake it.
+	it("advertises a wakeable session as idle+online on construction, before any loop", async () => {
+		let woke = 0;
+		const alice = controller("alice");
+		// bob is wakeable but has NEVER called recordPresence explicitly.
+		const bob = controller("bob", { wakeForMessages: () => woke++, isStreaming: () => false });
+		try {
+			const res = await call(alice, { to: "bob", content: "urgent on a fresh session!", urgent: true });
+			await new Promise((r) => setTimeout(r, 20));
+			const text = res.content.map((p) => ("text" in p ? p.text : "")).join("");
+			// The sender sees bob as idle (not "no presence record yet") and wakes it.
+			expect(text).toContain("idle");
+			expect(res.details?.recipientStatus).toBe("idle");
+			expect(res.details?.woken).toBe(true);
+			expect(woke).toBeGreaterThan(0);
+		} finally {
+			alice.shutdown();
+			bob.shutdown();
+		}
+	});
+
+	// A non-wakeable session (no wakeForMessages, e.g. signal handlers unavailable)
+	// still records presence on construction, but must not advertise a pid, so peers
+	// never try to signal a process that cannot handle the wake.
+	it("records construction presence without a pid when not wakeable", async () => {
+		const alice = controller("alice");
+		const bob = controller("bob"); // no wakeForMessages => not wakeable
+		try {
+			const res = await call(alice, { to: "bob", content: "hi", urgent: true });
+			await new Promise((r) => setTimeout(r, 20));
+			// Without a live pid, getPresence computes online=false, so the sender is
+			// told the recipient is effectively offline and no wake is attempted.
+			expect(res.details?.woken).toBe(false);
+		} finally {
+			alice.shutdown();
+			bob.shutdown();
+		}
+	});
+
 	it("formats a single message and multiple messages distinctly", () => {
 		const one = formatPeerMessages([
 			{

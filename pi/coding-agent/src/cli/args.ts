@@ -416,10 +416,11 @@ ${chalk.bold("Native Application Tool Names:")}
   write  - Write files (creates/overwrites)
   bg_shell  - Run long-running shell commands in the background
   sub_agent - Run parallel no-TUI agent subtasks
-  show   - Display local files or remote URLs (off by default)
-  grep   - Search file contents (read-only, off by default)
-  find   - Find files by glob pattern (read-only, off by default)
-  ls     - List directory contents (read-only, off by default)
+  send_message - Send messages to other agent sessions
+  show   - Display local files or remote URLs
+  grep   - Search file contents (read-only)
+  find   - Find files by glob pattern (read-only)
+  ls     - List directory contents (read-only)
 
 Repository HCP, Package, user MCP, and extension tools may add more names.
 Use --harness-list to inspect repository HCP components.
