@@ -122,6 +122,7 @@ type PiMessage = {
 			cacheRead?: number;
 			cacheWrite?: number;
 			total?: number;
+			unknown?: boolean;
 		};
 	};
 	errorMessage?: string;
@@ -317,6 +318,7 @@ export async function spawnWorker(
 								usage.cost.cacheRead += msg.usage.cost.cacheRead ?? 0;
 								usage.cost.cacheWrite += msg.usage.cost.cacheWrite ?? 0;
 								usage.cost.total += msg.usage.cost.total ?? 0;
+								if (msg.usage.cost.unknown) usage.cost.unknown = true;
 							}
 							if (msg.usage.totalTokens) totalTokens = msg.usage.totalTokens; // legacy compat
 						}

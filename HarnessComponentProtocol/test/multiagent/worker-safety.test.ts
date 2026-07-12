@@ -86,7 +86,7 @@ describe("worker host invocation", () => {
 		const fixture = [
 			"const event = {",
 			'type: "message_end",',
-			'message: { role: "assistant", content: [{ type: "text", text: "worker-ok" }] },',
+			'message: { role: "assistant", content: [{ type: "text", text: "worker-ok" }], usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, totalTokens: 15, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0, unknown: true } } },',
 			"};",
 			'process.stdout.write(JSON.stringify(event) + "\\n");',
 		].join("\n");
@@ -106,6 +106,7 @@ describe("worker host invocation", () => {
 		);
 
 		expect(result).toMatchObject({ success: true, text: "worker-ok" });
+		expect(result.usage?.cost.unknown).toBe(true);
 		expect(requestedArgs).toEqual(
 			expect.arrayContaining(["--harness-package", "ClaudeScience", "paper-analysis:review"]),
 		);
