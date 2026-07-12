@@ -43,7 +43,12 @@ node pi/coding-agent/dist/cli.js
 - [Extension packages](packages.md) - npm, git, HTTPS, SSH, and local packages
 - [Custom providers](custom-provider.md) - extension-owned APIs and OAuth
 
-Extension APIs and package manifest keys preserve their upstream `pi` names. Harness domain packages are a separate input: an external cache should be passed with `--harness-packages-root`; without it, Magenta checks only `<current-workspace>/packages`. It does not scan sibling directories or require a package submodule. Future GitHub acquisition is outside the current loader.
+Extension APIs and package manifest keys preserve their upstream `pi` names.
+Harness domain packages are a separate HCP input. Local selectors use
+`--harness-packages-root` or `<current-workspace>/packages`; versioned GitHub
+selectors are verified and cached under `~/.magenta/harness-packages`.
+`/harness package` discovers official releases and can download and load them
+without rebuilding the Magenta binary.
 
 ## Integration
 

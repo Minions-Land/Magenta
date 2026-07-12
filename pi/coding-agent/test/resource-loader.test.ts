@@ -469,19 +469,18 @@ describe("DefaultResourceLoader", () => {
 			expect(loader.getAppendSystemPrompt()).toContain("Package append prompt.");
 		});
 
-		it("retains Tool descriptor containment diagnostics produced during HCP assembly", async () => {
+		it("rejects Tool descriptor containment errors and preserves the previous Client", async () => {
 			writeLateToolDescriptorDiagnosticPackage(cwd);
-			const loader = createLoader({ harnessPackages: ["LateDiagnosticDomain"] });
-
+			const loader = createLoader();
 			await loader.reload();
+			const previousHcp = loader.HcpClientgetsession();
+			loader.HcpClientsetharnesspackageselectors(["LateDiagnosticDomain"]);
+
+			await expect(loader.reload()).rejects.toThrow(/descriptor is invalid.*escapes the package root/i);
 
 			expect(loader.getPackageTools().tools).toEqual([]);
-			expect(loader.getPackageTools().diagnostics).toContainEqual(
-				expect.objectContaining({
-					type: "error",
-					message: expect.stringMatching(/descriptor is invalid.*escapes the package root/i),
-				}),
-			);
+			expect(loader.HcpClientgetsession()).toBe(previousHcp);
+			expect(loader.getPackageOverlay()).toBeUndefined();
 		});
 
 		it("loads selected harness package resources from an explicit external root", async () => {
@@ -580,18 +579,18 @@ describe("DefaultResourceLoader", () => {
 			const loader = createLoader();
 			await loader.reload();
 
-			expect(loader.getHarnessPackageSelectors()).toEqual([]);
+			expect(loader.HcpClientgetharnesspackageselectors()).toEqual([]);
 			expect(loader.getPackageOverlay()).toBeUndefined();
 			expect(loader.getPackageTools().tools).toEqual([]);
 
-			loader.setHarnessPackageSelectors(["TestDomain", "TestDomain", " "]);
+			loader.HcpClientsetharnesspackageselectors(["TestDomain", "TestDomain", " "]);
 			await loader.reload();
 
-			expect(loader.getHarnessPackageSelectors()).toEqual(["TestDomain"]);
+			expect(loader.HcpClientgetharnesspackageselectors()).toEqual(["TestDomain"]);
 			expect(loader.getPackageOverlay()?.packages.map((pkg) => pkg.id)).toEqual(["TestDomain"]);
 			expect(loader.getPackageTools().tools.map((tool) => tool.name)).toEqual(["test_package_tool"]);
 
-			loader.setHarnessPackageSelectors([]);
+			loader.HcpClientsetharnesspackageselectors([]);
 			await loader.reload();
 
 			expect(loader.getPackageOverlay()).toBeUndefined();
@@ -599,17 +598,18 @@ describe("DefaultResourceLoader", () => {
 			expect(loader.getSkills().skills.some((skill) => skill.name === "test-domain")).toBe(false);
 		});
 
-		it("diagnoses malformed GitHub selectors instead of treating them as local package ids", async () => {
+		it("rejects malformed GitHub selectors instead of treating them as local package ids", async () => {
 			const selector = "github:owner/repo/PackageWithoutVersion";
-			const loader = createLoader({ harnessPackages: [selector] });
-
+			const loader = createLoader();
 			await loader.reload();
+			const previousHcp = loader.HcpClientgetsession();
+			loader.HcpClientsetharnesspackageselectors([selector]);
 
-			expect(loader.getHarnessPackageSelectors()).toEqual([selector]);
+			await expect(loader.reload()).rejects.toThrow(`Invalid GitHub package selector: ${selector}`);
+
+			expect(loader.HcpClientgetharnesspackageselectors()).toEqual([selector]);
 			expect(loader.getPackageOverlay()).toBeUndefined();
-			expect(loader.getPackageTools().diagnostics).toContainEqual(
-				expect.objectContaining({ type: "error", message: `Invalid GitHub package selector: ${selector}` }),
-			);
+			expect(loader.HcpClientgetsession()).toBe(previousHcp);
 		});
 
 		it("exposes a session HCP that resolves the compaction capability with and without a package", async () => {
@@ -634,7 +634,7 @@ describe("DefaultResourceLoader", () => {
 			// With a package selected: the session HCP is rebuilt layering defaults on
 			// the assembled overlay HCP; compaction (a default source, not overridden
 			// by the fixture) must still resolve, and package tools coexist.
-			loader.setHarnessPackageSelectors(["TestDomain"]);
+			loader.HcpClientsetharnesspackageselectors(["TestDomain"]);
 			await loader.reload();
 
 			const hcpPkg = loader.HcpClientgetsession();
@@ -664,14 +664,14 @@ describe("DefaultResourceLoader", () => {
 			expect(previousSkills.some((skill) => skill.name === "test-domain")).toBe(true);
 			expect(loader.getSystemPrompt()).toBe("Package system prompt.");
 
-			loader.setHarnessPackageSelectors([]);
+			loader.HcpClientsetharnesspackageselectors([]);
 			failSkills = true;
 			await expect(loader.reload()).rejects.toThrow("late skill failure");
 
 			expect(loader.HcpClientgetsession()).toBe(previousHcp);
 			expect(loader.getSkills().skills).toBe(previousSkills);
 			expect(loader.getPackageOverlay()).toBe(previousOverlay);
-			expect(loader.getHarnessPackageSelectors()).toEqual([]);
+			expect(loader.HcpClientgetharnesspackageselectors()).toEqual([]);
 			expect(loader.getPackageTools().tools.map((tool) => tool.name)).toEqual(["test_package_tool"]);
 			expect(loader.getSystemPrompt()).toBe("Package system prompt.");
 			expect(previousHcp?.resolveCapability("compaction")).toBeDefined();
@@ -913,7 +913,7 @@ lines.on("line", (line) => {
 			await loader.reload();
 
 			// Selecting only the extra profile loads just that profile's tool.
-			loader.setHarnessPackageSelectors(["MultiDomain:extra"]);
+			loader.HcpClientsetharnesspackageselectors(["MultiDomain:extra"]);
 			await loader.reload();
 			expect(
 				loader
@@ -924,7 +924,7 @@ lines.on("line", (line) => {
 
 			// Adding a second per-profile selector for the same package is additive:
 			// both profiles' tools load together (the menu's per-row toggles rely on this).
-			loader.setHarnessPackageSelectors(["MultiDomain:extra", "MultiDomain:general"]);
+			loader.HcpClientsetharnesspackageselectors(["MultiDomain:extra", "MultiDomain:general"]);
 			await loader.reload();
 			expect(
 				loader

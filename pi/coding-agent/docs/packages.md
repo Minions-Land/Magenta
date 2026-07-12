@@ -4,7 +4,10 @@
 
 Extension packages bundle extensions, skills, prompt templates, and themes for npm, git, HTTPS, SSH, or local-path distribution. The `pi` manifest key and `pi-package` keyword remain compatibility APIs.
 
-These are not Harness domain packages. Harness packages are selected with `--harness-package` and loaded from `--harness-packages-root` or the `<current-workspace>/packages` fallback; they do not use the extension-package manager described here.
+These are not Harness domain packages. Harness packages are selected with
+`--harness-package` or `/harness package`, then loaded from a local Package root
+or a verified GitHub Release cached under `~/.magenta/harness-packages`; they do
+not use the extension-package manager described here.
 
 ## Table of Contents
 

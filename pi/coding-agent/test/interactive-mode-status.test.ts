@@ -166,7 +166,7 @@ name = "External Domain"
 				},
 			};
 
-			const view = await (InteractiveMode as any).prototype.loadHarnessPackagesView.call(fakeThis);
+			const view = await (InteractiveMode as any).prototype.HcpClientloadpackagesview.call(fakeThis);
 
 			expect(view.packagesRoot).toBe(packagesRoot);
 			expect(view.packages.map((pkg: { id: string }) => pkg.id)).toEqual(["ExternalDomain"]);
@@ -179,14 +179,14 @@ name = "External Domain"
 	test("shows an active GitHub package that is absent from local discovery and preserves its exact selector", async () => {
 		const selector = "github:Minions-Land/MagentaPackages/AutOmicScience@1.0.0:single-cell";
 		const fakeThis: any = {
-			loadHarnessPackagesView: async () => ({
+			HcpClientloadpackagesview: async () => ({
 				packagesRoot: "/workspace/packages",
 				packages: [],
 				diagnostics: [],
 			}),
 		};
 
-		const [root] = await (InteractiveMode as any).prototype.harnessPackageMenuItems.call(fakeThis, {
+		const [root] = await (InteractiveMode as any).prototype.HcpClientpackagemenuitems.call(fakeThis, {
 			harnessPackages: [selector],
 		});
 		const githubPackage = root.children.find((item: any) => item.label === "AutOmicScience (GitHub)");
@@ -199,21 +199,60 @@ name = "External Domain"
 			description: "Active: single-cell",
 		});
 
-		const setHarnessPackageSelectorEnabled = vi.fn();
-		const actionContext = { setHarnessPackageSelectorEnabled };
+		const HcpClientsetpackageselectorenabled = vi.fn();
+		const actionContext = { HcpClientsetpackageselectorenabled };
 		const reload = githubPackage.children.find((item: any) => item.label === "Reload package");
 		const unload = githubPackage.children.find((item: any) => item.label === "Unload selector");
 
 		expect((InteractiveMode as any).prototype.handleHarnessMenuItem.call(actionContext, reload)).toBe(true);
-		expect(setHarnessPackageSelectorEnabled).toHaveBeenLastCalledWith(selector, true);
+		expect(HcpClientsetpackageselectorenabled).toHaveBeenLastCalledWith(selector, true);
 		expect((InteractiveMode as any).prototype.handleHarnessMenuItem.call(actionContext, unload)).toBe(true);
-		expect(setHarnessPackageSelectorEnabled).toHaveBeenLastCalledWith(selector, false);
+		expect(HcpClientsetpackageselectorenabled).toHaveBeenLastCalledWith(selector, false);
+	});
+
+	test("offers an official Package release that downloads and loads through its exact selector", async () => {
+		const selector = "github:Minions-Land/Magenta-CLI/ClaudeScience@0.1.0";
+		const fakeThis: any = {
+			HcpClientloadpackagesview: async () => ({
+				packagesRoot: "/workspace/packages",
+				packages: [],
+				diagnostics: [],
+			}),
+			HcpClientloadpackagecatalogview: async () => ({
+				packages: [
+					{
+						package: "ClaudeScience",
+						version: "0.1.0",
+						selector,
+						owner: "Minions-Land",
+						repo: "MagentaPackages",
+					},
+				],
+				diagnostics: [],
+			}),
+		};
+
+		const [root] = await (InteractiveMode as any).prototype.HcpClientpackagemenuitems.call(fakeThis, {
+			harnessPackages: [],
+		});
+		const officialPackage = root.children.find((item: any) => item.label === "ClaudeScience (Official)");
+
+		expect(root.description).toBe("0 selected · 0 local available · 1 official available");
+		expect(officialPackage).toMatchObject({ active: false });
+		const load = officialPackage.children.find((item: any) => item.label === "Download & load");
+		expect(load.description).toContain("~/.magenta/harness-packages");
+
+		const HcpClientsetpackageselectorenabled = vi.fn();
+		expect(
+			(InteractiveMode as any).prototype.handleHarnessMenuItem.call({ HcpClientsetpackageselectorenabled }, load),
+		).toBe(true);
+		expect(HcpClientsetpackageselectorenabled).toHaveBeenCalledWith(selector, true);
 	});
 
 	test("keeps a same-id GitHub selector separate from local package profile controls", async () => {
 		const selector = "github:owner/packages/SharedDomain@2.0.0";
 		const fakeThis: any = {
-			loadHarnessPackagesView: async () => ({
+			HcpClientloadpackagesview: async () => ({
 				packagesRoot: "/workspace/packages",
 				packages: [
 					{
@@ -229,7 +268,7 @@ name = "External Domain"
 			}),
 		};
 
-		const [root] = await (InteractiveMode as any).prototype.harnessPackageMenuItems.call(fakeThis, {
+		const [root] = await (InteractiveMode as any).prototype.HcpClientpackagemenuitems.call(fakeThis, {
 			harnessPackages: [selector],
 		});
 		const localPackage = root.children.find((item: any) => item.value === "harness:package:SharedDomain");
@@ -247,18 +286,68 @@ name = "External Domain"
 		const githubSelector = "github:owner/packages/SharedDomain@2.0.0";
 		let nextSelectors: string[] | undefined;
 		const fakeThis = {
-			enqueueHarnessPackageMutation: async (compute: (current: string[]) => string[]) => {
+			HcpClientenqueuepackagemutation: async (compute: (current: string[]) => string[]) => {
 				nextSelectors = compute(["SharedDomain", "SharedDomain:local-profile", githubSelector, "OtherDomain"]);
 			},
 		};
 
-		await (InteractiveMode as any).prototype.clearHarnessPackageSelectors.call(fakeThis, "SharedDomain");
+		await (InteractiveMode as any).prototype.HcpClientclearpackageselectors.call(fakeThis, "SharedDomain");
 
 		expect(nextSelectors).toEqual([githubSelector, "OtherDomain"]);
 	});
 
+	test("loading a new GitHub Package version replaces the active version but keeps a same-id local selector", async () => {
+		const oldSelector = "github:Minions-Land/Magenta-CLI/ClaudeScience@0.1.0";
+		const newSelector = "github:Minions-Land/Magenta-CLI/ClaudeScience@0.2.0";
+		let nextSelectors: string[] | undefined;
+		const fakeThis = {
+			HcpClientenqueuepackagemutation: async (compute: (current: string[]) => string[]) => {
+				nextSelectors = compute(["ClaudeScience", oldSelector, "OtherDomain"]);
+			},
+		};
+
+		await (InteractiveMode as any).prototype.HcpClientsetpackageselectorenabled.call(fakeThis, newSelector, true);
+
+		expect(nextSelectors).toEqual(["ClaudeScience", "OtherDomain", newSelector]);
+	});
+
+	test("restores the previous selection when a requested Package did not load", async () => {
+		const requested = "github:Minions-Land/MagentaPackages/ClaudeScience@0.1.0";
+		let selectors: string[] = [];
+		const HcpClientsetharnesspackageselectors = vi.fn((next: string[]) => {
+			selectors = [...next];
+		});
+		const handleReloadCommand = vi.fn(async () => true);
+		const showError = vi.fn();
+		const fakeThis: any = {
+			session: {
+				resourceLoader: {
+					HcpClientsetharnesspackageselectors,
+					getPackageOverlay: () => undefined,
+					getPackageTools: () => ({
+						tools: [],
+						diagnostics: [{ type: "error", message: "GitHub returned 404 Not Found" }],
+					}),
+				},
+			},
+			canReloadRuntime: () => true,
+			HcpClientgetharnesspackageselectors: () => [...selectors],
+			handleReloadCommand,
+			showError,
+		};
+
+		await (InteractiveMode as any).prototype.HcpClientapplypackageselectors.call(fakeThis, () => [requested]);
+
+		expect(HcpClientsetharnesspackageselectors).toHaveBeenNthCalledWith(1, [requested]);
+		expect(HcpClientsetharnesspackageselectors).toHaveBeenNthCalledWith(2, []);
+		expect(handleReloadCommand).toHaveBeenCalledTimes(2);
+		expect(showError).toHaveBeenCalledWith(expect.stringContaining("Harness Package load failed"));
+		expect(showError).toHaveBeenCalledWith(expect.stringContaining("GitHub returned 404 Not Found"));
+		expect(selectors).toEqual([]);
+	});
+
 	test("formats every loaded package in a multi-package overlay", () => {
-		const formatted = (InteractiveMode as any).prototype.formatHarnessPackageSelection.call(
+		const formatted = (InteractiveMode as any).prototype.HcpClientformatpackageselection.call(
 			{},
 			["FirstDomain", "github:owner/packages/SecondDomain@2.0.0", "MissingDomain"],
 			{
@@ -330,11 +419,12 @@ name = "External Domain"
 					],
 				},
 			});
-			fakeThis.loadHarnessPackagesView = async () => ({
+			fakeThis.HcpClientloadpackagesview = async () => ({
 				packagesRoot: path.join(root, "packages"),
 				packages: [],
 				diagnostics: [],
 			});
+			fakeThis.HcpClientloadpackagecatalogview = async () => ({ packages: [], diagnostics: [] });
 
 			const menu = await (InteractiveMode as any).prototype.harnessMenuItems.call(fakeThis);
 			const tools = menu.children.find((item: any) => item.value === "harness:tools");

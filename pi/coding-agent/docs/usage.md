@@ -315,4 +315,10 @@ magenta --exclude-tools ask_question
 
 Magenta includes first-class `bg_shell` and `sub_agent` tools and can load user MCP tools through the Harness path. Workflow-specific UI and commands remain extension surfaces.
 
-Extension packages and Harness domain packages are separate. Pass an externally prepared cache with `--harness-packages-root`; otherwise Magenta checks only `<current-workspace>/packages`. It does not scan sibling directories or require a `MagentaPackages` checkout/submodule. A future GitHub download/cache layer may prepare the explicit root, but acquisition is not part of the current loader.
+Extension packages and Harness domain packages are separate. Local selectors use
+`--harness-packages-root` or `<current-workspace>/packages`; Magenta does not
+scan sibling directories or require a `MagentaPackages` checkout/submodule.
+Versioned `github:owner/repo/Package@version` selectors are downloaded,
+SHA-256 verified, and cached under `~/.magenta/harness-packages`. In the TUI,
+`/harness package` discovers official releases and **Download & load** performs
+that acquisition before reloading the current HCP session.

@@ -290,13 +290,13 @@ describe("AgentSession dynamic tool registration", () => {
 
 		expect(session.getAllTools().map((tool) => tool.name)).not.toContain("test_package_tool");
 
-		resourceLoader.setHarnessPackageSelectors(["TestDomain"]);
+		resourceLoader.HcpClientsetharnesspackageselectors(["TestDomain"]);
 		await session.reload();
 
 		expect(session.getAllTools().map((tool) => tool.name)).toContain("test_package_tool");
 		expect(session.getActiveToolNames()).toContain("test_package_tool");
 
-		resourceLoader.setHarnessPackageSelectors([]);
+		resourceLoader.HcpClientsetharnesspackageselectors([]);
 		await session.reload();
 
 		expect(session.getAllTools().map((tool) => tool.name)).not.toContain("test_package_tool");

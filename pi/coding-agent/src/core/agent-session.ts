@@ -94,10 +94,10 @@ import {
 	wrapRegisteredTools,
 } from "./extensions/index.ts";
 import { emitSessionShutdownEvent } from "./extensions/runner.ts";
+import { HcpClientpackageloadcontroller } from "./HcpClientpackageloadcontroller.ts";
 import { HcpClientassembletools } from "./HcpClienttools.ts";
 import type { BashExecutionMessage, CustomMessage } from "./messages.ts";
 import type { ModelRegistry } from "./model-registry.ts";
-import { PackageLoadController } from "./package-load-events.ts";
 import { expandPromptTemplate, type PromptTemplate } from "./prompt-templates.ts";
 import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.ts";
 import type { BranchSummaryEntry, CompactionEntry, SessionManager } from "./session-manager.ts";
@@ -394,7 +394,7 @@ export class AgentSession {
 	private _extensionErrorUnsubscriber?: () => void;
 	private _backgroundEvents: BackgroundEventManager;
 	private _backgroundShell: BackgroundShellController;
-	private _packageLoad: PackageLoadController;
+	private _HcpClientpackageloadcontroller: HcpClientpackageloadcontroller;
 	private _subAgents: SubAgentController;
 	/** Magenta feature: peer messaging between agent sessions. */
 	private _peerMessages: SendMessageController;
@@ -436,7 +436,7 @@ export class AgentSession {
 		this._baseToolsOverride = config.baseToolsOverride;
 		this._sessionStartEvent = config.sessionStartEvent ?? { type: "session_start", reason: "startup" };
 		this._backgroundEvents = new BackgroundEventManager();
-		this._packageLoad = new PackageLoadController(this._backgroundEvents);
+		this._HcpClientpackageloadcontroller = new HcpClientpackageloadcontroller(this._backgroundEvents);
 		this._toolProgressTracker = new ToolProgressTracker();
 		this._backgroundShell = new BackgroundShellController(this._backgroundEvents, {
 			sendMessage: (message, options) => this.sendCustomMessage(message, options),
@@ -3056,7 +3056,11 @@ export class AgentSession {
 		return resolved;
 	}
 
-	async reload(options?: { beforeSessionStart?: () => void | Promise<void> }): Promise<void> {
+	async reload(options?: {
+		beforeSessionStart?: () => void | Promise<void>;
+		HcpClienttrackpackageload?: boolean;
+		HcpClientpreservepackageloadevent?: boolean;
+	}): Promise<void> {
 		const previousFlagValues = this._extensionRunner.getFlagValues();
 		const previousToolNames = new Set(this.getAllTools().map((tool) => tool.name));
 		const previousActiveToolNames = this.getActiveToolNames();
@@ -3066,19 +3070,34 @@ export class AgentSession {
 		resetApiProviders();
 		// Refresh model registry to reload models.json and provider configurations
 		this._modelRegistry.refresh();
-		await this._resourceLoader.reload({
-			onPackageAssemblyProgress: this._packageLoad.onProgress,
-			HcpClientprepare: async (hcp) => {
-				await HcpClientassembletools({
-					hcp,
-					cwd: this._cwd,
-					settingsManager: this.settingsManager,
-					sessionManager: this.sessionManager,
-					sshOperations: this._sshOperations,
-				});
-			},
-		});
-		this._packageLoad.finish();
+		const HcpClientpreservepackageloadevent = options?.HcpClientpreservepackageloadevent === true;
+		if (options?.HcpClienttrackpackageload && !HcpClientpreservepackageloadevent) {
+			this._HcpClientpackageloadcontroller.begin(0);
+		}
+		try {
+			await this._resourceLoader.reload({
+				onPackageAssemblyProgress: HcpClientpreservepackageloadevent
+					? undefined
+					: this._HcpClientpackageloadcontroller.onProgress,
+				HcpClientprepare: async (hcp) => {
+					await HcpClientassembletools({
+						hcp,
+						cwd: this._cwd,
+						settingsManager: this.settingsManager,
+						sessionManager: this.sessionManager,
+						sshOperations: this._sshOperations,
+					});
+				},
+			});
+			if (!HcpClientpreservepackageloadevent) {
+				this._HcpClientpackageloadcontroller.finish();
+			}
+		} catch (error) {
+			if (!HcpClientpreservepackageloadevent) {
+				this._HcpClientpackageloadcontroller.fail(error);
+			}
+			throw error;
+		}
 		const loadedToolNames = [
 			...(this._autoActivateDefaultTools ? (this._resourceLoader.getDefaultToolNames?.() ?? []) : []),
 			...(this._autoActivateLoadedTools

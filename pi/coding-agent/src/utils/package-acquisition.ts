@@ -21,10 +21,13 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "nod
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import lockfile from "proper-lockfile";
-import { valid as validSemver } from "semver";
+import { compare as compareSemver, valid as validSemver } from "semver";
 import { parse as parseToml } from "smol-toml";
 
 const HcpClientpackagedownloadtimeoutms = 300_000; // 5 minutes for package download
+const HcpClientpackagecatalogtimeoutms = 5_000;
+const HcpClientofficialpackageowner = "Minions-Land";
+const HcpClientofficialpackagerepo = "Magenta-CLI";
 const HcpClientpackagecacheprovenancefile = ".magenta-package-provenance.json";
 const HcpClientpackagecacheprovenanceschemaversion = 2;
 const HcpClientgithubownerpattern = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
@@ -34,6 +37,11 @@ const HcpClientwindowsreservednamepattern = /^(?:aux|con|nul|prn|com[1-9]|lpt[1-
 const HcpClientstrictsemverpattern =
 	/^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
 const HcpClientinflightpackageacquisitions = new Map<string, Promise<HcpClientpackageacquisitionresult>>();
+
+function HcpClientistruthyenvflag(value: string | undefined): boolean {
+	if (!value) return false;
+	return value === "1" || value.toLowerCase() === "true" || value.toLowerCase() === "yes";
+}
 
 export type HcpClientpackageacquisitionresult = {
 	/** Absolute path to the extracted package root (contains package.toml). */
@@ -60,6 +68,41 @@ export type HcpClientgithubpackageselector = {
 
 export type HcpClientpackageplatformid = "linux-x64" | "macos-arm64" | "macos-x64" | "windows-x64";
 
+export type HcpClientpackagecatalogentry = {
+	package: string;
+	version: string;
+	selector: string;
+	owner: string;
+	repo: string;
+	releaseName?: string;
+	publishedAt?: string;
+};
+
+export type HcpClientpackagecatalogresult = {
+	packages: HcpClientpackagecatalogentry[];
+	diagnostics: HcpClientpackageacquisitiondiagnostic[];
+};
+
+type HcpClientgithubrelease = {
+	tag_name?: unknown;
+	name?: unknown;
+	published_at?: unknown;
+	draft?: unknown;
+	prerelease?: unknown;
+	assets?: unknown;
+};
+
+type HcpClientgithubreleaseasset = {
+	name?: unknown;
+};
+
+type HcpClientpackagecatalogoptions = {
+	owner?: string;
+	repo?: string;
+	platform?: HcpClientpackageplatformid;
+	fetch?: typeof globalThis.fetch;
+};
+
 /** Platform suffix shared by MagentaPackages release assets and the local cache. */
 export function HcpClientgetpackageplatformid(): HcpClientpackageplatformid {
 	const hostPlatform = platform();
@@ -69,6 +112,144 @@ export function HcpClientgetpackageplatformid(): HcpClientpackageplatformid {
 	if (hostPlatform === "linux" && hostArch === "x64") return "linux-x64";
 	if (hostPlatform === "win32" && hostArch === "x64") return "windows-x64";
 	throw new Error(`Unsupported package platform: ${hostPlatform}-${hostArch}`);
+}
+
+/**
+ * Discover loadable releases from the official Harness Package repository.
+ * Only stable, non-draft releases that contain both the current platform
+ * archive and its adjacent SHA-256 file are returned. The newest semantic
+ * version wins when a package has multiple releases.
+ */
+export async function HcpClientdiscoverofficialpackages(
+	options: HcpClientpackagecatalogoptions = {},
+): Promise<HcpClientpackagecatalogresult> {
+	if (HcpClientistruthyenvflag(process.env.PI_OFFLINE)) {
+		return {
+			packages: [],
+			diagnostics: [
+				{
+					type: "info",
+					code: "package_catalog_offline",
+					message: "Official Package discovery is disabled in offline mode",
+				},
+			],
+		};
+	}
+
+	const owner = options.owner ?? HcpClientofficialpackageowner;
+	const repo = options.repo ?? HcpClientofficialpackagerepo;
+	let packagePlatform: HcpClientpackageplatformid;
+	try {
+		packagePlatform = options.platform ?? HcpClientgetpackageplatformid();
+	} catch (error) {
+		return {
+			packages: [],
+			diagnostics: [
+				{
+					type: "warning",
+					code: "package_catalog_platform_unsupported",
+					message: `Official Package discovery failed: ${error instanceof Error ? error.message : String(error)}`,
+				},
+			],
+		};
+	}
+	const fetchPackageCatalog = options.fetch ?? globalThis.fetch;
+	const controller = new AbortController();
+	const timeout = setTimeout(() => controller.abort(), HcpClientpackagecatalogtimeoutms);
+	try {
+		const headers: Record<string, string> = {
+			Accept: "application/vnd.github+json",
+			"User-Agent": "Magenta-Package-Catalog",
+			"X-GitHub-Api-Version": "2022-11-28",
+		};
+		const token = process.env.MAGENTA_GITHUB_TOKEN;
+		if (token) headers.Authorization = `Bearer ${token}`;
+		const response = await fetchPackageCatalog(
+			`https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/releases?per_page=100`,
+			{ headers, signal: controller.signal },
+		);
+		if (!response.ok) {
+			return {
+				packages: [],
+				diagnostics: [
+					{
+						type: "warning",
+						code: "package_catalog_http_error",
+						message: `Official Package discovery failed: GitHub returned ${response.status} ${response.statusText}`,
+					},
+				],
+			};
+		}
+
+		const payload: unknown = await response.json();
+		if (!Array.isArray(payload)) {
+			throw new Error("GitHub releases response is not an array");
+		}
+
+		const diagnostics: HcpClientpackageacquisitiondiagnostic[] = [];
+		const newestByPackage = new Map<string, HcpClientpackagecatalogentry>();
+		for (const candidate of payload as HcpClientgithubrelease[]) {
+			if (!candidate || typeof candidate !== "object" || candidate.draft === true || candidate.prerelease === true) {
+				continue;
+			}
+			if (typeof candidate.tag_name !== "string") continue;
+			const tagMatch = /^([A-Za-z0-9][A-Za-z0-9._-]{0,99})-v(.+)$/.exec(candidate.tag_name);
+			if (!tagMatch) continue;
+			const [, packageId, version] = tagMatch;
+			if (!packageId || !version) continue;
+			const selector = `github:${owner}/${repo}/${packageId}@${version}`;
+			if (!HcpClientparsegithubpackageselector(selector)) continue;
+
+			const assets = Array.isArray(candidate.assets)
+				? (candidate.assets as HcpClientgithubreleaseasset[])
+						.map((asset) => asset?.name)
+						.filter((name): name is string => typeof name === "string")
+				: [];
+			const artifact = `${packageId}-v${version}-${packagePlatform}.tar.gz`;
+			if (!assets.includes(artifact) || !assets.includes(`${artifact}.sha256`)) {
+				diagnostics.push({
+					type: "warning",
+					code: "package_catalog_assets_missing",
+					message: `Ignoring ${candidate.tag_name}: release is missing ${artifact} or its SHA-256 file`,
+				});
+				continue;
+			}
+
+			const entry: HcpClientpackagecatalogentry = {
+				package: packageId,
+				version,
+				selector,
+				owner,
+				repo,
+				...(typeof candidate.name === "string" && candidate.name ? { releaseName: candidate.name } : {}),
+				...(typeof candidate.published_at === "string" && candidate.published_at
+					? { publishedAt: candidate.published_at }
+					: {}),
+			};
+			const current = newestByPackage.get(packageId);
+			if (!current || compareSemver(entry.version, current.version) > 0) {
+				newestByPackage.set(packageId, entry);
+			}
+		}
+
+		return {
+			packages: [...newestByPackage.values()].sort((left, right) => left.package.localeCompare(right.package)),
+			diagnostics,
+		};
+	} catch (error) {
+		return {
+			packages: [],
+			diagnostics: [
+				{
+					type: "warning",
+					code: "package_catalog_failed",
+					message: `Official Package discovery failed: ${error instanceof Error ? error.message : String(error)}`,
+				},
+			],
+		};
+	} finally {
+		clearTimeout(timeout);
+	}
 }
 
 type HcpClientpackagecacheprovenance = {
