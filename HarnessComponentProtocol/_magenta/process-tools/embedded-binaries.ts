@@ -18,8 +18,7 @@ const PLATFORM = process.platform;
 const ARCH = process.arch;
 
 function getHarnessRoot(): string {
-	const isBunBinary =
-		typeof (globalThis as any).Bun !== "undefined" && HcpClientisbunbinaryurl(import.meta.url);
+	const isBunBinary = typeof (globalThis as any).Bun !== "undefined" && HcpClientisbunbinaryurl(import.meta.url);
 	return isBunBinary ? dirname(process.execPath) : fileURLToPath(new URL("../..", import.meta.url));
 }
 
