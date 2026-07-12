@@ -47,6 +47,7 @@ import {
 } from "@earendil-works/pi-tui";
 import type { HarnessPackage, PackageDiagnostic, PackageOverlay } from "@magenta/harness";
 import { discoverHarnessPackages, parsePackageSelector } from "@magenta/harness";
+import { parseGitHubPackageSelector } from "../../utils/package-acquisition.ts";
 import chalk from "chalk";
 import { spawn, spawnSync } from "child_process";
 import {
@@ -271,6 +272,8 @@ function decodeMenuValuePart(value: string | undefined): string {
 }
 
 function packageIdFromSelector(selector: string): string {
+	const github = parseGitHubPackageSelector(selector);
+	if (github) return github.package;
 	return parsePackageSelector(selector).packageId;
 }
 
@@ -4582,10 +4585,14 @@ export class InteractiveMode {
 		// Fallback for loaders without the accessor: reconstruct one selector per
 		// profile (id, id:profile, id:*) so the forms match what the menu emits and
 		// compares against, rather than a single comma-joined "id:a,b" string.
-		return (loader.getPackageOverlay()?.selections ?? []).flatMap((selection) => {
-			if (!selection.profiles?.length) return [selection.packageId];
-			return selection.profiles.map((profile) => `${selection.packageId}:${profile}`);
-		});
+		// Fallback for loaders without the accessor: a v2 overlay exposes its
+		// primary package id and merged profiles rather than the original
+		// selection list, so reconstruct one selector per profile (id, id:profile).
+		const overlay = loader.getPackageOverlay();
+		if (!overlay?.packageId) return [];
+		const profiles = overlay.profiles ?? [];
+		if (profiles.length === 0) return [overlay.packageId];
+		return profiles.map((profile) => `${overlay.packageId}:${profile.name}`);
 	}
 
 	private getHarnessActiveHookEvents(): string[] {
@@ -4760,7 +4767,12 @@ export class InteractiveMode {
 
 	private formatHarnessPackageSelection(selectors: string[], overlay: PackageOverlay | undefined): string {
 		if (selectors.length === 0) return "- none";
-		const packageDirs = new Map((overlay?.packages ?? []).map((pkg) => [pkg.id, pkg.dir]));
+		// A v2 overlay resolves to a single primary package root; map its id to dir
+		// for display. Selectors for other packages show "not loaded".
+		const packageDirs = new Map<string, string>();
+		if (overlay?.packageId && overlay.packageRoot) {
+			packageDirs.set(overlay.packageId, overlay.packageRoot);
+		}
 		return selectors
 			.map((selector) => {
 				const packageId = packageIdFromSelector(selector);
