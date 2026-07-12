@@ -46,7 +46,9 @@ $installLeaf = Split-Path -Leaf $InstallDir
 if ([string]::IsNullOrWhiteSpace($installParent) -or [string]::IsNullOrWhiteSpace($installLeaf)) {
     throw "Unable to resolve InstallDir: $InstallDir"
 }
-New-Item -ItemType Directory -Force -Path $installParent | Out-Null
+if (-not (Test-Path -LiteralPath $installParent -PathType Container)) {
+    New-Item -ItemType Directory -Force -Path $installParent | Out-Null
+}
 
 $releaseBase = if ($AssetBaseUrl) {
     $AssetBaseUrl.TrimEnd("/")
