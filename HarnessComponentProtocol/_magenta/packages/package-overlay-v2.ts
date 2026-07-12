@@ -28,6 +28,13 @@ import { loadPackageMagnets, type LoadedPackageMagnet, type PackageComponentDecl
 export type PackageProfileSelection = {
 	packageId: string;
 	profiles?: string[];
+	/**
+	 * Explicit on-disk root for this package. When present, the loader uses it
+	 * directly instead of resolving `<packagesRoot>/<packageId>`. This lets an
+	 * acquisition layer place a downloaded package in a per-version cache dir
+	 * and hand its path straight to the overlay loader.
+	 */
+	packageRoot?: string;
 };
 
 /** Default packages root: <repoRoot>/packages. */
@@ -185,8 +192,11 @@ export async function loadPackageOverlay(options: LoadPackageOverlayOptions): Pr
 	let primaryRoot = packagesRoot;
 
 	for (const selection of options.selections) {
-		const { packageId, profiles } = typeof selection === "string" ? parsePackageSelector(selection) : selection;
-		const packageRoot = join(packagesRoot, packageId);
+		const parsed = typeof selection === "string" ? parsePackageSelector(selection) : selection;
+		const { packageId, profiles } = parsed;
+		// An explicit packageRoot (e.g. from the acquisition cache) wins over the
+		// <packagesRoot>/<packageId> convention.
+		const packageRoot = parsed.packageRoot ?? join(packagesRoot, packageId);
 		const overlay = await loadSinglePackage(packageRoot, profiles);
 		diagnostics.push(...overlay.diagnostics);
 		if (!primaryId) {
