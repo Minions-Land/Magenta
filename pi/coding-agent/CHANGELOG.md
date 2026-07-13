@@ -4,6 +4,18 @@ All notable changes to Magenta CLI are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.0.15] - 2026-07-13
+
+### Added
+- Ultra input border now animates a flowing rainbow that shifts one palette step per frame while preserving ANSI escapes, grapheme clusters, and column width, and stops when Ultra is inactive, in Bash mode, suspended, or the terminal is externally owned
+- Clipboard image pastes render `[paste #N Image]` markers whose identity is snapshotted across editor swaps and carried through prompt, steer, follow-up, and post-compaction replay queues
+
+### Fixed
+- Windows `install.ps1` now implements the documented `-NoPath` and `-Uninstall` switches, including user-PATH entry removal
+- Editor undo can no longer resurrect cleared paste markers, and images whose markers were removed from the submitted text are dropped instead of leaking into a later turn
+- `clearImageTokens()` cancels pending clipboard scan timers so their callbacks cannot fire against a cleared controller
+- Widened premature-stream-close retry classification to cover both Anthropic and OpenAI stream endings
+
 ## [0.0.14] - 2026-07-13
 
 ### Added
