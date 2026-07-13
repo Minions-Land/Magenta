@@ -192,13 +192,21 @@ if (-not (Test-Path -LiteralPath $installParent -PathType Container)) {
     New-Item -ItemType Directory -Force -Path $installParent | Out-Null
 }
 
+# Support MAGENTA_GITHUB_MIRROR for restricted networks
+$mirror = $env:MAGENTA_GITHUB_MIRROR
+if ($mirror) {
+    $mirror = $mirror.TrimEnd("/")
+}
+
 $releaseBase = if ($AssetBaseUrl) {
     $AssetBaseUrl.TrimEnd("/")
 } elseif ($Version -eq "latest") {
-    "https://github.com/$Repository/releases/latest/download"
+    $base = "https://github.com/$Repository/releases/latest/download"
+    if ($mirror) { "$mirror/$base" } else { $base }
 } else {
     $tag = if ($Version.StartsWith("v")) { $Version } else { "v$Version" }
-    "https://github.com/$Repository/releases/download/$tag"
+    $base = "https://github.com/$Repository/releases/download/$tag"
+    if ($mirror) { "$mirror/$base" } else { $base }
 }
 
 $operationId = [Guid]::NewGuid().ToString("N")

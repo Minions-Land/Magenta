@@ -18,6 +18,7 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import lockfile from "proper-lockfile";
 import { isBunBinary, VERSION } from "../config.ts";
+import { resolveGitHubUrl } from "./github-mirror.ts";
 import {
 	applyResourceUpdateTransaction,
 	applyUnixUpdateTransaction,
@@ -166,7 +167,7 @@ async function fetchWithTimeout(
 
 async function getLatestRelease(): Promise<GitHubRelease | null> {
 	try {
-		const url = `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`;
+		const url = resolveGitHubUrl(`https://api.github.com/repos/${GITHUB_REPO}/releases/latest`);
 		const response = await fetchWithTimeout(url, {
 			headers: buildGitHubHeaders("application/vnd.github+json"),
 		});
@@ -210,7 +211,7 @@ async function downloadReleaseAsset(
 	const timeout = setTimeout(() => controller.abort(), DOWNLOAD_TIMEOUT_MS);
 
 	try {
-		const response = await fetch(asset.downloadUrl, {
+		const response = await fetch(resolveGitHubUrl(asset.downloadUrl), {
 			headers: buildGitHubHeaders("application/octet-stream"),
 			signal: controller.signal,
 		});
