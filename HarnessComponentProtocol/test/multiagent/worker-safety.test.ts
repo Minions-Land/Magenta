@@ -8,19 +8,11 @@ import { currentDepth, sanitizeWorkerTools, spawnWorker } from "../../multiagent
  */
 describe("worker capability denial", () => {
 	it("strips nested agent and background controllers from any requested whitelist", () => {
-		expect(sanitizeWorkerTools(["read", "sub_agent", "bg_shell", "teammate_agent", "ls"])).toEqual([
-			"read",
-			"ls",
-		]);
+		expect(sanitizeWorkerTools(["read", "sub_agent", "bg_shell", "teammate_agent", "ls"])).toEqual(["read", "ls"]);
 	});
 
 	it("falls back to read-only when only forbidden tools are requested", () => {
-		expect(sanitizeWorkerTools(["sub_agent", "bg_shell", "teammate_agent"])).toEqual([
-			"read",
-			"grep",
-			"find",
-			"ls",
-		]);
+		expect(sanitizeWorkerTools(["sub_agent", "bg_shell", "teammate_agent"])).toEqual(["read", "grep", "find", "ls"]);
 	});
 
 	it("falls back to read-only when no tools are requested", () => {

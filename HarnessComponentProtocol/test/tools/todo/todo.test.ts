@@ -1,7 +1,7 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { describe, expect, it } from "vitest";
-import { HCP_MAGNETS } from "../../../.HCP/assembly/sources.generated.ts";
 import { HcpClientassemble } from "../../../.HCP/assembly/session-hcp.ts";
+import { HCP_MAGNETS } from "../../../.HCP/assembly/sources.generated.ts";
 import { HcpClient } from "../../../HcpClient.ts";
 import { HcpServer as TodoHcpServer } from "../../../tools/todo/HcpServer.ts";
 import {
