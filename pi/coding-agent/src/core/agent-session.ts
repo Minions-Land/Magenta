@@ -1765,7 +1765,6 @@ export class AgentSession {
 						details: { count: deferredGroup.length, ids: normalIds, wake: true },
 						timestamp: Date.now(),
 					} satisfies CustomMessage);
-
 				} catch {
 					try {
 						this._peerMessages.requeue(normalIds);

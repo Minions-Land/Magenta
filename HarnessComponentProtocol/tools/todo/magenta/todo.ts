@@ -152,7 +152,8 @@ export function isTodoPlanState(value: unknown): value is TodoPlanState {
 	if (value.version !== TODO_PLAN_VERSION) return false;
 	if (typeof value.title !== "string" || value.title.trim().length === 0) return false;
 	if (value.summary !== null && typeof value.summary !== "string") return false;
-	if (value.currentId !== null && (!Number.isInteger(value.currentId) || (value.currentId as number) <= 0)) return false;
+	if (value.currentId !== null && (!Number.isInteger(value.currentId) || (value.currentId as number) <= 0))
+		return false;
 	if (!Number.isInteger(value.nextId) || (value.nextId as number) < 1) return false;
 	if (!Number.isInteger(value.revision) || (value.revision as number) < 0) return false;
 	if (!Array.isArray(value.nodes)) return false;
@@ -162,7 +163,10 @@ export function isTodoPlanState(value: unknown): value is TodoPlanState {
 	for (const candidate of nodes) {
 		if (!isRecord(candidate)) return false;
 		if (!Number.isInteger(candidate.id) || (candidate.id as number) <= 0) return false;
-		if (candidate.parentId !== null && (!Number.isInteger(candidate.parentId) || (candidate.parentId as number) <= 0)) {
+		if (
+			candidate.parentId !== null &&
+			(!Number.isInteger(candidate.parentId) || (candidate.parentId as number) <= 0)
+		) {
 			return false;
 		}
 		if (!Number.isInteger(candidate.order) || (candidate.order as number) < 0) return false;
@@ -253,7 +257,8 @@ function resolveExistingId(
 	label: string,
 ): number | TodoError {
 	const ref = normalizeRef(refValue);
-	if (id !== undefined && ref !== undefined) return operationError("AMBIGUOUS_TARGET", `${label} cannot use both id and ref`);
+	if (id !== undefined && ref !== undefined)
+		return operationError("AMBIGUOUS_TARGET", `${label} cannot use both id and ref`);
 	let resolved = id;
 	if (ref !== undefined) {
 		resolved = refs.get(ref);
@@ -281,7 +286,8 @@ function resolveOptionalParent(
 		resolved = refs.get(parentRef) ?? Number.NaN;
 		if (!Number.isInteger(resolved)) return operationError("UNKNOWN_REF", `Unknown parent ref: ${parentRef}`);
 	}
-	if (resolved !== null && !nodeById(state, resolved)) return operationError("NOT_FOUND", `Parent #${resolved} not found`);
+	if (resolved !== null && !nodeById(state, resolved))
+		return operationError("NOT_FOUND", `Parent #${resolved} not found`);
 	return resolved;
 }
 
@@ -315,20 +321,27 @@ function resolveDestination(
 	if (isTodoError(relativeId)) return relativeId;
 
 	if (placement === "before" || placement === "after") {
-		if (relativeId === null) return operationError("MISSING_RELATIVE", `${placement} requires relativeToId or relativeToRef`);
-		if (relativeId === movingId) return operationError("INVALID_RELATIVE", "A Todo cannot be positioned relative to itself");
+		if (relativeId === null)
+			return operationError("MISSING_RELATIVE", `${placement} requires relativeToId or relativeToRef`);
+		if (relativeId === movingId)
+			return operationError("INVALID_RELATIVE", "A Todo cannot be positioned relative to itself");
 		const relative = nodeById(state, relativeId)!;
 		const suppliedParent = operation.parentId !== undefined || normalizeRef(operation.parentRef) !== undefined;
 		if (suppliedParent && requestedParent !== relative.parentId) {
-			return operationError("PARENT_MISMATCH", "Explicit destination parent does not match the relative Todo parent");
+			return operationError(
+				"PARENT_MISMATCH",
+				"Explicit destination parent does not match the relative Todo parent",
+			);
 		}
 		const siblings = sortedSiblings(state, relative.parentId, movingId);
 		const relativeIndex = siblings.findIndex((node) => node.id === relative.id);
-		if (relativeIndex < 0) return operationError("INVALID_RELATIVE", "Relative Todo is not in the destination sibling set");
+		if (relativeIndex < 0)
+			return operationError("INVALID_RELATIVE", "Relative Todo is not in the destination sibling set");
 		return { parentId: relative.parentId, index: relativeIndex + (placement === "after" ? 1 : 0) };
 	}
 
-	if (relativeId !== null) return operationError("UNEXPECTED_RELATIVE", `${placement} does not accept a relative Todo`);
+	if (relativeId !== null)
+		return operationError("UNEXPECTED_RELATIVE", `${placement} does not accept a relative Todo`);
 	const siblings = sortedSiblings(state, requestedParent, movingId);
 	return { parentId: requestedParent, index: placement === "first" ? 0 : siblings.length };
 }
@@ -428,7 +441,10 @@ export function applyTodoOperations(state: TodoPlanState, operations: TodoOperat
 					error = destination;
 					break;
 				}
-				if (destination.parentId === id || descendantsOf(draft, id).some((descendant) => descendant.id === destination.parentId)) {
+				if (
+					destination.parentId === id ||
+					descendantsOf(draft, id).some((descendant) => descendant.id === destination.parentId)
+				) {
 					error = operationError("CYCLE", "A Todo cannot move under itself or one of its descendants");
 					break;
 				}
@@ -491,7 +507,10 @@ export function applyTodoOperations(state: TodoPlanState, operations: TodoOperat
 				const node = nodeById(draft, id)!;
 				const descendants = descendantsOf(draft, id);
 				if (descendants.length > 0 && !operation.cascade) {
-					error = operationError("HAS_CHILDREN", `Todo #${id} has descendants; use cascade: true to remove the subtree`);
+					error = operationError(
+						"HAS_CHILDREN",
+						`Todo #${id} has descendants; use cascade: true to remove the subtree`,
+					);
 					break;
 				}
 				const removedIds = new Set([id, ...descendants.map((descendant) => descendant.id)]);
@@ -548,9 +567,7 @@ export function flattenTodoPlan(state: TodoPlanState): FlattenedTodoNode[] {
 
 	const rows: FlattenedTodoNode[] = [];
 	const roots = children.get(null) ?? [];
-	const stack = roots
-		.map((node, index) => ({ node, depth: 0, outline: String(index + 1) }))
-		.reverse();
+	const stack = roots.map((node, index) => ({ node, depth: 0, outline: String(index + 1) })).reverse();
 	while (stack.length > 0) {
 		const row = stack.pop()!;
 		rows.push(row);
@@ -612,7 +629,13 @@ export function createTodoTool(_cwd: string, options: TodoToolOptions = {}): Age
 			if (params.action === "get") {
 				return {
 					content: [{ type: "text", text: formatPlan(state) }],
-					details: { action: "get", state: cloneTodoPlanState(state), applied: 0, changes: emptyChanges(), refs: {} },
+					details: {
+						action: "get",
+						state: cloneTodoPlanState(state),
+						applied: 0,
+						changes: emptyChanges(),
+						refs: {},
+					},
 				};
 			}
 
