@@ -18,6 +18,7 @@ import { readRenderer } from "./read.ts";
 import { registerRenderer } from "./renderer-registry.ts";
 import { showRenderer } from "./show.ts";
 import { subAgentRenderer } from "./sub-agent-renderer.ts";
+import { todoPlanRenderer } from "./todo-renderer.ts";
 import { searchResultsRenderer, webContentRenderer } from "./web-renderers.ts";
 import { writeRenderer } from "./write.ts";
 
@@ -39,6 +40,7 @@ export function registerBuiltinRenderers(): void {
 	registerRenderer("directory-list", lsRenderer);
 	registerRenderer("file-preview", showRenderer);
 	registerRenderer("sub-agent-result", subAgentRenderer);
+	registerRenderer("todo-plan", todoPlanRenderer);
 	// HCP web tools (web-search, web-fetch) declare these render kinds
 	// via their manifest render_kind; the renderers parse the Rust tools' text.
 	registerRenderer("search-results", searchResultsRenderer);

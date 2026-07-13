@@ -25,7 +25,6 @@ import type {
 } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, ImageContent, Message, Model, TextContent } from "@earendil-works/pi-ai/compat";
 import {
-	clampThinkingLevel,
 	cleanupSessionResources,
 	getSupportedThinkingLevels,
 	isContextOverflow,
@@ -44,7 +43,7 @@ import {
 	type SshTarget,
 	type SshToolOperations,
 } from "@magenta/harness";
-import { getAgentDir, getPeerMessageDbPath } from "../config.ts";
+import { ENV_TEAMMATE_PARENT_SESSION_ID, getAgentDir, getPeerMessageDbPath } from "../config.ts";
 import { createBuiltInMessageRenderersExtension } from "../modes/interactive/builtin-message-renderers.ts";
 import { getThemeByName, theme } from "../modes/interactive/theme/theme.ts";
 import { resolvePath } from "../utils/paths.ts";
@@ -64,7 +63,15 @@ import {
 	prepareCompaction,
 	shouldCompact,
 } from "./compaction/index.ts";
-import { DEFAULT_NATIVE_ACTIVE_TOOLS, DEFAULT_THINKING_LEVEL } from "./defaults.ts";
+import { DEFAULT_NATIVE_ACTIVE_TOOLS } from "./defaults.ts";
+import {
+	type ExecutionProfile,
+	getAvailableExecutionProfiles,
+	type HarnessCapabilities,
+	type HarnessCapabilitySettings,
+	resolveExecutionProfile,
+	resolveHarnessCapabilities,
+} from "./execution-profile.ts";
 import { exportSessionToHtml, type ToolHtmlRenderer } from "./export-html/index.ts";
 import { createToolHtmlRenderer } from "./export-html/tool-renderer.ts";
 import {
@@ -113,6 +120,7 @@ import { BackgroundShellController } from "./tools/bg-shell.ts";
 import { createAllToolDefinitions } from "./tools/index.ts";
 import { formatPeerMessages, PEER_MESSAGE_CUSTOM_TYPE, SendMessageController } from "./tools/send-message.ts";
 import { SubAgentController, type SubAgentWorkflowProvider } from "./tools/sub-agent.ts";
+import { TeammateAgentController } from "./tools/teammate-agent.ts";
 import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.ts";
 
 // ============================================================================
@@ -156,8 +164,17 @@ export type AgentSessionEvent =
 			followUp: readonly string[];
 	  }
 	| { type: "compaction_start"; reason: "manual" | "threshold" | "overflow" }
+	| {
+			type: "compaction_progress";
+			reason: "manual" | "threshold" | "overflow";
+			phase: "preparing" | "extensions" | "summarizing" | "persisting";
+			processedBytes?: number;
+			totalBytes?: number;
+			completedChunks?: number;
+	  }
 	| { type: "session_info_changed"; name: string | undefined }
 	| { type: "thinking_level_changed"; level: ThinkingLevel }
+	| { type: "execution_profile_changed"; profile: ExecutionProfile; thinkingLevel: ThinkingLevel }
 	| {
 			type: "compaction_end";
 			reason: "manual" | "threshold" | "overflow";
@@ -200,7 +217,11 @@ export interface AgentSessionConfig {
 	 */
 	agentDir?: string;
 	/** Models to cycle through with Ctrl+P (from --models flag) */
-	scopedModels?: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel }>;
+	scopedModels?: Array<{ model: Model<any>; thinkingLevel?: ExecutionProfile }>;
+	/** User-facing execution profile. Provider state remains a native ThinkingLevel. */
+	executionProfile?: ExecutionProfile;
+	/** Per-session Harness capability overrides. */
+	harnessCapabilities?: HarnessCapabilitySettings;
 	/** Resource loader for skills, prompts, themes, context files, system prompt */
 	resourceLoader: ResourceLoader;
 	/** SDK custom tools registered outside extensions */
@@ -259,6 +280,7 @@ export interface PromptOptions {
 export interface ModelCycleResult {
 	model: Model<any>;
 	thinkingLevel: ThinkingLevel;
+	executionProfile: ExecutionProfile;
 	/** Whether cycling through scoped models (--models flag) or all available */
 	isScoped: boolean;
 }
@@ -313,7 +335,9 @@ export class AgentSession {
 	readonly sessionManager: SessionManager;
 	readonly settingsManager: SettingsManager;
 
-	private _scopedModels: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel }>;
+	private _scopedModels: Array<{ model: Model<any>; thinkingLevel?: ExecutionProfile }>;
+	private _executionProfile: ExecutionProfile;
+	private _harnessCapabilityOverrides?: HarnessCapabilitySettings;
 
 	// Event subscription state
 	private _unsubscribeAgent?: () => void;
@@ -399,6 +423,7 @@ export class AgentSession {
 	private _subAgents: SubAgentController;
 	/** Magenta feature: peer messaging between agent sessions. */
 	private _peerMessages: SendMessageController;
+	private _teammates: TeammateAgentController;
 	private _toolProgressTracker: ToolProgressTracker;
 	private _sideChat: SideChatManager;
 	private _sshTarget?: SshTarget;
@@ -422,6 +447,8 @@ export class AgentSession {
 		this.sessionManager = config.sessionManager;
 		this.settingsManager = config.settingsManager;
 		this._scopedModels = config.scopedModels ?? [];
+		this._executionProfile = config.executionProfile ?? this.agent.state.thinkingLevel;
+		this._harnessCapabilityOverrides = config.harnessCapabilities;
 		this._resourceLoader = config.resourceLoader;
 		this._customTools = config.customTools ?? [];
 		this._cwd = config.cwd;
@@ -445,6 +472,7 @@ export class AgentSession {
 		this._subAgents = new SubAgentController(this._backgroundEvents, {
 			sendMessage: (message, options) => this.sendCustomMessage(message, options),
 			getWorkflowProvider: () => this._resolveMultiAgentProvider(),
+			isWorkflowEnabled: () => this.harnessCapabilities.workflows,
 			getDefaultModel: () =>
 				this.model
 					? {
@@ -459,11 +487,13 @@ export class AgentSession {
 		// the location.
 		const configuredAgentDir = config.agentDir ? resolvePath(config.agentDir) : undefined;
 		const defaultAgentDir = resolvePath(getAgentDir());
+		const peerMessageDbPath =
+			configuredAgentDir && configuredAgentDir !== defaultAgentDir
+				? join(configuredAgentDir, "messages.db")
+				: getPeerMessageDbPath();
 		this._peerMessages = new SendMessageController({
-			dbPath:
-				configuredAgentDir && configuredAgentDir !== defaultAgentDir
-					? join(configuredAgentDir, "messages.db")
-					: getPeerMessageDbPath(),
+			dbPath: peerMessageDbPath,
+			managedParentSessionId: process.env[ENV_TEAMMATE_PARENT_SESSION_ID],
 			getSessionId: () => this.sessionId,
 			// Idle wake: when a peer sends this session an urgent message while it is
 			// idle, its process is signalled and this fires. Trigger a drain by
@@ -472,6 +502,23 @@ export class AgentSession {
 			// that races with an already-running loop is a no-op.
 			wakeForMessages: () => this._wakeForPeerMessages(),
 			isStreaming: () => this.isStreaming,
+		});
+		this._teammates = new TeammateAgentController(this._backgroundEvents, {
+			sendPeerMessage: (params) => this._peerMessages.send(params),
+			getUnreadPeerMessageCount: (sessionId) => this._peerMessages.unreadCountFor(sessionId),
+			getParentSessionId: () => this.sessionId,
+			getParentSessionFile: () => this.sessionFile,
+			getParentSessionDir: () => this.sessionManager.getSessionDir(),
+			getAgentDirPath: () => configuredAgentDir ?? defaultAgentDir,
+			getPeerMessageDbPath: () => peerMessageDbPath,
+			isEnabled: () => this.harnessCapabilities.teammates,
+			getDefaultModel: () =>
+				this.model
+					? {
+							provider: this.model.provider,
+							model: this.model.id,
+						}
+					: undefined,
 		});
 		this._sideChat = new SideChatManager({ toolProgress: this._toolProgressTracker });
 
@@ -1014,6 +1061,7 @@ export class AgentSession {
 			this.abortBash();
 			this._backgroundShell.shutdown();
 			this._subAgents.shutdown();
+			await this._teammates.shutdown();
 			this._peerMessages.shutdown();
 			this._backgroundEvents.dispose();
 			resourceDisposal = Promise.resolve(this._resourceLoader.dispose?.());
@@ -1049,9 +1097,22 @@ export class AgentSession {
 		return this.agent.state.model;
 	}
 
-	/** Current thinking level */
+	/** Current provider-native thinking level. */
 	get thinkingLevel(): ThinkingLevel {
 		return this.agent.state.thinkingLevel;
+	}
+
+	/** Current user-facing execution profile. */
+	get executionProfile(): ExecutionProfile {
+		return this._executionProfile;
+	}
+
+	get harnessCapabilities(): HarnessCapabilities {
+		return resolveHarnessCapabilities(
+			this._executionProfile,
+			this.settingsManager.getHarnessCapabilities(),
+			this._harnessCapabilityOverrides,
+		);
 	}
 
 	/** Whether agent is currently streaming a response */
@@ -1157,7 +1218,7 @@ export class AgentSession {
 	}
 
 	/** Scoped models for cycling (from --models flag) */
-	get scopedModels(): ReadonlyArray<{ model: Model<any>; thinkingLevel?: ThinkingLevel }> {
+	get scopedModels(): ReadonlyArray<{ model: Model<any>; thinkingLevel?: ExecutionProfile }> {
 		return this._scopedModels;
 	}
 
@@ -1166,7 +1227,7 @@ export class AgentSession {
 	}
 
 	/** Update scoped models for cycling */
-	setScopedModels(scopedModels: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel }>): void {
+	setScopedModels(scopedModels: Array<{ model: Model<any>; thinkingLevel?: ExecutionProfile }>): void {
 		this._scopedModels = scopedModels;
 	}
 
@@ -1704,6 +1765,7 @@ export class AgentSession {
 						details: { count: deferredGroup.length, ids: normalIds, wake: true },
 						timestamp: Date.now(),
 					} satisfies CustomMessage);
+
 				} catch {
 					try {
 						this._peerMessages.requeue(normalIds);
@@ -1986,13 +2048,13 @@ export class AgentSession {
 		}
 
 		const previousModel = this.model;
-		const thinkingLevel = this._getThinkingLevelForModelSwitch();
+		const executionProfile = this._getExecutionProfileForModelSwitch();
 		this.agent.state.model = model;
 		this.sessionManager.appendModelChange(model.provider, model.id);
 		this.settingsManager.setDefaultModelAndProvider(model.provider, model.id);
 
-		// Re-clamp thinking level for new model's capabilities
-		this.setThinkingLevel(thinkingLevel);
+		// Re-map the execution profile for the new model's native capabilities.
+		this.setExecutionProfile(executionProfile);
 
 		await this._emitModelSelect(model, previousModel, "set");
 	}
@@ -2021,22 +2083,26 @@ export class AgentSession {
 		const len = scopedModels.length;
 		const nextIndex = direction === "forward" ? (currentIndex + 1) % len : (currentIndex - 1 + len) % len;
 		const next = scopedModels[nextIndex];
-		const thinkingLevel = this._getThinkingLevelForModelSwitch(next.thinkingLevel);
+		const executionProfile = this._getExecutionProfileForModelSwitch(next.thinkingLevel);
 
 		// Apply model
 		this.agent.state.model = next.model;
 		this.sessionManager.appendModelChange(next.model.provider, next.model.id);
 		this.settingsManager.setDefaultModelAndProvider(next.model.provider, next.model.id);
 
-		// Apply thinking level.
-		// - Explicit scoped model thinking level overrides current session level
-		// - Undefined scoped model thinking level inherits the current session preference
-		// setThinkingLevel clamps to model capabilities.
-		this.setThinkingLevel(thinkingLevel);
+		// Apply execution profile.
+		// - Explicit scoped model profile overrides current session profile
+		// - Undefined scoped model profile inherits the current session preference
+		this.setExecutionProfile(executionProfile);
 
 		await this._emitModelSelect(next.model, currentModel, "cycle");
 
-		return { model: next.model, thinkingLevel: this.thinkingLevel, isScoped: true };
+		return {
+			model: next.model,
+			thinkingLevel: this.thinkingLevel,
+			executionProfile: this.executionProfile,
+			isScoped: true,
+		};
 	}
 
 	private async _cycleAvailableModel(direction: "forward" | "backward"): Promise<ModelCycleResult | undefined> {
@@ -2051,17 +2117,22 @@ export class AgentSession {
 		const nextIndex = direction === "forward" ? (currentIndex + 1) % len : (currentIndex - 1 + len) % len;
 		const nextModel = availableModels[nextIndex];
 
-		const thinkingLevel = this._getThinkingLevelForModelSwitch();
+		const executionProfile = this._getExecutionProfileForModelSwitch();
 		this.agent.state.model = nextModel;
 		this.sessionManager.appendModelChange(nextModel.provider, nextModel.id);
 		this.settingsManager.setDefaultModelAndProvider(nextModel.provider, nextModel.id);
 
-		// Re-clamp thinking level for new model's capabilities
-		this.setThinkingLevel(thinkingLevel);
+		// Re-map the execution profile for the new model's native capabilities.
+		this.setExecutionProfile(executionProfile);
 
 		await this._emitModelSelect(nextModel, currentModel, "cycle");
 
-		return { model: nextModel, thinkingLevel: this.thinkingLevel, isScoped: false };
+		return {
+			model: nextModel,
+			thinkingLevel: this.thinkingLevel,
+			executionProfile: this.executionProfile,
+			isScoped: false,
+		};
 	}
 
 	// =========================================================================
@@ -2069,25 +2140,32 @@ export class AgentSession {
 	// =========================================================================
 
 	/**
-	 * Set thinking level.
-	 * Clamps to model capabilities based on available thinking levels.
-	 * Saves to session and settings only if the level actually changes.
+	 * Set a provider-native thinking level. This compatibility API selects the
+	 * corresponding standard execution profile.
 	 */
 	setThinkingLevel(level: ThinkingLevel): void {
-		const availableLevels = this.getAvailableThinkingLevels();
-		const effectiveLevel = availableLevels.includes(level) ? level : this._clampThinkingLevel(level, availableLevels);
+		this.setExecutionProfile(level);
+	}
 
-		// Only persist if actually changing
+	setExecutionProfile(profile: ExecutionProfile): void {
+		const previousProfile = this._executionProfile;
 		const previousLevel = this.agent.state.thinkingLevel;
-		const isChanging = effectiveLevel !== previousLevel;
+		const previousCapabilities = this.harnessCapabilities;
+		const effectiveLevel = resolveExecutionProfile(this.model, profile);
+		const effectiveProfile = profile === "ultra" ? "ultra" : effectiveLevel;
+		const profileChanging = effectiveProfile !== previousProfile;
+		const levelChanging = effectiveLevel !== previousLevel;
 
+		this._executionProfile = effectiveProfile;
 		this.agent.state.thinkingLevel = effectiveLevel;
 
-		if (isChanging) {
-			this.sessionManager.appendThinkingLevelChange(effectiveLevel);
-			if (this.supportsThinking() || effectiveLevel !== "off") {
-				this.settingsManager.setDefaultThinkingLevel(effectiveLevel);
-			}
+		if (!profileChanging && !levelChanging) return;
+
+		this.sessionManager.appendThinkingLevelChange(effectiveProfile);
+		if (this.supportsThinking() || effectiveProfile === "ultra" || effectiveLevel !== "off") {
+			this.settingsManager.setDefaultThinkingLevel(effectiveProfile);
+		}
+		if (levelChanging) {
 			this._emit({ type: "thinking_level_changed", level: effectiveLevel });
 			void this._extensionRunner.emit({
 				type: "thinking_level_select",
@@ -2095,22 +2173,32 @@ export class AgentSession {
 				previousLevel,
 			});
 		}
+		this._emit({
+			type: "execution_profile_changed",
+			profile: effectiveProfile,
+			thinkingLevel: effectiveLevel,
+		});
+
+		const capabilities = this.harnessCapabilities;
+		if (
+			profileChanging ||
+			capabilities.workflows !== previousCapabilities.workflows ||
+			capabilities.teammates !== previousCapabilities.teammates
+		) {
+			this._refreshNativeCapabilityTools(previousCapabilities);
+		}
 	}
 
-	/**
-	 * Cycle to next thinking level.
-	 * @returns New level, or undefined if model doesn't support thinking
-	 */
-	cycleThinkingLevel(): ThinkingLevel | undefined {
-		if (!this.supportsThinking()) return undefined;
+	/** Cycle through native levels followed by Ultra. */
+	cycleThinkingLevel(): ExecutionProfile | undefined {
+		const profiles = this.getAvailableExecutionProfiles();
+		if (profiles.length <= 1) return undefined;
+		const currentIndex = profiles.indexOf(this.executionProfile);
+		const nextIndex = (currentIndex + 1) % profiles.length;
+		const nextProfile = profiles[nextIndex];
 
-		const levels = this.getAvailableThinkingLevels();
-		const currentIndex = levels.indexOf(this.thinkingLevel);
-		const nextIndex = (currentIndex + 1) % levels.length;
-		const nextLevel = levels[nextIndex];
-
-		this.setThinkingLevel(nextLevel);
-		return nextLevel;
+		this.setExecutionProfile(nextProfile);
+		return nextProfile;
 	}
 
 	/**
@@ -2122,6 +2210,10 @@ export class AgentSession {
 		return getSupportedThinkingLevels(this.model) as ThinkingLevel[];
 	}
 
+	getAvailableExecutionProfiles(): ExecutionProfile[] {
+		return getAvailableExecutionProfiles(this.model);
+	}
+
 	/**
 	 * Check if current model supports thinking/reasoning.
 	 */
@@ -2129,18 +2221,22 @@ export class AgentSession {
 		return !!this.model?.reasoning;
 	}
 
-	private _getThinkingLevelForModelSwitch(explicitLevel?: ThinkingLevel): ThinkingLevel {
-		if (explicitLevel !== undefined) {
-			return explicitLevel;
-		}
-		if (!this.supportsThinking()) {
-			return this.settingsManager.getDefaultThinkingLevel() ?? DEFAULT_THINKING_LEVEL;
-		}
-		return this.thinkingLevel;
+	private _getExecutionProfileForModelSwitch(explicitProfile?: ExecutionProfile): ExecutionProfile {
+		return explicitProfile ?? this.executionProfile;
 	}
 
-	private _clampThinkingLevel(level: ThinkingLevel, _availableLevels: ThinkingLevel[]): ThinkingLevel {
-		return this.model ? (clampThinkingLevel(this.model, level) as ThinkingLevel) : "off";
+	private _refreshNativeCapabilityTools(previousCapabilities?: HarnessCapabilities): void {
+		const activeToolNames = this.getActiveToolNames();
+		const capabilities = this.harnessCapabilities;
+		this._buildNativeToolDefinitions();
+		const nextActiveToolNames = activeToolNames.filter((name) => name !== "teammate_agent" || capabilities.teammates);
+		if (capabilities.teammates && !previousCapabilities?.teammates && this._autoActivateDefaultTools) {
+			nextActiveToolNames.push("teammate_agent");
+		}
+		this._refreshToolRegistry({ activeToolNames: [...new Set(nextActiveToolNames)] });
+		if (previousCapabilities?.teammates && !capabilities.teammates) {
+			void this._teammates.stopAll();
+		}
 	}
 
 	// =========================================================================
@@ -2184,6 +2280,7 @@ export class AgentSession {
 		await this.abort();
 		this._compactionAbortController = new AbortController();
 		this._emit({ type: "compaction_start", reason: "manual" });
+		this._emit({ type: "compaction_progress", reason: "manual", phase: "preparing" });
 
 		try {
 			if (!this.model) {
@@ -2210,6 +2307,7 @@ export class AgentSession {
 			let fromExtension = false;
 
 			if (this._extensionRunner.hasHandlers("session_before_compact")) {
+				this._emit({ type: "compaction_progress", reason: "manual", phase: "extensions" });
 				const result = (await this._extensionRunner.emit({
 					type: "session_before_compact",
 					preparation,
@@ -2243,6 +2341,7 @@ export class AgentSession {
 				details = extensionCompaction.details;
 			} else {
 				// Generate compaction result
+				this._emit({ type: "compaction_progress", reason: "manual", phase: "summarizing" });
 				const result = await compact(
 					preparation,
 					this.model,
@@ -2254,6 +2353,7 @@ export class AgentSession {
 					this.agent.streamFn,
 					env,
 					compactionProvider,
+					(progress) => this._emit({ type: "compaction_progress", reason: "manual", ...progress }),
 				);
 				summary = result.summary;
 				firstKeptEntryId = result.firstKeptEntryId;
@@ -2265,6 +2365,7 @@ export class AgentSession {
 				throw new Error("Compaction cancelled");
 			}
 
+			this._emit({ type: "compaction_progress", reason: "manual", phase: "persisting" });
 			this.sessionManager.appendCompaction(summary, firstKeptEntryId, tokensBefore, details, fromExtension);
 			const newEntries = this.sessionManager.getEntries();
 			const sessionContext = this.sessionManager.buildSessionContext();
@@ -2491,6 +2592,7 @@ export class AgentSession {
 			let fromExtension = false;
 
 			if (this._extensionRunner.hasHandlers("session_before_compact")) {
+				this._emit({ type: "compaction_progress", reason, phase: "extensions" });
 				const extensionResult = (await this._extensionRunner.emit({
 					type: "session_before_compact",
 					preparation,
@@ -2531,6 +2633,7 @@ export class AgentSession {
 				details = extensionCompaction.details;
 			} else {
 				// Generate compaction result
+				this._emit({ type: "compaction_progress", reason, phase: "summarizing" });
 				const compactResult = await compact(
 					preparation,
 					this.model,
@@ -2542,6 +2645,7 @@ export class AgentSession {
 					this.agent.streamFn,
 					env,
 					compactionProvider,
+					(progress) => this._emit({ type: "compaction_progress", reason, ...progress }),
 				);
 				summary = compactResult.summary;
 				firstKeptEntryId = compactResult.firstKeptEntryId;
@@ -2560,6 +2664,7 @@ export class AgentSession {
 				return false;
 			}
 
+			this._emit({ type: "compaction_progress", reason, phase: "persisting" });
 			this.sessionManager.appendCompaction(summary, firstKeptEntryId, tokensBefore, details, fromExtension);
 			const newEntries = this.sessionManager.getEntries();
 			const sessionContext = this.sessionManager.buildSessionContext();
@@ -3003,20 +3108,8 @@ export class AgentSession {
 							},
 						]),
 					);
-		if (!this._baseToolsOverride) {
-			for (const [name, definition] of Object.entries({
-				bg_shell: this._backgroundShell.createToolDefinition() as ToolDefinition,
-				sub_agent: this._subAgents.createToolDefinition() as ToolDefinition,
-				send_message: this._peerMessages.createToolDefinition() as ToolDefinition,
-			})) {
-				baseToolDefinitions[name] = {
-					definition,
-					sourceInfo: createSyntheticSourceInfo(`<pi:${name}>`, { source: "pi" }),
-				};
-			}
-		}
-
 		this._baseToolDefinitions = new Map(Object.entries(baseToolDefinitions));
+		this._buildNativeToolDefinitions();
 
 		const extensionsResult = this._resourceLoader.getExtensions();
 
@@ -3060,6 +3153,7 @@ export class AgentSession {
 			? Object.keys(this._baseToolsOverride)
 			: [
 					...DEFAULT_NATIVE_ACTIVE_TOOLS,
+					...(this.harnessCapabilities.teammates ? ["teammate_agent"] : []),
 					...(this._autoActivateDefaultTools ? (this._resourceLoader.getDefaultToolNames?.() ?? []) : []),
 					...(this._autoActivateLoadedTools
 						? [
@@ -3073,6 +3167,27 @@ export class AgentSession {
 			activeToolNames: baseActiveToolNames,
 			includeAllExtensionTools: options.includeAllExtensionTools,
 		});
+	}
+
+	private _buildNativeToolDefinitions(): void {
+		if (this._baseToolsOverride) return;
+		for (const name of ["bg_shell", "sub_agent", "send_message", "teammate_agent"]) {
+			this._baseToolDefinitions.delete(name);
+		}
+		const definitions: Record<string, ToolDefinition> = {
+			bg_shell: this._backgroundShell.createToolDefinition() as ToolDefinition,
+			sub_agent: this._subAgents.createToolDefinition() as ToolDefinition,
+			send_message: this._peerMessages.createToolDefinition() as ToolDefinition,
+		};
+		if (this.harnessCapabilities.teammates) {
+			definitions.teammate_agent = this._teammates.createToolDefinition() as ToolDefinition;
+		}
+		for (const [name, definition] of Object.entries(definitions)) {
+			this._baseToolDefinitions.set(name, {
+				definition,
+				sourceInfo: createSyntheticSourceInfo(`<pi:${name}>`, { source: "pi" }),
+			});
+		}
 	}
 
 	private HcpClientresolvetools(sessionHcp: HcpClient): Record<string, ToolDefinitionEntry> {

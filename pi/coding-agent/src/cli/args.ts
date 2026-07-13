@@ -2,9 +2,9 @@
  * CLI argument parsing and help display
  */
 
-import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import chalk from "chalk";
 import { APP_BINARY_NAME, APP_NAME, CONFIG_DIR_NAME, ENV_AGENT_DIR, ENV_SESSION_DIR } from "../config.ts";
+import { EXECUTION_PROFILES, type ExecutionProfile, isExecutionProfile } from "../core/execution-profile.ts";
 import type { ExtensionFlag } from "../core/extensions/types.ts";
 
 export type Mode = "text" | "json" | "rpc";
@@ -15,7 +15,7 @@ export interface Args {
 	apiKey?: string;
 	systemPrompt?: string;
 	appendSystemPrompt?: string[];
-	thinking?: ThinkingLevel;
+	thinking?: ExecutionProfile;
 	continue?: boolean;
 	resume?: boolean;
 	help?: boolean;
@@ -59,10 +59,8 @@ export interface Args {
 	diagnostics: Array<{ type: "warning" | "error"; message: string }>;
 }
 
-const VALID_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
-
-export function isValidThinkingLevel(level: string): level is ThinkingLevel {
-	return VALID_THINKING_LEVELS.includes(level as ThinkingLevel);
+export function isValidThinkingLevel(level: string): level is ExecutionProfile {
+	return isExecutionProfile(level);
 }
 
 export function parseArgs(args: string[]): Args {
@@ -141,7 +139,7 @@ export function parseArgs(args: string[]): Args {
 			} else {
 				result.diagnostics.push({
 					type: "warning",
-					message: `Invalid thinking level "${level}". Valid values: ${VALID_THINKING_LEVELS.join(", ")}`,
+					message: `Invalid thinking level "${level}". Valid values: ${EXECUTION_PROFILES.join(", ")}`,
 				});
 			}
 		} else if (arg === "--print" || arg === "-p") {
@@ -279,7 +277,7 @@ ${chalk.bold("Options:")}
                                  Applies to every configured tool source
   --exclude-tools, -xt <tools>   Comma-separated denylist of tool names to disable
                                  Applies to every configured tool source
-  --thinking <level>             Set thinking level: off, minimal, low, medium, high, xhigh, max
+  --thinking <level>             Set execution profile: off, minimal, low, medium, high, xhigh, max, ultra
   --extension, -e <path>         Load an extension file (can be used multiple times)
   --no-extensions, -ne           Disable extension discovery (explicit -e paths still work)
   --skill <path>                 Load a skill file or directory (can be used multiple times)
@@ -403,6 +401,7 @@ ${chalk.bold("Environment Variables:")}
   ${ENV_AGENT_DIR.padEnd(32)} - Config directory (default: ~/${CONFIG_DIR_NAME}/agent)
   ${ENV_SESSION_DIR.padEnd(32)} - Session storage directory (overridden by --session-dir)
   MAGENTA_HARNESS_PACKAGES       - Comma-separated harness package selectors
+  MAGENTA_PEER_MESSAGE_DB        - Override shared peer-message mailbox path
   PI_HARNESS_PACKAGES            - Comma-separated harness package selectors
   PI_PACKAGE_DIR                   - Override package directory (for Nix/Guix store paths)
   PI_OFFLINE                       - Disable startup network operations when set to 1/true/yes
@@ -417,6 +416,7 @@ ${chalk.bold("Native Application Tool Names:")}
   bg_shell  - Run long-running shell commands in the background
   sub_agent - Run parallel no-TUI agent subtasks
   send_message - Send messages to other agent sessions
+  teammate_agent - Manage persistent hidden teammate sessions
   show   - Display local files or remote URLs
   grep   - Search file contents (read-only)
   find   - Find files by glob pattern (read-only)

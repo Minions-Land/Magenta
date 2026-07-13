@@ -5,6 +5,7 @@ import type { SshTarget } from "@magenta/harness";
 import { getAgentDir } from "../config.ts";
 import { resolvePath } from "../utils/paths.ts";
 import { AuthStorage } from "./auth-storage.ts";
+import type { ExecutionProfile, HarnessCapabilitySettings } from "./execution-profile.ts";
 import type { SessionStartEvent, ToolDefinition } from "./extensions/index.ts";
 import { ModelRegistry } from "./model-registry.ts";
 import {
@@ -59,7 +60,9 @@ export interface CreateAgentSessionFromServicesOptions {
 	sessionStartEvent?: SessionStartEvent;
 	model?: Model<any>;
 	thinkingLevel?: ThinkingLevel;
-	scopedModels?: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel }>;
+	executionProfile?: ExecutionProfile;
+	scopedModels?: Array<{ model: Model<any>; thinkingLevel?: ExecutionProfile }>;
+	harnessCapabilities?: HarnessCapabilitySettings;
 	tools?: string[];
 	excludeTools?: CreateAgentSessionOptions["excludeTools"];
 	noTools?: CreateAgentSessionOptions["noTools"];
@@ -199,7 +202,9 @@ export async function createAgentSessionFromServices(
 		sessionManager: options.sessionManager,
 		model: options.model,
 		thinkingLevel: options.thinkingLevel,
+		executionProfile: options.executionProfile,
 		scopedModels: options.scopedModels,
+		harnessCapabilities: options.harnessCapabilities,
 		tools: options.tools,
 		excludeTools: options.excludeTools,
 		noTools: options.noTools,

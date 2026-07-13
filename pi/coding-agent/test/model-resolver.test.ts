@@ -104,8 +104,8 @@ describe("parseModelPattern", () => {
 			expect(result.warning).toBeUndefined();
 		});
 
-		test("all valid thinking levels work", () => {
-			for (const level of ["off", "minimal", "low", "medium", "high", "xhigh", "max"]) {
+		test("all valid execution profiles work", () => {
+			for (const level of ["off", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]) {
 				const result = parseModelPattern(`sonnet:${level}`, allModels);
 				expect(result.model?.id).toBe("claude-sonnet-4-5");
 				expect(result.thinkingLevel).toBe(level);

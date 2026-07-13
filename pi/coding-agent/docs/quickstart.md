@@ -63,8 +63,11 @@ Type a request and press Enter:
 Summarize this repository and run its documented checks.
 ```
 
-The default active tools are `read`, `bash`, `edit`, `write`, `bg_shell`,
-`sub_agent`, `web-search`, and `web-fetch`. The two web tools are autoloaded
+Standard profiles activate `read`, `bash`, `edit`, `write`, `bg_shell`,
+`sub_agent`, `send_message`, `web-search`, and `web-fetch`. Ultra also enables
+workflow templates and `teammate_agent` by default. Use `sub_agent` for disposable
+work and `teammate_agent` for a persistent hidden collaborator that communicates
+through `send_message`. The two web tools are autoloaded
 through HCP. `grep`, `find`, and `ls` are available as optional read-only tools.
 All tools and extensions run with the permissions of the Magenta process;
 project trust is not a sandbox.

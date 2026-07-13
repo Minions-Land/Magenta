@@ -10,6 +10,7 @@ import type { ImageContent, Model } from "@earendil-works/pi-ai";
 import type { SessionStats } from "../../core/agent-session.ts";
 import type { BashResult } from "../../core/bash-executor.ts";
 import type { CompactionResult } from "../../core/compaction/index.ts";
+import type { ExecutionProfile } from "../../core/execution-profile.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
 
 // ============================================================================
@@ -34,6 +35,7 @@ export type RpcCommand =
 
 	// Thinking
 	| { id?: string; type: "set_thinking_level"; level: ThinkingLevel }
+	| { id?: string; type: "set_execution_profile"; profile: ExecutionProfile }
 	| { id?: string; type: "cycle_thinking_level" }
 
 	// Queue modes
@@ -91,6 +93,7 @@ export interface RpcSlashCommand {
 export interface RpcSessionState {
 	model?: Model<any>;
 	thinkingLevel: ThinkingLevel;
+	executionProfile: ExecutionProfile;
 	isStreaming: boolean;
 	isCompacting: boolean;
 	steeringMode: "all" | "one-at-a-time";
@@ -132,7 +135,12 @@ export type RpcResponse =
 			type: "response";
 			command: "cycle_model";
 			success: true;
-			data: { model: Model<any>; thinkingLevel: ThinkingLevel; isScoped: boolean } | null;
+			data: {
+				model: Model<any>;
+				thinkingLevel: ThinkingLevel;
+				executionProfile: ExecutionProfile;
+				isScoped: boolean;
+			} | null;
 	  }
 	| {
 			id?: string;
@@ -144,12 +152,13 @@ export type RpcResponse =
 
 	// Thinking
 	| { id?: string; type: "response"; command: "set_thinking_level"; success: true }
+	| { id?: string; type: "response"; command: "set_execution_profile"; success: true }
 	| {
 			id?: string;
 			type: "response";
 			command: "cycle_thinking_level";
 			success: true;
-			data: { level: ThinkingLevel } | null;
+			data: { level: ExecutionProfile } | null;
 	  }
 
 	// Queue modes

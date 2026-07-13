@@ -46,7 +46,11 @@ import {
 	visibleWidth,
 } from "@earendil-works/pi-tui";
 import type { HcpClientharnesspackage, HcpClientpackagediagnostic, HcpClientpackageoverlay } from "@magenta/harness";
-import { HcpClientdiscoverharnesspackages, HcpClientparsepackageselector } from "@magenta/harness";
+import {
+	createEmptyTodoPlanState,
+	HcpClientdiscoverharnesspackages,
+	HcpClientparsepackageselector,
+} from "@magenta/harness";
 import chalk from "chalk";
 import { spawn, spawnSync } from "child_process";
 import {
@@ -76,6 +80,7 @@ import type {
 	ProjectTrustContext,
 } from "../../core/extensions/index.ts";
 import { FooterDataProvider, type ReadonlyFooterDataProvider } from "../../core/footer-data-provider.ts";
+import { loadTodoPlanStateFromBranch } from "../../core/HcpClienttools.ts";
 import {
 	buildHarnessComponentsView,
 	buildHarnessToolSwitches,
@@ -154,6 +159,7 @@ import {
 	type FloatingOverlayBody,
 	FloatingOverlayContainer,
 } from "./components/floating-menu.ts";
+import { CENTER_FLOATING_OVERLAY } from "./components/floating-window.ts";
 import { FooterComponent } from "./components/footer.ts";
 import { formatKeyText, keyDisplayText, keyHint, keyText, rawKeyHint } from "./components/keybinding-hints.ts";
 import { LoginDialogComponent } from "./components/login-dialog.ts";
@@ -163,6 +169,7 @@ import { ScopedModelsSelectorComponent } from "./components/scoped-models-select
 import { SessionSelectorComponent } from "./components/session-selector.ts";
 import { SettingsSelectorComponent } from "./components/settings-selector.ts";
 import { SkillInvocationMessageComponent } from "./components/skill-invocation-message.ts";
+import { TodoOverlay } from "./components/todo-overlay.ts";
 import { ToolExecutionComponent } from "./components/tool-execution.ts";
 import { ToolExecutionGroupComponent } from "./components/tool-execution-group.ts";
 import { TreeSelectorComponent } from "./components/tree-selector.ts";
@@ -2806,6 +2813,11 @@ export class InteractiveMode {
 				this.editor.setText("");
 				return;
 			}
+			if (text === "/todo") {
+				this.editor.setText("");
+				this.showTodoOverlay();
+				return;
+			}
 			if (text === "/harness" || text.startsWith("/harness ") || text === "/h" || text.startsWith("/h ")) {
 				this.editor.setText("");
 				await this.handleHarnessCommand(text);
@@ -3050,6 +3062,7 @@ export class InteractiveMode {
 				break;
 
 			case "thinking_level_changed":
+			case "execution_profile_changed":
 				this.footer.invalidate();
 				this.updateEditorBorderColor();
 				break;
@@ -3246,6 +3259,42 @@ export class InteractiveMode {
 				);
 				this.statusContainer.addChild(this.autoCompactionLoader);
 				this.ui.requestRender();
+				break;
+			}
+
+			case "compaction_progress": {
+				if (!this.autoCompactionLoader) break;
+				const cancelHint = `(${keyText("app.interrupt")} to cancel)`;
+				let phaseLabel: string;
+				switch (event.phase) {
+					case "preparing":
+						phaseLabel = "preparing";
+						break;
+					case "extensions":
+						phaseLabel = "extensions";
+						break;
+					case "summarizing":
+						if (event.totalBytes !== undefined && event.processedBytes !== undefined) {
+							const fraction = event.totalBytes > 0 ? event.processedBytes / event.totalBytes : 0;
+							const filled = Math.round(fraction * 10);
+							const bar = "▓".repeat(filled) + "░".repeat(Math.max(0, 10 - filled));
+							const pct = Math.round(fraction * 100);
+							phaseLabel = `summarizing \u00b7 ${bar} ${pct}%`;
+						} else {
+							phaseLabel = "summarizing";
+						}
+						break;
+					case "persisting":
+						phaseLabel = "persisting";
+						break;
+					default:
+						phaseLabel = "working";
+				}
+				const label =
+					event.reason === "manual"
+						? `Compacting context \u00b7 ${phaseLabel} ${cancelHint}`
+						: `${event.reason === "overflow" ? "Context overflow, " : ""}compacting \u00b7 ${phaseLabel} ${cancelHint}`;
+				this.autoCompactionLoader.setMessage(label);
 				break;
 			}
 
@@ -3981,12 +4030,13 @@ export class InteractiveMode {
 	}
 
 	private updateEditorBorderColor(): void {
-		if (this.isBashMode) {
-			this.editor.borderColor = theme.getBashModeBorderColor();
-		} else {
-			const level = this.session.thinkingLevel || "off";
-			this.editor.borderColor = theme.getThinkingBorderColor(level);
-		}
+		const borderColor = this.isBashMode
+			? theme.getBashModeBorderColor()
+			: this.session.executionProfile === "ultra"
+				? theme.getUltraBorderColor()
+				: theme.getThinkingBorderColor(this.session.thinkingLevel || "off");
+		this.defaultEditor.borderColor = borderColor;
+		if (this.editor !== this.defaultEditor) this.editor.borderColor = borderColor;
 		this.ui.requestRender();
 	}
 
@@ -3997,7 +4047,7 @@ export class InteractiveMode {
 		} else {
 			this.footer.invalidate();
 			this.updateEditorBorderColor();
-			this.showStatus(`Thinking level: ${newLevel}`);
+			this.showStatus(`Execution profile: ${newLevel}`);
 		}
 	}
 
@@ -4622,6 +4672,8 @@ export class InteractiveMode {
 	private async createHarnessRuntimeSnapshot(): Promise<HarnessRuntimeSnapshot> {
 		const packageTools = this.session.resourceLoader.getPackageTools();
 		return {
+			executionProfile: this.session.executionProfile,
+			capabilities: this.session.harnessCapabilities,
 			autoCompact: this.session.autoCompactionEnabled,
 			skillCommands: this.settingsManager.getEnableSkillCommands(),
 			loadedSkills: this.session.resourceLoader.getSkills().skills.length,
@@ -5176,6 +5228,7 @@ export class InteractiveMode {
 			{ value: "slash:settings", label: "Settings", aliases: ["settings"], description: "/settings" },
 			this.mcpDockParentItem(),
 			{ value: "slash:events", label: "Events", aliases: ["events"], description: "/events" },
+			{ value: "slash:todo", label: "Todo", aliases: ["todo"], description: "/todo" },
 			{ value: "slash:side", label: "Side Chat", aliases: ["side", "btw", "s"], description: "/side" },
 			{
 				value: "slash:scoped-models",
@@ -5336,6 +5389,9 @@ export class InteractiveMode {
 				return;
 			case "events":
 				await this.session.prompt("/events");
+				return;
+			case "todo":
+				this.showTodoOverlay();
 				return;
 			case "side":
 				await this.session.prompt("/side");
@@ -6049,8 +6105,8 @@ export class InteractiveMode {
 					followUpMode: this.session.followUpMode,
 					transport: this.settingsManager.getTransport(),
 					httpIdleTimeoutMs: this.settingsManager.getHttpIdleTimeoutMs(),
-					thinkingLevel: this.session.thinkingLevel,
-					availableThinkingLevels: this.session.getAvailableThinkingLevels(),
+					thinkingLevel: this.session.executionProfile,
+					availableThinkingLevels: this.session.getAvailableExecutionProfiles(),
 					currentTheme: this.settingsManager.getThemeSetting() || "dark",
 					terminalTheme: this.themeController.getTerminalTheme(),
 					availableThemes: getAvailableThemes(),
@@ -6119,7 +6175,7 @@ export class InteractiveMode {
 						this.showStatus(`HTTP idle timeout: ${formatHttpIdleTimeoutMs(timeoutMs)}`);
 					},
 					onThinkingLevelChange: (level) => {
-						this.session.setThinkingLevel(level);
+						this.session.setExecutionProfile(level);
 						this.footer.invalidate();
 						this.updateEditorBorderColor();
 					},
@@ -6513,6 +6569,19 @@ export class InteractiveMode {
 		} catch (error: unknown) {
 			this.showError(error instanceof Error ? error.message : String(error));
 		}
+	}
+
+	private showTodoOverlay(): void {
+		const state = loadTodoPlanStateFromBranch(this.sessionManager) ?? createEmptyTodoPlanState();
+		void this.showExtensionCustom<void>(
+			(tui, overlayTheme, _keybindings, done) =>
+				new TodoOverlay(tui, overlayTheme, state, this.ui.terminal.rows, done),
+			{
+				overlay: true,
+				overlayOptions: CENTER_FLOATING_OVERLAY,
+				onHandle: (handle) => handle.focus(),
+			},
+		);
 	}
 
 	private showTreeSelector(initialSelectedId?: string): void {

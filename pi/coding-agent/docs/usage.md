@@ -10,7 +10,7 @@ The interface has four main areas:
 
 - **Startup header** - shortcuts, loaded context files, prompt templates, skills, and extensions
 - **Messages** - user messages, assistant responses, tool calls, tool results, notifications, errors, and extension UI
-- **Editor** - where you type; border color indicates the current thinking level
+- **Editor** - where you type; border color indicates the current execution profile, with a rainbow border for Ultra
 - **Footer** - working directory, session name, token/cache usage, cost, context usage, and current model
 
 The editor can be replaced temporarily by built-in UI such as `/settings` or by custom extension UI.
@@ -184,11 +184,11 @@ cat README.md | magenta -p "Summarize this text"
 | `--provider <name>` | Provider, such as `anthropic`, `openai`, or `google` |
 | `--model <pattern>` | Model pattern or ID; supports `provider/id` and optional `:<thinking>` |
 | `--api-key <key>` | API key, overriding environment variables |
-| `--thinking <level>` | `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` |
+| `--thinking <level>` | `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `ultra` |
 | `--models <patterns>` | Comma-separated patterns for Ctrl+P cycling |
 | `--list-models [search]` | List available models |
 
-The list above is the shared CLI vocabulary. The selector and cycling logic use each model's `thinkingLevelMap`. Built-in GPT-5.6 entries for OpenAI, Azure OpenAI Responses, and OpenRouter expose `off`, `low`, `medium`, `high`, `xhigh`, and `max`; they do not expose `minimal` or `ultra`.
+The native levels use each model's `thinkingLevelMap`. Ultra is a Magenta execution profile: it maps to the model's highest native level and defaults Harness workflows and teammates on. Providers never receive `ultra` as a thinking value.
 
 ### Session Options
 
@@ -211,9 +211,13 @@ The list above is the shared CLI vocabulary. The selector and cycling logic use 
 | `--no-builtin-tools`, `-nbt` | Disable native application and repository-default HCP tools; keep extension/custom, Package, and user MCP tools enabled |
 | `--no-tools`, `-nt` | Disable all tools |
 
-Default native application tools are `read`, `bash`, `edit`, `write`,
-`bg_shell`, and `sub_agent`. Native `show`, `grep`, `find`, and `ls` are
-available by name but off by default.
+Standard profiles activate native `read`, `bash`, `edit`, `write`, `bg_shell`,
+`sub_agent`, `send_message`, `show`, `grep`, `find`, and `ls`. They retain one-shot
+`sub_agent` tasks but omit workflow templates and `teammate_agent`. Ultra activates
+both by default. `harness.workflows` and `harness.teammates` explicitly override
+those defaults in either direction. Use `sub_agent` for disposable delegated work
+and `teammate_agent` for a persistent hidden collaborator whose assignments and
+results travel through `send_message`.
 
 HCP also autoloads `web-search` and `web-fetch`, so both are active by default
 unless the tool-selection options disable them.
@@ -304,6 +308,7 @@ magenta --exclude-tools ask_question
 | `MAGENTA_CODING_AGENT_DIR` | Override config directory; default is `~/.magenta/agent` |
 | `MAGENTA_CODING_AGENT_SESSION_DIR` | Override session storage directory; overridden by `--session-dir` |
 | `MAGENTA_HARNESS_PACKAGES` | Comma-separated Harness package selectors |
+| `MAGENTA_PEER_MESSAGE_DB` | Override the shared peer-message mailbox path; managed teammates inherit it |
 | `PI_PACKAGE_DIR` | Override package directory, useful for Nix/Guix store paths |
 | `PI_OFFLINE` | Disable startup network operations, including update checks, package update checks, and install/update telemetry |
 | `PI_SKIP_VERSION_CHECK` | Skip the startup version request |
@@ -313,7 +318,12 @@ magenta --exclude-tools ask_question
 
 ## Runtime Boundaries
 
-Magenta includes first-class `bg_shell` and `sub_agent` tools and can load user MCP tools through the Harness path. Workflow-specific UI and commands remain extension surfaces.
+Magenta includes first-class `bg_shell`, `sub_agent`, `send_message`, and
+`teammate_agent` tools and can load user MCP tools through the Harness path.
+Teammates are clean persistent sessions managed by the parent; their RPC
+channel controls lifecycle and interrupt, while work communication uses the
+shared peer mailbox. Workflow-specific UI and commands remain extension
+surfaces.
 
 Extension packages and Harness domain packages are separate. Local selectors use
 `--harness-packages-root` or `<current-workspace>/packages`; Magenta does not

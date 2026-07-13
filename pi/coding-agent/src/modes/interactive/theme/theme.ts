@@ -422,6 +422,25 @@ export class Theme {
 		}
 	}
 
+	getUltraBorderColor(): (str: string) => string {
+		const palette: ThemeColor[] = [
+			"error",
+			"warning",
+			"success",
+			"accent",
+			"thinkingLow",
+			"thinkingHigh",
+			"thinkingMax",
+		];
+		return (str: string) => {
+			if (!str) return "";
+			return [...str]
+				.map((character, index) => `${this.getFgAnsi(palette[index % palette.length])}${character}`)
+				.join("")
+				.concat("\x1b[39m");
+		};
+	}
+
 	getBashModeBorderColor(): (str: string) => string {
 		return (str: string) => this.fg("bashMode", str);
 	}

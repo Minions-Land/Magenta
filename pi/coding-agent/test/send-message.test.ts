@@ -95,6 +95,33 @@ describe("SendMessageController", () => {
 		}
 	});
 
+	it("binds a managed teammate mailbox to its parent session", async () => {
+		const parent = controller("parent");
+		const stranger = controller("stranger");
+		const teammate = new SendMessageController({
+			dbPath,
+			getSessionId: () => "teammate",
+			managedParentSessionId: "parent",
+		});
+		try {
+			await call(parent, { to: "teammate", content: "authorized work" });
+			await call(stranger, { to: "teammate", content: "forged work" });
+			const drained = teammate.drainForInjection();
+			expect(drained).toHaveLength(1);
+			expect(drained[0]).toMatchObject({ sender: "parent", content: "authorized work" });
+			expect(teammate.drainForInjection()).toHaveLength(0);
+
+			await expect(call(teammate, { to: "stranger", content: "leak" })).rejects.toThrow(
+				"may only target parent session parent",
+			);
+			await expect(call(teammate, { to: "parent", content: "result", urgent: true })).resolves.toBeDefined();
+		} finally {
+			parent.shutdown();
+			stranger.shutdown();
+			teammate.shutdown();
+		}
+	});
+
 	it("only delivers to the addressed recipient", async () => {
 		const alice = controller("alice");
 		const bob = controller("bob");

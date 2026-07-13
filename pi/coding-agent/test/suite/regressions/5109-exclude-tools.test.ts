@@ -50,8 +50,8 @@ describe("regression #5109: exclude tools", () => {
 			expect(allToolNames).not.toContain("ask_question");
 			expect(allToolNames).toContain("bash");
 			expect(allToolNames).toContain("dynamic_tool");
-			// Magenta activates every native tool by default; excluding `read` drops only
-			// that one, leaving all other built-ins plus the extension's dynamic_tool active.
+			// Standard profiles activate native one-shot tools by default; persistent
+			// teammates are capability-gated and therefore absent here.
 			expect(harness.session.getActiveToolNames().sort()).toEqual([
 				"bash",
 				"bg_shell",

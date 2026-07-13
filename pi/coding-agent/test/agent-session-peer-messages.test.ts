@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { getModel } from "@earendil-works/pi-ai/compat";
+import { getModel, type Model } from "@earendil-works/pi-ai/compat";
 import { MessageStore } from "@magenta/harness";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ENV_AGENT_DIR } from "../src/config.ts";
@@ -32,7 +32,7 @@ describe("AgentSession peer messaging", () => {
 		}
 	});
 
-	async function makeSession() {
+	async function makeSession(thinkingLevel?: "medium" | "ultra") {
 		const settingsManager = SettingsManager.create(tempDir, agentDir);
 		const sessionManager = SessionManager.inMemory();
 		const resourceLoader = new DefaultResourceLoader({ cwd: tempDir, agentDir, settingsManager });
@@ -44,6 +44,7 @@ describe("AgentSession peer messaging", () => {
 			settingsManager,
 			sessionManager,
 			resourceLoader,
+			executionProfile: thinkingLevel,
 		});
 		return session;
 	}
@@ -55,6 +56,136 @@ describe("AgentSession peer messaging", () => {
 			expect(tool).toBeDefined();
 			expect(tool?.description).toContain("another agent session");
 			expect(tool?.promptGuidelines?.some((g) => g.includes("send_message"))).toBe(true);
+		} finally {
+			await session.dispose();
+		}
+	});
+
+	it("gates teammate_agent by execution profile", async () => {
+		const standard = await makeSession("medium");
+		try {
+			expect(standard.getAllTools().some((tool) => tool.name === "teammate_agent")).toBe(false);
+		} finally {
+			await standard.dispose();
+		}
+
+		const ultra = await makeSession("ultra");
+		try {
+			const tool = ultra.getAllTools().find((candidate) => candidate.name === "teammate_agent");
+			expect(tool).toBeDefined();
+			expect(tool?.description).toContain("persistent hidden");
+			expect(tool?.description).toContain("Unlike sub_agent");
+			expect(tool?.promptGuidelines?.some((guideline) => guideline.includes("send_message"))).toBe(true);
+			expect(ultra.executionProfile).toBe("ultra");
+			expect(ultra.thinkingLevel).not.toBe("ultra");
+		} finally {
+			await ultra.dispose();
+		}
+	});
+
+	it("restores Ultra independently from the mapped native level", async () => {
+		const settingsManager = SettingsManager.create(tempDir, agentDir);
+		const resourceLoader = new DefaultResourceLoader({ cwd: tempDir, agentDir, settingsManager });
+		await resourceLoader.reload();
+		const model: Model<any> = {
+			id: "ultra-resume-test",
+			name: "Ultra Resume Test",
+			api: "anthropic-messages",
+			provider: "anthropic",
+			baseUrl: "https://example.invalid",
+			reasoning: true,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 100_000,
+			maxTokens: 8_192,
+		};
+		const sessionManager = SessionManager.inMemory(tempDir);
+		sessionManager.appendModelChange(model.provider, model.id);
+		sessionManager.appendThinkingLevelChange("ultra");
+		sessionManager.appendMessage({ role: "user", content: "resume me", timestamp: Date.now() });
+
+		const { session } = await createAgentSession({
+			cwd: tempDir,
+			agentDir,
+			model,
+			settingsManager,
+			sessionManager,
+			resourceLoader,
+		});
+		try {
+			expect(session.executionProfile).toBe("ultra");
+			expect(session.thinkingLevel).not.toBe("ultra");
+			expect(session.harnessCapabilities).toEqual({ workflows: true, teammates: true });
+			expect(session.getActiveToolNames()).toContain("teammate_agent");
+		} finally {
+			await session.dispose();
+		}
+	});
+
+	it("refreshes workflow and teammate tool surfaces when Ultra changes live", async () => {
+		const session = await makeSession("medium");
+		try {
+			const standardSubAgent = session.getAllTools().find((tool) => tool.name === "sub_agent");
+			expect((standardSubAgent?.parameters as any).properties.workflow).toBeUndefined();
+			expect(session.getActiveToolNames()).not.toContain("teammate_agent");
+
+			session.setExecutionProfile("ultra");
+			const ultraSubAgent = session.getAllTools().find((tool) => tool.name === "sub_agent");
+			expect((ultraSubAgent?.parameters as any).properties.workflow).toBeDefined();
+			expect(session.getActiveToolNames()).toContain("teammate_agent");
+
+			session.setExecutionProfile("high");
+			expect(session.getAllTools().some((tool) => tool.name === "teammate_agent")).toBe(false);
+			expect(session.getActiveToolNames()).not.toContain("teammate_agent");
+		} finally {
+			await session.dispose();
+		}
+	});
+
+	it("lets explicit Harness overrides enable capabilities outside Ultra", async () => {
+		const settingsManager = SettingsManager.create(tempDir, agentDir);
+		const sessionManager = SessionManager.inMemory();
+		const resourceLoader = new DefaultResourceLoader({ cwd: tempDir, agentDir, settingsManager });
+		await resourceLoader.reload();
+		const { session } = await createAgentSession({
+			cwd: tempDir,
+			agentDir,
+			model: getModel("anthropic", "claude-sonnet-4-5")!,
+			thinkingLevel: "medium",
+			harnessCapabilities: { workflows: true, teammates: true },
+			settingsManager,
+			sessionManager,
+			resourceLoader,
+		});
+		try {
+			expect(session.getAllTools().some((tool) => tool.name === "teammate_agent")).toBe(true);
+			const subAgent = session.getAllTools().find((tool) => tool.name === "sub_agent");
+			expect((subAgent?.parameters as any).properties.workflow).toBeDefined();
+		} finally {
+			await session.dispose();
+		}
+	});
+
+	it("lets explicit Harness overrides disable Ultra capabilities", async () => {
+		const settingsManager = SettingsManager.create(tempDir, agentDir);
+		const sessionManager = SessionManager.inMemory();
+		const resourceLoader = new DefaultResourceLoader({ cwd: tempDir, agentDir, settingsManager });
+		await resourceLoader.reload();
+		const { session } = await createAgentSession({
+			cwd: tempDir,
+			agentDir,
+			model: getModel("anthropic", "claude-sonnet-4-5")!,
+			executionProfile: "ultra",
+			harnessCapabilities: { workflows: false, teammates: false },
+			settingsManager,
+			sessionManager,
+			resourceLoader,
+		});
+		try {
+			expect(session.executionProfile).toBe("ultra");
+			expect(session.getAllTools().some((tool) => tool.name === "teammate_agent")).toBe(false);
+			const subAgent = session.getAllTools().find((tool) => tool.name === "sub_agent");
+			expect((subAgent?.parameters as any).properties.workflow).toBeUndefined();
 		} finally {
 			await session.dispose();
 		}

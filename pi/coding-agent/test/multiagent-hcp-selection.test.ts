@@ -78,6 +78,7 @@ describe("AgentSession multiagent HCP selection", () => {
 			cwd: tempDir,
 			agentDir,
 			model: getModel("anthropic", "claude-sonnet-4-5")!,
+			harnessCapabilities: { workflows: true },
 			settingsManager,
 			sessionManager: SessionManager.inMemory(),
 			resourceLoader,

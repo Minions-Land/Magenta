@@ -74,4 +74,4 @@ export * from "./tools/descriptor/package-tool.ts";
 // Tools: pure-execution tool logic + the AgentTool Tool contract.
 export * from "./tools/index.ts";
 export * from "./tools/process-tool.ts";
-export * from "./tools/todo/pi/todo.ts";
+export * from "./tools/todo/magenta/todo.ts";

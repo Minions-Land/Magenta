@@ -115,6 +115,19 @@ export type CompactionResult<T = unknown> = {
 	details?: T;
 };
 
+/** Exact progress through the serialized input being summarized. */
+export type CompactionProgress = {
+	phase: "summarizing";
+	/** UTF-8 input bytes fully incorporated into completed summary chunks. */
+	processedBytes: number;
+	/** Total UTF-8 input bytes that must be summarized. */
+	totalBytes: number;
+	/** Number of completed provider summary chunks across all summary streams. */
+	completedChunks: number;
+};
+
+export type CompactionProgressCallback = (progress: CompactionProgress) => void;
+
 /** Compaction thresholds and retention settings. */
 export type CompactionSettings = {
 	/** Enable automatic compaction decisions. */
@@ -554,6 +567,7 @@ type IncrementalSummaryOptions = {
 	thinkingLevel?: ThinkingLevel;
 	streamFn?: StreamFn;
 	errorPrefix: string;
+	onProgress?: (progress: { processedBytes: number; totalBytes: number; completedChunks: number }) => void;
 };
 
 async function generateIncrementalSummary(
@@ -564,6 +578,8 @@ async function generateIncrementalSummary(
 	let hasSummary = options.previousSummary !== undefined;
 	let completedChunks = 0;
 	const inputBudget = summaryInputByteBudget(options.model, options.maxTokens);
+	const totalBytes = Buffer.byteLength(options.conversationText, "utf8");
+	options.onProgress?.({ processedBytes: 0, totalBytes, completedChunks: 0 });
 
 	do {
 		const instructions = hasSummary ? options.updateInstructions : options.initialInstructions;
@@ -632,6 +648,11 @@ async function generateIncrementalSummary(
 		hasSummary = true;
 		remaining = rest;
 		completedChunks++;
+		options.onProgress?.({
+			processedBytes: totalBytes - Buffer.byteLength(remaining, "utf8"),
+			totalBytes,
+			completedChunks,
+		});
 	} while (remaining.length > 0 || completedChunks === 0);
 
 	return ok(rollingSummary ?? "");
@@ -648,6 +669,7 @@ export async function generateSummary(
 	previousSummary?: string,
 	thinkingLevel?: ThinkingLevel,
 	streamFn?: StreamFn,
+	onProgress?: (progress: { processedBytes: number; totalBytes: number; completedChunks: number }) => void,
 ): Promise<Result<string, CompactionError>> {
 	const maxTokens = Math.min(
 		Math.floor(0.8 * reserveTokens),
@@ -674,6 +696,7 @@ export async function generateSummary(
 		thinkingLevel,
 		streamFn,
 		errorPrefix: "Summarization",
+		onProgress,
 	});
 }
 
@@ -813,6 +836,7 @@ export async function compact(
 	signal?: AbortSignal,
 	thinkingLevel?: ThinkingLevel,
 	streamFn?: StreamFn,
+	onProgress?: CompactionProgressCallback,
 ): Promise<Result<CompactionResult, CompactionError>> {
 	const {
 		firstKeptEntryId,
@@ -830,8 +854,28 @@ export async function compact(
 	}
 
 	let summary: string;
+	const summaryProgress = new Map<
+		"history" | "turnPrefix",
+		{ processedBytes: number; totalBytes: number; completedChunks: number }
+	>();
+	const reportProgress = (
+		key: "history" | "turnPrefix",
+		progress: { processedBytes: number; totalBytes: number; completedChunks: number },
+	): void => {
+		summaryProgress.set(key, progress);
+		const values = [...summaryProgress.values()];
+		onProgress?.({
+			phase: "summarizing",
+			processedBytes: values.reduce((total, value) => total + value.processedBytes, 0),
+			totalBytes: values.reduce((total, value) => total + value.totalBytes, 0),
+			completedChunks: values.reduce((total, value) => total + value.completedChunks, 0),
+		});
+	};
 
 	if (isSplitTurn && turnPrefixMessages.length > 0) {
+		if (messagesToSummarize.length === 0) {
+			summaryProgress.set("history", { processedBytes: 0, totalBytes: 0, completedChunks: 0 });
+		}
 		const [historyResult, turnPrefixResult] = await Promise.all([
 			messagesToSummarize.length > 0
 				? generateSummary(
@@ -844,6 +888,7 @@ export async function compact(
 						previousSummary,
 						thinkingLevel,
 						streamFn,
+						(progress) => reportProgress("history", progress),
 					)
 				: Promise.resolve(ok<string, CompactionError>("No prior history.")),
 			generateTurnPrefixSummary(
@@ -854,6 +899,7 @@ export async function compact(
 				signal,
 				thinkingLevel,
 				streamFn,
+				(progress) => reportProgress("turnPrefix", progress),
 			),
 		]);
 		if (!historyResult.ok) return err(historyResult.error);
@@ -870,6 +916,7 @@ export async function compact(
 			previousSummary,
 			thinkingLevel,
 			streamFn,
+			(progress) => reportProgress("history", progress),
 		);
 		if (!summaryResult.ok) return err(summaryResult.error);
 		summary = summaryResult.value;
@@ -893,6 +940,7 @@ async function generateTurnPrefixSummary(
 	signal?: AbortSignal,
 	thinkingLevel?: ThinkingLevel,
 	streamFn?: StreamFn,
+	onProgress?: (progress: { processedBytes: number; totalBytes: number; completedChunks: number }) => void,
 ): Promise<Result<string, CompactionError>> {
 	const maxTokens = Math.min(
 		Math.floor(0.5 * reserveTokens),
@@ -911,5 +959,6 @@ async function generateTurnPrefixSummary(
 		thinkingLevel,
 		streamFn,
 		errorPrefix: "Turn prefix summarization",
+		onProgress,
 	});
 }
