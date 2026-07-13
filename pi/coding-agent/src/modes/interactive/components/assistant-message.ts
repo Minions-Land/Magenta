@@ -8,6 +8,46 @@ const OSC133_ZONE_END = "\x1b]133;B\x07";
 const OSC133_ZONE_FINAL = "\x1b]133;C\x07";
 
 /**
+ * Normalize a text block that some models (e.g. gpt-5.6) emit for reasoning,
+ * where the reasoning is delivered as a plain text block wrapped in literal
+ * `<thinking>...</thinking>` tags instead of a proper thinking block. Such tags
+ * would otherwise leak into the rendered output verbatim.
+ *
+ * Conservative by design: only a text block whose trimmed content STARTS with
+ * `<thinking>` is treated as reasoning, so `<thinking>` appearing mid-text or
+ * inside a fenced code example is left untouched. A block may split into a
+ * leading thinking part plus any trailing normal text after `</thinking>`.
+ */
+export function normalizeThinkingTags(content: AssistantMessage["content"]): AssistantMessage["content"] {
+	const normalized: AssistantMessage["content"] = [];
+	for (const block of content) {
+		if (block.type !== "text") {
+			normalized.push(block);
+			continue;
+		}
+		const trimmed = block.text.trimStart();
+		if (!trimmed.startsWith("<thinking>")) {
+			normalized.push(block);
+			continue;
+		}
+		const afterOpen = trimmed.slice("<thinking>".length);
+		const closeIndex = afterOpen.indexOf("</thinking>");
+		if (closeIndex === -1) {
+			// Streaming: closing tag not yet received. Whole block is reasoning.
+			normalized.push({ type: "thinking", thinking: afterOpen });
+			continue;
+		}
+		const thinkingText = afterOpen.slice(0, closeIndex);
+		const trailing = afterOpen.slice(closeIndex + "</thinking>".length);
+		normalized.push({ type: "thinking", thinking: thinkingText });
+		if (trailing.trim()) {
+			normalized.push({ type: "text", text: trailing });
+		}
+	}
+	return normalized;
+}
+
+/**
  * Component that renders a complete assistant message
  */
 export class AssistantMessageComponent extends Container {
@@ -16,6 +56,7 @@ export class AssistantMessageComponent extends Container {
 	private markdownTheme: MarkdownTheme;
 	private hiddenThinkingLabel: string;
 	private lastMessage?: AssistantMessage;
+	private normalizedContent: AssistantMessage["content"] = [];
 	private hasToolCalls = false;
 
 	// Character-by-character animation state
@@ -80,10 +121,11 @@ export class AssistantMessageComponent extends Container {
 
 	updateContent(message: AssistantMessage): void {
 		this.lastMessage = message;
+		this.normalizedContent = normalizeThinkingTags(message.content);
 
 		// Extract target texts from message content
 		const newTargetTexts: string[] = [];
-		for (const content of message.content) {
+		for (const content of this.normalizedContent) {
 			if (content.type === "text" && content.text.trim()) {
 				newTargetTexts.push(content.text.trim());
 			} else if (content.type === "thinking" && content.thinking.trim()) {
@@ -100,7 +142,7 @@ export class AssistantMessageComponent extends Container {
 		this.targetTexts = newTargetTexts;
 
 		// Check for tool calls
-		this.hasToolCalls = message.content.some((c) => c.type === "toolCall");
+		this.hasToolCalls = this.normalizedContent.some((c) => c.type === "toolCall");
 
 		// Render with current displayed texts
 		this.renderContent();
@@ -175,8 +217,8 @@ export class AssistantMessageComponent extends Container {
 
 		// Render displayed content
 		let blockIndex = 0;
-		for (let i = 0; i < this.lastMessage.content.length; i++) {
-			const content = this.lastMessage.content[i];
+		for (let i = 0; i < this.normalizedContent.length; i++) {
+			const content = this.normalizedContent[i];
 			if (content.type === "text" && content.text.trim()) {
 				const displayedText = this.displayedTexts[blockIndex] || "";
 				if (displayedText) {
@@ -187,7 +229,7 @@ export class AssistantMessageComponent extends Container {
 				blockIndex++;
 			} else if (content.type === "thinking" && content.thinking.trim()) {
 				const displayedText = this.displayedTexts[blockIndex] || "";
-				const hasVisibleContentAfter = this.lastMessage.content
+				const hasVisibleContentAfter = this.normalizedContent
 					.slice(i + 1)
 					.some((c) => (c.type === "text" && c.text.trim()) || (c.type === "thinking" && c.thinking.trim()));
 

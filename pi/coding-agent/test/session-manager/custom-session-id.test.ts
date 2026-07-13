@@ -75,6 +75,34 @@ describe("SessionManager.newSession with custom id", () => {
 		expect(existsSync(sessionFile)).toBe(false);
 	});
 
+	it("flushes a pre-seeded session before any assistant message exists", () => {
+		const tempDir = mkdtempSync(join(tmpdir(), "pi-session-manager-"));
+		const session = SessionManager.create(tempDir, tempDir, {
+			id: "managed-child-id",
+			parentSession: "/tmp/parent.jsonl",
+		});
+		session.appendSessionInfo("Managed child");
+		session.appendCustomMessageEntry("managed-identity", "selfSessionId: managed-child-id", false);
+
+		const sessionFile = session.getSessionFile()!;
+		expect(existsSync(sessionFile)).toBe(false);
+		session.flush();
+		expect(existsSync(sessionFile)).toBe(true);
+
+		const reopened = SessionManager.open(sessionFile);
+		expect(reopened.getHeader()).toMatchObject({
+			id: "managed-child-id",
+			parentSession: "/tmp/parent.jsonl",
+		});
+		expect(reopened.getSessionName()).toBe("Managed child");
+		expect(
+			reopened
+				.buildSessionContext()
+				.messages.map((message) => JSON.stringify(message))
+				.join("\n"),
+		).toContain("selfSessionId: managed-child-id");
+	});
+
 	it("generates a UUIDv7 id when creating a branched session", () => {
 		const session = SessionManager.inMemory();
 		const firstId = session.appendMessage({

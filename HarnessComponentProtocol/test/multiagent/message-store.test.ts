@@ -265,4 +265,41 @@ describe("MessageStore", () => {
 			expect(drained.map((m) => m.content)).toEqual(["urgent-1", "urgent-2", "normal-1", "normal-2"]);
 		});
 	});
+
+	describe("drain cap", () => {
+		it("claims at most `limit` messages, leaving the rest unread", () => {
+			for (let i = 0; i < 5; i++) store.send("a", "b", `m${i}`, "normal");
+			const first = store.drainUnread("b", 2);
+			expect(first.map((m) => m.content)).toEqual(["m0", "m1"]);
+			expect(store.unreadCount("b")).toBe(3);
+		});
+
+		it("delivers the whole backlog across successive capped drains, no loss or dup", () => {
+			for (let i = 0; i < 5; i++) store.send("a", "b", `m${i}`, "normal");
+			const seen: string[] = [];
+			let batch = store.drainUnread("b", 2);
+			while (batch.length > 0) {
+				seen.push(...batch.map((m) => m.content));
+				batch = store.drainUnread("b", 2);
+			}
+			expect(seen).toEqual(["m0", "m1", "m2", "m3", "m4"]);
+		});
+
+		it("lets urgent messages take the cap ahead of older normal ones", () => {
+			store.send("a", "b", "normal-old", "normal");
+			store.send("a", "b", "normal-old2", "normal");
+			store.send("a", "b", "urgent-new", "urgent");
+			// cap=1: the urgent message wins the single slot despite being newest.
+			const first = store.drainUnread("b", 1);
+			expect(first.map((m) => m.content)).toEqual(["urgent-new"]);
+			// Remaining drains preserve FIFO among the leftover normals.
+			const rest = store.drainUnread("b");
+			expect(rest.map((m) => m.content)).toEqual(["normal-old", "normal-old2"]);
+		});
+
+		it("treats a non-positive or omitted limit as unbounded", () => {
+			for (let i = 0; i < 3; i++) store.send("a", "b", `m${i}`, "normal");
+			expect(store.drainUnread("b", 0)).toHaveLength(3);
+		});
+	});
 });

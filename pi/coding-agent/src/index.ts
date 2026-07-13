@@ -210,6 +210,9 @@ export {
 	createReadOnlyTools,
 	createReadTool,
 	createWriteTool,
+	type ExecutionProfile,
+	type HarnessCapabilities,
+	type HarnessCapabilitySettings,
 	type PromptTemplate,
 } from "./core/sdk.ts";
 export {

@@ -64,7 +64,108 @@ jobs:
           cd pi/coding-agent/dist/release
           shasum -a 256 magenta-* > SHA256SUMS
           cat SHA256SUMS
-      
+
+      - name: Verify macOS release startup
+        run: |
+          cd pi/coding-agent/dist/release
+          case "$(uname -m)" in
+            arm64) ./magenta-macos-arm64 --help > /tmp/magenta-help.txt ;;
+            x86_64) ./magenta-macos-x64 --help > /tmp/magenta-help.txt ;;
+            *) echo "Unsupported macOS runner architecture: $(uname -m)"; exit 1 ;;
+          esac
+          test -f _magenta/process-tools/target/release/magenta-process-tools
+
+      - name: Upload release assets for verification
+        uses: actions/upload-artifact@v4
+        with:
+          name: magenta-release-assets
+          path: |
+            pi/coding-agent/dist/release/magenta-macos-arm64
+            pi/coding-agent/dist/release/magenta-macos-x64
+            pi/coding-agent/dist/release/magenta-linux-x64
+            pi/coding-agent/dist/release/magenta-windows-x64.exe
+            pi/coding-agent/dist/release/magenta-resources-universal.tar.gz
+            pi/coding-agent/dist/release/SHA256SUMS
+          if-no-files-found: error
+
+  smoke-windows:
+    name: Smoke test Windows release
+    needs: build
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout installer
+        uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ inputs.release_tag || github.ref_name }}
+
+      - name: Download release assets
+        uses: actions/download-artifact@v4
+        with:
+          name: magenta-release-assets
+          path: release
+
+      - name: Install resources and start Magenta
+        shell: powershell
+        run: |
+          $tempRoot = [System.IO.Path]::GetPathRoot([System.IO.Path]::GetTempPath())
+          $alternateDrive = Get-PSDrive -PSProvider FileSystem |
+            Where-Object { $_.Root -and $_.Root -ne $tempRoot -and $_.Free -gt 1GB } |
+            Select-Object -First 1
+          if ($alternateDrive) {
+            $installDir = Join-Path $alternateDrive.Root ("MagentaSmoke-" + [Guid]::NewGuid().ToString("N"))
+            Write-Host "Testing cross-volume install from TEMP $tempRoot to $installDir"
+          } else {
+            $installDir = Join-Path $env:RUNNER_TEMP ("MagentaSmoke-" + [Guid]::NewGuid().ToString("N"))
+            Write-Host "No alternate filesystem drive available; installing to $installDir"
+          }
+          "MAGENTA_SMOKE_INSTALL_DIR=$installDir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+          $server = Start-Process python -ArgumentList "-m", "http.server", "8765", "--directory", "release" -PassThru
+          try {
+            $serverReady = $false
+            for ($attempt = 0; $attempt -lt 30; $attempt++) {
+              try {
+                Invoke-WebRequest -UseBasicParsing -Method Head -TimeoutSec 1 -Uri "http://127.0.0.1:8765/SHA256SUMS" | Out-Null
+                $serverReady = $true
+                break
+              } catch {
+                Start-Sleep -Milliseconds 500
+              }
+            }
+            if (-not $serverReady) { throw "Timed out waiting for the local release asset server" }
+            .\scripts\install.ps1 -InstallDir $installDir -AssetBaseUrl "http://127.0.0.1:8765"
+          } finally {
+            Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue
+          }
+          & "$installDir\magenta.exe" --help | Out-File -FilePath magenta-help.txt -Encoding utf8
+          if ($LASTEXITCODE -ne 0) { throw "Installed Magenta failed with exit code $LASTEXITCODE" }
+
+      - name: Start installed binary from PowerShell 7
+        shell: pwsh
+        run: |
+          & "$env:MAGENTA_SMOKE_INSTALL_DIR\magenta.exe" --help | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "Installed Magenta failed under PowerShell 7 with exit code $LASTEXITCODE" }
+
+  publish:
+    name: Publish verified release
+    needs: [build, smoke-windows]
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ env.RELEASE_TAG }}
+
+      - name: Download verified release assets
+        uses: actions/download-artifact@v4
+        with:
+          name: magenta-release-assets
+          path: release
+
       - name: Extract release notes
         id: release_notes
         run: |
@@ -88,12 +189,13 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           target_commitish: main
           files: |
-            pi/coding-agent/dist/release/magenta-macos-arm64
-            pi/coding-agent/dist/release/magenta-macos-x64
-            pi/coding-agent/dist/release/magenta-linux-x64
-            pi/coding-agent/dist/release/magenta-windows-x64.exe
-            pi/coding-agent/dist/release/magenta-resources-universal.tar.gz
-            pi/coding-agent/dist/release/SHA256SUMS
+            release/magenta-macos-arm64
+            release/magenta-macos-x64
+            release/magenta-linux-x64
+            release/magenta-windows-x64.exe
+            release/magenta-resources-universal.tar.gz
+            release/SHA256SUMS
+            scripts/install.ps1
           body_path: /tmp/release_notes.md
           draft: false
           prerelease: false
@@ -103,7 +205,7 @@ jobs:
         run: |
           echo "✅ Release ${{ steps.release_notes.outputs.version }} published to Minions-Land/Magenta-CLI"
           echo "📦 Artifacts:"
-          ls -lh pi/coding-agent/dist/release/magenta-*
+          ls -lh release/magenta-*
           echo ""
           echo "🔗 Download URL:"
           echo "   https://github.com/Minions-Land/Magenta-CLI/releases/tag/${{ steps.release_notes.outputs.version }}"

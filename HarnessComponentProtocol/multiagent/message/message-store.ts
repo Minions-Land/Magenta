@@ -208,20 +208,27 @@ export class MessageStore {
 	 * share a millisecond timestamp. This makes "the first thing an agent sees on
 	 * entering its loop is every urgent message, then everything else that piled
 	 * up while it was busy, in send order" exact.
+	 *
+	 * `limit` caps how many messages a single drain claims, so a large backlog is
+	 * injected in bounded batches across successive loops instead of one oversized
+	 * context block. Messages beyond the cap stay `unread` and are claimed by the
+	 * next drain, in the same priority-then-FIFO order, so nothing is lost or
+	 * reordered — the cap only bounds batch size, never drops a message. Omitting
+	 * `limit` (or a non-positive value) claims everything, preserving the original
+	 * behaviour. node:sqlite does not support `UPDATE ... ORDER BY ... LIMIT`, so
+	 * the capped path first SELECTs the highest-priority rowids, then flips exactly
+	 * those to `pending`; the `status = 'unread'` guard plus a single serial
+	 * connection keep the two statements from ever double-claiming a row.
 	 */
-	drainUnread(recipient: string): PeerMessage[] {
+	drainUnread(recipient: string, limit?: number): PeerMessage[] {
 		// Recover any messages left `pending` by a previous drain whose injection
 		// never confirmed (crash, thrown injector, interrupted turn). They rejoin
 		// this claim so a transient failure cannot strand a message forever.
 		this.reclaimStalePending(recipient);
 		const drainedAt = new Date().toISOString();
-		const rows = this.db
-			.prepare(
-				`UPDATE messages SET status = 'pending', drained_at = ?
-				 WHERE recipient = ? AND status = 'unread'
-				 RETURNING rowid, id, sender, recipient, content, created_at, priority`,
-			)
-			.all(drainedAt, recipient) as Array<{
+		const capped = typeof limit === "number" && limit > 0;
+
+		type Row = {
 			rowid: number;
 			id: string;
 			sender: string;
@@ -229,7 +236,40 @@ export class MessageStore {
 			content: string;
 			created_at: string;
 			priority: MessagePriority;
-		}>;
+		};
+
+		let rows: Row[];
+		if (capped) {
+			// Pick the top `limit` unread rows in the true delivery order (urgent
+			// first, then FIFO by rowid), then claim exactly those. Two statements on
+			// one serial connection: the SELECT chooses ids, the UPDATE claims only
+			// still-`unread` ones, so a row can never be claimed twice.
+			const picked = this.db
+				.prepare(
+					`SELECT rowid FROM messages
+					 WHERE recipient = ? AND status = 'unread'
+					 ORDER BY (CASE priority WHEN 'urgent' THEN 0 ELSE 1 END), rowid
+					 LIMIT ?`,
+				)
+				.all(recipient, limit) as Array<{ rowid: number }>;
+			if (picked.length === 0) return [];
+			const placeholders = picked.map(() => "?").join(",");
+			rows = this.db
+				.prepare(
+					`UPDATE messages SET status = 'pending', drained_at = ?
+					 WHERE status = 'unread' AND rowid IN (${placeholders})
+					 RETURNING rowid, id, sender, recipient, content, created_at, priority`,
+				)
+				.all(drainedAt, ...picked.map((p) => p.rowid)) as Row[];
+		} else {
+			rows = this.db
+				.prepare(
+					`UPDATE messages SET status = 'pending', drained_at = ?
+					 WHERE recipient = ? AND status = 'unread'
+					 RETURNING rowid, id, sender, recipient, content, created_at, priority`,
+				)
+				.all(drainedAt, recipient) as Row[];
+		}
 
 		// Priority DESC (urgent before normal), then rowid ASC (FIFO within a priority).
 		const ordered = rows.slice().sort((a, b) => {

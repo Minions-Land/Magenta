@@ -15,6 +15,7 @@ import {
 	type SubAgentReturnMessage,
 	type SubAgentSpawn,
 	type SubAgentWorkflowProvider,
+	sanitizeSubAgentTools,
 } from "../src/core/tools/sub-agent.ts";
 
 function textOf(result: { content: Array<{ type: string; text?: string }> }): string {
@@ -107,6 +108,21 @@ function createFakeSpawn(records: SpawnRecord[], options?: { autoClose?: boolean
 		return child;
 	};
 }
+
+describe("sub-agent tool grants", () => {
+	it("strips nested agent and background controllers", () => {
+		expect(sanitizeSubAgentTools(["read", "sub_agent", "bg_shell", "teammate_agent", "ls"])).toEqual(["read", "ls"]);
+	});
+
+	it("falls back to read-only tools when only forbidden controllers were requested", () => {
+		expect(sanitizeSubAgentTools(["sub_agent", "bg_shell", "teammate_agent"])).toEqual([
+			"read",
+			"grep",
+			"find",
+			"ls",
+		]);
+	});
+});
 
 describe("built-in sub_agent tool", () => {
 	let tempDir: string;
@@ -380,6 +396,34 @@ describe("built-in sub_agent tool", () => {
 		expect(textOf(result)).toContain("defaultReturnToMain: true");
 		expect(textOf(result)).toContain("defaultReturnDelivery: nextTurn");
 		expect(textOf(result)).toContain("defaultThinking: max");
+	});
+
+	it("removes workflow from the schema and rejects bypassed workflow calls when disabled", async () => {
+		controller.shutdown();
+		controller = new SubAgentController(manager, {
+			sendMessage: (message, options) => {
+				returned.push({ message, options: options ?? {} });
+			},
+			isWorkflowEnabled: () => false,
+		});
+		const tool = controller.createToolDefinition();
+		expect((tool.parameters as any).properties.workflow).toBeUndefined();
+		await expect(
+			tool.execute(
+				"call-disabled-wf",
+				{
+					action: "start",
+					workflow: {
+						pattern: "fan_out_synthesize",
+						workers: [{ task: "inspect" }],
+						synthesizer: { task: "summarize" },
+					},
+				},
+				undefined,
+				undefined,
+				createContext(tempDir),
+			),
+		).rejects.toThrow("workflows are disabled");
 	});
 
 	it("runs a workflow as one background event and returns a structured tree", async () => {

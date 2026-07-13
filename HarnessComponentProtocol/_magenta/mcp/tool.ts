@@ -3,13 +3,14 @@ import type { TextContent } from "@earendil-works/pi-ai";
 import { type TSchema, Type } from "typebox";
 import { type McpToolsCacheOptions, readMcpToolsCache, writeMcpToolsCache } from "./cache.ts";
 import {
-	McpStdioClient,
-	type McpStdioClientOptions,
+	type McpClient,
+	type McpClientOptions,
 	type McpToolCallResult,
 	type McpToolSchema,
 	validateMcpToolSchemas,
 } from "./client.ts";
 import type { JsonSchema } from "./schema.ts";
+import { createMcpClient } from "./transport.ts";
 
 /**
  * Adapts one tool exposed by an external MCP server into a loop-ready
@@ -34,8 +35,8 @@ export type McpToolDetails = {
  * rather than re-spawning per call the way one-shot process tools do.
  */
 export class McpConnection {
-	private client?: McpStdioClient;
-	private readonly clientOptions: McpStdioClientOptions;
+	private client?: McpClient;
+	private readonly clientOptions: McpClientOptions;
 	private connectPromise?: Promise<void>;
 	private idleClosePromise?: Promise<void>;
 	private toolReferences = 0;
@@ -43,17 +44,17 @@ export class McpConnection {
 	private terminal = false;
 	readonly serverName: string;
 
-	constructor(serverName: string, options: McpStdioClientOptions) {
+	constructor(serverName: string, options: McpClientOptions) {
 		this.serverName = serverName;
 		this.clientOptions = options;
-		this.client = new McpStdioClient(options);
+		this.client = createMcpClient(options);
 	}
 
 	/** Connect once; concurrent callers await the same in-flight handshake. */
 	async ensureConnected(): Promise<void> {
 		await this.idleClosePromise;
 		if (this.terminal) throw new Error(`MCP connection ${this.serverName} has been closed`);
-		if (!this.client) this.client = new McpStdioClient(this.clientOptions);
+		if (!this.client) this.client = createMcpClient(this.clientOptions);
 		const client = this.client;
 		if (client.isConnected) return;
 		if (!this.connectPromise) {
@@ -210,7 +211,7 @@ export class McpTool {
 
 export type CreateMcpToolsOptions = {
 	serverName: string;
-	client: McpStdioClientOptions;
+	client: McpClientOptions;
 	namePrefix?: string;
 	/**
 	 * Optional disk cache for the server's `tools/list` result. When provided and
@@ -247,18 +248,22 @@ export type DiscoverMcpToolsResult = {
 export async function discoverMcpTools(options: CreateMcpToolsOptions): Promise<DiscoverMcpToolsResult> {
 	const connection = new McpConnection(options.serverName, options.client);
 
-	const cacheOptions: McpToolsCacheOptions | undefined = options.cache
-		? {
-				cacheDir: options.cache.dir,
-				serverName: options.serverName,
-				client: {
-					command: options.client.command,
-					args: options.client.args,
-					env: options.cache.descriptorEnv,
-					cwd: options.client.cwd,
-				},
-			}
-		: undefined;
+	// The disk cache keys on the resolved command/binary identity, which only the
+	// stdio transport has. Remote (http) servers enumerate live every assembly —
+	// a single network round-trip — so they simply skip the cache.
+	const cacheOptions: McpToolsCacheOptions | undefined =
+		options.cache && options.client.transport !== "http"
+			? {
+					cacheDir: options.cache.dir,
+					serverName: options.serverName,
+					client: {
+						command: options.client.command,
+						args: options.client.args,
+						env: options.cache.descriptorEnv,
+						cwd: options.client.cwd,
+					},
+				}
+			: undefined;
 
 	try {
 		let tools: McpToolSchema[] | undefined;

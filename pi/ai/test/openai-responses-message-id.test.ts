@@ -45,4 +45,33 @@ describe("OpenAI Responses message ID conversion", () => {
 		expect(messageIds).toEqual(["msg_pi_1", "msg_pi_1_1"]);
 		expect(new Set(messageIds).size).toBe(messageIds.length);
 	});
+
+	it("omits status field from replayed assistant text messages", () => {
+		const model = getModel("openai-codex", "gpt-5.5");
+		const assistant: AssistantMessage = {
+			role: "assistant",
+			content: [{ type: "text", text: "replayed answer" }],
+			api: "openai-responses",
+			provider: "openai-codex",
+			model: "gpt-5.5",
+			usage,
+			stopReason: "stop",
+			timestamp: Date.now() - 1000,
+		};
+		const context: Context = {
+			systemPrompt: "You are helpful.",
+			messages: [{ role: "user", content: "question", timestamp: Date.now() - 2000 }, assistant],
+		};
+
+		const input = convertResponsesMessages(model, context, new Set(["openai", "openai-codex"]));
+		const replayedMessages = input.filter(
+			(item): item is ResponseOutputMessage =>
+				item.type === "message" && "role" in item && item.role === "assistant",
+		);
+
+		expect(replayedMessages.length).toBeGreaterThan(0);
+		for (const msg of replayedMessages) {
+			expect(msg).not.toHaveProperty("status");
+		}
+	});
 });

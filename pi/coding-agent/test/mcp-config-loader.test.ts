@@ -249,4 +249,74 @@ lines.on("line", (line) => {
 		await hcp.dispose();
 		expect(readLifecycle(lifecyclePath)).toEqual(["spawn", "close"]);
 	});
+
+	it("skips an http server missing a url with a warning", async () => {
+		writeConfig(JSON.stringify({ servers: [{ name: "remote", type: "http" }] }));
+		const result = await load();
+		expect(result.tools).toEqual([]);
+		const warning = result.diagnostics.find((d) => d.message.includes('http MCP server "remote"'));
+		expect(warning?.type).toBe("warning");
+		expect(warning?.message).toContain('missing "url"');
+	});
+
+	it("connects to a configured http server and surfaces its tools", async () => {
+		const { createServer } = await import("node:http");
+		const server = createServer((req, res) => {
+			let raw = "";
+			req.on("data", (c) => {
+				raw += c;
+			});
+			req.on("end", () => {
+				const msg = JSON.parse(raw || "{}") as { id?: number; method?: string };
+				if (msg.id === undefined) {
+					res.statusCode = 202;
+					res.end();
+					return;
+				}
+				const result =
+					msg.method === "initialize"
+						? { protocolVersion: "2025-03-26", capabilities: { tools: {} } }
+						: msg.method === "tools/list"
+							? { tools: [{ name: "ping", description: "ping", inputSchema: { type: "object" } }] }
+							: { content: [{ type: "text", text: "pong" }] };
+				res.setHeader("content-type", "application/json");
+				res.end(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result }));
+			});
+		});
+		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+		const { port } = server.address() as { port: number };
+		try {
+			writeConfig(
+				JSON.stringify({
+					servers: [{ name: "remote", type: "http", url: `http://127.0.0.1:${port}/mcp`, name_prefix: "" }],
+				}),
+			);
+			const result = await load();
+			expect(result.addresses).toContain("tool:ping");
+			expect(result.diagnostics.filter((d) => d.type === "error")).toEqual([]);
+		} finally {
+			await new Promise<void>((resolve) => server.close(() => resolve()));
+		}
+	});
+
+	it("never serializes http headers into diagnostics (no token leak)", async () => {
+		// Point at a closed port so the connection fails, forcing a diagnostic that
+		// mentions the server; the secret header must not appear anywhere in it.
+		writeConfig(
+			JSON.stringify({
+				servers: [
+					{
+						name: "remote",
+						type: "http",
+						url: "http://127.0.0.1:1/mcp",
+						headers: { Authorization: "Bearer super-secret-token" },
+						timeout_ms: 100,
+					},
+				],
+			}),
+		);
+		const result = await load();
+		const serialized = JSON.stringify(result.diagnostics);
+		expect(serialized).not.toContain("super-secret-token");
+	});
 });

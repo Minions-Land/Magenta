@@ -1,10 +1,10 @@
 kind = "tool"
 product = "tool"
 name = "todo"
-description = "Manage a session-scoped todo list. State is stored in tool result details for proper branching support."
-source = "pi"
-sources = ["pi"]
+description = "Manage a hierarchical session-branch Todo plan with atomic batch mutations."
+source = "magenta"
+sources = ["magenta"]
 
 [exports]
-module = "tools/todo/pi/todo.ts"
+module = "tools/todo/magenta/todo.ts"
 factory = "createTodoTool"

@@ -883,6 +883,20 @@ export class SessionManager {
 		}
 	}
 
+	/**
+	 * Persist the complete current session immediately.
+	 *
+	 * Normal interactive sessions defer creating their file until an assistant
+	 * message exists, avoiding empty session files. Managed background sessions
+	 * need a durability boundary before another process opens them, so callers
+	 * may explicitly flush a pre-seeded header and custom context.
+	 */
+	flush(): void {
+		if (!this.persist || !this.sessionFile) return;
+		this._rewriteFile();
+		this.flushed = true;
+	}
+
 	isPersisted(): boolean {
 		return this.persist;
 	}

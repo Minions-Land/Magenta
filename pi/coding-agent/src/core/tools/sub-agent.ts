@@ -26,6 +26,7 @@ const MAIN_PROGRESS_PATH = join(WORK_DIR, "main-tool-progress.md");
 const TERM_GRACE_MS = 3000;
 const MAX_START_MANY = 8;
 const DEFAULT_TOOLS = ["read", "grep", "find", "ls"];
+const FORBIDDEN_SUB_AGENT_TOOLS = new Set(["sub_agent", "bg_shell", "teammate_agent"]);
 const DEFAULT_THINKING = "medium";
 const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
@@ -317,6 +318,12 @@ export type SubAgentDetails = Record<string, unknown>;
 
 function positiveNumber(value: unknown): number | undefined {
 	return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
+export function sanitizeSubAgentTools(requested: string[] | undefined): string[] {
+	const selected = requested?.length ? requested : DEFAULT_TOOLS;
+	const tools = selected.filter((name) => !FORBIDDEN_SUB_AGENT_TOOLS.has(name));
+	return tools.length ? tools : DEFAULT_TOOLS;
 }
 
 function compactValue(value: unknown, maxLength = 1200): string {
@@ -635,6 +642,7 @@ export class SubAgentController {
 	private agentCommand: string;
 	private getDefaultModel?: () => SubAgentModelSelection | undefined;
 	private getWorkflowProvider?: () => SubAgentWorkflowProvider | undefined;
+	private isWorkflowEnabled: () => boolean;
 
 	constructor(
 		manager: BackgroundEventManager,
@@ -644,6 +652,7 @@ export class SubAgentController {
 			agentCommand?: string;
 			getDefaultModel?: () => SubAgentModelSelection | undefined;
 			getWorkflowProvider?: () => SubAgentWorkflowProvider | undefined;
+			isWorkflowEnabled?: () => boolean;
 		},
 	) {
 		this.sendMessage = options.sendMessage;
@@ -651,6 +660,7 @@ export class SubAgentController {
 		this.agentCommand = options.agentCommand ?? APP_BINARY_NAME;
 		this.getDefaultModel = options.getDefaultModel;
 		this.getWorkflowProvider = options.getWorkflowProvider;
+		this.isWorkflowEnabled = options.isWorkflowEnabled ?? (() => true);
 		this.monitor = manager.registerSource({
 			id: "agents",
 			title: "agents",
@@ -700,11 +710,14 @@ export class SubAgentController {
 		});
 	}
 
-	createToolDefinition(): ToolDefinition<typeof subAgentSchema, SubAgentDetails> {
+	createToolDefinition(): ToolDefinition<any, SubAgentDetails> {
+		const workflowsEnabled = this.isWorkflowEnabled();
 		return {
 			name: "sub_agent",
 			label: "Sub Agent",
-			description: `Start, inspect, wait for, or cancel headless ${APP_NAME} sub-agents. action=start accepts either one task or a tasks array for parallel work, or a workflow object to run a multi-agent orchestration preset (classify_and_act, fan_out_synthesize, adversarial_verify, generate_and_filter, tournament, loop_until_done). Set returnToMain=true to automatically send completed results back to the main agent. Sub-agents are read-only by default, inherit the parent model unless a task specifies model/provider, run with --no-session --no-extensions, and receive parent progress.`,
+			description: workflowsEnabled
+				? `Start, inspect, wait for, or cancel headless ${APP_NAME} sub-agents. action=start accepts either one task or a tasks array for parallel work, or a workflow object to run a multi-agent orchestration preset (classify_and_act, fan_out_synthesize, adversarial_verify, generate_and_filter, tournament, loop_until_done). Set returnToMain=true to automatically send completed results back to the main agent. Sub-agents are read-only by default, inherit the parent model unless a task specifies model/provider, run with --no-session --no-extensions, and receive parent progress.`
+				: `Start, inspect, wait for, or cancel headless ${APP_NAME} sub-agents. action=start accepts either one task or a tasks array for parallel work. Set returnToMain=true to automatically send completed results back to the main agent. Sub-agents are read-only by default, inherit the parent model unless a task specifies model/provider, run with --no-session --no-extensions, and receive parent progress.`,
 			promptSnippet: `Run one or more headless ${APP_NAME} sub-agents for delegated analysis`,
 			promptGuidelines: [
 				"Use sub_agent action=start with tasks:[...] when a task can be decomposed into independent research, code review, test analysis, or planning subtasks that benefit from concurrent agents.",
@@ -713,11 +726,15 @@ export class SubAgentController {
 				"Sub-agents receive parent tool progress as situational awareness; if they need the freshest state and have read access, they can read the provided progress file.",
 				"After sub_agent action=start, either call sub_agent action=wait before relying on results, or set returnToMain=true so results are automatically returned as a follow-up to the main agent — use one or the other, not both. If you wait (or view a finished agent via action=status) the pending automatic return is cancelled, so you will not get a duplicate return.",
 				"Sub-agents run with --no-extensions, so they cannot recursively create more sub-agents.",
-				"Use action=start with a workflow object when the task needs a structured multi-agent pattern (route-and-handle, fan-out-and-synthesize, generate-and-verify, candidate tournament, or iterate-until-done) rather than independent parallel tasks. The orchestration control flow is deterministic and owned by the harness; you only supply each slot's task content. A workflow shows up as a single background event whose expansion reveals its internal workers.",
+				...(workflowsEnabled
+					? [
+							"Use action=start with a workflow object when the task needs a structured multi-agent pattern (route-and-handle, fan-out-and-synthesize, generate-and-verify, candidate tournament, or iterate-until-done) rather than independent parallel tasks. The orchestration control flow is deterministic and owned by the harness; you only supply each slot's task content. A workflow shows up as a single background event whose expansion reveals its internal workers.",
+						]
+					: []),
 			],
-			parameters: subAgentSchema,
+			parameters: workflowsEnabled ? subAgentSchema : Type.Omit(subAgentSchema, ["workflow"]),
 			renderKind: "sub-agent-result",
-			execute: (_toolCallId, params, signal, _onUpdate, ctx) => this.execute(params, signal, ctx),
+			execute: (_toolCallId, params, signal, _onUpdate, ctx) => this.execute(params as SubAgentInput, signal, ctx),
 		};
 	}
 
@@ -840,6 +857,9 @@ export class SubAgentController {
 		// deterministic control flow; this facade only manages it as one background
 		// event and reuses the same return-to-main auto-continuation.
 		if (params.workflow) {
+			if (!this.isWorkflowEnabled()) {
+				throw new Error("sub_agent workflows are disabled for the current execution profile");
+			}
 			const running = [...this.events.values()].filter((event) => event.status === "running").length;
 			if (running + 1 > MAX_START_MANY) {
 				throw new Error(
@@ -1015,7 +1035,7 @@ export class SubAgentController {
 
 		const id = `agent_${String(this.nextAgentNumber++).padStart(3, "0")}`;
 		const cwd = resolve(parentCwd, input.cwd ?? ".");
-		const tools = input.tools?.length ? input.tools : DEFAULT_TOOLS;
+		const tools = sanitizeSubAgentTools(input.tools);
 		const packages =
 			input.packages?.map((selector) => selector.trim()).filter((selector) => selector.length > 0) ?? [];
 		const thinking = input.thinking ?? DEFAULT_THINKING;

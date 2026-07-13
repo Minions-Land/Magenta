@@ -5,14 +5,14 @@ import { createTodoTool, type TodoToolOptions } from "./todo.ts";
 export class HcpMagnet {
 	static readonly module = "tools/todo";
 	static readonly kind = "tool";
-	static readonly source = "pi";
+	static readonly source = "magenta";
 
 	static build(context: HcpMagnetBuildContext) {
 		return new HcpMagnet(context.cwd ?? context.repoRoot, context.settings as TodoToolOptions | undefined);
 	}
 
 	readonly kind = "native";
-	readonly source = "pi";
+	readonly source = "magenta";
 	private readonly tool: AgentTool;
 
 	constructor(cwd: string, options?: TodoToolOptions) {

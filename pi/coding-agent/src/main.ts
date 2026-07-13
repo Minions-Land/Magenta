@@ -48,9 +48,9 @@ import { migrateLegacyPiAgentDirToCurrentConfigDir, runMigrations, showDeprecati
 import { InteractiveMode, runPrintMode, runRpcMode } from "./modes/index.ts";
 import { initTheme, stopThemeWatcher } from "./modes/interactive/theme/theme.ts";
 import { handleConfigCommand, handlePackageCommand } from "./package-manager-cli.ts";
+import { backgroundUpdateNotification, checkForUpdate, installUpdate } from "./utils/github-release-update.ts";
 import { isLocalPath, normalizePath, resolvePath } from "./utils/paths.ts";
 import { cleanupWindowsSelfUpdateQuarantine } from "./utils/windows-self-update.ts";
-import { checkForUpdate, installUpdate, backgroundUpdateNotification } from "./utils/github-release-update.ts";
 
 const EXTENSION_LOAD_FAILURE_HINT = 'Hint: Start without extensions using "pi -ne".';
 
@@ -390,7 +390,7 @@ function buildSessionOptions(
 			// Allow "--model <pattern>:<thinking>" as a shorthand.
 			// Explicit --thinking still takes precedence (applied later).
 			if (!parsed.thinking && resolved.thinkingLevel) {
-				options.thinkingLevel = resolved.thinkingLevel;
+				options.executionProfile = resolved.thinkingLevel;
 				cliThinkingFromModel = true;
 			}
 		}
@@ -407,20 +407,20 @@ function buildSessionOptions(
 			options.model = savedInScope.model;
 			// Use thinking level from scoped model config if explicitly set
 			if (!parsed.thinking && savedInScope.thinkingLevel) {
-				options.thinkingLevel = savedInScope.thinkingLevel;
+				options.executionProfile = savedInScope.thinkingLevel;
 			}
 		} else {
 			options.model = scopedModels[0].model;
 			// Use thinking level from first scoped model if explicitly set
 			if (!parsed.thinking && scopedModels[0].thinkingLevel) {
-				options.thinkingLevel = scopedModels[0].thinkingLevel;
+				options.executionProfile = scopedModels[0].thinkingLevel;
 			}
 		}
 	}
 
 	// Thinking level from CLI (takes precedence over scoped model thinking levels set above)
 	if (parsed.thinking) {
-		options.thinkingLevel = parsed.thinking;
+		options.executionProfile = parsed.thinking;
 	}
 
 	// Scoped models for Ctrl+P cycling
@@ -522,36 +522,36 @@ export async function main(args: string[], options?: MainOptions) {
 		// Handle --update flag
 		console.log("🔍 Checking for updates...");
 		const result = await checkForUpdate({ force: true });
-		
+
 		if (result.error) {
 			console.error(chalk.red(`Update check failed: ${result.error}`));
 			process.exit(1);
 		}
-		
+
 		if (!result.updateAvailable) {
 			console.log(chalk.green(`✓ Already on latest version (${result.currentVersion})`));
 			process.exit(0);
 		}
-		
+
 		console.log(chalk.cyan(`\n📦 New version available: ${result.latestVersion}`));
 		if (result.releaseNotes) {
 			console.log(chalk.dim("\nRelease notes:"));
 			console.log(result.releaseNotes.split("\n").slice(0, 10).join("\n"));
 		}
-		
+
 		console.log(chalk.cyan("\nDownloading and installing..."));
 		const installResult = await installUpdate();
-		
+
 		if (!installResult.success) {
 			console.error(chalk.red(`\n✗ Update failed: ${installResult.error}`));
 			process.exit(1);
 		}
-		
+
 		console.log(chalk.green(`\n✓ Updated to v${installResult.newVersion}`));
 		console.log(chalk.dim("Please restart magenta to use the new version"));
 		process.exit(0);
 	}
-	
+
 	if (parsed.version) {
 		console.log(VERSION);
 		process.exit(0);
@@ -792,6 +792,7 @@ export async function main(args: string[], options?: MainOptions) {
 			sessionStartEvent,
 			model: sessionOptions.model,
 			thinkingLevel: sessionOptions.thinkingLevel,
+			executionProfile: sessionOptions.executionProfile,
 			scopedModels: sessionOptions.scopedModels,
 			tools: sessionOptions.tools,
 			excludeTools: sessionOptions.excludeTools,
@@ -801,7 +802,7 @@ export async function main(args: string[], options?: MainOptions) {
 		});
 		const cliThinkingOverride = parsed.thinking !== undefined || cliThinkingFromModel;
 		if (created.session.model && cliThinkingOverride) {
-			created.session.setThinkingLevel(created.session.thinkingLevel);
+			created.session.setExecutionProfile(created.session.executionProfile);
 		}
 
 		return {
@@ -910,12 +911,12 @@ export async function main(args: string[], options?: MainOptions) {
 		}
 
 		printTimings();
-		
+
 		// Background update check (non-blocking)
 		if (!offlineMode) {
 			backgroundUpdateNotification().catch(() => {});
 		}
-		
+
 		await interactiveMode.run();
 	} else {
 		printTimings();

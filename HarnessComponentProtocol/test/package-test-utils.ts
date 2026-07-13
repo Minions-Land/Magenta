@@ -5,12 +5,12 @@ import {
 	type HcpClientbuildsessionresult,
 } from "../.HCP/assembly/session-hcp.ts";
 import { HcpClientpackageinputfromoverlay } from "../_magenta/packages/hcp-client-components.ts";
-import type { PackageToolDiagnostic } from "../_magenta/packages/tool-diagnostic.ts";
 import type {
 	PackageAssemblyProgress,
 	PackageDiagnostic,
 	PackageOverlay,
 } from "../_magenta/packages/package-overlay-v2.ts";
+import type { PackageToolDiagnostic } from "../_magenta/packages/tool-diagnostic.ts";
 
 export type HcpClientpackagetestbuildoptions = Omit<HcpClientbuildsessionoptions, "components"> & {
 	overlay: PackageOverlay;

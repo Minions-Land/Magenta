@@ -12,8 +12,12 @@ export * from "./.HCP/transport/hcp-process.ts";
 export * from "./_magenta/env/pi/nodejs.ts";
 export * from "./_magenta/env/ssh.ts";
 export * from "./_magenta/mcp/client.ts";
+export * from "./_magenta/mcp/http-client.ts";
+export * from "./_magenta/mcp/jsonrpc.ts";
 export * from "./_magenta/mcp/schema.ts";
+export * from "./_magenta/mcp/sse.ts";
 export * from "./_magenta/mcp/tool.ts";
+export * from "./_magenta/mcp/transport.ts";
 export * from "./_magenta/messages/messages.ts";
 export * from "./_magenta/packages/hcp-client-components.ts";
 export * from "./_magenta/packages/package-overlay-v2.ts";
@@ -70,4 +74,4 @@ export * from "./tools/descriptor/package-tool.ts";
 // Tools: pure-execution tool logic + the AgentTool Tool contract.
 export * from "./tools/index.ts";
 export * from "./tools/process-tool.ts";
-export * from "./tools/todo/pi/todo.ts";
+export * from "./tools/todo/magenta/todo.ts";

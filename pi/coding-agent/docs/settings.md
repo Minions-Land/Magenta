@@ -29,9 +29,11 @@ Use `/trust` in interactive mode to save a project trust decision for future ses
 |---------|------|---------|-------------|
 | `defaultProvider` | string | - | Default provider (e.g., `"anthropic"`, `"openai"`) |
 | `defaultModel` | string | - | Default model ID |
-| `defaultThinkingLevel` | string | - | `"off"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"` |
+| `defaultThinkingLevel` | string | - | `"off"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"`, `"ultra"` |
 | `hideThinkingBlock` | boolean | `false` | Hide thinking blocks in output |
 | `thinkingBudgets` | object | - | Custom token budgets per thinking level |
+
+`ultra` is a Harness execution profile. It maps to the selected model's highest native thinking level and enables workflow orchestration and persistent teammates by default. Providers never receive `ultra` as a thinking value.
 
 #### thinkingBudgets
 
@@ -45,6 +47,15 @@ Use `/trust` in interactive mode to save a project trust decision for future ses
   }
 }
 ```
+
+### Harness Capabilities
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `harness.workflows` | boolean | profile default | Enable `sub_agent` workflow templates |
+| `harness.teammates` | boolean | profile default | Enable persistent `teammate_agent` sessions |
+
+Both capabilities default to `true` in Ultra and `false` in other profiles. Explicit settings win in either direction, so standard profiles can enable them and Ultra can disable them.
 
 ### UI & Display
 
@@ -266,6 +277,10 @@ See [packages.md](packages.md) for package management details.
   "defaultProvider": "anthropic",
   "defaultModel": "claude-sonnet-4-20250514",
   "defaultThinkingLevel": "medium",
+  "harness": {
+    "workflows": true,
+    "teammates": false
+  },
   "theme": "dark",
   "compaction": {
     "enabled": true,

@@ -10,6 +10,7 @@ import type { ImageContent } from "@earendil-works/pi-ai";
 import type { SessionStats } from "../../core/agent-session.ts";
 import type { BashResult } from "../../core/bash-executor.ts";
 import type { CompactionResult } from "../../core/compaction/index.ts";
+import type { ExecutionProfile } from "../../core/execution-profile.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.ts";
 import type { RpcCommand, RpcResponse, RpcSessionState, RpcSlashCommand } from "./rpc-types.ts";
 
@@ -250,6 +251,7 @@ export class RpcClient {
 	async cycleModel(): Promise<{
 		model: { provider: string; id: string };
 		thinkingLevel: ThinkingLevel;
+		executionProfile: ExecutionProfile;
 		isScoped: boolean;
 	} | null> {
 		const response = await this.send({ type: "cycle_model" });
@@ -271,10 +273,14 @@ export class RpcClient {
 		await this.send({ type: "set_thinking_level", level });
 	}
 
+	async setExecutionProfile(profile: ExecutionProfile): Promise<void> {
+		await this.send({ type: "set_execution_profile", profile });
+	}
+
 	/**
 	 * Cycle thinking level.
 	 */
-	async cycleThinkingLevel(): Promise<{ level: ThinkingLevel } | null> {
+	async cycleThinkingLevel(): Promise<{ level: ExecutionProfile } | null> {
 		const response = await this.send({ type: "cycle_thinking_level" });
 		return this.getData(response);
 	}

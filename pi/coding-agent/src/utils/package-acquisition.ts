@@ -1,10 +1,10 @@
 /**
  * Acquisition layer for harness packages from GitHub releases.
- * 
+ *
  * Resolves `github:owner/repo/Package@version` selectors, downloads the release
  * artifact (.tar.gz + .sha256), verifies checksum, extracts to local cache, and
  * returns the on-disk package root for loadPackageOverlay consumption.
- * 
+ *
  * Conventions (per MagentaPackages release.yml):
  * - Tag: <Package>-v<version> (e.g. AutOmicScience-v1.0.0)
  * - Artifact: <Pkg>-v<ver>.tar.gz + <Pkg>-v<ver>.tar.gz.sha256

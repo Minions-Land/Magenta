@@ -2,7 +2,7 @@ import { dirname } from "node:path";
 import type { HcpClientcomponent } from "../../.HCP/assembly/session-hcp.ts";
 import { HCP_MAGNETS } from "../../.HCP/assembly/sources.generated.ts";
 import type { PackageToolBuildSettings } from "../../tools/descriptor/package-tool.ts";
-import type { PackageOverlay, PackageDiagnostic } from "./package-overlay-v2.ts";
+import type { PackageDiagnostic, PackageOverlay } from "./package-overlay-v2.ts";
 import type { LoadedPackageMagnet } from "./runtime-magnet-loader.ts";
 import type { PackageToolDiagnostic } from "./tool-diagnostic.ts";
 

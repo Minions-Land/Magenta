@@ -38,7 +38,7 @@ test.describe("Extension Retirement", () => {
 	test("keeps reusable tools in Harness tools", async () => {
 		const expectedPaths = [
 			"HarnessComponentProtocol/tools/todo/todo.toml",
-			"HarnessComponentProtocol/tools/todo/pi/todo.ts",
+			"HarnessComponentProtocol/tools/todo/magenta/todo.ts",
 		];
 
 		for (const relativePath of expectedPaths) {

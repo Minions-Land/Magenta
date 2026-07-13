@@ -32,7 +32,7 @@ const DEFAULT_TOOLS = ["read", "grep", "find", "ls"];
  * primary, structural fork-bomb prevention; the depth guard below is a
  * defense-in-depth backstop.
  */
-const FORBIDDEN_WORKER_TOOLS = new Set(["sub_agent", "bg_shell"]);
+const FORBIDDEN_WORKER_TOOLS = new Set(["sub_agent", "bg_shell", "teammate_agent"]);
 
 /**
  * Sanitize a tool whitelist for a worker: drop any forbidden tool. If the result

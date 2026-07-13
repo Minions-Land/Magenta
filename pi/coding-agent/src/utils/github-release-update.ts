@@ -1,10 +1,10 @@
 /**
  * GitHub Releases-based auto-update mechanism for Magenta.
- * 
+ *
  * This module checks GitHub Releases for new versions and downloads the binary
  * when updates are available. Binaries are published to a PUBLIC repository
  * (Minions-Land/Magenta-CLI) so downloads work anonymously with no token.
- * 
+ *
  * Unlike magenta-update.ts (git-based), this works with distributed binaries.
  */
 
@@ -14,7 +14,7 @@ import { chmod, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promi
 import { arch, homedir, platform } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { pipeline } from "node:stream/promises";
-import { VERSION, isBunBinary } from "../config.ts";
+import { isBunBinary, VERSION } from "../config.ts";
 
 // ============================================================================
 // Configuration - Set these before building the binary
@@ -23,7 +23,7 @@ import { VERSION, isBunBinary } from "../config.ts";
 /** GitHub repository in format "owner/repo" */
 const GITHUB_REPO = process.env.MAGENTA_GITHUB_REPO || "Minions-Land/Magenta-CLI";
 
-/** 
+/**
  * GitHub Personal Access Token (optional).
  * For public repositories, no token is needed - downloads work anonymously.
  * Set MAGENTA_GITHUB_TOKEN environment variable only if using a private repo.
@@ -123,7 +123,11 @@ async function recordUpdateCheck(): Promise<void> {
 // GitHub API
 // ============================================================================
 
-async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs: number = FETCH_TIMEOUT_MS): Promise<Response> {
+async function fetchWithTimeout(
+	url: string,
+	options: RequestInit,
+	timeoutMs: number = FETCH_TIMEOUT_MS,
+): Promise<Response> {
 	const controller = new AbortController();
 	const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -153,7 +157,7 @@ async function getLatestRelease(): Promise<GitHubRelease | null> {
 			throw new Error(`GitHub API returned ${response.status}: ${response.statusText}`);
 		}
 
-		return await response.json() as GitHubRelease;
+		return (await response.json()) as GitHubRelease;
 	} catch (error) {
 		// Network errors, timeouts, etc. - silently fail
 		return null;
@@ -242,14 +246,14 @@ export async function checkForUpdate(options: { force?: boolean } = {}): Promise
 		};
 	}
 
-		return {
-			updateAvailable: true,
-			currentVersion: VERSION,
-			latestVersion,
-			releaseNotes: release.body,
-			// Public repo: anonymous download via browser_download_url
-			downloadUrl: asset.browser_download_url,
-		};
+	return {
+		updateAvailable: true,
+		currentVersion: VERSION,
+		latestVersion,
+		releaseNotes: release.body,
+		// Public repo: anonymous download via browser_download_url
+		downloadUrl: asset.browser_download_url,
+	};
 }
 
 /**
@@ -279,8 +283,7 @@ export async function installUpdate(): Promise<UpdateInstallResult> {
 	if (!isBunBinary) {
 		return {
 			success: false,
-			error:
-				"Self-update only works for compiled Magenta binaries. Currently running via Node.js; skipping self-update to avoid overwriting Node.js.",
+			error: "Self-update only works for compiled Magenta binaries. Currently running via Node.js; skipping self-update to avoid overwriting Node.js.",
 		};
 	}
 
@@ -312,9 +315,13 @@ export async function installUpdate(): Promise<UpdateInstallResult> {
 
 	try {
 		// Download the new binary (use longer timeout for large files)
-		const response = await fetchWithTimeout(checkResult.downloadUrl, {
-			headers: buildGitHubHeaders("application/octet-stream"),
-		}, DOWNLOAD_TIMEOUT_MS);
+		const response = await fetchWithTimeout(
+			checkResult.downloadUrl,
+			{
+				headers: buildGitHubHeaders("application/octet-stream"),
+			},
+			DOWNLOAD_TIMEOUT_MS,
+		);
 
 		if (!response.ok) {
 			throw new Error(`Download failed: ${response.status} ${response.statusText}`);
@@ -329,14 +336,14 @@ export async function installUpdate(): Promise<UpdateInstallResult> {
 		if (!response.body) {
 			throw new Error("Response body is null");
 		}
-		
+
 		const fileStream = createWriteStream(tempPath);
-		
+
 		// Convert Web ReadableStream to Node.js stream and add progress
 		const contentLength = parseInt(response.headers.get("content-length") || "0", 10);
 		let downloadedBytes = 0;
 		const startTime = Date.now();
-		
+
 		const reader = response.body.getReader();
 		const writeChunk = async (): Promise<void> => {
 			const { done, value } = await reader.read();
@@ -344,7 +351,7 @@ export async function installUpdate(): Promise<UpdateInstallResult> {
 				fileStream.end();
 				return;
 			}
-			
+
 			if (contentLength > 0) {
 				downloadedBytes += value.length;
 				const percent = Math.floor((downloadedBytes / contentLength) * 100);
@@ -352,16 +359,16 @@ export async function installUpdate(): Promise<UpdateInstallResult> {
 				const speed = (downloadedBytes / elapsed / 1024 / 1024).toFixed(2);
 				process.stdout.write(`\r📥 下载中: ${percent}% (${speed} MB/s)`);
 			}
-			
+
 			fileStream.write(value);
 			await writeChunk();
 		};
-		
+
 		await writeChunk();
 		if (contentLength > 0) {
 			console.log(""); // New line after progress
 		}
-		
+
 		// Wait for stream to finish
 		await new Promise<void>((resolve, reject) => {
 			fileStream.on("finish", resolve);
@@ -415,7 +422,7 @@ export async function installUpdate(): Promise<UpdateInstallResult> {
 
 /**
  * Windows-specific update installer.
- * 
+ *
  * Windows cannot rename a running .exe, so we:
  *  1. Write the new binary to a temp location
  *  2. Generate a batch script to replace the exe after magenta exits

@@ -28,6 +28,7 @@ export const BUILTIN_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 	{ name: "name", description: "Set session display name" },
 	{ name: "session", description: "Show session info and stats" },
 	{ name: "events", description: "Show background work started by the main agent" },
+	{ name: "todo", description: "Show the current branch Todo plan" },
 	{ name: "side", description: "Open a temporary no-tools side chat" },
 	{ name: "btw", description: "Open a temporary no-tools side chat" },
 	{ name: "s", description: "Open a temporary no-tools side chat" },

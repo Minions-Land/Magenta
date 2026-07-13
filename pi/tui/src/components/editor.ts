@@ -476,7 +476,7 @@ export class Editor implements Component, Focusable {
 		// Store for cursor navigation (must match wrapping width)
 		this.lastWidth = layoutWidth;
 
-		const horizontal = this.borderColor("─");
+		const horizontal = this.borderColor("─".repeat(width));
 
 		// Layout the text
 		const layoutLines = this.layoutText(layoutWidth);
@@ -517,7 +517,7 @@ export class Editor implements Component, Focusable {
 				result.push(this.borderColor(truncateToWidth(indicator, width)));
 			}
 		} else {
-			result.push(horizontal.repeat(width));
+			result.push(horizontal);
 		}
 
 		// Render each visible layout line
@@ -575,7 +575,7 @@ export class Editor implements Component, Focusable {
 			const remaining = width - visibleWidth(indicator);
 			result.push(this.borderColor(indicator + "─".repeat(Math.max(0, remaining))));
 		} else {
-			result.push(horizontal.repeat(width));
+			result.push(horizontal);
 		}
 
 		// Add autocomplete list if active

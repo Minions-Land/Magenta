@@ -220,8 +220,14 @@ export async function writeFixturePackage(packagesRoot: string, pkg: FixturePack
 			);
 		} else if (component.kind === "skill") {
 			const dir = join(packageDir, "skills", component.item, component.source);
-			await writeText(join(dir, "HcpMagnet.ts"), skillMagnetSource(component.item, component.name, component.source));
-			await writeText(join(dir, "SKILL.md"), component.skillMarkdown ?? `# ${component.name}\n\nFixture skill content.\n`);
+			await writeText(
+				join(dir, "HcpMagnet.ts"),
+				skillMagnetSource(component.item, component.name, component.source),
+			);
+			await writeText(
+				join(dir, "SKILL.md"),
+				component.skillMarkdown ?? `# ${component.name}\n\nFixture skill content.\n`,
+			);
 			componentDecls.push(
 				`[[components]]\nkind = "skill"\nname = "${component.name}"\nsource = "${component.source}"\npath = "skills/${component.item}/${component.source}"${
 					component.includeInContext ? `\ninclude_in_context = true` : ""
@@ -240,10 +246,14 @@ export async function writeFixturePackage(packagesRoot: string, pkg: FixturePack
 		} else if (component.kind === "system-prompt") {
 			const mergeMode = component.mergeMode ?? "append";
 			const dir = join(packageDir, "system-prompt", component.source);
-			await writeText(join(dir, "HcpMagnet.ts"), systemPromptMagnetSource(component.name, component.source, mergeMode));
+			await writeText(
+				join(dir, "HcpMagnet.ts"),
+				systemPromptMagnetSource(component.name, component.source, mergeMode),
+			);
 			await writeText(
 				join(dir, "system-prompt.toml"),
-				component.systemPromptToml ?? `kind = "system-prompt"\nname = "${component.name}"\ncontent_path = "SYSTEM.md"\n`,
+				component.systemPromptToml ??
+					`kind = "system-prompt"\nname = "${component.name}"\ncontent_path = "SYSTEM.md"\n`,
 			);
 			await writeText(join(dir, "SYSTEM.md"), `Fixture system prompt for ${component.name}.\n`);
 			componentDecls.push(
@@ -253,7 +263,10 @@ export async function writeFixturePackage(packagesRoot: string, pkg: FixturePack
 	}
 
 	const profilesToml = (pkg.profiles ?? [])
-		.map((p) => `[[profiles]]\nname = "${p.name}"${p.description ? `\ndescription = "${p.description}"` : ""}\nextends = []\n`)
+		.map(
+			(p) =>
+				`[[profiles]]\nname = "${p.name}"${p.description ? `\ndescription = "${p.description}"` : ""}\nextends = []\n`,
+		)
 		.join("\n");
 
 	const manifest = `schema_version = "magenta.package.v2"
