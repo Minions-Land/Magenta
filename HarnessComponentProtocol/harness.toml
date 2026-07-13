@@ -95,7 +95,7 @@ path = "tools/lsp/lsp.toml"
 [[components]]
 kind = "tool"
 name = "todo"
-description = "Manage a session-scoped todo list with branching support."
+description = "Manage a hierarchical session-branch Todo plan with atomic batch mutations."
 path = "tools/todo/todo.toml"
 
 [[components]]

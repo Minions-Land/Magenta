@@ -5,7 +5,7 @@ import type { ExtensionContext } from "./extensions/types.ts";
 
 const STATUS_KEY = "background-events";
 const FAILED_STATUSES = new Set(["failed", "timed_out"]);
-const DONE_STATUSES = new Set(["exited", "cancelled"]);
+const DONE_STATUSES = new Set(["exited", "cancelled", "stopped"]);
 
 export type EventStatus = "running" | "exited" | "failed" | "timed_out" | "cancelled" | string;
 

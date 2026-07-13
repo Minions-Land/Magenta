@@ -588,6 +588,46 @@ describe("harness compaction", () => {
 		expect(seenOptions.map((options) => options?.maxTokens)).toEqual([128000, 128000]);
 	});
 
+	it("reports monotonic summarization progress through onProgress", async () => {
+		const messages: AgentMessage[] = [
+			createUserMessage("line\n".repeat(500)),
+			createAssistantMessage("response\n".repeat(100)),
+		];
+		const { faux, model } = createFauxModel(false, 128, 2_000);
+		faux.setResponses(Array.from({ length: 40 }, () => () => fauxAssistantMessage("summary chunk")));
+		const preparation: CompactionPreparation = {
+			firstKeptEntryId: "entry-1",
+			messagesToSummarize: messages,
+			turnPrefixMessages: [],
+			isSplitTurn: false,
+			tokensBefore: 600,
+			fileOps: { read: new Set(), written: new Set(), edited: new Set() },
+			settings: { enabled: true, reserveTokens: 160, keepRecentTokens: 20 },
+		};
+
+		const progressUpdates: Array<{ processedBytes: number; totalBytes: number; completedChunks: number }> = [];
+		getOrThrow(
+			await compact(preparation, models, model, undefined, undefined, undefined, undefined, (progress) => {
+				progressUpdates.push({
+					processedBytes: progress.processedBytes,
+					totalBytes: progress.totalBytes,
+					completedChunks: progress.completedChunks,
+				});
+			}),
+		);
+
+		expect(progressUpdates.length).toBeGreaterThan(1);
+		const first = progressUpdates[0]!;
+		const last = progressUpdates[progressUpdates.length - 1]!;
+		expect(first.processedBytes).toBe(0);
+		expect(first.totalBytes).toBeGreaterThan(0);
+		expect(last.processedBytes).toBe(last.totalBytes);
+		expect(last.completedChunks).toBeGreaterThan(1);
+		for (let i = 1; i < progressUpdates.length; i++) {
+			expect(progressUpdates[i]!.processedBytes).toBeGreaterThanOrEqual(progressUpdates[i - 1]!.processedBytes);
+		}
+	});
+
 	it("returns compaction error results without throwing", async () => {
 		const messages: AgentMessage[] = [createUserMessage("Summarize this.")];
 		const preparation: CompactionPreparation = {

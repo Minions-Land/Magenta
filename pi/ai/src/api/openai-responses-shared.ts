@@ -208,14 +208,20 @@ export function convertResponsesMessages<TApi extends Api>(
 					} else if (msgId.length > 64) {
 						msgId = `msg_${shortHash(msgId)}`;
 					}
-					output.push({
+					// Replayed assistant messages are sent back as `input` items. The SDK's
+					// `ResponseOutputMessage` type marks `status` as required, but that field
+					// is response-only metadata ("Populated when input items are returned via
+					// API"). Most models ignore a replayed `status`, but stricter ones (e.g.
+					// gpt-5.6) reject it with `Unknown parameter: 'input[N].status'`. Omit it on
+					// replay while preserving `phase`, which gpt-5.3-codex+ requires resending.
+					const replayMessage: Omit<ResponseOutputMessage, "status"> = {
 						type: "message",
 						role: "assistant",
 						content: [{ type: "output_text", text: sanitizeSurrogates(textBlock.text), annotations: [] }],
-						status: "completed",
 						id: msgId,
 						phase: parsedSignature?.phase,
-					} satisfies ResponseOutputMessage);
+					};
+					output.push(replayMessage as ResponseOutputMessage);
 				} else if (block.type === "toolCall") {
 					const toolCall = block as ToolCall;
 					const [callId, itemIdRaw] = toolCall.id.split("|");

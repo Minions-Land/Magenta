@@ -1,17 +1,17 @@
 /**
  * Package overlay v2: isomorphic HCP structure loader.
- * 
+ *
  * Replaces the v1 flat package.toml [[components]] parser with a directory-tree
  * scanner that discovers modules/<source>/HcpMagnet.ts, dynamically imports them,
  * and constructs HcpClientcomponent entries for the unified session assembly.
- * 
+ *
  * V2 packages have this structure (matching HarnessComponentProtocol):
  *   <package-root>/
  *     package.toml (id, version, source, profiles)
  *     memory/<source>/HcpMagnet.ts
  *     tools/<tool>/<source>/HcpMagnet.ts
  *     skills/<skill>/<source>/HcpMagnet.ts
- * 
+ *
  * Each HcpMagnet is a bare class (spec §2) with static module/kind/source,
  * static build(), and a product method (toTool/toCapability/toResource or
  * descriptor() for tools). The runtime magnet loader imports these, validates
@@ -22,7 +22,11 @@ import { readFile, realpath } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import * as TOML from "smol-toml";
 import type { HcpClientcomponent } from "../../.HCP/assembly/session-hcp.ts";
-import { loadPackageMagnets, type LoadedPackageMagnet, type PackageComponentDeclaration } from "./runtime-magnet-loader.ts";
+import {
+	type LoadedPackageMagnet,
+	loadPackageMagnets,
+	type PackageComponentDeclaration,
+} from "./runtime-magnet-loader.ts";
 
 /** Selection of a package plus optional profile narrowing (e.g. "AutOmicScience:single-cell,spatial"). */
 export type PackageProfileSelection = {
@@ -231,7 +235,10 @@ export async function loadPackageOverlay(options: LoadPackageOverlayOptions): Pr
  * resolves each component's <path>/HcpMagnet.ts, dynamically imports and
  * validates them, and constructs HcpClientcomponent entries.
  */
-export async function loadSinglePackage(inputPackageRoot: string, selectedProfiles?: readonly string[]): Promise<PackageOverlay> {
+export async function loadSinglePackage(
+	inputPackageRoot: string,
+	selectedProfiles?: readonly string[],
+): Promise<PackageOverlay> {
 	const diagnostics: PackageDiagnostic[] = [];
 
 	// Normalize to the real path so paths derived here share the same basis as
@@ -247,7 +254,7 @@ export async function loadSinglePackage(inputPackageRoot: string, selectedProfil
 	try {
 		const tomlContent = await readFile(manifestPath, "utf-8");
 		manifest = TOML.parse(tomlContent) as PackageManifest;
-		
+
 		// Validate required fields
 		if (!manifest.id || !manifest.name || !manifest.version || !manifest.source) {
 			diagnostics.push({
@@ -268,7 +275,7 @@ export async function loadSinglePackage(inputPackageRoot: string, selectedProfil
 				diagnostics,
 			};
 		}
-		
+
 		// Validate schema version
 		if (manifest.schema_version !== "magenta.package.v2") {
 			diagnostics.push({
@@ -298,7 +305,7 @@ export async function loadSinglePackage(inputPackageRoot: string, selectedProfil
 			diagnostics,
 		};
 	}
-	
+
 	// Load magnets from manifest component declarations, filtered by profile.
 	// Profile semantics: when profiles are selected, load components tagged with
 	// any selected profile PLUS untagged (always-load) components. When no profiles
@@ -312,7 +319,7 @@ export async function loadSinglePackage(inputPackageRoot: string, selectedProfil
 				})
 			: allComponents;
 	const magnetResult = await loadPackageMagnets(packageRoot, manifest.id, manifest.version, components);
-	
+
 	// Convert loader diagnostics to overlay diagnostics
 	for (const loaderDiag of magnetResult.diagnostics) {
 		diagnostics.push({
@@ -323,7 +330,7 @@ export async function loadSinglePackage(inputPackageRoot: string, selectedProfil
 			packageId: loaderDiag.packageId,
 		});
 	}
-	
+
 	return {
 		packageId: manifest.id,
 		packageVersion: manifest.version,

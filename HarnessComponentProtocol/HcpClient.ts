@@ -1,5 +1,10 @@
 import { HcpClientcapabilityprefix, type HcpServerDescription, type HcpServerRequest } from "./.HCP/HcpServerTypes.ts";
 
+/** Detect Bun's virtual module URLs on every supported compiled-binary target. */
+export function HcpClientisbunbinaryurl(url: string): boolean {
+	return url.includes("$bunfs") || url.includes("~BUN") || url.includes("%7EBUN");
+}
+
 /**
  * HcpServer 的结构化类型约束（规范§2：全仓无 interface，靠结构化类型）。
  * 任何具有这些方法的对象都可以作为 HcpServer 使用。

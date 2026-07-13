@@ -2,10 +2,10 @@ import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import { HcpClientbuildsession, type SshToolOperations } from "@magenta/harness";
+import { HcpClientbuildsession, type SshToolOperations, type TodoPlanState } from "@magenta/harness";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
-import { HcpClientassembletools } from "../src/core/HcpClienttools.ts";
+import { HcpClientassembletools, loadTodoPlanStateFromBranch } from "../src/core/HcpClienttools.ts";
 import { DefaultResourceLoader } from "../src/core/resource-loader.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
@@ -51,16 +51,21 @@ describe("HcpClient host tool assembly", () => {
 		const { hcp } = await HcpClientbuildsession({ repoRoot: root });
 
 		const sessionManager = SessionManager.inMemory(root);
+		const todoState: TodoPlanState = {
+			version: 1,
+			title: "Branch plan",
+			summary: null,
+			currentId: 7,
+			nodes: [{ id: 7, parentId: null, order: 0, text: "From this branch", status: "in_progress" }],
+			nextId: 8,
+			revision: 2,
+		};
 		sessionManager.appendMessage({
 			role: "toolResult",
 			toolCallId: "todo-history",
 			toolName: "todo",
 			content: [{ type: "text", text: "historical todo" }],
-			details: {
-				action: "add",
-				todos: [{ id: 7, text: "From this branch", done: false }],
-				nextId: 8,
-			},
+			details: { action: "apply", state: todoState, applied: 1, changes: {}, refs: {} },
 			isError: false,
 			timestamp: Date.now(),
 		});
@@ -81,9 +86,9 @@ describe("HcpClient host tool assembly", () => {
 		});
 		expect(executedCommand).toBe("source ~/.profile\npwd");
 		const todo = hcp.resolveInstance<AgentTool>("tool:todo")!;
-		await expect(todo.execute("todo-1", { action: "list" })).resolves.toMatchObject({
-			content: [{ type: "text", text: "7. [ ] From this branch" }],
-			details: { nextId: 8 },
+		await expect(todo.execute("todo-1", { action: "get" })).resolves.toMatchObject({
+			content: [{ type: "text", text: expect.stringContaining("From this branch") }],
+			details: { state: todoState },
 		});
 	});
 
@@ -134,16 +139,21 @@ describe("HcpClient host tool assembly", () => {
 		expect(hcp.resolveInstance("tool:read")).toBeUndefined();
 
 		const sessionManager = SessionManager.inMemory(root);
+		const todoState: TodoPlanState = {
+			version: 1,
+			title: "Reloaded plan",
+			summary: "restored",
+			currentId: null,
+			nodes: [{ id: 9, parentId: null, order: 0, text: "Restored after loader reload", status: "pending" }],
+			nextId: 10,
+			revision: 4,
+		};
 		sessionManager.appendMessage({
 			role: "toolResult",
 			toolCallId: "todo-history",
 			toolName: "todo",
 			content: [{ type: "text", text: "historical todo" }],
-			details: {
-				action: "add",
-				todos: [{ id: 9, text: "Restored after loader reload", done: false }],
-				nextId: 10,
-			},
+			details: { action: "apply", state: todoState, applied: 1, changes: {}, refs: {} },
 			isError: false,
 			timestamp: Date.now(),
 		});
@@ -176,10 +186,49 @@ describe("HcpClient host tool assembly", () => {
 			content: [{ type: "text", text: "remote after reload" }],
 		});
 		const todo = hcp.resolveInstance<AgentTool>("tool:todo")!;
-		await expect(todo.execute("todo-after-reload", { action: "list" })).resolves.toMatchObject({
-			content: [{ type: "text", text: "9. [ ] Restored after loader reload" }],
-			details: { nextId: 10 },
+		await expect(todo.execute("todo-after-reload", { action: "get" })).resolves.toMatchObject({
+			content: [{ type: "text", text: expect.stringContaining("Restored after loader reload") }],
+			details: { state: todoState },
 		});
 		await loader.dispose();
+	});
+
+	it("loads the latest valid selected-branch snapshot across malformed and compaction entries", () => {
+		const root = join(tmpdir(), `hcp-client-tools-state-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+		roots.push(root);
+		const sessionManager = SessionManager.inMemory(root);
+		const state: TodoPlanState = {
+			version: 1,
+			title: "Compaction-safe",
+			summary: null,
+			currentId: 1,
+			nodes: [{ id: 1, parentId: null, order: 0, text: "Keep state", status: "in_progress" }],
+			nextId: 2,
+			revision: 1,
+		};
+		const todoEntryId = sessionManager.appendMessage({
+			role: "toolResult",
+			toolCallId: "todo-valid",
+			toolName: "todo",
+			content: [{ type: "text", text: "valid" }],
+			details: { action: "apply", state, applied: 1, changes: {}, refs: {} },
+			isError: false,
+			timestamp: Date.now(),
+		});
+		sessionManager.appendMessage({
+			role: "toolResult",
+			toolCallId: "todo-legacy",
+			toolName: "todo",
+			content: [{ type: "text", text: "legacy" }],
+			details: { action: "add", todos: [{ id: 99, text: "ignored", done: false }], nextId: 100 },
+			isError: false,
+			timestamp: Date.now(),
+		});
+		sessionManager.appendCompaction("summary", todoEntryId, 1000);
+
+		expect(loadTodoPlanStateFromBranch(sessionManager)).toEqual(state);
+		const cloned = loadTodoPlanStateFromBranch(sessionManager)!;
+		cloned.nodes[0]!.text = "mutated clone";
+		expect(loadTodoPlanStateFromBranch(sessionManager)?.nodes[0]?.text).toBe("Keep state");
 	});
 });

@@ -7,12 +7,20 @@ import { currentDepth, sanitizeWorkerTools, spawnWorker } from "../../multiagent
  * background-delegation powers, and prevent the fork-bomb class of failure.
  */
 describe("worker capability denial", () => {
-	it("strips sub_agent and bg_shell from any requested whitelist", () => {
-		expect(sanitizeWorkerTools(["read", "sub_agent", "bg_shell", "ls"])).toEqual(["read", "ls"]);
+	it("strips nested agent and background controllers from any requested whitelist", () => {
+		expect(sanitizeWorkerTools(["read", "sub_agent", "bg_shell", "teammate_agent", "ls"])).toEqual([
+			"read",
+			"ls",
+		]);
 	});
 
 	it("falls back to read-only when only forbidden tools are requested", () => {
-		expect(sanitizeWorkerTools(["sub_agent", "bg_shell"])).toEqual(["read", "grep", "find", "ls"]);
+		expect(sanitizeWorkerTools(["sub_agent", "bg_shell", "teammate_agent"])).toEqual([
+			"read",
+			"grep",
+			"find",
+			"ls",
+		]);
 	});
 
 	it("falls back to read-only when no tools are requested", () => {

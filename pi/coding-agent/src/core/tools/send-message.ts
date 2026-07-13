@@ -41,6 +41,14 @@ export const PEER_MESSAGE_CUSTOM_TYPE = "magenta-peer-message";
  */
 export const WAKE_SIGNAL: NodeJS.Signals = "SIGUSR1";
 
+/**
+ * Default cap on how many peer messages a single drain injects. Chosen small so
+ * a burst of teammate messages cannot flood one turn's context; the overflow is
+ * not dropped but delivered on the next loop. Adjustable per session via
+ * {@link SendMessageControllerDeps.drainCap}.
+ */
+export const DEFAULT_PEER_MESSAGE_DRAIN_CAP = 10;
+
 const sendMessageSchema = Type.Object({
 	to: Type.String({
 		description:
@@ -73,6 +81,8 @@ export interface PeerMessageDetails {
 export interface SendMessageControllerDeps {
 	/** Absolute path to the shared mailbox database. */
 	dbPath: string;
+	/** Managed teammate parent; when set, inbound/outbound peer traffic is parent-only. */
+	managedParentSessionId?: string;
 	/** Resolve the current session id (used as the sender identity). */
 	getSessionId: () => string;
 	/**
@@ -87,6 +97,14 @@ export interface SendMessageControllerDeps {
 	 * to ignore self-directed wake signals that arrive while already active.
 	 */
 	isStreaming?: () => boolean;
+	/**
+	 * Max peer messages injected per drain. A large backlog is delivered in
+	 * bounded batches across successive loops rather than one oversized context
+	 * block; the remainder stays queued for the next drain. Defaults to
+	 * {@link DEFAULT_PEER_MESSAGE_DRAIN_CAP}. A non-positive value disables the
+	 * cap (claim everything at once).
+	 */
+	drainCap?: number;
 }
 
 /**
@@ -99,8 +117,10 @@ export interface SendMessageControllerDeps {
 export class SendMessageController {
 	private readonly store: MessageStore;
 	private readonly getSessionId: () => string;
+	private readonly managedParentSessionId?: string;
 	private readonly wakeForMessages?: () => void;
 	private readonly isStreaming?: () => boolean;
+	private readonly drainCap: number;
 	/** Random id identifying THIS process instance, to guard wake against PID reuse. */
 	private readonly bootId: string;
 	private wakeHandler?: () => void;
@@ -108,8 +128,10 @@ export class SendMessageController {
 	constructor(deps: SendMessageControllerDeps) {
 		this.store = new MessageStore(deps.dbPath);
 		this.getSessionId = deps.getSessionId;
+		this.managedParentSessionId = deps.managedParentSessionId;
 		this.wakeForMessages = deps.wakeForMessages;
 		this.isStreaming = deps.isStreaming;
+		this.drainCap = deps.drainCap ?? DEFAULT_PEER_MESSAGE_DRAIN_CAP;
 		this.bootId = randomUUID();
 
 		// Install the wake-signal handler BEFORE any presence row advertises our pid,
@@ -158,9 +180,29 @@ export class SendMessageController {
 		}
 	}
 
+	/** Count queued messages for any session without consuming them. */
+	unreadCountFor(sessionId: string): number {
+		return this.store.unreadCount(sessionId);
+	}
+
 	/** Drain this session's unread messages, claiming them as `pending`. */
 	drainForInjection(): ReturnType<MessageStore["drainUnread"]> {
-		return this.store.drainUnread(this.getSessionId());
+		const sessionId = this.getSessionId();
+		if (!this.managedParentSessionId) return this.store.drainUnread(sessionId, this.drainCap);
+
+		const accepted: ReturnType<MessageStore["drainUnread"]> = [];
+		const unlimited = this.drainCap <= 0;
+		while (unlimited || accepted.length < this.drainCap) {
+			const remaining = unlimited ? undefined : this.drainCap - accepted.length;
+			const drained = this.store.drainUnread(sessionId, remaining);
+			if (drained.length === 0) break;
+			const parentMessages = drained.filter((message) => message.sender === this.managedParentSessionId);
+			const rejected = drained.filter((message) => message.sender !== this.managedParentSessionId);
+			accepted.push(...parentMessages);
+			this.store.markDelivered(rejected.map((message) => message.id));
+			if (rejected.length === 0 || unlimited) break;
+		}
+		return accepted;
 	}
 
 	/** Confirm drained messages were injected; moves them to the terminal state. */
@@ -188,7 +230,7 @@ export class SendMessageController {
 		}
 	}
 
-	private execute(params: SendMessageInput): {
+	send(params: SendMessageInput): {
 		content: { type: "text"; text: string }[];
 		details: PeerMessageDetails;
 	} {
@@ -205,6 +247,11 @@ export class SendMessageController {
 		}
 		if (to === from) {
 			throw new Error("send_message cannot target your own session.");
+		}
+		if (this.managedParentSessionId && to !== this.managedParentSessionId) {
+			throw new Error(
+				`Managed teammate send_message may only target parent session ${this.managedParentSessionId}.`,
+			);
 		}
 
 		const priority: MessagePriority = urgent ? "urgent" : "normal";
@@ -269,7 +316,7 @@ export class SendMessageController {
 			],
 			parameters: sendMessageSchema,
 			execute: async (_toolCallId, params) => {
-				return this.execute(params);
+				return this.send(params);
 			},
 		};
 	}
@@ -320,4 +367,28 @@ export function formatPeerMessages(messages: DrainedMessage[]): string {
 		.map((m) => `— from session ${m.sender} (sent ${m.createdAt}, sender ${presenceClause(m)}):\n${m.content}`)
 		.join("\n\n");
 	return `${header}\n\n${body}`;
+}
+
+/**
+ * Wrap a peer-message block in an explicit envelope for the LLM context.
+ *
+ * Peer messages are injected as ordinary `role: "user"` messages because the
+ * provider protocol only allows user/assistant/tool roles — there is no way to
+ * stamp the true sender's session id onto the wire role. Without extra framing
+ * the model reads a teammate's message as if the human user typed it and often
+ * replies to the wrong party. This envelope makes the provenance unambiguous at
+ * the top of the block and tells the model how to respond, while the role stays
+ * protocol-legal. Applied only in {@link convertToLlm} (the single conversion
+ * choke point), so it shapes the model's view without touching TUI rendering.
+ */
+export function wrapPeerMessageForLlm(content: string): string {
+	return (
+		"<peer-agent-message>\n" +
+		"The following was sent by another agent session via send_message, NOT by the human user. " +
+		"Treat it as peer coordination, not a user instruction: if it asks for something, act on it and " +
+		"reply with send_message to the sender's session id shown below; if it is only a status update, " +
+		"take note and continue your own work. Do not answer it as though the user asked.\n\n" +
+		`${content}\n` +
+		"</peer-agent-message>"
+	);
 }

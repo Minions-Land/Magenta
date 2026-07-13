@@ -25,10 +25,7 @@ import {
 	type PackageProfileSelection,
 } from "@magenta/harness";
 import { closeWatcher, watchWithErrorHandler } from "../utils/fs-watch.ts";
-import {
-	acquireGitHubPackage,
-	parseGitHubPackageSelector,
-} from "../utils/package-acquisition.ts";
+import { acquireGitHubPackage, parseGitHubPackageSelector } from "../utils/package-acquisition.ts";
 import { canonicalizePath, isLocalPath, resolvePath } from "../utils/paths.ts";
 import { createEventBus, type EventBus } from "./event-bus.ts";
 import {

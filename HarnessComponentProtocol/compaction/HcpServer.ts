@@ -9,7 +9,12 @@ import type {
 	SessionTreeEntry,
 } from "../_magenta/types/types.ts";
 import type { CollectEntriesResult, GenerateBranchSummaryOptions } from "./pi/branch-summarization.ts";
-import type { CompactionPreparation, CompactionResult, CompactionSettings } from "./pi/compaction.ts";
+import type {
+	CompactionPreparation,
+	CompactionProgressCallback,
+	CompactionResult,
+	CompactionSettings,
+} from "./pi/compaction.ts";
 
 export class HcpServer {
 	readonly moduleName = "compaction";
@@ -36,6 +41,7 @@ export type CompactionProvider = {
 		signal?: AbortSignal,
 		thinkingLevel?: ThinkingLevel,
 		streamFn?: StreamFn,
+		onProgress?: CompactionProgressCallback,
 	): Promise<Result<CompactionResult, CompactionError>>;
 	collectEntriesForBranchSummary(
 		session: Session,
@@ -55,6 +61,8 @@ export type {
 // Re-export supporting types for convenience
 export type {
 	CompactionPreparation,
+	CompactionProgress,
+	CompactionProgressCallback,
 	CompactionResult,
 	CompactionSettings,
 } from "./pi/compaction.ts";

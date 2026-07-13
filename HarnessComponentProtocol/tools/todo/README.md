@@ -1,103 +1,88 @@
-# Todo Tool
+# Magenta Todo Tool
 
-Session-scoped todo list management tool for Magenta3.
+Magenta-owned hierarchical Todo planning with atomic batch mutations and session-branch snapshots.
 
-## Overview
+## Contract
 
-The `todo` tool allows the LLM to manage a todo list within the current session. State is stored in tool result details (not external files), which enables proper branching support - when you branch the conversation, the todo state is automatically correct for that point in history.
+The tool exposes two actions:
 
-## Migrated from
+- `get` — read the current plan.
+- `apply` — atomically apply a non-empty operations array. One mutation is a one-operation batch.
 
-Previously located at `harness/extensions/pi/bundled/todo.ts` as a Pi Extension.
-It now lives at `HarnessComponentProtocol/tools/todo/` as an HCP tool component.
+State is stored as a complete versioned snapshot in every tool result's `details.state`. The host restores the latest valid snapshot from the selected session branch, so fork and tree navigation keep independent plans without an external database.
 
-## Usage
+## State
 
-### Actions
+```ts
+type TodoStatus = "pending" | "in_progress" | "completed" | "blocked";
 
-- `list` - Show all todos
-- `add` - Create a new todo (requires `text` parameter)
-- `toggle` - Mark a todo as done/undone (requires `id` parameter)
-- `clear` - Remove all todos
+type TodoNode = {
+  id: number;
+  parentId: number | null;
+  order: number;
+  text: string;
+  status: TodoStatus;
+};
 
-### Examples
-
-```typescript
-// Add a todo
-await todoTool.execute("1", { action: "add", text: "Write tests" });
-// Result: "Added #1: Write tests"
-
-// List todos
-await todoTool.execute("2", { action: "list" });
-// Result: "1. [ ] Write tests"
-
-// Toggle a todo
-await todoTool.execute("3", { action: "toggle", id: 1 });
-// Result: "Toggled #1: [x] Write tests"
-
-// Clear all
-await todoTool.execute("4", { action: "clear" });
-// Result: "Cleared 1 todo(s)"
+type TodoPlanState = {
+  version: 1;
+  title: string;
+  summary: string | null;
+  currentId: number | null;
+  nodes: TodoNode[];
+  nextId: number;
+  revision: number;
+};
 ```
 
-## Integration
+The persisted representation is normalized rather than recursively nested. `parentId` defines hierarchy and `order` defines sibling order. IDs remain stable when nodes move.
 
-### HCP Declaration
+## Atomic plan creation
 
-`HarnessComponentProtocol/harness.toml` selects this component declaration for
-codegen:
+```ts
+await todoTool.execute("1", {
+  action: "apply",
+  operations: [
+    { op: "set_title", text: "Release Plan" },
+    { op: "add", ref: "root", text: "Validate release", status: "in_progress" },
+    { op: "add", ref: "windows", text: "Windows smoke", parentRef: "root" },
+    { op: "add", text: "Real update validation", parentRef: "windows" },
+    { op: "set_current", targetRef: "windows" },
+  ],
+});
+```
+
+Temporary refs exist only inside one batch. Operations are evaluated sequentially against a draft, but commit once. Any invalid operation returns an error and the unchanged state.
+
+## Operations
+
+- `add` — create a node, optionally using `ref`, `parentId`/`parentRef`, and sibling placement.
+- `update` — replace node text.
+- `move` — move a node and its descendants.
+- `set_status` — set `pending`, `in_progress`, `completed`, or `blocked`; optional cascade applies to descendants.
+- `set_current` — select or clear the current node.
+- `set_summary` / `set_title` — update plan metadata.
+- `remove` — remove a leaf; `cascade: true` is required for a subtree.
+- `clear` — clear the current plan without reusing previously allocated IDs.
+
+Placement values are `first`, `last`, `before`, and `after`. `before`/`after` require `relativeToId` or `relativeToRef`.
+
+## Ownership
+
+The component source is `magenta`:
 
 ```toml
-[[components]]
-kind = "tool"
-name = "todo"
-description = "Manage a session-scoped todo list with branching support."
-path = "tools/todo/todo.toml"
+source = "magenta"
+sources = ["magenta"]
 ```
 
-### Usage in Code
+Its native implementation lives under `tools/todo/magenta/`. Pi remains the TUI client: the tool declares render kind `todo-plan`, while Pi owns the inline renderer and `/todo` overlay.
 
-```typescript
-import { createTodoTool } from "@magenta/harness";
-
-const todoTool = createTodoTool(process.cwd());
-```
-
-## Testing
-
-Run tests:
+## Tests
 
 ```bash
 cd HarnessComponentProtocol
 npm test -- test/tools/todo/todo.test.ts
+npm run check:structure
+npm run check:hcp-sources
 ```
-
-Focused coverage lives in `test/tools/todo/todo.test.ts`; the full Harness suite
-also covers generated Tool ownership and session assembly.
-
-## State Management
-
-Todo state is maintained in the `details` field of tool results:
-
-```typescript
-type TodoDetails = {
-  action: "list" | "add" | "toggle" | "clear";
-  todos: Todo[];
-  nextId: number;
-  error?: string;
-};
-```
-
-This approach ensures that:
-- State follows the conversation branch
-- No external file storage needed
-- Proper history tracking
-- Branch-safe state management
-
-## Future Enhancements
-
-- [ ] Persist todos across sessions (optional)
-- [ ] Support for due dates
-- [ ] Priority levels
-- [ ] Categories/tags
-- [ ] Search/filter capabilities

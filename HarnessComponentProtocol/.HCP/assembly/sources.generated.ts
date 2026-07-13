@@ -62,7 +62,7 @@ import * as toolsReadPi from "../../tools/read/pi/HcpMagnet.ts";
 import * as toolsShow from "../../tools/show/HcpServer.ts";
 import * as toolsShowPi from "../../tools/show/pi/HcpMagnet.ts";
 import * as toolsTodo from "../../tools/todo/HcpServer.ts";
-import * as toolsTodoPi from "../../tools/todo/pi/HcpMagnet.ts";
+import * as toolsTodoMagenta from "../../tools/todo/magenta/HcpMagnet.ts";
 import * as toolsToolSearch from "../../tools/tool-search/HcpServer.ts";
 import * as toolsToolSearchPi from "../../tools/tool-search/pi/HcpMagnet.ts";
 import * as toolsWebFetch from "../../tools/web-fetch/HcpServer.ts";
@@ -602,13 +602,13 @@ export const HCP_MAGNETS: readonly HcpMagnetentry[] = [
 		kind: "tool",
 		name: "todo",
 		product: "tool",
-		source: "pi",
+		source: "magenta",
 		selected: true,
 		autoload: false,
 		hotSwappable: false,
 		descriptorPath: "tools/todo/todo.toml",
 		requires: [],
-		HcpMagnet: toolsTodoPi.HcpMagnet,
+		HcpMagnet: toolsTodoMagenta.HcpMagnet,
 	},
 	{
 		module: "tools/tool-search",

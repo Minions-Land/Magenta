@@ -70,7 +70,12 @@ export {
 } from "@magenta/harness";
 
 // Import the pure delegated symbols locally for wrapper signatures below.
-import type { CompactionPreparation, CompactionResult, CompactionSettings } from "@magenta/harness";
+import type {
+	CompactionPreparation,
+	CompactionProgressCallback,
+	CompactionResult,
+	CompactionSettings,
+} from "@magenta/harness";
 
 // ============================================================================
 // Transport-aware wrappers (preserve pi's explicit-auth call signatures)
@@ -158,9 +163,19 @@ export async function compact(
 	streamFn?: StreamFn,
 	env?: Record<string, string>,
 	provider?: CompactionProvider,
+	onProgress?: CompactionProgressCallback,
 ): Promise<CompactionResult> {
 	const models = createCompactionModels({ apiKey, headers, env, streamFn });
 	const runCompact = provider?.compact ?? harnessCompact;
-	const result = await runCompact(preparation, models, model, customInstructions, signal, thinkingLevel);
+	const result = await runCompact(
+		preparation,
+		models,
+		model,
+		customInstructions,
+		signal,
+		thinkingLevel,
+		undefined,
+		onProgress,
+	);
 	return unwrap(result);
 }

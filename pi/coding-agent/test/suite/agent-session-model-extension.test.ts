@@ -75,7 +75,10 @@ describe("AgentSession model and extension characterization", () => {
 
 		harness.session.setThinkingLevel("high");
 		expect(harness.session.thinkingLevel).toBe("off");
-		expect(harness.session.cycleThinkingLevel()).toBeUndefined();
+		expect(harness.session.executionProfile).toBe("off");
+		expect(harness.session.cycleThinkingLevel()).toBe("ultra");
+		expect(harness.session.thinkingLevel).toBe("off");
+		expect(harness.session.harnessCapabilities).toEqual({ workflows: true, teammates: true });
 	});
 
 	it("throws when setModel is called without configured auth", async () => {

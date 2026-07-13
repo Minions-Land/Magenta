@@ -1,4 +1,3 @@
-import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { Transport } from "@earendil-works/pi-ai";
 import {
 	type Component,
@@ -12,6 +11,7 @@ import {
 	Spacer,
 	Text,
 } from "@earendil-works/pi-tui";
+import type { ExecutionProfile } from "../../../core/execution-profile.ts";
 import { formatHttpIdleTimeoutMs, HTTP_IDLE_TIMEOUT_CHOICES } from "../../../core/http-dispatcher.ts";
 import type { DefaultProjectTrust, WarningSettings } from "../../../core/settings-manager.ts";
 import {
@@ -29,14 +29,15 @@ const SETTINGS_SUBMENU_SELECT_LIST_LAYOUT: SelectListLayoutOptions = {
 	maxPrimaryColumnWidth: 32,
 };
 
-const THINKING_DESCRIPTIONS: Record<ThinkingLevel, string> = {
+const THINKING_DESCRIPTIONS: Record<ExecutionProfile, string> = {
 	off: "No reasoning",
 	minimal: "Very brief reasoning (~1k tokens)",
 	low: "Light reasoning (~2k tokens)",
 	medium: "Moderate reasoning (~8k tokens)",
 	high: "Deep reasoning (~16k tokens)",
 	xhigh: "Maximum reasoning (~32k tokens)",
-	max: "Deepest reasoning, no constraints",
+	max: "Deepest native reasoning, no constraints",
+	ultra: "Maximum native reasoning with proactive workflows and teammates",
 };
 
 const DEFAULT_PROJECT_TRUST_LABELS: Record<DefaultProjectTrust, string> = {
@@ -60,8 +61,8 @@ export interface SettingsConfig {
 	followUpMode: "all" | "one-at-a-time";
 	transport: Transport;
 	httpIdleTimeoutMs: number;
-	thinkingLevel: ThinkingLevel;
-	availableThinkingLevels: ThinkingLevel[];
+	thinkingLevel: ExecutionProfile;
+	availableThinkingLevels: ExecutionProfile[];
 	currentTheme: string;
 	terminalTheme: TerminalTheme;
 	availableThemes: string[];
@@ -91,7 +92,7 @@ export interface SettingsCallbacks {
 	onFollowUpModeChange: (mode: "all" | "one-at-a-time") => void;
 	onTransportChange: (transport: Transport) => void;
 	onHttpIdleTimeoutMsChange: (timeoutMs: number) => void;
-	onThinkingLevelChange: (level: ThinkingLevel) => void;
+	onThinkingLevelChange: (level: ExecutionProfile) => void;
 	onThemeChange: (theme: string) => void;
 	onThemePreview?: (theme: string) => void;
 	onHideThinkingBlockChange: (hidden: boolean) => void;
@@ -579,13 +580,13 @@ export class SettingsSelectorComponent extends Container {
 			},
 			{
 				id: "thinking",
-				label: "Thinking level",
-				description: "Reasoning depth for thinking-capable models",
+				label: "Execution profile",
+				description: "Reasoning depth and Harness orchestration defaults",
 				currentValue: config.thinkingLevel,
 				submenu: (currentValue, done) =>
 					new SelectSubmenu(
-						"Thinking Level",
-						"Select reasoning depth for thinking-capable models",
+						"Execution Profile",
+						"Select reasoning depth and Harness orchestration defaults",
 						config.availableThinkingLevels.map((level) => ({
 							value: level,
 							label: level,
@@ -593,7 +594,7 @@ export class SettingsSelectorComponent extends Container {
 						})),
 						currentValue,
 						(value) => {
-							callbacks.onThinkingLevelChange(value as ThinkingLevel);
+							callbacks.onThinkingLevelChange(value as ExecutionProfile);
 							done(value);
 						},
 						() => done(),

@@ -7,6 +7,7 @@
 
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ImageContent, Message, TextContent } from "@earendil-works/pi-ai";
+import { PEER_MESSAGE_CUSTOM_TYPE, wrapPeerMessageForLlm } from "./tools/send-message.ts";
 
 export const COMPACTION_SUMMARY_PREFIX = `The conversation history before this point was compacted into the following summary:
 
@@ -160,6 +161,31 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
 						timestamp: m.timestamp,
 					};
 				case "custom": {
+					// Peer messages (from send_message) arrive as custom messages but must be
+					// framed so the model does not mistake a teammate's message for the user's.
+					// The wire role stays "user" (provider protocol allows no custom role); the
+					// envelope carries the provenance. Only the leading text segment is wrapped
+					// so any image content is preserved untouched.
+					if (m.customType === PEER_MESSAGE_CUSTOM_TYPE) {
+						if (typeof m.content === "string") {
+							return {
+								role: "user",
+								content: [{ type: "text" as const, text: wrapPeerMessageForLlm(m.content) }],
+								timestamp: m.timestamp,
+							};
+						}
+						const firstText = m.content.find((c): c is TextContent => c.type === "text");
+						const wrappedContent = firstText
+							? m.content.map((c) =>
+									c === firstText ? { type: "text" as const, text: wrapPeerMessageForLlm(c.text) } : c,
+								)
+							: [{ type: "text" as const, text: wrapPeerMessageForLlm("") }, ...m.content];
+						return {
+							role: "user",
+							content: wrappedContent,
+							timestamp: m.timestamp,
+						};
+					}
 					const content = typeof m.content === "string" ? [{ type: "text" as const, text: m.content }] : m.content;
 					return {
 						role: "user",

@@ -1,4 +1,5 @@
 import { HCP_MAGNETS, HCP_SERVERS, type HcpClient } from "@magenta/harness";
+import type { ExecutionProfile, HarnessCapabilities } from "./execution-profile.ts";
 import type { ToolInfo } from "./extensions/index.ts";
 
 export const HARNESS_HOOK_EVENTS = [
@@ -65,6 +66,8 @@ export interface HarnessToolSwitch {
 }
 
 export interface HarnessRuntimeSnapshot {
+	executionProfile: ExecutionProfile;
+	capabilities: HarnessCapabilities;
 	autoCompact: boolean;
 	skillCommands: boolean;
 	loadedSkills: number;
@@ -175,6 +178,9 @@ export function formatHarnessRuntimeSummary(snapshot: HarnessRuntimeSnapshot): s
 
 	return [
 		"Harness runtime",
+		`Execution profile: ${snapshot.executionProfile}`,
+		`Workflows: ${snapshot.capabilities.workflows ? "enabled" : "disabled"}`,
+		`Teammates: ${snapshot.capabilities.teammates ? "enabled" : "disabled"}`,
 		`Auto-compact: ${snapshot.autoCompact ? "enabled" : "disabled"}`,
 		`Skill commands: ${snapshot.skillCommands ? "enabled" : "disabled"} (${snapshot.loadedSkills} skills loaded)`,
 		`Tools: ${activeTools.length}/${snapshot.tools.length} active${

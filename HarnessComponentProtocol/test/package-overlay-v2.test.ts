@@ -1,8 +1,9 @@
-import { mkdtemp, rm, writeFile, mkdir } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, dirname } from "node:path";
+import { dirname, join } from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { describe, expect, it } from "vitest";
+import { HcpClientpackageinputfromoverlay } from "../_magenta/packages/hcp-client-components.ts";
 import {
 	discoverHarnessPackages,
 	getHarnessPackagesRoot,
@@ -10,7 +11,6 @@ import {
 	loadSinglePackage,
 	parsePackageSelector,
 } from "../_magenta/packages/package-overlay-v2.ts";
-import { HcpClientpackageinputfromoverlay } from "../_magenta/packages/hcp-client-components.ts";
 import { HcpClientbuildpackagesessionfortest, type HcpClientpackagetestbuildresult } from "./package-test-utils.ts";
 import { writeFixturePackage } from "./package-v2-fixtures.ts";
 
@@ -75,7 +75,13 @@ describe("package overlay v2 (isomorphic HCP structure)", () => {
 					{ kind: "brand", name: "BetaDomain", source: "BetaDomain" },
 					{ kind: "system-prompt", name: "system-prompt", source: "BetaDomain", mergeMode: "append" },
 					{ kind: "skill", item: "workflow", name: "workflow", source: "BetaDomain" },
-					{ kind: "tool", item: "echo", name: "echo_tool", source: "BetaDomain", descriptorToml: PROCESS_ECHO_TOML },
+					{
+						kind: "tool",
+						item: "echo",
+						name: "echo_tool",
+						source: "BetaDomain",
+						descriptorToml: PROCESS_ECHO_TOML,
+					},
 				],
 			});
 			const overlay = await loadPackageOverlay({ packagesRoot, selections: ["BetaDomain"] });
@@ -137,7 +143,13 @@ describe("package overlay v2 (isomorphic HCP structure)", () => {
 				id: "DeltaDomain",
 				source: "DeltaDomain",
 				components: [
-					{ kind: "tool", item: "echo", name: "echo_tool", source: "DeltaDomain", descriptorToml: PROCESS_ECHO_TOML },
+					{
+						kind: "tool",
+						item: "echo",
+						name: "echo_tool",
+						source: "DeltaDomain",
+						descriptorToml: PROCESS_ECHO_TOML,
+					},
 				],
 			});
 			const overlay = await loadPackageOverlay({ packagesRoot, selections: ["DeltaDomain"] });
