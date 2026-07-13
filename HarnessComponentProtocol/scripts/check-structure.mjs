@@ -11,7 +11,6 @@ const notes = [];
 
 const allowedTopLevel = new Set([
 	"README.md",
-	"README-harness.md",
 	"HcpClient.ts",
 	"_magenta",
 	"docs",
@@ -49,7 +48,6 @@ const HCP_NAME_PATTERN = /^(?:Hcp|HCP_)/u;
 const HCP_FORBIDDEN_BOUNDARY_DETAIL_PATTERN = /(?:package|mcp)/iu;
 const allowedHcpClientConstructor = resolve(harnessRoot, ".HCP", "assembly", "session-hcp.ts");
 const allowedInfrastructurePaths = new Set([
-	"HCP-OVERVIEW.md",
 	"HcpMagnetTypes.ts",
 	"HcpServerTypes.ts",
 	"README.md",

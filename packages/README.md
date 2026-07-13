@@ -1,10 +1,10 @@
 # Package Integration Boundary
 
-This directory is the Magenta3-side integration boundary for domain expert
+This directory is Magenta's integration boundary for domain expert
 packages. It intentionally contains no concrete domain package.
 
 Concrete packages are maintained and published in independent GitHub
-repositories. Magenta3 does not vendor their content. The coding-agent host can
+repositories. Magenta does not vendor their content. The coding-agent host can
 acquire a platform-specific `github:owner/repo/Package@version` release,
 SHA-256 verify and validate it, and pass its cached package root to this
 integration boundary. Local roots use the same boundary.

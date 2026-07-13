@@ -335,6 +335,12 @@ export function summarizeToolCall(call: ToolDisplayCall, maxWidth = 50): string 
 			const pattern = stringField(args, "pattern");
 			return pattern ? `'${truncateMiddleDisplay(pattern, Math.max(1, maxWidth - 2))}'` : "";
 		}
+		case "find": {
+			const pattern = stringField(args, "pattern");
+			if (!pattern) return "";
+			const path = stringField(args, "path") ?? ".";
+			return truncateEnd(`'${pattern}' in ${path}`, maxWidth);
+		}
 		case "grep": {
 			const pattern = stringField(args, "pattern", "query") ?? "";
 			const path = stringField(args, "path");

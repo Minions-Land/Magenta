@@ -3599,6 +3599,79 @@ describe("Editor component", () => {
 			assert.match(text, /\[paste #\d+ \+\d+ lines\]/);
 		});
 
+		it("registers image markers in the same paste sequence", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			pasteWithMarker(editor);
+			editor.handleInput(" ");
+			const image = editor.insertPasteMarker("Image");
+
+			assert.deepStrictEqual(image, { id: 2, marker: "[paste #2 Image]" });
+			assert.match(editor.getText(), /^\[paste #1 \+20 lines\] \[paste #2 Image\]$/);
+			assert.match(editor.getExpandedText(), /line\n.*\[paste #2 Image\]$/s);
+		});
+
+		it("treats a registered image marker as one editable unit", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			const { marker } = editor.insertPasteMarker("Image");
+
+			editor.handleInput("\x01");
+			editor.handleInput("\x1b[C");
+			assert.deepStrictEqual(editor.getCursor(), { line: 0, col: marker.length });
+
+			editor.handleInput("\x7f");
+			assert.strictEqual(editor.getText(), "");
+			editor.handleInput("\x1b[45;5u");
+			assert.strictEqual(editor.getText(), marker);
+		});
+
+		it("undoes image marker registration with its insertion", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			editor.insertPasteMarker("Image");
+
+			editor.handleInput("\x1b[45;5u");
+			assert.strictEqual(editor.getText(), "");
+			assert.deepStrictEqual(editor.getPasteMarkerSnapshot().entries, []);
+			assert.deepStrictEqual(editor.insertPasteMarker("Image"), { id: 2, marker: "[paste #2 Image]" });
+		});
+
+		it("does not restore cleared marker registrations through undo", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			editor.insertPasteMarker("Image");
+			editor.setText("");
+			editor.clearPasteMarkers();
+
+			editor.handleInput("\x1b[45;5u");
+			assert.strictEqual(editor.getText(), "");
+			assert.deepStrictEqual(editor.insertPasteMarker("Image"), { id: 1, marker: "[paste #1 Image]" });
+		});
+
+		it("transfers marker registration and counters between editors", () => {
+			const first = new Editor(createTestTUI(), defaultEditorTheme);
+			pasteWithMarker(first);
+			first.insertPasteMarker("Image");
+			const snapshot = first.getPasteMarkerSnapshot();
+
+			const second = new Editor(createTestTUI(), defaultEditorTheme);
+			second.setText(first.getText());
+			second.restorePasteMarkerSnapshot(snapshot);
+
+			assert.deepStrictEqual(second.insertPasteMarker("Image"), { id: 3, marker: "[paste #3 Image]" });
+			assert.match(second.getExpandedText(), /line\n.*\[paste #2 Image\]\[paste #3 Image\]$/s);
+		});
+
+		it("submits image markers literally and restarts numbering", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			let submitted = "";
+			editor.onSubmit = (text) => {
+				submitted = text;
+			};
+			editor.insertPasteMarker("Image");
+			editor.handleInput("\r");
+
+			assert.strictEqual(submitted, "[paste #1 Image]");
+			assert.deepStrictEqual(editor.insertPasteMarker("Image"), { id: 1, marker: "[paste #1 Image]" });
+		});
+
 		it("treats paste marker as single unit for right arrow", () => {
 			const editor = new Editor(createTestTUI(), defaultEditorTheme);
 			editor.handleInput("A");

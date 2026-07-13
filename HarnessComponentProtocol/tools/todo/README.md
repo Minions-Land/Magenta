@@ -4,12 +4,15 @@ Magenta-owned hierarchical Todo planning with atomic batch mutations and session
 
 ## Contract
 
-The tool exposes two actions:
+The tool exposes exactly two top-level actions:
 
 - `get` — read the current plan.
-- `apply` — atomically apply a non-empty operations array. One mutation is a one-operation batch.
+- `apply` — atomically apply a non-empty `operations` array. One mutation is a one-operation batch.
 
-State is stored as a complete versioned snapshot in every tool result's `details.state`. The host restores the latest valid snapshot from the selected session branch, so fork and tree navigation keep independent plans without an external database.
+Mutation names such as `add`, `update`, and `set_status` are valid only in
+`operations[].op`; `{ "action": "add" }` is invalid.
+
+State is stored as a complete versioned snapshot in every tool result's `details.state`. The host restores the latest valid snapshot from the selected session branch, so fork and tree navigation keep independent plans without an external database. This state is the session's single plan, progress, completion, and evaluation ledger; orchestration must not mirror it into plan or progress Markdown files.
 
 ## State
 

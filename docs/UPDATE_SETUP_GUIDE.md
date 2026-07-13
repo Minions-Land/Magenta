@@ -1,102 +1,125 @@
-# Magenta 发布与自动更新指南（开发者）
+# Release And Update Guide
 
-本文档面向 **Magenta 维护者**，说明如何发布新版本，以及自动更新的工作原理。用户安装文档见 [USER_INSTALL.md](./USER_INSTALL.md)。
+Magenta uses two repositories with different ownership:
 
-## 分发架构
+- [`Minions-Land/Magenta`](https://github.com/Minions-Land/Magenta) is the source repository and owns version tags.
+- [`Minions-Land/Magenta-CLI`](https://github.com/Minions-Land/Magenta-CLI) is the public binary distribution repository and owns GitHub Release assets.
 
-二进制发布在公开仓库 `Minions-Land/Magenta-CLI`，用户匿名下载。
+The supported binary release path is the tag-triggered workflow in [`.github/workflows/release.yml`](../.github/workflows/release.yml). Do not manually upload locally built binaries or use the legacy one-machine publishing script as an equivalent release path.
 
-**关键点：**
-- 二进制里**不内嵌任何 GitHub Token**
-- 用户下载和 `magenta --update` 都是匿名的（公开仓库 release）
+## Release Contract
 
----
+A source tag matching `v*` starts the workflow. The workflow checks out that exact tag, then:
 
-## 🚀 发布新版本
+1. installs the pinned Node.js and Bun toolchains;
+2. verifies embedded process-tool binaries;
+3. builds four standalone executables;
+4. packages the universal runtime resources archive;
+5. writes SHA-256 checksums for every executable and the archive;
+6. smoke-tests the macOS build;
+7. installs and tests the staged Windows build from Windows PowerShell, PowerShell 7, and Git Bash;
+8. rejects a checksum-valid resource archive that attempts to overwrite the executable;
+9. publishes the verified assets and installer to the public CLI Release.
 
-### 一键发布脚本
+```mermaid
+flowchart LR
+    Main[clean source main] --> Script[release script]
+    Script --> Commits[release and next-cycle commits]
+    Script --> Tag[immutable version tag]
+    Tag --> Workflow[GitHub release workflow]
+    Workflow --> Build[all target binaries and resources]
+    Build --> Verify[checksums and smoke tests]
+    Verify --> Public[Magenta-CLI GitHub Release]
+    Public --> Client[installer and built-in updater]
+```
+
+The published asset names are part of the updater contract:
+
+```text
+magenta-macos-arm64
+magenta-macos-x64
+magenta-linux-x64
+magenta-windows-x64.exe
+magenta-resources-universal.tar.gz
+SHA256SUMS
+install.ps1
+```
+
+Change these names only together with the workflow, Windows installer, built-in updater, tests, and installation guide.
+
+## Prerequisites
+
+Before releasing:
+
+- the local branch is the intended, up-to-date `main`;
+- `origin` points to the source repository;
+- the working tree is clean;
+- every workspace uses the intended lockstep version policy;
+- the coding-agent changelog has useful content under `## [Unreleased]`;
+- repository build, checks, tests, and documentation gate pass;
+- the source repository has a `MAGENTA_CLI_RELEASE_TOKEN` secret allowed to publish Releases in the public CLI repository.
+
+Verify the local state:
 
 ```bash
-# 1. 先更新版本号
-#    编辑 brands/magenta/magenta.brand.ts，把 version 改成新版本
-
-# 2. 运行发布脚本
-./scripts/publish-to-cli-repo.sh 0.0.4 "本次更新说明"
+git status --short --branch
+git remote -v
+git pull --ff-only
+npm run check:docs
+npm run build
+npm run check
+npm test
 ```
 
-脚本会自动完成：
-1. 校验 brand 版本与发布版本一致
-2. 编译单文件二进制（`npm run build:binary`）
-3. **安全检查**：确认二进制里没有内嵌任何 token
-4. 验证二进制能正常运行且版本正确
-5. 按平台命名（`magenta-macos` / `magenta-linux`）
-6. 发布/追加到公开仓库 `Minions-Land/Magenta-CLI` 的 release
-
-### 多平台发布
-
-在对应平台的机器上分别运行发布脚本，asset 会追加到同一个 release：
-- macOS 机器上运行 → 上传 `magenta-macos`
-- Linux 机器上运行 → 上传 `magenta-linux`
-
----
-
-## 🔄 自动更新工作原理
-
-核心逻辑在 `pi/coding-agent/src/utils/github-release-update.ts`。
-
-### 配置
-
-```typescript
-// 默认指向公开仓库，无需 token
-const GITHUB_REPO = process.env.MAGENTA_GITHUB_REPO || "Minions-Land/Magenta-CLI";
-
-// token 默认为空；公开仓库匿名下载即可
-// 仅当发布仓库为私有时才需要设置 MAGENTA_GITHUB_TOKEN
-const GITHUB_TOKEN = process.env.MAGENTA_GITHUB_TOKEN || "";
-```
-
-### 更新流程
-
-1. 启动时后台检查（每天最多一次）GitHub 最新 release
-2. 发现新版本时提示用户运行 `magenta --update`
-3. `--update` 时：
-   - 通过 `browser_download_url` 匿名下载对应平台二进制
-   - 验证新二进制能运行（`--version`）
-   - 备份当前二进制为 `.backup`
-   - 原子替换，失败自动回滚
-
-### 重要安全守卫
-
-自更新**只在编译后的 bun 单文件二进制里生效**（通过 `isBunBinary` 判断）。
-
-原因：当通过 `node dist/cli.js` 运行时，`process.execPath` 指向的是 Node.js 可执行文件本身，若执行自更新会**覆盖宿主的 Node.js 安装**。因此 Node.js 环境下自更新会被拒绝并给出提示。
-
----
-
-## 🔍 手动检查更新状态
+For isolated package and current-platform binary validation without publishing:
 
 ```bash
-# 触发一次更新检查并安装
-magenta --update
+npm run release:local
 ```
 
-如果当前通过 Node.js 运行（开发环境），会提示"自更新仅适用于编译后的二进制"，这是预期行为。
+This creates output outside the repository, packs the publishable workspaces, installs them in isolated Node and Bun environments, and builds a current-platform standalone binary. It does not create a version tag or GitHub Release.
 
----
+## Create A Release
 
-## 📋 相关文件
+The release commands are mutating remote operations:
 
+```bash
+npm run release:patch
+npm run release:minor
+npm run release:major
 ```
-pi/coding-agent/src/
-├── utils/github-release-update.ts    # 更新核心逻辑（指向公开仓库，无内嵌 token）
-├── config.ts                          # isBunBinary 检测
-└── main.ts                            # 集成启动检查和 --update
 
-scripts/
-└── publish-to-cli-repo.sh            # 发布二进制到公开仓库
+For an explicit version, run `node scripts/release.mjs <x.y.z>`.
 
-docs/
-├── USER_INSTALL.md                   # 用户安装文档
-├── QUICKEST_INSTALL.md               # 极简安装
-└── ZERO_CONFIG_INSTALL.md            # 零配置安装说明
-```
+The script requires a clean tree. It bumps all workspace versions, synchronizes internal versions and lock metadata, converts each changelog's first `## [Unreleased]` heading into the release heading, regenerates model and shrinkwrap artifacts, runs `npm run check`, creates the version commit and tag, adds new Unreleased headings in a second commit, then pushes `main` and the tag to `origin`.
+
+Because the script commits, tags, and pushes, inspect it and confirm repository access before running it. Do not run two releases concurrently.
+
+## Monitor And Verify
+
+After the tag push:
+
+1. Open the source repository's **Release** workflow and wait for `build`, `smoke-windows`, and `publish` to pass.
+2. Open the matching tag in the public CLI repository and confirm all seven assets are present.
+3. Check that `SHA256SUMS` contains exactly the four executables and the universal resources archive.
+4. Install into a temporary directory using [`scripts/install.ps1`](../scripts/install.ps1) on Windows or the verified Unix procedure in [Installation](./USER_INSTALL.md).
+5. Run `magenta --version` and `magenta --help` from the staged install.
+6. Confirm the published version matches the source tag and the embedded `magenta-release.json` version.
+
+The workflow extracts release notes from the matching coding-agent changelog heading. If the heading is absent, the public Release receives only a fallback title; fix changelog preparation before creating the next tag.
+
+## Retry And Recovery
+
+Version tags are immutable release records. Never move, delete, or force-update a published tag to point at different source.
+
+- For a transient workflow failure with unchanged tagged source, rerun the failed job or manually dispatch the workflow with that existing tag.
+- For a source, build, installer, checksum, or release-note defect, fix it on `main` and create a new version. Do not repair the old tag in place.
+- If `main` was pushed but the tag push failed, verify the local tag still names the release commit, then push that existing tag. Do not recreate it on the next-cycle commit.
+- If public publication fails, preserve the source tag and rerun after repairing permissions or repository configuration. Confirm existing assets before retrying.
+- If an installer or updater activation fails, it must leave the previous installation active. Treat a missing rollback as a release-blocking defect.
+
+## Built-In Updater
+
+`magenta --update` queries the public CLI repository. It selects the current platform asset, downloads the executable, universal resources archive, and checksums, verifies both hashes, validates and extracts the archive into staging, smoke-tests the replacement, and activates it with rollback protection.
+
+Updater behavior is implemented in [`github-release-update.ts`](../pi/coding-agent/src/utils/github-release-update.ts). The Windows fresh-install transaction is implemented in [`install.ps1`](../scripts/install.ps1). Any change to asset layout, resource lookup, checksum format, staging, or rollback must update both paths and their tests before the next release.

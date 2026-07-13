@@ -1,6 +1,11 @@
 import type { AutocompleteProvider } from "./autocomplete.ts";
 import type { Component } from "./tui.ts";
 
+export interface PasteMarkerSnapshot {
+	counter: number;
+	entries: Array<{ id: number; marker: string; expandedText: string }>;
+}
+
 /**
  * Interface for custom editor components.
  *
@@ -45,6 +50,21 @@ export interface EditorComponent extends Component {
 
 	/** Insert text at current cursor position */
 	insertTextAtCursor?(text: string): void;
+
+	/** Allocate a registered atomic paste marker without inserting it. */
+	createPasteMarker?(label: string, expandedText?: string): { id: number; marker: string };
+
+	/** Register and insert an atomic paste marker using the editor's shared paste sequence. */
+	insertPasteMarker?(label: string, expandedText?: string): { id: number; marker: string };
+
+	/** Clear registered paste markers, their undo history, and restart numbering. */
+	clearPasteMarkers?(): void;
+
+	/** Export registered markers when replacing one editor component with another. */
+	getPasteMarkerSnapshot?(): PasteMarkerSnapshot;
+
+	/** Restore registered markers after replacing an editor component. */
+	restorePasteMarkerSnapshot?(snapshot: PasteMarkerSnapshot): void;
 
 	/**
 	 * Get text with any markers expanded (e.g., paste markers).

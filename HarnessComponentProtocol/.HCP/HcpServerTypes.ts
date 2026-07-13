@@ -55,9 +55,8 @@ export type HcpServerRequest = {
 /**
  * The result of handling an HcpServerRequest. Today HCP dispatch is in-process
  * with no serialization boundary (spec §1/§5), so a response is simply the
- * operation's return value. This alias names the request/response pair now so
- * the vocabulary is stable; when §3's protocol envelope lands, this becomes a
- * structured result type without renaming call sites.
+ * operation's return value. This alias names the request/response pair without
+ * implying a serialized envelope or a future transport migration.
  */
 export type HcpServerResponse<T = unknown> = T;
 

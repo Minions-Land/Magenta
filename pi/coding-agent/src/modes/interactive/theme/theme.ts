@@ -16,6 +16,9 @@ import type { SourceInfo } from "../../../core/source-info.ts";
 import { closeWatcher, watchWithErrorHandler } from "../../../utils/fs-watch.ts";
 import { highlight, supportsLanguage } from "../../../utils/syntax-highlight.ts";
 
+const ultraBorderGraphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+const ANSI_SEQUENCE = /\x1b(?:\][^\x07]*(?:\x07|\x1b\\)|\[[0-?]*[ -/]*[@-~]|[@-_])/gu;
+
 // ============================================================================
 // Types & Schema
 // ============================================================================
@@ -422,7 +425,7 @@ export class Theme {
 		}
 	}
 
-	getUltraBorderColor(): (str: string) => string {
+	getUltraBorderColor(phase = 0): (str: string) => string {
 		const palette: ThemeColor[] = [
 			"error",
 			"warning",
@@ -432,12 +435,25 @@ export class Theme {
 			"thinkingHigh",
 			"thinkingMax",
 		];
+		const normalizedPhase = ((Math.floor(phase) % palette.length) + palette.length) % palette.length;
 		return (str: string) => {
 			if (!str) return "";
-			return [...str]
-				.map((character, index) => `${this.getFgAnsi(palette[index % palette.length])}${character}`)
-				.join("")
-				.concat("\x1b[39m");
+			let output = "";
+			let cursor = 0;
+			let visibleIndex = 0;
+			const appendVisible = (text: string) => {
+				for (const { segment } of ultraBorderGraphemes.segment(text)) {
+					output += `${this.getFgAnsi(palette[(visibleIndex + normalizedPhase) % palette.length])}${segment}`;
+					visibleIndex++;
+				}
+			};
+			for (const match of str.matchAll(ANSI_SEQUENCE)) {
+				appendVisible(str.slice(cursor, match.index));
+				output += match[0];
+				cursor = match.index + match[0].length;
+			}
+			appendVisible(str.slice(cursor));
+			return `${output}\x1b[39m`;
 		};
 	}
 

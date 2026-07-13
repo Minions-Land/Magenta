@@ -1,4 +1,4 @@
-import type { Message, TextContent, UserMessage } from "@earendil-works/pi-ai";
+import type { AssistantMessage, Message, TextContent, UserMessage } from "@earendil-works/pi-ai";
 import { completeSimple } from "@earendil-works/pi-ai/compat";
 import { CENTER_FLOATING_OVERLAY } from "../modes/interactive/components/floating-window.ts";
 import { SideChatOverlay } from "../modes/interactive/components/side-chat-overlay.ts";
@@ -115,12 +115,20 @@ export class SideChatManager {
 						{ apiKey: auth.apiKey, headers: auth.headers, env: auth.env, signal },
 					);
 
-					const answer = response.content
-						.filter((part): part is TextContent => part.type === "text")
-						.map((part) => part.text)
-						.join("\n");
+					const textParts = response.content.filter((part): part is TextContent => part.type === "text");
+					const answer = textParts.map((part) => part.text).join("\n");
 
-					messages.push(response);
+					// Store only the text of the reply in history. The raw response can carry
+					// reasoning `thinking` blocks whose signatures reference server-side reasoning
+					// items. Replaying those through the stateless completeSimple path (which does
+					// not request encrypted reasoning content) makes reasoning models return only a
+					// reasoning item and no message on the next turn, surfacing as "(empty response)".
+					// Keeping just the text preserves conversational context without that hazard.
+					messages.push({
+						role: "assistant",
+						content: [{ type: "text", text: answer }],
+						timestamp: Date.now(),
+					} as AssistantMessage);
 					return answer;
 				};
 

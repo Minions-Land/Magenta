@@ -22,6 +22,8 @@ type ShutdownThis = {
 	runtimeHost: { dispose: () => Promise<void> };
 	ui: { terminal: { drainInput: (ms: number) => Promise<void> } };
 	themeController: { disableAutoSync: () => void };
+	invalidateClipboardImagePastes: () => void;
+	stopUltraBorderAnimation: () => void;
 	stop: () => void;
 	sessionManager: SessionManager;
 };
@@ -83,6 +85,8 @@ function createContext(order: string[], sessionManager = createSessionManager())
 			},
 		},
 		themeController: { disableAutoSync: vi.fn() },
+		invalidateClipboardImagePastes: vi.fn(),
+		stopUltraBorderAnimation: vi.fn(),
 		stop: vi.fn(() => {
 			order.push("stop");
 		}),

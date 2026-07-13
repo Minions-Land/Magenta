@@ -1,5 +1,5 @@
 import { Editor, type EditorOptions, type EditorTheme, matchesKey, type TUI } from "@earendil-works/pi-tui";
-import { type ImageTokenController, type ImageTokenTheme, readClipboardFilePaths } from "../../../core/image-tokens.ts";
+import type { ImageTokenController, ImageTokenTheme } from "../../../core/image-tokens.ts";
 import type { AppKeybinding, KeybindingsManager } from "../../../core/keybindings.ts";
 
 type EditorInternals = {
@@ -38,6 +38,8 @@ export class CustomEditor extends Editor {
 	}
 
 	clearImageTokens(): void {
+		for (const timer of this.scanTimers) clearTimeout(timer);
+		this.scanTimers = [];
 		this.imageTokens?.clear();
 	}
 
@@ -62,9 +64,8 @@ export class CustomEditor extends Editor {
 			return;
 		}
 
-		// Check for paste image keybinding
+		// The interactive host resolves clipboard pixels and copied file URLs into attachments.
 		if (this.keybindings.matches(data, "app.clipboard.pasteImage")) {
-			if (this.pasteClipboardFilePaths()) return;
 			void this.onPasteImage?.();
 			this.scheduleImageTokenScan();
 			return;
@@ -131,19 +132,6 @@ export class CustomEditor extends Editor {
 		const theme = this.getImageTokenTheme?.();
 		if (!this.imageTokens || !theme) return lines;
 		return this.imageTokens.render(lines, theme, width);
-	}
-
-	private pasteClipboardFilePaths(): boolean {
-		if (!this.imageTokens) return false;
-		const paths = readClipboardFilePaths();
-		if (paths.length === 0) return false;
-
-		const text = this.imageTokens.formatClipboardPaths(paths, this.getText());
-		if (!text) return false;
-
-		super.insertTextAtCursor(text);
-		this.tui.requestRender();
-		return true;
 	}
 
 	private deleteImageTokenAtCursor(data: string): boolean {

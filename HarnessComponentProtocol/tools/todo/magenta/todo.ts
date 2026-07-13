@@ -84,17 +84,13 @@ export type TodoToolOptions = {
 };
 
 const todoOperationSchema = Type.Object({
-	op: StringEnum([
-		"add",
-		"update",
-		"move",
-		"set_status",
-		"set_current",
-		"set_summary",
-		"set_title",
-		"remove",
-		"clear",
-	] as const),
+	op: StringEnum(
+		["add", "update", "move", "set_status", "set_current", "set_summary", "set_title", "remove", "clear"] as const,
+		{
+			description:
+				'Mutation verb for this operation. Put add/update/move/etc. here, never in the top-level "action" field.',
+		},
+	),
 	id: Type.Optional(Type.Number({ description: "Existing Todo ID targeted by this operation" })),
 	targetRef: Type.Optional(Type.String({ description: "Temporary ref created by an earlier add in this batch" })),
 	ref: Type.Optional(Type.String({ description: "Unique temporary ref assigned by an add operation" })),
@@ -109,10 +105,15 @@ const todoOperationSchema = Type.Object({
 });
 
 export const todoSchema = Type.Object({
-	action: StringEnum(["get", "apply"] as const),
+	action: StringEnum(["get", "apply"] as const, {
+		description:
+			'Top-level command. The only valid values are "get" and "apply". To add or change an item, use action "apply" and put the mutation in operations[].op; never use action "add".',
+	}),
 	operations: Type.Optional(
 		Type.Array(todoOperationSchema, {
-			description: "Atomic Todo mutations. A one-item change is an array with one operation.",
+			minItems: 1,
+			description:
+				'Atomic mutations used with action "apply". A single change is still an array with one operation, for example {"action":"apply","operations":[{"op":"add","text":"Run tests"}]}.',
 		}),
 	),
 });
@@ -620,7 +621,7 @@ export function createTodoTool(_cwd: string, options: TodoToolOptions = {}): Age
 		name: "todo",
 		label: "Todo",
 		description:
-			"Manage a hierarchical session-branch Todo plan. Read with get; mutate atomically with one apply operations array. A single change is a one-operation batch.",
+			'The single source of truth for multi-step planning and progress; do not mirror it in plan/progress files or a second checklist. Top-level action is only "get" or "apply". Read with {"action":"get"}. Mutate with {"action":"apply","operations":[{"op":"add","text":"..."}]}; add/update/move/etc. belong in operations[].op, never action. A single change is a one-operation batch.',
 		parameters: todoSchema,
 		executionMode: "sequential",
 		renderKind: TODO_RENDER_KIND,

@@ -1,9 +1,10 @@
 /**
  * Package overlay v2: isomorphic HCP structure loader.
  *
- * Replaces the v1 flat package.toml [[components]] parser with a directory-tree
- * scanner that discovers modules/<source>/HcpMagnet.ts, dynamically imports them,
- * and constructs HcpClientcomponent entries for the unified session assembly.
+ * Replaces the v1 flat component adapter with a manifest-driven loader that
+ * resolves each declared Source HcpMagnet.ts and owning Module HcpServer.ts,
+ * dynamically imports them, and constructs HcpClientcomponent entries for the
+ * unified session assembly.
  *
  * V2 packages have this structure (matching HarnessComponentProtocol):
  *   <package-root>/

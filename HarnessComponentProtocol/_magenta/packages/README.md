@@ -1,12 +1,11 @@
 # Package Support
 
-This private support directory defines Magenta3's generic Package integration
+This private support directory defines Magenta's generic Package integration
 boundary. A configured Package can contribute components that override lower
-layers by `kind:name`, but Magenta3 does not own concrete domain expert
-Packages.
+layers by `kind:name`, but Magenta does not own concrete domain expert Packages.
 
 This directory is not part of `.HCP/`, is not a Harness Module, owns no
-`HcpServer`, and is not a Package content root. Magenta3's root `packages/`
+`HcpServer`, and is not a Package content root. Magenta's root `packages/`
 contains only the generic contract and templates. Concrete domain Packages are
 maintained and published in independent GitHub repositories; this integration
 does not depend on a fixed sibling checkout.
@@ -28,7 +27,7 @@ become a new Module or Magnet subtype.
 
 ## Ownership boundary
 
-Magenta3 keeps only the reusable contract and template material:
+Magenta keeps only the reusable contract and template material:
 
 ```text
 packages/

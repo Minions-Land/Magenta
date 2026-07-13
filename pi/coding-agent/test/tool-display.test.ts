@@ -76,6 +76,19 @@ describe("tool-display helpers", () => {
 		).toBe("my-skill");
 	});
 
+	test("summarizes find calls by pattern regardless of argument order", () => {
+		expect(
+			summarizeToolCall(
+				{
+					name: "find",
+					args: { path: "/Users/mjm/Magenta3", pattern: "**/*python*" },
+				},
+				80,
+			),
+		).toBe("'**/*python*' in /Users/mjm/Magenta3");
+		expect(summarizeToolCall({ name: "find", args: { pattern: "*.ts" } }, 80)).toBe("'*.ts' in .");
+	});
+
 	test("detects and summarizes failed output", () => {
 		expect(conciseToolErrorSummary("Error: missing field `command`")).toBe("invalid input: missing command");
 		expect(conciseToolErrorSummary("--- Command finished with exit code: 2 ---")).toBe("exit 2");

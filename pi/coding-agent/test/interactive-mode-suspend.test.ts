@@ -9,16 +9,27 @@ type FakeUi = {
 
 type HandleCtrlZThis = {
 	ui: FakeUi;
+	stopUltraBorderAnimation?: () => void;
+	updateEditorBorderColor?: () => void;
 };
 
 type ProcessSignalHandler = () => void;
 
 type InteractiveModePrototypeWithHandleCtrlZ = {
-	handleCtrlZ(this: HandleCtrlZThis): void;
+	handleCtrlZ(
+		this: HandleCtrlZThis & {
+			stopUltraBorderAnimation: () => void;
+			updateEditorBorderColor: () => void;
+		},
+	): void;
 };
 
 function callHandleCtrlZ(context: HandleCtrlZThis): void {
-	(interactiveModePrototype as InteractiveModePrototypeWithHandleCtrlZ).handleCtrlZ.call(context);
+	(interactiveModePrototype as InteractiveModePrototypeWithHandleCtrlZ).handleCtrlZ.call({
+		...context,
+		stopUltraBorderAnimation: context.stopUltraBorderAnimation ?? (() => undefined),
+		updateEditorBorderColor: context.updateEditorBorderColor ?? (() => undefined),
+	});
 }
 
 const interactiveModePrototype = InteractiveMode.prototype as unknown;
@@ -68,7 +79,9 @@ describe("InteractiveMode.handleCtrlZ", () => {
 			stop: vi.fn(),
 			requestRender: vi.fn(),
 		};
-		const context: HandleCtrlZThis = { ui };
+		const stopUltraBorderAnimation = vi.fn();
+		const updateEditorBorderColor = vi.fn();
+		const context: HandleCtrlZThis = { ui, stopUltraBorderAnimation, updateEditorBorderColor };
 		const keepAliveHandle = setTimeout(() => undefined, 0);
 		clearTimeout(keepAliveHandle);
 
@@ -99,6 +112,7 @@ describe("InteractiveMode.handleCtrlZ", () => {
 		expect(setIntervalSpy).toHaveBeenCalledWith(expect.any(Function), 2 ** 30);
 		expect(processOnSpy).toHaveBeenCalledWith("SIGINT", expect.any(Function));
 		expect(processOnceSpy).toHaveBeenCalledWith("SIGCONT", expect.any(Function));
+		expect(stopUltraBorderAnimation).toHaveBeenCalledTimes(1);
 		expect(ui.stop).toHaveBeenCalledTimes(1);
 		expect(processKillSpy).toHaveBeenCalledWith(0, "SIGTSTP");
 		expect(sigintHandler).toBeDefined();
@@ -109,6 +123,7 @@ describe("InteractiveMode.handleCtrlZ", () => {
 		expect(clearIntervalSpy).toHaveBeenCalledWith(keepAliveHandle);
 		expect(removeListenerSpy).toHaveBeenCalledWith("SIGINT", sigintHandler);
 		expect(ui.start).toHaveBeenCalledTimes(1);
+		expect(updateEditorBorderColor).toHaveBeenCalledTimes(1);
 		expect(ui.requestRender).toHaveBeenCalledWith(true);
 	});
 

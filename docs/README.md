@@ -1,42 +1,45 @@
-# Magenta3 Documentation
+# Magenta Documentation
 
-This directory contains repository-level documentation. Harness-specific
-architecture and naming rules live beside the Harness source so there is only
-one authoritative HCP specification.
+This directory contains the maintained product and contributor guides. Use each topic's authoritative document instead of copying commands or contracts into new status reports.
 
-## Start Here
+## Use Magenta
 
-- [`../README.md`](../README.md) - product overview, build, launch, and common commands
-- [`ARCHITECTURE.md`](./ARCHITECTURE.md) - package ownership, runtime flow, and integration boundaries
-- [`DEVELOPING.md`](./DEVELOPING.md) - contribution workflow and verification gates
-- [`AUTHENTICATION.md`](./AUTHENTICATION.md) - provider credential lookup and setup
-- [`BRANDING.md`](./BRANDING.md) - build-time brand registry and synchronization
+- [Installation](./USER_INSTALL.md): verified binary installation, source installation, update, and removal
+- [Authentication](./AUTHENTICATION.md): credential resolution, provider login, and security boundaries
+- [Coding-agent documentation](../pi/coding-agent/docs/index.md): CLI, settings, sessions, extensions, SDK, RPC, themes, and terminal behavior
+- [Package loading](../pi/coding-agent/docs/packages.md): local and GitHub Package selectors
 
-## Installation and Distribution
+## Develop Magenta
 
-- [`USER_INSTALL.md`](./USER_INSTALL.md) - user installation guide
-- [`UPDATE_SETUP_GUIDE.md`](./UPDATE_SETUP_GUIDE.md) - release and auto-update workflow for maintainers
+- [Architecture](./ARCHITECTURE.md): workspace ownership, runtime flow, and assembly boundaries
+- [Development](./DEVELOPING.md): repository setup, validation, and change workflow
+- [Release](./UPDATE_SETUP_GUIDE.md): tag-driven binary release pipeline and updater contract
+- [Brand configuration](../brands/README.md): build-time product metadata and synchronization
+- [Repository scripts](../scripts/README.md): supported maintenance commands and mutating-script cautions
 
-## Harness And HCP
+## HCP Governance
 
-- [`../HarnessComponentProtocol/README.md`](../HarnessComponentProtocol/README.md) - current Harness layout
-- [`../HarnessComponentProtocol/.HCP/HCP-OVERVIEW.md`](../HarnessComponentProtocol/.HCP/HCP-OVERVIEW.md) - HCP assembly walkthrough
-- [`../HarnessComponentProtocol/docs/DEVELOPING.md`](../HarnessComponentProtocol/docs/DEVELOPING.md) - task-oriented component development
-- [`../HarnessComponentProtocol/docs/governance/hcp-architecture.md`](../HarnessComponentProtocol/docs/governance/hcp-architecture.md) - authoritative HCP architecture
-- [`../HarnessComponentProtocol/docs/governance/hcp-naming.md`](../HarnessComponentProtocol/docs/governance/hcp-naming.md) - authoritative entity-tree naming rules
+HCP has four durable sources of truth, each with a separate concern:
 
-## Other Boundaries
+| Concern | Authority |
+|---|---|
+| Role and identifier naming | [HCP naming law](../HarnessComponentProtocol/docs/governance/hcp-naming.md) |
+| Runtime architecture and ownership | [HCP architecture](../HarnessComponentProtocol/docs/governance/hcp-architecture.md) |
+| Change discipline and invariants | [HCP contract](../HarnessComponentProtocol/docs/governance/contract.md) |
+| Implementation workflow | [HCP development guide](../HarnessComponentProtocol/docs/DEVELOPING.md) |
 
-- [`../packages/README.md`](../packages/README.md) - retained domain Package contract and template
-- [`../brands/README.md`](../brands/README.md) - brand registry implementation details
-- [`../tests/README.md`](../tests/README.md) - end-to-end test suite
-- [`../pi/README-upstream.md`](../pi/README-upstream.md) - preserved upstream Pi documentation
+The [Harness workspace README](../HarnessComponentProtocol/README.md) is the entry point. Module-specific READMEs describe only their owning module; they do not override the governance documents.
 
 ## Documentation Rules
 
-1. Describe implemented behavior, not planned behavior, as current fact.
-2. Keep HCP naming rules in the Harness governance document and link to them
-   instead of creating another copy.
-3. Distinguish Pi extension packages from Harness domain Packages.
-4. Verify every command against the current root and workspace scripts.
-5. Update this index when adding a repository-level document.
+- Link to an authority rather than duplicating its contract.
+- Do not hardcode a release version, binary size, or supported model inventory. Obtain those from `magenta --version`, the current Release, or `magenta --list-models`.
+- Commands in maintained docs must match a current `package.json` script, CLI option, workflow, or checked-in executable.
+- Use repository-relative links for repository files and verify anchors after renaming headings.
+- Historical research evidence belongs under `.research/`; it is not current product documentation.
+
+Run the documentation gate from the repository root:
+
+```bash
+npm run check:docs
+```

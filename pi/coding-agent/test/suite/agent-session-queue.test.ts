@@ -1,5 +1,6 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
+import type { ImageContent } from "@earendil-works/pi-ai/compat";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
@@ -153,6 +154,64 @@ describe("AgentSession queue characterization", () => {
 		expect(getUserTexts(harness)).toEqual(["start", "after current run"]);
 		expect(assistantSeenBeforeFollowUp).toContain("");
 		expect(getAssistantTexts(harness)).toContain("follow-up response");
+	});
+
+	it("preserves image attachments on queued steering messages", async () => {
+		const waiting = await createWaitingHarness();
+		const { harness, waitForToolStart, promptPromise, releaseToolExecution } = waiting;
+		harnesses.push(harness);
+		const image: ImageContent = { type: "image", mimeType: "image/png", data: "queued-image" };
+		let sawImage = false;
+
+		harness.setResponses([
+			fauxAssistantMessage(fauxToolCall("wait", {}), { stopReason: "toolUse" }),
+			(context) => {
+				sawImage = context.messages.some(
+					(message) =>
+						message.role === "user" &&
+						typeof message.content !== "string" &&
+						message.content.some(
+							(part) => part.type === "image" && part.data === "queued-image" && part.mimeType === "image/png",
+						),
+				);
+				return fauxAssistantMessage("saw attachment");
+			},
+		]);
+
+		await waitForToolStart;
+		await harness.session.steer("inspect [paste #1 Image]", [image]);
+		releaseToolExecution();
+		await promptPromise;
+
+		expect(sawImage).toBe(true);
+		expect(harness.session.pendingMessageCount).toBe(0);
+	});
+
+	it("returns queued image content for editor restoration", async () => {
+		const waiting = await createWaitingHarness();
+		const { harness, waitForToolStart, promptPromise, releaseToolExecution } = waiting;
+		harnesses.push(harness);
+		const image: ImageContent = { type: "image", mimeType: "image/png", data: "restore-image" };
+		harness.setResponses([
+			fauxAssistantMessage(fauxToolCall("wait", {}), { stopReason: "toolUse" }),
+			fauxAssistantMessage("done"),
+		]);
+
+		await waitForToolStart;
+		await harness.session.followUp("queued [paste #1 Image]", [image], ["[paste #1 Image]"]);
+		expect(harness.session.clearQueueWithContent()).toEqual({
+			steering: [],
+			followUp: [
+				{
+					text: "queued [paste #1 Image]",
+					images: [image],
+					imageMarkers: ["[paste #1 Image]"],
+				},
+			],
+		});
+		expect(harness.session.getFollowUpMessages()).toEqual([]);
+		releaseToolExecution();
+		await promptPromise;
 	});
 
 	it("delivers multiple steering messages in order in one-at-a-time mode", async () => {
