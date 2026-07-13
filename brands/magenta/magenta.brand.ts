@@ -9,7 +9,7 @@ export const BRAND_CONFIG: BrandConfig = {
 	name: "Magenta",
 
 	/** Product version (independent of infrastructure versions) */
-	version: "0.0.14",
+	version: "0.0.15",
 
 	/** NPM package scope for product-specific packages */
 	packageScope: "@magenta",
@@ -36,10 +36,10 @@ export const BRAND_CONFIG: BrandConfig = {
 
 	/** Project URLs */
 	urls: {
-		homepage: "https://github.com/yourusername/Magenta3",
-		docs: "https://docs.magenta.dev",
-		issues: "https://github.com/yourusername/Magenta3/issues",
-		repository: "https://github.com/yourusername/Magenta3.git",
+		homepage: "https://github.com/Minions-Land/Magenta",
+		docs: "https://github.com/Minions-Land/Magenta/tree/main/docs",
+		issues: "https://github.com/Minions-Land/Magenta/issues",
+		repository: "https://github.com/Minions-Land/Magenta.git",
 	},
 
 	/** Infrastructure layer versions (reference only, synced from upstream) */
