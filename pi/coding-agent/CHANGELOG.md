@@ -4,6 +4,23 @@ All notable changes to Magenta CLI are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.0.14] - 2026-07-13
+
+### Added
+- Ultra execution profiles map to each model's highest supported native reasoning level and enable workflow orchestration plus persistent teammates by default, with CLI, settings, SDK, RPC, session-resume, and TUI support
+- The new `teammate_agent` tool manages persistent child sessions with start, status, send, interrupt, stop, and resume controls, parent lineage, parent-only mailbox routing, and shutdown cleanup
+- Todo is now a Magenta-owned hierarchical plan with atomic batch operations, branch-aware state restoration, compact inline rendering, and a dedicated `/todo` overlay
+- Compaction exposes bounded progress phases and chunk metrics to SDK and TUI consumers
+
+### Changed
+- Standard execution profiles retain one-shot sub-agents while workflow schemas and persistent teammates remain capability-gated; nested workers strip recursive coordination tools
+- Incoming peer messages carry an explicit agent-provenance envelope for the model without changing their TUI presentation
+- Refreshed generated OpenRouter and Vercel AI Gateway pricing and context metadata
+
+### Fixed
+- Replayed assistant messages for OpenAI Responses omit the response-only `status` field, preventing strict models from rejecting conversation history
+- Managed teammate delivery now composes parent-only filtering with owner-aware claims, count limits, and byte limits without starving authorized work
+
 ## [0.0.13] - 2026-07-13
 
 ### Added
