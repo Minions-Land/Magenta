@@ -4,6 +4,13 @@ All notable changes to Magenta CLI are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.0.16] - 2026-07-13
+
+### Added
+- GitHub mirror support via the `MAGENTA_GITHUB_MIRROR` environment variable, which rewrites every GitHub URL (self-update, harness package acquisition, and `fd`/`rg` helper-tool downloads) through a proxy prefix for restricted networks; unset preserves the previous direct-download behavior
+- macOS/Linux install script auto-detects `aria2c` for 16-connection parallel downloads and falls back to `curl`, and the Windows `install.ps1` now honors `MAGENTA_GITHUB_MIRROR`
+- New `docs/CHINA_NETWORK.md` guide covering mirror selection, `aria2` setup, manual verified downloads, and troubleshooting
+
 ## [0.0.15] - 2026-07-13
 
 ### Added
