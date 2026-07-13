@@ -1,8 +1,12 @@
 /**
- * Todo Extension - Demonstrates state management via session entries
+ * Simple Todo Extension - Demonstrates state management via session entries
+ *
+ * This standalone example intentionally uses the `simple_todo` name. It is not
+ * Magenta's HCP Todo planning tool and does not share that tool's get/apply
+ * contract.
  *
  * This extension:
- * - Registers a `todo` tool for the LLM to manage todos
+ * - Registers a `simple_todo` tool for the LLM to manage a flat example list
  * - Registers a `/todos` command for users to view the list
  *
  * State is stored in tool result details (not external files), which allows
@@ -118,7 +122,7 @@ export default function (pi: ExtensionAPI) {
 		for (const entry of ctx.sessionManager.getBranch()) {
 			if (entry.type !== "message") continue;
 			const msg = entry.message;
-			if (msg.role !== "toolResult" || msg.toolName !== "todo") continue;
+			if (msg.role !== "toolResult" || msg.toolName !== "simple_todo") continue;
 
 			const details = msg.details as TodoDetails | undefined;
 			if (details) {
@@ -134,9 +138,9 @@ export default function (pi: ExtensionAPI) {
 
 	// Register the todo tool for the LLM
 	pi.registerTool({
-		name: "todo",
-		label: "Todo",
-		description: "Manage a todo list. Actions: list, add (text), toggle (id), clear",
+		name: "simple_todo",
+		label: "Simple Todo",
+		description: "Manage the flat list in this standalone example. Actions: list, add (text), toggle (id), clear",
 		parameters: TodoParams,
 
 		async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
@@ -219,7 +223,7 @@ export default function (pi: ExtensionAPI) {
 		},
 
 		renderCall(args, theme, _context) {
-			let text = theme.fg("toolTitle", theme.bold("todo ")) + theme.fg("muted", args.action);
+			let text = theme.fg("toolTitle", theme.bold("simple_todo ")) + theme.fg("muted", args.action);
 			if (args.text) text += ` ${theme.fg("dim", `"${args.text}"`)}`;
 			if (args.id !== undefined) text += ` ${theme.fg("accent", `#${args.id}`)}`;
 			return new Text(text, 0, 0);

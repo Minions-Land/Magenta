@@ -29,7 +29,6 @@ It is not the `hcp-process` Module, not a Source, not a default session
 component, and not an alternative route around a Module's real `HcpServer`.
 
 Magenta-specific Package, MCP, session, environment, and utility support belongs
-under [`../_magenta/`](../_magenta/), outside this generic boundary. See
-[`HCP-OVERVIEW.md`](./HCP-OVERVIEW.md),
-[`../docs/governance/hcp-architecture.md`](../docs/governance/hcp-architecture.md),
-and [`../docs/governance/hcp-naming.md`](../docs/governance/hcp-naming.md).
+under [`../_magenta/`](../_magenta/), outside this generic boundary. See the
+authoritative [`HCP architecture`](../docs/governance/hcp-architecture.md) and
+[`HCP naming law`](../docs/governance/hcp-naming.md).

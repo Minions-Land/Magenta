@@ -1,97 +1,63 @@
-# HCP Unified Architecture Contract
+# HCP Architecture
 
-Date: 2026-07-11
-Status: **AUTHORITATIVE.** This is the source of truth for HCP ownership,
-assembly, routing, and transport. Naming details are authoritative in
-`hcp-naming.md`.
+Status: **AUTHORITATIVE.** This document owns HCP runtime roles, assembly, routing, and transport boundaries. Identifier construction is owned by the [naming law](./hcp-naming.md).
 
-## 1. The Only Resolution Chain
+## Resolution Chain
 
-Every assembled component follows one ownership chain:
+Every assembled component follows one chain:
 
-```text
-HcpClient -> real module HcpServer -> selected source HcpMagnet -> source product
+```mermaid
+flowchart LR
+    Client[one session HcpClient] --> Server[real Module HcpServer]
+    Server --> Magnet[selected Source HcpMagnet]
+    Magnet --> Product[one Tool, Capability, or Resource]
+    Product --> Consumer[direct runtime consumer]
 ```
 
-There is no anonymous Server, per-Magnet Server, facade Server, prefix Server,
-or parallel selection/lookup service. A Magnet never creates a Server.
-`HcpClient.resolve()` returns the real `HcpServer` owned by a Module directory;
-consumers that need the selected product use `resolveInstance()` or
-`resolveCapability()`.
+There is no anonymous Server, per-Magnet Server, facade Server, prefix Server, alternate Client, or parallel lookup service. A Magnet never creates a Server. `HcpClient.resolve()` returns the real Server owned by a Module; consumers that need the selected product use instance or capability resolution.
 
-`HcpClient`, `HcpServer`, and `HcpMagnet` are the only runtime HCP entities.
-Generated arrays, component inputs, Package declarations, and transport helpers
-are data or support plumbing, not additional roles.
+HCP performs construction, selection, routing, and disposal. It is not the tool execution hot path: after assembly, the agent loop calls an `AgentTool` directly and capability consumers call their resolved live objects directly.
 
-HCP performs assembly, selection, and management. It is not the tool execution
-hot path: once a tool has been assembled, the agent loop calls
-`AgentTool.execute()` directly.
-
-## 2. The Three Roles
+## Three Roles
 
 ### HcpClient
 
-`HarnessComponentProtocol/HcpClient.ts` is the single session router. It owns:
+`HarnessComponentProtocol/HcpClient.ts` defines the Client class. Each session creates exactly one instance. It owns:
 
-- Module state keyed by the Server's `moduleName`;
+- Module state keyed by each Server's `moduleName`;
 - each Module's selector-to-Magnet slots;
-- address-to-Module routing pointers; and
-- Source-independent `resolve`, `describe`, `call`, and instance resolution.
+- address-to-Module routing pointers;
+- Source-independent resolve, describe, call, and instance resolution; and
+- replacement, merge, and disposal behavior.
 
-`registerModule(server, slots)` replaces the module subtree by default.
-`registerModule(server, slots, { merge: true })` overlays the supplied slots and
-preserves sibling slots already owned by that same Module. Host-supplied
-components may request explicit replacement; default assembly subsequently
-fills only missing slots.
+`registerModule(server, slots)` replaces that Module subtree by default. `{ merge: true }` overlays supplied slots while preserving sibling slots already owned by the same Module.
 
 ### HcpServer
 
-Every actual Module or grouping node owns a real, named
-`<module>/HcpServer.ts` exporting bare `class HcpServer`. The class declares its
-Module identity and, where needed, its Module-specific address, description,
-or call behavior. The HcpClient supplies the common routing behavior.
+Every real Module or grouping node owns `<module>/HcpServer.ts`, exporting bare `class HcpServer`. The class declares Module identity and any Module-specific addressing, description, or management behavior. The Client supplies common routing.
 
-Examples:
-
-- `runtime/HcpServer.ts` owns the multi-slot `runtime` module;
-- `tools/read/HcpServer.ts` owns the `tools/read` leaf;
-- `tools/HcpServer.ts` and `skills/HcpServer.ts` are real grouping nodes.
-
-These classes are the only Servers in the chain. Source folders do not define
-Servers, and assembly does not synthesize anonymous ones. `.HCP/assembly/` and
-`.HCP/transport/` are HCP infrastructure, not Harness Modules; neither may own a
-Server. Generic Package and MCP support lives under `_magenta/`, outside the HCP
-entity tree.
+Tools and skills have both grouping Servers and leaf Servers. Source directories do not define Servers. `.HCP/` and `_magenta/` are infrastructure and cannot own a Server.
 
 ### HcpMagnet
 
-Every repository-declared Source owns a Source-local `HcpMagnet.ts` exporting
-bare `class HcpMagnet`. Path supplies identity; the class name is deliberately
-the same everywhere.
+Every declared Source owns a Source-local `HcpMagnet.ts`, exporting bare `class HcpMagnet`. Path supplies Source identity; the role class name is identical everywhere.
 
-A Magnet binds one selected Source to its Module and produces exactly one of:
+A Magnet binds one Source to its Module and exposes exactly one product method:
 
-- `toTool()` for an `AgentTool`;
-- `toCapability()` for an `HcpMagnetBinding` containing a live instance; or
-- `toResource()` for an `HcpMagnetResource`.
+| Product | Magnet method | Runtime consumer |
+|---|---|---|
+| Tool | `toTool()` | agent loop calls `execute()` directly |
+| Capability | `toCapability()` | consumer calls the live binding instance |
+| Resource | `toResource()` | resource loader injects or merges content |
 
-A Magnet does not select a Source, own addresses, or implement a
-management Server. In particular, `toHcpServer()` is retired.
-An aggregate input whose sibling selectors are unique may expand one static
-`build()` into multiple sibling Magnet instances, but every returned Magnet
-still exposes exactly one of these products. Today that applies to the root
-`tools/descriptor` Source and Resources. Fixed capability slots and leaf Tool
-Modules require one product per component; Client assembly rejects fan-out
-there instead of silently replacing a sibling.
+A Source `build()` may return sibling Magnets only where the component input explicitly allows fan-out, such as a descriptor that discovers multiple MCP tools. Each sibling still exposes one product. Fixed capability slots and ordinary leaf tools reject accidental fan-out.
 
-## 3. Entity Tree And Paths
-
-The package root is `HarnessComponentProtocol/`; there is no `modules/` wrapper
-and no `hcp-client/`, `hcp-contract/`, or `hcp-magnet/` zone.
+## Entity Boundaries
 
 ```text
 HarnessComponentProtocol/
   HcpClient.ts
+  harness.toml
   .HCP/
     HcpServerTypes.ts
     HcpMagnetTypes.ts
@@ -100,179 +66,112 @@ HarnessComponentProtocol/
   _magenta/
     mcp/
     packages/
-    utils/pi/toml.ts
-  memory/
+    session/
+    env/
+    messages/
+    types/
+    utils/
+  <module>/
     HcpServer.ts
-    magenta/HcpMagnet.ts
-  runtime/
-    HcpServer.ts
-    magenta/HcpMagnet.ts
-  tools/
-    HcpServer.ts
-    read/
-      HcpServer.ts
-      pi/HcpMagnet.ts
+    <source>/HcpMagnet.ts
 ```
 
-Most Modules are one level deep. Tools and skills have real root grouping
-Servers plus leaf Servers. A nested Source may be deeper when its declared
-Source path requires it, for example
-`multiagent/workflow/magenta/HcpMagnet.ts`.
+`.HCP/` contains host-neutral protocol data, generated repository projections, assembly, and optional injected transport support. It accepts ordinary component inputs and settings; it does not parse Package manifests, acquire releases, discover user MCP configuration, or choose Magenta host policy.
 
-`.HCP/` contains only Hcp-prefixed protocol data, Client assembly, and explicit
-HCP transport. It is infrastructure, not a Module or a fourth HCP role.
-Placement under `.HCP/` does not relax the Hcp-prefix rule for HCP-related names.
+`_magenta/` contains private Magenta host and shared support. It can parse and validate Package or MCP inputs and convert them to ordinary HCP inputs. It is not a Module, Source, role layer, or contract exception.
 
-`_magenta/` contains private host/shared Magenta support code: Package parsing,
-MCP transport support, session storage, environment adapters, message helpers,
-shared types, and generic utilities such as TOML parsing. These
-directories are not Modules or Sources, define no HCP roles or contract
-exceptions, and never appear in generated HCP assembly.
+There is no `modules/`, `hcp-client/`, `hcp-contract/`, `hcp-magnet/`, or `.HCP/magnet/` ownership layer.
 
-## 4. Assembly And Selection
+## Repository Assembly
 
-`harness.toml` and each declared component TOML are the repository source of
-truth. `scripts/generate-hcp-sources.mjs` resolves the real Module and Source
-paths and generates `.HCP/assembly/sources.generated.ts` with:
+`harness.toml` and referenced component TOML files are authoritative for built-in repository components. `scripts/generate-hcp-sources.mjs` validates those declarations and generates `.HCP/assembly/sources.generated.ts` with:
 
-- `HCP_SERVERS`, a Module-name-to-Server-class map;
-- `HCP_MAGNETS`, the complete and only generated Magnet class list.
+- `HCP_SERVERS`, the repository Module-name-to-Server-class map;
+- `HCP_MAGNETS`, the generated repository component and Magnet rows.
 
-Assembly filters `HCP_MAGNETS` by its generated static metadata. Tool,
-Capability, and Resource consumers must not create product-specific Magnet
-lists.
+The generated file is a disposable static projection, not an extensibility registry. Never hand-edit it or maintain a product-specific Magnet list or second Server map.
 
-Do not hand-maintain a second Module/Server map. Adding a repository Module or
-Source means adding its real role files and TOML declaration, then regenerating
-the assembly file.
+`.HCP/assembly/session-hcp.ts` owns the single construction and attachment pipeline. It combines selected generated rows with host-supplied dynamic components, expands capability dependencies, calls each selected `HcpMagnet.build()`, validates each single-product Magnet, routes it through the component's real Server, and disposes products that fail validation or routing. Input origin is deliberately opaque to this layer.
 
-`.HCP/assembly/session-hcp.ts::HcpClientbuildsession()` constructs the one
-session HcpClient. It accepts only ordinary component inputs and Source settings,
-resolves capability dependencies, calls each selected `HcpMagnet.build()`, routes
-every returned Magnet through its real Server, and releases returned products
-that cannot be validated or routed. Repository defaults fill unoccupied slots
-after host-supplied non-tool components and before host-supplied tools.
+```mermaid
+flowchart TB
+    Toml[repository TOML] --> Generator[generate-hcp-sources.mjs]
+    Generator --> Static[sources.generated.ts]
+    Host[validated host inputs] --> Pipeline[session-hcp.ts]
+    Static --> Pipeline
+    Pipeline --> Client[session HcpClient]
+```
 
-`.HCP/assembly/` does not import or interpret Package declarations, Package
-overlays, MCP server descriptors, MCP schemas, or MCP connections. Hosts may
-supply components, but their origin is deliberately opaque to HCP assembly.
+## Package Assembly
 
-Package parsing and selection live in `_magenta/packages/`. The overlay returns
-one canonical component list; it does not derive parallel Tool/Resource lookup
-systems. `HcpClientpackageinputfromoverlay()` maps supported declarations from a
-validated local root to the ordinary components and settings accepted by HCP
-assembly. The coding-agent host may produce that root by acquiring a
-platform-specific `github:owner/repo/Package@version` release, or callers may
-supply `packagesRoot` explicitly. If omitted, local discovery falls back only
-to `<repoRoot>/packages`. Package paths remain relative to that root, and
-integration must not infer a sibling repository, `MagentaPackages`, or
-submodule path.
+Package acquisition and HCP assembly are separate concerns:
 
-The owning Module's repository-declared `tools/descriptor/HcpMagnet.ts`
-constructs both Package tool products and configured user MCP products. One MCP
-server component may build multiple sibling Magnets, one per discovered tool;
-each sibling still contains one product. MCP discovery and connection ownership
-remain behind that Source and `_magenta/mcp/`, never in `.HCP/assembly/`.
+```mermaid
+flowchart LR
+    Selector[local or GitHub selector] --> Acquire[host acquisition and cache]
+    Acquire --> Validate[manifest, archive, and path validation]
+    Validate --> Roles[dynamic Package roles]
+    Roles --> Inputs[ordinary HcpClientcomponent inputs]
+    Inputs --> Pipeline[session-hcp.ts]
+```
 
-Magenta3's root `packages/` retains only the generic contract and templates and
-does not depend on a fixed Package checkout. Concrete domain Packages are
-maintained and published in independent GitHub repositories. Download, version
-selection, verification, safe extraction, and caching are implemented by the
-coding-agent host and remain outside HCP.
+Schema-v2 is the current Package contract:
 
-Selection is consumed once. Consumers never name a Source and never fall back
-to a Source-specific import.
+- `package.toml` uses `schema_version = "magenta.package.v2"` and declares components.
+- Each non-infrastructure component path contains a real `HcpMagnet.ts`.
+- Each owning Module path contains a real `HcpServer.ts`.
+- `_magenta/packages/runtime-magnet-loader.ts` dynamically imports and validates both bare role classes.
+- The loader verifies static Module, kind, Source, product shape, manifest identity, and path containment before producing a dynamic component input.
+- Tool Magnets keep Package Source identity. The Client injects a host-owned tool builder through settings so sandbox, runtime, process, script, or MCP adapters can construct the product without replacing the Package Magnet.
+- Infrastructure declarations such as Python runtimes and environment locks support tool construction but are not Source roles.
 
-## 5. Products And Transport
+Schema-v1 is a compatibility path. The v1 adapter converts validated flat declarations into the current Client input shape, using host repository roles or compatibility Magnet classes where necessary. New Packages must use schema-v2 and must not copy the compatibility architecture.
 
-The shipping Magnet product surface has three mutually exclusive products:
-Tool, Capability, and Resource. Prompt-template behavior is represented by the
-appropriate Capability or Resource path; it is not a fourth Magnet method.
+GitHub Package acquisition is implemented by the coding-agent host. It resolves a versioned platform archive, verifies checksums, rejects unsafe extraction paths, caches the result, and passes the local root to the Package loader. Explicit local roots enter the same boundary. Neither path introduces a Package Client, Package Server subtype, or fourth HCP role.
 
-| Product | Assembly result | Runtime behavior |
-|---|---|---|
-| Tool | `AgentTool` | loop calls `execute()` directly |
-| Capability | `HcpMagnetBinding.instance` | consumer calls the live object directly |
-| Resource | inert content/path metadata | resource loader injects or merges content |
+Dynamic Package roles do not appear in `sources.generated.ts`; that file projects only this repository's TOML declarations.
 
-Runtime mechanism is not Source identity. Process, Python, script, MCP, and
-JSONL support live behind the owning Source and the `.HCP/transport/` plumbing:
+## MCP And Transport
 
-- `tools/process-tool.ts::ProcessTool` adapts one-shot process tools;
-- `tools/python-module-tool.ts::PythonModuleTool` adapts Python modules;
-- `_magenta/mcp/tool.ts` exposes `McpTool` instances from one shared MCP
-  connection; and
-- `.HCP/transport/hcp-process.ts::HcpMagnetProcess` implements the JSONL HCP
-  boundary for an owning Source that explicitly injects and uses it.
+Configured user MCP servers are Magenta host inputs. `_magenta/mcp/` owns connection and discovery support; the built-in descriptor Source can expand one server into sibling `McpTool` products while preserving shared connection ownership. Generic session assembly sees only ordinary component rows and returned Magnets.
 
-`tools/descriptor/HcpMagnet.ts` is the Source construction boundary for Package
-tools and configured user MCP servers. Its MCP build may fan one server into
-multiple sibling Magnets while preserving a shared connection; generic Client
-assembly sees only the returned Magnets and their products.
+`ProcessTool`, `PythonModuleTool`, and `McpTool` are runtime product adapters, not Sources or HCP role subclasses.
 
-`HcpMagnetProcess` is not a Harness Module, not a source role file, and not part
-of default generated assembly. Transport never owns a Server or address.
-Dynamic products must remain under a real owning Module/Server and
-Source Magnet. There is no Universal Magnet or transport-owned Server.
-Default production assembly does not instantiate or reference
-`HcpMagnetProcess`; an owning Source must explicitly inject the helper before it
-can be used.
+`.HCP/transport/hcp-process.ts` defines `HcpMagnetProcess`, an injectable JSONL request/response helper. It is not a Module, Source role, default component, or alternative routing path. An owning Source must explicitly construct and use it. Transport never owns a Server or address.
 
-## 6. Addressing
+The HCP management envelope is currently in-process. `HcpServerRequest`, `HcpServerResponse`, and `HcpServerDescription` name that surface without implying a serialization boundary.
 
-Addresses identify products, while Module names identify Server ownership.
-Typical addresses include:
+## Addressing
 
-- `tool:read` for a repository-declared tool;
-- `tool:<name>` for a Package or other dynamically supplied tool;
-- `capability:compaction` for a single-slot capability; and
-- `capability:runtime:process` for a named slot in a multi-slot module.
+Addresses identify products; Module names identify Server ownership. Examples include:
 
-The HcpClient routing index maps each address to `{ module, selector }`. The
-selector remains internal to routing; consumers do not compute it.
+- `tool:read` for a tool;
+- `capability:compaction` for a single-slot capability;
+- `capability:runtime:process` for a named slot in a multi-slot Module.
 
-## 7. TypeScript Boundary
+The Client routing index maps an address to its internal Module and selector. Consumers request a product address or capability slot; they do not name a Source or fall back to Source-specific imports.
 
-HCP role files use bare classes and structural `type` aliases. They do not use
-role interfaces, `implements`, base role classes, or a `contract/` layer.
-`HcpServerTypes.ts` and `HcpMagnetTypes.ts` contain protocol data types only;
-they do not define substitute Server or Magnet roles.
+## Invariants
 
-The management envelope is currently in-process. `HcpServerRequest`,
-`HcpServerResponse`, and `HcpServerDescription` name that protocol surface;
-cross-process mechanisms adapt at the transport boundary rather than changing
-the ownership chain.
+1. Each session owns exactly one `HcpClient`.
+2. Every assembled Module has a real `HcpServer`; every selected declared Source has a Source-owned `HcpMagnet`.
+3. Client, Server, and Magnet are the only HCP roles.
+4. No Magnet exposes `toHcpServer()` and assembly creates no anonymous Server.
+5. Every returned Magnet exposes exactly one Tool, Capability, or Resource.
+6. Consumers are Source-agnostic and HCP stays off the execution hot path.
+7. Repository TOML plus generated imports are authoritative only for repository components.
+8. Dynamic schema-v2 Packages carry and load their own real roles; schema-v1 is compatibility only.
+9. `.HCP/assembly/` has no Package- or MCP-specific branch.
+10. Infrastructure and transports own no Server and create no alternate route.
+11. Rejected, replaced, or unroutable live products are disposed.
+12. Application code consumes package-level public APIs, not deep implementation imports.
 
-## 8. Invariants
-
-1. Exactly one session `HcpClient` owns resolution and selection.
-2. Every assembled Module has a real `HcpServer`; every selected declared Source
-   has a source-owned `HcpMagnet`.
-3. No Magnet exposes `toHcpServer()` and no assembly code creates anonymous
-   Servers.
-4. Every Magnet produces exactly one Tool, Capability, or Resource; a Source
-   build may return multiple single-product sibling Magnets.
-5. Consumers are source-agnostic and use package-level APIs.
-6. HCP stays off the execution hot path.
-7. TOML plus generated static imports remain the repository assembly source of
-   truth.
-8. The Package adapter maps selected declarations to ordinary component inputs;
-   `.HCP/assembly/` has no Package- or MCP-specific branch, and integration does
-   not locate domain Package repositories by fixed path.
-9. Infrastructure and transports own no Server; `HcpMagnetProcess` is injected
-   by an owning Source and is never auto-assembled as a Module.
-10. `_magenta/` is generic host/shared support, including Package and MCP
-    domains; it is not a set of Modules or a contract layer.
-11. `HCP_MAGNETS` is the only generated Magnet list; consumers filter it rather
-    than maintaining derived product lists.
-12. Root `packages/` contains only the generic contract and templates. GitHub
-    acquisition, versioning, caching, and verification remain future host work.
-
-Verification from `HarnessComponentProtocol/`:
+Validate from `HarnessComponentProtocol/`:
 
 ```bash
 npm run generate:hcp-sources -- --check
 npm run check:structure
+npm run check:assumptions
 npm run build
 npm test
 ```

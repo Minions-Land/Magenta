@@ -1,4 +1,5 @@
 import type { AutocompleteProvider, AutocompleteSuggestions } from "../autocomplete.ts";
+import type { PasteMarkerSnapshot } from "../editor-component.ts";
 import { getKeybindings } from "../keybindings.ts";
 import { decodePrintableKey, matchesKey } from "../keys.ts";
 import { KillRing } from "../kill-ring.ts";
@@ -18,11 +19,8 @@ import { SelectList, type SelectListLayoutOptions, type SelectListTheme } from "
 const graphemeSegmenter = getGraphemeSegmenter();
 const wordSegmenter = getWordSegmenter();
 
-/** Regex matching paste markers like `[paste #1 +123 lines]` or `[paste #2 1234 chars]`. */
-const PASTE_MARKER_REGEX = /\[paste #(\d+)( (\+\d+ lines|\d+ chars))?\]/g;
-
-/** Non-global version for single-segment testing. */
-const PASTE_MARKER_SINGLE = /^\[paste #(\d+)( (\+\d+ lines|\d+ chars))?\]$/;
+/** Matches registered markers such as `[paste #1 +123 lines]` or `[paste #2 Image]`. */
+const PASTE_MARKER_SINGLE = /^\[paste #\d+(?: .+)?\]$/;
 
 /** Check if a segment is a paste marker (i.e. was merged by segmentWithMarkers). */
 function isPasteMarker(segment: string): boolean {
@@ -34,25 +32,30 @@ function isPasteMarker(segment: string): boolean {
  * within paste markers into single atomic segments.  This makes cursor
  * movement, deletion, word-wrap, etc. treat paste markers as single units.
  *
- * Only markers whose numeric ID exists in `validIds` are merged.
+ * Only exact markers registered in the editor are merged.
  */
 function segmentWithMarkers(
 	text: string,
 	baseSegmenter: Intl.Segmenter,
-	validIds: Set<number>,
+	validMarkers: ReadonlySet<string>,
 ): Iterable<Intl.SegmentData> {
-	// Fast path: no paste markers in the text or no valid IDs.
-	if (validIds.size === 0 || !text.includes("[paste #")) {
+	// Fast path: no paste markers in the text or no registered markers.
+	if (validMarkers.size === 0 || !text.includes("[paste #")) {
 		return baseSegmenter.segment(text);
 	}
 
-	// Find all marker spans with valid IDs.
+	// Find exact registered marker spans. Manually typed marker-like text remains ordinary text.
 	const markers: Array<{ start: number; end: number }> = [];
-	for (const m of text.matchAll(PASTE_MARKER_REGEX)) {
-		const id = Number.parseInt(m[1]!, 10);
-		if (!validIds.has(id)) continue;
-		markers.push({ start: m.index, end: m.index + m[0].length });
+	for (const marker of validMarkers) {
+		let searchFrom = 0;
+		while (searchFrom < text.length) {
+			const start = text.indexOf(marker, searchFrom);
+			if (start === -1) break;
+			markers.push({ start, end: start + marker.length });
+			searchFrom = start + marker.length;
+		}
 	}
+	markers.sort((left, right) => left.start - right.start || right.end - left.end);
 	if (markers.length === 0) {
 		return baseSegmenter.segment(text);
 	}
@@ -99,6 +102,15 @@ export interface TextChunk {
 	startIndex: number;
 	endIndex: number;
 }
+
+export interface PasteMarker {
+	id: number;
+	marker: string;
+}
+
+type PasteEntry = PasteMarker & {
+	expandedText: string;
+};
 
 /**
  * Split a line into word-wrapped chunks.
@@ -210,6 +222,7 @@ interface EditorState {
 	lines: string[];
 	cursorLine: number;
 	cursorCol: number;
+	pastes: Map<number, PasteEntry>;
 }
 
 interface LayoutLine {
@@ -255,6 +268,7 @@ export class Editor implements Component, Focusable {
 		lines: [""],
 		cursorLine: 0,
 		cursorCol: 0,
+		pastes: new Map(),
 	};
 
 	/** Focusable interface - set by TUI when focus changes */
@@ -289,8 +303,7 @@ export class Editor implements Component, Focusable {
 	private autocompleteStartToken: number = 0;
 	private autocompleteRequestId: number = 0;
 
-	// Paste tracking for large pastes
-	private pastes: Map<number, string> = new Map();
+	// Registered text and attachment paste markers share one draft-scoped counter.
 	private pasteCounter: number = 0;
 
 	// Bracketed paste mode buffering
@@ -337,14 +350,14 @@ export class Editor implements Component, Focusable {
 		this.slashAutocomplete = options.slashAutocomplete ?? true;
 	}
 
-	/** Set of currently valid paste IDs, for marker-aware segmentation. */
-	private validPasteIds(): Set<number> {
-		return new Set(this.pastes.keys());
+	/** Exact registered markers used for marker-aware segmentation. */
+	private validPasteMarkers(): Set<string> {
+		return new Set([...this.state.pastes.values()].map((entry) => entry.marker));
 	}
 
-	/** Segment text with paste-marker awareness, only merging markers with valid IDs. */
+	/** Segment text with paste-marker awareness, only merging registered markers. */
 	private segment(text: string, mode: "word" | "grapheme"): Iterable<Intl.SegmentData> {
-		return segmentWithMarkers(text, mode === "word" ? wordSegmenter : graphemeSegmenter, this.validPasteIds());
+		return segmentWithMarkers(text, mode === "word" ? wordSegmenter : graphemeSegmenter, this.validPasteMarkers());
 	}
 
 	getPaddingX(): number {
@@ -975,9 +988,8 @@ export class Editor implements Component, Focusable {
 
 	private expandPasteMarkers(text: string): string {
 		let result = text;
-		for (const [pasteId, pasteContent] of this.pastes) {
-			const markerRegex = new RegExp(`\\[paste #${pasteId}( (\\+\\d+ lines|\\d+ chars))?\\]`, "g");
-			result = result.replace(markerRegex, () => pasteContent);
+		for (const entry of this.state.pastes.values()) {
+			result = result.replaceAll(entry.marker, () => entry.expandedText);
 		}
 		return result;
 	}
@@ -1022,6 +1034,61 @@ export class Editor implements Component, Focusable {
 		this.lastAction = null;
 		this.exitHistoryBrowsing();
 		this.insertTextAtCursorInternal(text);
+	}
+
+	/** Allocate a registered atomic paste marker without inserting it. */
+	createPasteMarker(label: string, expandedText?: string): PasteMarker {
+		const normalizedLabel = label.trim();
+		if (!normalizedLabel || /[[\]\r\n]/.test(normalizedLabel)) {
+			throw new Error("Paste marker label must be non-empty and cannot contain brackets or newlines");
+		}
+		const id = ++this.pasteCounter;
+		const marker = `[paste #${id} ${normalizedLabel}]`;
+		this.state.pastes.set(id, { id, marker, expandedText: expandedText ?? marker });
+		return { id, marker };
+	}
+
+	/** Register and insert an atomic paste marker using the shared paste sequence. */
+	insertPasteMarker(label: string, expandedText?: string): PasteMarker {
+		this.cancelAutocomplete();
+		this.pushUndoSnapshot();
+		this.lastAction = null;
+		this.exitHistoryBrowsing();
+		const paste = this.createPasteMarker(label, expandedText);
+		this.insertTextAtCursorInternal(paste.marker);
+		return paste;
+	}
+
+	/** Export registered markers so a replacement editor can preserve atomic behavior. */
+	getPasteMarkerSnapshot(): PasteMarkerSnapshot {
+		return {
+			counter: this.pasteCounter,
+			entries: [...this.state.pastes.values()].map((entry) => ({ ...entry })),
+		};
+	}
+
+	/** Restore marker registration after replacing an editor component. */
+	restorePasteMarkerSnapshot(snapshot: PasteMarkerSnapshot): void {
+		if (!Number.isInteger(snapshot.counter) || snapshot.counter < 0) {
+			throw new Error(`Invalid paste marker counter: ${snapshot.counter}`);
+		}
+		const entries = new Map<number, PasteEntry>();
+		for (const entry of snapshot.entries) {
+			if (!Number.isInteger(entry.id) || entry.id < 1 || !PASTE_MARKER_SINGLE.test(entry.marker)) {
+				throw new Error(`Invalid paste marker snapshot entry: ${entry.marker}`);
+			}
+			entries.set(entry.id, { ...entry });
+		}
+		this.state.pastes = entries;
+		this.pasteCounter = Math.max(snapshot.counter, 0, ...entries.keys());
+		this.undoStack.clear();
+	}
+
+	/** Clear registered markers and restart paste numbering at a draft boundary. */
+	clearPasteMarkers(): void {
+		this.state.pastes.clear();
+		this.pasteCounter = 0;
+		this.undoStack.clear();
 	}
 
 	/**
@@ -1186,17 +1253,9 @@ export class Editor implements Component, Focusable {
 		// Check if this is a large paste (> 10 lines or > 1000 characters)
 		const totalChars = filteredText.length;
 		if (pastedLines.length > 10 || totalChars > 1000) {
-			// Store the paste and insert a marker
-			this.pasteCounter++;
-			const pasteId = this.pasteCounter;
-			this.pastes.set(pasteId, filteredText);
-
-			// Insert marker like "[paste #1 +123 lines]" or "[paste #1 1234 chars]"
-			const marker =
-				pastedLines.length > 10
-					? `[paste #${pasteId} +${pastedLines.length} lines]`
-					: `[paste #${pasteId} ${totalChars} chars]`;
-			this.insertTextAtCursorInternal(marker);
+			const label = pastedLines.length > 10 ? `+${pastedLines.length} lines` : `${totalChars} chars`;
+			const paste = this.createPasteMarker(label, filteredText);
+			this.insertTextAtCursorInternal(paste.marker);
 			return;
 		}
 
@@ -1250,9 +1309,8 @@ export class Editor implements Component, Focusable {
 		this.cancelAutocomplete();
 		const result = this.expandPasteMarkers(this.state.lines.join("\n")).trim();
 
-		this.state = { lines: [""], cursorLine: 0, cursorCol: 0 };
-		this.pastes.clear();
-		this.pasteCounter = 0;
+		this.state = { lines: [""], cursorLine: 0, cursorCol: 0, pastes: new Map() };
+		this.clearPasteMarkers();
 		this.exitHistoryBrowsing();
 		this.scrollOffset = 0;
 		this.undoStack.clear();

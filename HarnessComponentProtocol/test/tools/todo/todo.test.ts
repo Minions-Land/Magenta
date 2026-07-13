@@ -11,6 +11,7 @@ import {
 	flattenTodoPlan,
 	type TodoOperation,
 	type TodoPlanState,
+	todoSchema,
 } from "../../../tools/todo/magenta/todo.ts";
 
 function getText(result: { content: Array<{ type: string; text?: string }> }): string {
@@ -49,8 +50,27 @@ describe("todo HCP component", () => {
 			label: "Todo",
 			renderKind: "todo-plan",
 		});
-		expect(tool?.description).toContain("hierarchical");
+		expect(tool?.description).toContain("single source of truth");
+		expect(tool?.description).toContain('Top-level action is only "get" or "apply"');
+		expect(tool?.description).toContain("operations[].op, never action");
 		expect(tool?.execute).toBeTypeOf("function");
+	});
+
+	it("advertises get/apply as the only top-level actions", () => {
+		expect(todoSchema.properties.action).toMatchObject({
+			type: "string",
+			enum: ["get", "apply"],
+			description: expect.stringContaining('never use action "add"'),
+		});
+		expect(todoSchema.properties.operations).toMatchObject({ minItems: 1 });
+		expect(todoSchema.properties.operations.items.properties.op).toMatchObject({
+			type: "string",
+			enum: ["add", "update", "move", "set_status", "set_current", "set_summary", "set_title", "remove", "clear"],
+			description: expect.stringContaining('never in the top-level "action" field'),
+		});
+		expect((todoSchema.properties.operations as { description?: string }).description).toContain(
+			'{"action":"apply","operations":[{"op":"add","text":"Run tests"}]}',
+		);
 	});
 });
 
@@ -101,6 +121,23 @@ describe("todo atomic batch execution", () => {
 		expect(result.details.state.nodes).toEqual([
 			{ id: 1, parentId: null, order: 0, text: "One item", status: "pending" },
 		]);
+	});
+
+	it("updates text and clears the plan without reusing IDs", async () => {
+		const tool = createTool();
+		await apply(tool, [{ op: "add", text: "Draft" }]);
+
+		const updated = await apply(tool, [{ op: "update", id: 1, text: "Reviewed" }]);
+		expect(updated.details.state.nodes[0]?.text).toBe("Reviewed");
+
+		const cleared = await apply(tool, [{ op: "clear" }]);
+		expect(cleared.details.state).toMatchObject({
+			title: "Todo",
+			summary: null,
+			currentId: null,
+			nextId: 2,
+			nodes: [],
+		});
 	});
 
 	it("rolls back the entire batch when a middle operation fails", async () => {

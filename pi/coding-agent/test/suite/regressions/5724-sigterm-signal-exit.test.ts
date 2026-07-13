@@ -14,6 +14,8 @@ type ShutdownThis = {
 	runtimeHost: { dispose: () => Promise<void> };
 	ui: { terminal: { drainInput: (ms: number) => Promise<void> } };
 	themeController: { disableAutoSync: () => void };
+	invalidateClipboardImagePastes: () => void;
+	stopUltraBorderAnimation: () => void;
 	stop: () => void;
 };
 
@@ -75,6 +77,8 @@ describe("InteractiveMode SIGTERM shutdown with signal-exit (#5724)", () => {
 				},
 			},
 			themeController: { disableAutoSync: vi.fn() },
+			invalidateClipboardImagePastes: vi.fn(),
+			stopUltraBorderAnimation: vi.fn(),
 			stop: vi.fn(() => {
 				order.push("stop");
 			}),

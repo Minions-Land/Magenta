@@ -14,7 +14,7 @@ export class HcpMagnet {
 	private readonly definition: SkillSourceDefinition = {
 		name: "research-orchestration",
 		source: "pi",
-		description: "Explicit plan, implement, observe, reflect, and refine orchestration.",
+		description: "Explicit research iteration with the session Todo as the single planning and progress source.",
 		contentPath: join(getHarnessSkillsDir(), "research-orchestration", "pi", "SKILL.md"),
 	};
 

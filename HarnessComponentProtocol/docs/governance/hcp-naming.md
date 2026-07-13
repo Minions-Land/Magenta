@@ -1,9 +1,6 @@
 # HCP Naming Convention
 
-Date: 2026-07-10
 Status: **AUTHORITATIVE.** This is the single source of truth for HCP naming.
-The frozen refactor specification remains a historical decision snapshot; this
-document describes the settled tree.
 
 ## 0. Iron Law: Naming Hierarchy Equals Entity Tree
 
@@ -34,9 +31,9 @@ Derived rules:
 
 ### HcpClient
 
-The one router lives at `HarnessComponentProtocol/HcpClient.ts` and exports
-`class HcpClient`. There is no per-module Client, prefix Client, alternate
-Package Client, or fourth role beside it.
+The Client class lives at `HarnessComponentProtocol/HcpClient.ts` and exports
+`class HcpClient`; each session constructs exactly one instance. There is no
+per-module Client, prefix Client, alternate Package Client, or fourth role.
 
 ### HcpServer
 
@@ -59,8 +56,10 @@ transport are infrastructure, not Harness Modules, and therefore cannot own
 
 ### HcpMagnet
 
-Every repository-declared Source owns a Source-local `HcpMagnet.ts`, exporting
-bare `class HcpMagnet`. Examples:
+Every declared Source owns a Source-local `HcpMagnet.ts`, exporting bare
+`class HcpMagnet`. This includes dynamically loaded schema-v2 Package Sources;
+repository declarations additionally enter the generated static projection.
+Examples:
 
 - `memory/magenta/HcpMagnet.ts`
 - `tools/read/pi/HcpMagnet.ts`
@@ -171,7 +170,7 @@ by Modules.
 
 ## 5. Generated Assembly
 
-Same-name role classes are collected by static code generation:
+Same-name repository role classes are collected by static code generation:
 
 1. `harness.toml` and declared component TOML files identify Module and Source
    paths.
@@ -181,7 +180,12 @@ Same-name role classes are collected by static code generation:
 4. `HCP_MAGNETS` is the only Source `HcpMagnet` class list; consumers filter it
    by generated static metadata rather than maintaining product-specific Magnet
    lists.
-5. Assembly attaches those real entities to the one HcpClient.
+5. Assembly attaches those real entities to the session's `HcpClient`.
+
+Schema-v2 Package roles follow the same naming and path law but are dynamically
+loaded from validated Package roots. They are runtime inputs, not entries in the
+repository-generated projection. Schema-v1 overlays are compatibility data and
+must not be used as the model for new role names.
 
 Adding a repository Module/Source requires its TOML declaration and real role
 files, followed by this command from `HarnessComponentProtocol/`:
@@ -235,6 +239,6 @@ a newly capitalized concept represents a legitimate parent entity.
 
 ## See Also
 
-- `docs/governance/hcp-architecture.md`: ownership, routing, assembly, transport
-- `docs/DEVELOPING.md`: task-oriented contribution guide
-- repository `.tmp/HCP重构规范-冻结.md`: frozen 2026-07-08 decision snapshot
+- [HCP architecture](./hcp-architecture.md): ownership, routing, assembly, and transport
+- [HCP contract](./contract.md): invariants and change discipline
+- [HCP development](../DEVELOPING.md): task-oriented contribution guide

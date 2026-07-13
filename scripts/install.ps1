@@ -2,7 +2,9 @@ param(
     [string]$InstallDir = (Join-Path $env:LOCALAPPDATA "Magenta"),
     [string]$Version = "latest",
     [string]$Repository = "Minions-Land/Magenta-CLI",
-    [string]$AssetBaseUrl = ""
+    [string]$AssetBaseUrl = "",
+    [switch]$NoPath,
+    [switch]$Uninstall
 )
 
 $ErrorActionPreference = "Stop"
@@ -27,6 +29,20 @@ function Test-MagentaPathEqual([string]$Left, [string]$Right) {
     } catch {
         return $Left.Trim().TrimEnd($pathSeparators) -ieq $Right.Trim().TrimEnd($pathSeparators)
     }
+}
+
+function Remove-MagentaFromUserPath([string]$Directory) {
+    $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+    if ([string]::IsNullOrEmpty($userPath)) {
+        return $false
+    }
+    $entries = @($userPath -split ";")
+    $kept = @($entries | Where-Object { $_ -and -not (Test-MagentaPathEqual $_ $Directory) })
+    if ($kept.Count -eq $entries.Count) {
+        return $false
+    }
+    [Environment]::SetEnvironmentVariable("Path", ($kept -join ";"), "User")
+    return $true
 }
 
 function Test-MagentaResourceArchive([string]$ArchivePath) {
@@ -153,6 +169,25 @@ $installLeaf = Split-Path -Leaf $InstallDir
 if ([string]::IsNullOrWhiteSpace($installParent) -or [string]::IsNullOrWhiteSpace($installLeaf)) {
     throw "Unable to resolve InstallDir: $InstallDir"
 }
+
+if ($Uninstall) {
+    $removedDir = $false
+    if (Test-Path -LiteralPath $InstallDir -PathType Container) {
+        Remove-Item -Recurse -Force -LiteralPath $InstallDir
+        $removedDir = $true
+    }
+    $removedPath = Remove-MagentaFromUserPath $InstallDir
+    if ($removedDir -or $removedPath) {
+        Write-Host "Magenta uninstalled from $InstallDir"
+        if ($removedPath) {
+            Write-Host "Removed $InstallDir from the user PATH. Open a new terminal for the change to take effect."
+        }
+    } else {
+        Write-Host "No Magenta installation found at $InstallDir"
+    }
+    return
+}
+
 if (-not (Test-Path -LiteralPath $installParent -PathType Container)) {
     New-Item -ItemType Directory -Force -Path $installParent | Out-Null
 }
@@ -282,23 +317,29 @@ try {
     }
 
     $userPathReady = $true
-    try {
-        $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
-        $pathEntries = @($userPath -split ";" | Where-Object { $_ })
-        if (-not ($pathEntries | Where-Object { Test-MagentaPathEqual $_ $InstallDir })) {
-            $updatedPath = if ($userPath) { "$userPath;$InstallDir" } else { $InstallDir }
-            [Environment]::SetEnvironmentVariable("Path", $updatedPath, "User")
-        }
-    } catch {
+    if ($NoPath) {
         $userPathReady = $false
-        Write-Warning "Magenta was installed, but the user PATH could not be updated. Add $InstallDir manually. Error: $_"
+    } else {
+        try {
+            $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+            $pathEntries = @($userPath -split ";" | Where-Object { $_ })
+            if (-not ($pathEntries | Where-Object { Test-MagentaPathEqual $_ $InstallDir })) {
+                $updatedPath = if ($userPath) { "$userPath;$InstallDir" } else { $InstallDir }
+                [Environment]::SetEnvironmentVariable("Path", $updatedPath, "User")
+            }
+        } catch {
+            $userPathReady = $false
+            Write-Warning "Magenta was installed, but the user PATH could not be updated. Add $InstallDir manually. Error: $_"
+        }
     }
     if (-not (($env:Path -split ";") | Where-Object { Test-MagentaPathEqual $_ $InstallDir })) {
         $env:Path = "$InstallDir;$env:Path"
     }
 
     Write-Host "Magenta installed successfully: $installedBinary"
-    if ($userPathReady) {
+    if ($NoPath) {
+        Write-Host "Skipped PATH update (-NoPath). Run Magenta directly: $installedBinary"
+    } elseif ($userPathReady) {
         Write-Host "Open a new terminal, then run: magenta"
     } else {
         Write-Host "Run Magenta directly: $installedBinary"

@@ -143,6 +143,28 @@ describe("AgentSession retry and event characterization", () => {
 		expect(harness.eventsOfType("auto_retry_start")).toEqual([]);
 	});
 
+	it("retries premature stream endings from both Anthropic and OpenAI", async () => {
+		const harness = await createHarness({ settings: { retry: { enabled: true, maxRetries: 2, baseDelayMs: 1 } } });
+		harnesses.push(harness);
+		harness.setResponses([
+			fauxAssistantMessage("", {
+				stopReason: "error",
+				errorMessage: "Anthropic stream ended before message_stop",
+			}),
+			fauxAssistantMessage("", {
+				stopReason: "error",
+				errorMessage: "OpenAI Responses stream ended before a terminal response event",
+			}),
+			fauxAssistantMessage("recovered"),
+		]);
+
+		await harness.session.prompt("test");
+
+		expect(harness.faux.state.callCount).toBe(3);
+		expect(harness.eventsOfType("auto_retry_start")).toHaveLength(2);
+		expect(harness.session.isRetrying).toBe(false);
+	});
+
 	it("cancels retry sleep when abortRetry is called", async () => {
 		const harness = await createHarness({ settings: { retry: { enabled: true, maxRetries: 3, baseDelayMs: 100 } } });
 		harnesses.push(harness);

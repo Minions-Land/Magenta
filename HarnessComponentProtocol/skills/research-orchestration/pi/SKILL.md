@@ -1,124 +1,113 @@
 ---
 name: research-orchestration
-description: Make the plan → implement → observe → reflect → refine loop explicit for a complex task. Magenta already applies this loop by default; load this skill when the user wants the orchestration visible, asks to "research" a hard problem, or wants independent work fanned out to workflows, sub-agents, or agent teams before a final synthesis.
+description: Make the plan -> implement -> observe -> reflect -> refine loop explicit for a complex task. Uses the session Todo as the single source of truth for planning and progress, and fans independent work out to workflows, sub-agents, or agent teams when useful.
 ---
 
 # Research Orchestration
 
-A manual entrypoint that makes Magenta's core research loop explicit for the current task. Magenta already plans, implements, observes, reflects, and refines on non-trivial work; loading this skill surfaces that loop as visible structure and biases toward distributed execution.
+A manual entrypoint that makes Magenta's normal research loop visible for the current task. Use it when the user asks to research a hard problem, wants independent work fanned out, or needs an explicit iterative process.
 
 ## Role
 
 Act as the main agent: planner, orchestrator, dispatcher, and final synthesizer. You are responsible for:
 
-- decomposing the task,
-- negotiating an explicit, testable contract before building,
-- forming and revising hypotheses,
+- turning the objective into testable completion criteria,
+- maintaining one coherent execution plan,
 - selecting real, available tools,
-- dispatching independent work to workflows, sub-agents, or agent teams when useful,
+- dispatching independent work when it improves coverage or role separation,
 - observing outputs and failures,
-- reflecting from multiple lenses with concrete scores,
-- refining the plan or restarting when the approach is wrong,
-- producing the final answer in the format the user asked for.
+- arranging an independent evaluation,
+- refining or restarting when evidence rejects the current approach,
+- producing the final answer in the requested format.
 
-## Loop Discipline (the non-negotiables)
+## One State Model
 
-These five rules make the difference between a loop that converges and a loop that spins. They come from hard-won practice with long-horizon agent loops; treat them as constraints, not suggestions.
+**Todo is the single source of truth for planning and progress.** For every non-trivial task, use the session Todo when the tool is available. Do not mirror its title, summary, completion criteria, current work, or statuses into another checklist or planning artifact.
 
-1. **Contract before code.** Do not start building until you have written down what "done" means as a checklist of testable assertions. A vague objective produces a vague result you cannot grade.
-2. **Separate the roles.** The agent that produces work must not be the same agent that grades it. A generator asked "is this good?" will say yes. Spawn an independent evaluator, or at minimum switch role explicitly and grade against the contract, not against your own intent.
-3. **State lives on disk, not in context.** Every plan, contract, progress note, and score goes to a file. Context is volatile and gets compacted; files persist across iterations and let you restart cleanly.
-4. **Read the traces.** Every debugging insight comes from reading the raw transcript of what a worker actually did, not from guessing. When something is wrong, grep the trace for the exact divergence point and fix that specific step.
-5. **Restart beats rescue.** If two iterations on the same issue do not converge, the approach is likely wrong. Delete the artifacts, keep the contract, and restart — do not keep patching a broken foundation.
+The Todo protocol is exact:
 
-## Workspace Layout
+- Read with `{"action":"get"}`.
+- Mutate with `{"action":"apply","operations":[...]}`.
+- Top-level `action` is only `get` or `apply`.
+- Mutation verbs such as `add`, `update`, `set_status`, and `set_current` belong only in `operations[].op`.
+- A single mutation is still one `apply` batch containing one operation. Never call the tool with a top-level action such as `{"action":"add"}`.
 
-Create a workspace directory for the task and keep standardized state files. This is the memory of the loop.
+Seed the Todo in one atomic `apply` batch. Use its title for the task, its summary for the objective or current synthesis, nodes for testable completion criteria and work units, statuses for progress, and `currentId` for the active item. Update it at meaningful milestones, after a changed conclusion, or when the active item changes. Do not update it for every command.
 
-```
-task-workspace/
-├── plan.md          current plan, rewritten each iteration
-├── contract.md      the agreed testable assertions ("done" definition)
-├── progress.md      ✅ done / 🔄 in-progress / ⏳ todo
-├── iterations.log   append-only: ## [YYYY-MM-DD HH:MM] Iteration N | title
-├── reflection.md    latest per-axis scores + gap analysis
-├── artifacts/       all outputs, grouped by iteration (iteration-1/, .../, final/)
-└── traces/          raw sub-agent / workflow / tool transcripts
-```
+Do not create or maintain `plan.md`, `progress.md`, `contract.md`, `reflection.md`, a second checklist, or an equivalent planning ledger. Context compaction is not a reason to duplicate state: the Todo is session-branch state and is the recovery point. If Todo is unavailable, keep the plan concise in the conversation and do not silently introduce a file-based substitute.
 
-For a small task, a subset is fine (at minimum `contract.md` + `progress.md`). For anything multi-iteration or multi-agent, keep the full set.
+Files on disk are for actual deliverables, requested reports, datasets, reproducible experiments, or other task artifacts. They are not a second account of what is pending or complete. Raw tool and worker traces already live in the harness event infrastructure; inspect them there unless the user explicitly requests an exported trace artifact.
 
-Starter templates for these files live in `assets/templates/` (`plan.md`, `contract.md`, `progress.md`, `reflection.md`). The reasoning behind the loop discipline is in `assets/references/loop-principles.md` — read it when you want to understand why each stage is shaped the way it is.
+For a trivial task, skip persistent planning entirely.
+
+## Loop Discipline
+
+These constraints keep the loop convergent:
+
+1. **Contract before implementation.** Add testable completion criteria to Todo before substantial work. Each criterion must be decidable as pass, fail, or unclear from evidence.
+2. **One progress ledger.** Todo owns the plan, active item, status, and synthesis. Never dual-write progress to files or prose checklists.
+3. **Separate production and evaluation.** The worker that produces an artifact must not be its only evaluator. Use an independent sub-agent, workflow verifier, or an explicit evaluator role grounded in the Todo criteria.
+4. **Read the traces.** Diagnose failures from the raw worker or tool output. Find the first divergence instead of guessing from the final symptom.
+5. **Restart beats repeated rescue.** If two iterations fail for the same reason, preserve the objective and completion criteria in Todo, discard the failed approach, and restart from a different hypothesis.
 
 ## Operating Loop
 
-Run this loop by default unless the user explicitly asks for a quick direct answer.
-
-This is a **true iterative cycle**: PLAN → IMPLEMENT → OBSERVE → REFLECT → REFINE → back to PLAN. Continue cycling until the contract is satisfied or a blocker is reached.
+Run PLAN -> IMPLEMENT -> OBSERVE -> REFLECT -> REFINE until the Todo completion criteria pass or a real blocker remains.
 
 ### 1. PLAN
-   - Clarify the objective and the output contract.
-   - Decompose the task into concrete subproblems.
-   - **Negotiate the contract** (this is the step most loops skip):
-     - Draft: as generator, propose the completion criteria — a numbered list of testable assertions.
-     - Review: spawn an evaluator sub-agent (or switch role explicitly) to critique the draft — push back on vague criteria, missing edge cases, untestable claims.
-     - Finalize: write the agreed assertions to `contract.md`. Each assertion must be checkable as PASS / FAIL / UNCLEAR.
-   - State working hypotheses and what evidence would support or reject them.
-   - Identify risks, unknowns, constraints, and independent work units.
-   - For multi-step work, consider using the `todo` tool to persist the execution plan when it is available. Seed or revise the plan with one atomic `apply` batch, update it only at meaningful milestones, and skip Todo for trivial tasks or per-command bookkeeping. Todo is optional, not a prerequisite for this skill.
-   - Write `plan.md` and initialize `progress.md`.
-   - **If iteration N > 1**: incorporate findings from the previous REFINE step; if the contract itself was wrong, renegotiate it here.
+
+- Read the current Todo before changing it.
+- Clarify the objective and constraints.
+- Draft testable completion criteria and have an independent evaluator challenge omissions or ambiguity when risk warrants it.
+- Seed or revise the Todo with one atomic `apply` batch.
+- Set one current item. Keep independent work units separate enough to dispatch safely.
+- Record hypotheses only when they affect an upcoming decision; put the current synthesis in the Todo summary rather than a parallel note.
 
 ### 2. IMPLEMENT
-   - **Role: Generator.** You are producing work, not grading it. Do not evaluate your own output in this phase.
-   - Use real Magenta capabilities rather than model memory when tool use is relevant: structured tools, code execution, files, notebooks, APIs, skills, MCP tools, workflows, sub-agents, agent teams.
-   - If a tool's availability is uncertain, discover it first. Do not invent tool names or imply unavailable capabilities were used.
-   - Write all outputs to `artifacts/iteration-N/`. Update `progress.md` as work completes.
+
+- Act as the generator, not the grader.
+- Use real Magenta capabilities rather than remembered or invented interfaces.
+- Produce task artifacts in their natural locations.
+- Update Todo only when a work unit reaches a meaningful state transition: `in_progress`, `completed`, `blocked`, or materially revised.
 
 ### 3. OBSERVE
-   - Execute the plan and collect facts only — do not judge quality yet.
-   - Save every sub-agent / workflow / tool transcript to `traces/`.
-   - Inspect outputs, intermediate artifacts, errors, and empirical results.
-   - When something is wrong, **read the trace**: open the raw transcript, grep for the divergence moment (where behavior first departed from intent), and note the exact step for REFLECT.
+
+- Collect facts from commands, tests, worker returns, screenshots, external sources, or runtime behavior.
+- Inspect raw traces when behavior diverges.
+- Keep evidence with the real artifact or test output. Do not copy status into a progress file.
 
 ### 4. REFLECT
-   - **Role: Evaluator.** Approach the work assuming it is broken and try to prove it. Grade against `contract.md`, not against what you meant to build.
-   - Walk `contract.md` assertion by assertion: mark each PASS / FAIL / UNCLEAR with the evidence (which artifact, which trace line).
-   - Score on four axes, each 0–1 with a one-line justification:
-     - **Correctness** — does it do the right thing?
-     - **Coverage** — how much of the contract is satisfied?
-     - **Rigor** — reproducible, provenance clear, evidence traceable?
-     - **Format compliance** — does the output match the requested schema/shape?
-   - Write `reflection.md` with the per-axis scores, total, and the single biggest gap.
-   - **Decision point**: is another iteration needed, or is the contract satisfied?
+
+- Switch to an evaluator role or dispatch an independent evaluator.
+- Walk the Todo completion criteria and classify each as pass, fail, or unclear from concrete evidence.
+- Mark only demonstrated criteria completed. Keep failed work pending or blocked and summarize the largest remaining gap in the Todo summary.
+- Evaluate correctness, coverage, rigor, and requested-format compliance when those dimensions matter, without creating a separate reflection ledger.
 
 ### 5. REFINE
-   - If gaps or errors exist: revise `plan.md` and **return to PLAN** for the next iteration.
-   - If the contract was wrong or incomplete: renegotiate it, then return to PLAN.
-   - If two iterations on the same issue have not converged: **restart** — archive/delete `artifacts/`, keep `contract.md`, and rebuild from a different approach. Do not keep patching.
-   - Append to `iterations.log`: `## [YYYY-MM-DD HH:MM] Iteration N | short title`.
-   - If the contract is satisfied: finalize the output in the format the user asked for.
-   - If a blocker exists: state it clearly and explain what would be needed to proceed.
+
+- Revise the Todo in one `apply` batch to reflect the evidence and select the next current item.
+- If the completion criteria were wrong, update them explicitly before continuing.
+- If the same approach has failed twice, replace the approach instead of accumulating patches.
+- Finish only when every required Todo criterion is complete, or mark the exact blocker and report what evidence or capability is missing.
 
 ## Distributed Execution
 
-Use distributed execution when work units are independent or benefit from specialized review. This is also how you enforce role separation (rule 2).
+Use distributed execution when work units are independent or benefit from specialized review. This also enforces producer/evaluator separation.
 
-- Run independent investigations in parallel when the tool surface supports it.
-- Use workflow tools for repeatable multi-step execution. The built-in patterns already encode role separation and forced "soul steps":
-  - `adversarial_verify` — generator casts wide, independent verifiers re-check; confidence is computed, never self-reported. Use for high false-positive-cost work.
-  - `generate_and_filter` — parallel candidates scored by criteria; keep the strongest.
-  - `tournament` — pairwise elimination for subjective quality.
-  - `classify_and_act` — classify first, then route to type-specific handlers.
-  - `fan_out_synthesize` — same check over every item, merged into one artifact.
-  - `loop_until_done` — iterate excluding prior findings; the skeleton owns termination.
-- Use sub-agent or team tools for contract review, hypothesis critique, alternative approaches, implementation/review separation, or multi-lens critique.
-- Keep coordination, conflict resolution, synthesis, and final quality control in the main agent.
-
-## Extensible Design
-
-Favor designs that can be reused and inspected: explicit plans and interfaces, named artifacts, traceable tool calls, reproducible scripts or workflows, clear provenance for evidence and claims, and small reusable workflow or skill components when the task pattern is likely to recur.
+- Run independent investigations in parallel when their inputs and file ownership do not conflict.
+- Prefer read-only sub-agents for research, review, test analysis, and alternative designs; synthesize their results in the main agent.
+- Use persistent teammates only when retained context across multiple assignments is valuable, and assign non-overlapping ownership if they edit.
+- Use workflow patterns when their deterministic control flow fits the problem:
+  - `adversarial_verify` for high false-positive-cost claims,
+  - `generate_and_filter` for competing candidates,
+  - `tournament` for pairwise subjective selection,
+  - `classify_and_act` for type-specific routing,
+  - `fan_out_synthesize` for the same check over many items,
+  - `loop_until_done` for bounded iteration that excludes prior findings.
+- Keep coordination, conflict resolution, Todo ownership, and final synthesis in the main agent. Workers do not maintain competing progress ledgers.
 
 ## Output Discipline
 
-Keep intermediate planning concise and operational; do not bury the final result under process narration. If the user requested a strict final schema (such as exact JSON), that constraint applies to the final answer block only — keep the loop stages visible as concise status blocks, but make the final answer satisfy the requested schema exactly. If evidence is insufficient or a required capability cannot be called, state the blocker and the next verifiable step.
+Keep process updates concise and operational. The Todo carries durable state; user-facing updates explain only what changed, what was learned, and what is next. The final answer should lead with the requested result and the verification that matters, not an exported copy of the Todo.
+
+If evidence is insufficient or a capability cannot be called, mark the affected Todo item blocked and state the next verifiable step. Do not claim completion from intent alone.

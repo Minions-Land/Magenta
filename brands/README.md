@@ -35,9 +35,11 @@ The script synchronizes the fields that are wired today:
 
 It does not currently generate runtime themes, rewrite documentation, or apply
 the configured welcome text and URLs. Treat those fields as source metadata
-until code explicitly consumes them. `infra.harnessVersion` is also
-informational today: the sync script versions `@magenta/harness` with the
-selected product version.
+until code explicitly consumes them. The canonical Magenta metadata uses
+`https://github.com/Minions-Land/Magenta` for source and
+`https://github.com/Minions-Land/Magenta-CLI` for public binary Releases.
+`infra.harnessVersion` is also informational today: the sync script versions
+`@magenta/harness` with the selected product version.
 
 Always inspect the resulting diff. A real synchronization changes tracked
 package manifests, so follow it with:

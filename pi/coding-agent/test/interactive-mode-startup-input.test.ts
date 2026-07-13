@@ -2,11 +2,21 @@ import { describe, expect, it, vi } from "vitest";
 import { FloatingMenuBody, type FloatingMenuItem } from "../src/modes/interactive/components/floating-menu.ts";
 import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
 
+type SubmittedInput = { text: string; images?: unknown[]; imageMarkers?: string[] };
+
 type SubmitContext = {
-	defaultEditor: { onSubmit?: (text: string) => void; transformImageTokenInput: (text: string) => string };
+	defaultEditor: {
+		onSubmit?: (text: string) => void;
+		transformImageTokenInput: (text: string) => string;
+		clearImageTokens: () => void;
+	};
+	pendingImageController: { takeForText: (text: string) => SubmittedInput };
 	editor: {
+		getText: () => string;
+		getExpandedText?: () => string;
 		addToHistory?: (text: string) => void;
 		setText: (text: string) => void;
+		clearPasteMarkers?: () => void;
 	};
 	session: {
 		isCompacting: boolean;
@@ -21,16 +31,19 @@ type SubmitContext = {
 		};
 	};
 	flushPendingBashComponents: () => void;
-	onInputCallback?: (text: string) => void;
-	pendingUserInputs: string[];
+	clipboardImagePastePending: number;
+	settleClipboardImagePastes: () => Promise<void>;
+	invalidateClipboardImagePastes: () => void;
+	onInputCallback?: (input: SubmittedInput) => void;
+	pendingUserInputs: SubmittedInput[];
 	showFloatingMenu: (...args: unknown[]) => unknown;
 	showMcpManager: () => void;
 	mcpMenuView: () => { items: FloatingMenuItem[]; description: string };
 };
 
 type InputContext = {
-	onInputCallback?: (text: string) => void;
-	pendingUserInputs: string[];
+	onInputCallback?: (input: SubmittedInput) => void;
+	pendingUserInputs: SubmittedInput[];
 };
 
 type InteractiveModePrivate = {
@@ -62,10 +75,16 @@ function createSubmitContext(): SubmitContext {
 	const context: SubmitContext = {
 		defaultEditor: {
 			transformImageTokenInput: (text) => text,
+			clearImageTokens: vi.fn(),
+		},
+		pendingImageController: {
+			takeForText: (text) => ({ text }),
 		},
 		editor: {
+			getText: () => "",
 			addToHistory: vi.fn(),
 			setText: vi.fn(),
+			clearPasteMarkers: vi.fn(),
 		},
 		session: {
 			isCompacting: false,
@@ -77,6 +96,9 @@ function createSubmitContext(): SubmitContext {
 			},
 		},
 		flushPendingBashComponents: vi.fn(),
+		clipboardImagePastePending: 0,
+		settleClipboardImagePastes: vi.fn(async () => {}),
+		invalidateClipboardImagePastes: vi.fn(),
 		pendingUserInputs: [],
 		showFloatingMenu: vi.fn(),
 		showMcpManager: vi.fn(),
@@ -93,9 +115,48 @@ describe("InteractiveMode startup input", () => {
 
 		await context.defaultEditor.onSubmit?.(" early prompt ");
 
-		expect(context.pendingUserInputs).toEqual(["early prompt"]);
+		expect(context.pendingUserInputs).toEqual([{ text: "early prompt" }]);
 		expect(context.flushPendingBashComponents).toHaveBeenCalledTimes(1);
 		expect(context.editor.addToHistory).toHaveBeenCalledWith("early prompt");
+	});
+
+	it("keeps submitted clipboard images with the queued input", async () => {
+		const context = createSubmitContext();
+		const attached = { type: "image", mimeType: "image/png", data: "abc" };
+		context.pendingImageController.takeForText = (text) => ({ text, images: [attached] });
+		const onInputCallback = vi.fn();
+		context.onInputCallback = onInputCallback;
+		interactiveModePrototype.setupEditorSubmitHandler.call(context);
+
+		await context.defaultEditor.onSubmit?.(" [paste #1 Image] ");
+
+		expect(onInputCallback).toHaveBeenCalledWith({ text: "[paste #1 Image]", images: [attached] });
+		expect(context.pendingUserInputs).toEqual([]);
+	});
+
+	it("waits for an in-flight image paste before finalizing the submitted draft", async () => {
+		const context = createSubmitContext();
+		const attached = { type: "image", mimeType: "image/png", data: "late" };
+		context.clipboardImagePastePending = 1;
+		context.editor.getExpandedText = () => "[paste #1 Image]";
+		context.pendingImageController.takeForText = (text) => ({
+			text,
+			images: [attached],
+			imageMarkers: ["[paste #1 Image]"],
+		});
+		const onInputCallback = vi.fn();
+		context.onInputCallback = onInputCallback;
+		interactiveModePrototype.setupEditorSubmitHandler.call(context);
+
+		await context.defaultEditor.onSubmit?.("describe this");
+
+		expect(context.settleClipboardImagePastes).toHaveBeenCalledTimes(1);
+		expect(context.editor.setText).toHaveBeenCalledWith("");
+		expect(onInputCallback).toHaveBeenCalledWith({
+			text: "describe this [paste #1 Image]",
+			images: [attached],
+			imageMarkers: ["[paste #1 Image]"],
+		});
 	});
 
 	it("opens the empty MCP manager without submitting the command as model input", async () => {
@@ -173,7 +234,7 @@ describe("InteractiveMode startup input", () => {
 
 	it("returns queued startup input before installing a new input callback", async () => {
 		const context: InputContext = {
-			pendingUserInputs: ["queued prompt"],
+			pendingUserInputs: [{ text: "queued prompt" }],
 		};
 
 		await expect(interactiveModePrototype.getUserInput.call(context)).resolves.toBe("queued prompt");

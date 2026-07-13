@@ -262,12 +262,21 @@ export interface ExtensionBindings {
 	onError?: ExtensionErrorListener;
 }
 
+export interface SubmittedInput {
+	text: string;
+	images?: ImageContent[];
+	/** Editor marker identity retained only for queue restoration. */
+	imageMarkers?: string[];
+}
+
 /** Options for AgentSession.prompt() */
 export interface PromptOptions {
 	/** Whether to expand file-based prompt templates (default: true) */
 	expandPromptTemplates?: boolean;
 	/** Image attachments */
 	images?: ImageContent[];
+	/** Editor marker identity retained only while a prompt may enter a queue. */
+	imageMarkers?: string[];
 	/** When streaming, how to queue the message: "steer" (interrupt) or "followUp" (wait). Required if streaming. */
 	streamingBehavior?: "steer" | "followUp";
 	/** Source of input for extension input event handlers. Defaults to "interactive". */
@@ -343,10 +352,10 @@ export class AgentSession {
 	private _unsubscribeAgent?: () => void;
 	private _eventListeners: AgentSessionEventListener[] = [];
 
-	/** Tracks pending steering messages for UI display. Removed when delivered. */
-	private _steeringMessages: string[] = [];
-	/** Tracks pending follow-up messages for UI display. Removed when delivered. */
-	private _followUpMessages: string[] = [];
+	/** Tracks pending steering messages and attachments. Removed when delivered. */
+	private _steeringMessages: SubmittedInput[] = [];
+	/** Tracks pending follow-up messages and attachments. Removed when delivered. */
+	private _followUpMessages: SubmittedInput[] = [];
 	/** Messages queued to be included with the next user prompt as context ("asides"). */
 	private _pendingNextTurnMessages: CustomMessage[] = [];
 
@@ -731,8 +740,8 @@ export class AgentSession {
 	private _emitQueueUpdate(): void {
 		this._emit({
 			type: "queue_update",
-			steering: [...this._steeringMessages],
-			followUp: [...this._followUpMessages],
+			steering: this._steeringMessages.map((input) => input.text),
+			followUp: this._followUpMessages.map((input) => input.text),
 		});
 	}
 
@@ -748,13 +757,13 @@ export class AgentSession {
 			const messageText = this._getUserMessageText(event.message);
 			if (messageText) {
 				// Check steering queue first
-				const steeringIndex = this._steeringMessages.indexOf(messageText);
+				const steeringIndex = this._steeringMessages.findIndex((input) => input.text === messageText);
 				if (steeringIndex !== -1) {
 					this._steeringMessages.splice(steeringIndex, 1);
 					this._emitQueueUpdate();
 				} else {
 					// Check follow-up queue
-					const followUpIndex = this._followUpMessages.indexOf(messageText);
+					const followUpIndex = this._followUpMessages.findIndex((input) => input.text === messageText);
 					if (followUpIndex !== -1) {
 						this._followUpMessages.splice(followUpIndex, 1);
 						this._emitQueueUpdate();
@@ -1403,10 +1412,12 @@ export class AgentSession {
 						"Agent is already processing. Specify streamingBehavior ('steer' or 'followUp') to queue the message.",
 					);
 				}
+				const imageMarkers =
+					options.imageMarkers?.length === currentImages?.length ? options.imageMarkers : undefined;
 				if (options.streamingBehavior === "followUp") {
-					await this._queueFollowUp(expandedText, currentImages);
+					await this._queueFollowUp(expandedText, currentImages, imageMarkers);
 				} else {
-					await this._queueSteer(expandedText, currentImages);
+					await this._queueSteer(expandedText, currentImages, imageMarkers);
 				}
 				preflightResult?.(true);
 				return;
@@ -1577,7 +1588,7 @@ export class AgentSession {
 	 * @param images Optional image attachments to include with the message
 	 * @throws Error if text is an extension command
 	 */
-	async steer(text: string, images?: ImageContent[]): Promise<void> {
+	async steer(text: string, images?: ImageContent[], imageMarkers?: string[]): Promise<void> {
 		// Check for extension commands (cannot be queued)
 		if (text.startsWith("/")) {
 			this._throwIfExtensionCommand(text);
@@ -1587,7 +1598,7 @@ export class AgentSession {
 		let expandedText = this._expandSkillCommand(text);
 		expandedText = expandPromptTemplate(expandedText, [...this.promptTemplates]);
 
-		await this._queueSteer(expandedText, images);
+		await this._queueSteer(expandedText, images, imageMarkers);
 	}
 
 	/**
@@ -1597,7 +1608,7 @@ export class AgentSession {
 	 * @param images Optional image attachments to include with the message
 	 * @throws Error if text is an extension command
 	 */
-	async followUp(text: string, images?: ImageContent[]): Promise<void> {
+	async followUp(text: string, images?: ImageContent[], imageMarkers?: string[]): Promise<void> {
 		// Check for extension commands (cannot be queued)
 		if (text.startsWith("/")) {
 			this._throwIfExtensionCommand(text);
@@ -1607,14 +1618,19 @@ export class AgentSession {
 		let expandedText = this._expandSkillCommand(text);
 		expandedText = expandPromptTemplate(expandedText, [...this.promptTemplates]);
 
-		await this._queueFollowUp(expandedText, images);
+		await this._queueFollowUp(expandedText, images, imageMarkers);
 	}
 
 	/**
 	 * Internal: Queue a steering message (already expanded, no extension command check).
 	 */
-	private async _queueSteer(text: string, images?: ImageContent[]): Promise<void> {
-		this._steeringMessages.push(text);
+	private async _queueSteer(text: string, images?: ImageContent[], imageMarkers?: string[]): Promise<void> {
+		const markers = imageMarkers && imageMarkers.length === images?.length ? [...imageMarkers] : undefined;
+		this._steeringMessages.push({
+			text,
+			...(images ? { images: [...images] } : {}),
+			...(markers ? { imageMarkers: markers } : {}),
+		});
 		this._emitQueueUpdate();
 		const content: (TextContent | ImageContent)[] = [{ type: "text", text }];
 		if (images) {
@@ -1630,8 +1646,13 @@ export class AgentSession {
 	/**
 	 * Internal: Queue a follow-up message (already expanded, no extension command check).
 	 */
-	private async _queueFollowUp(text: string, images?: ImageContent[]): Promise<void> {
-		this._followUpMessages.push(text);
+	private async _queueFollowUp(text: string, images?: ImageContent[], imageMarkers?: string[]): Promise<void> {
+		const markers = imageMarkers && imageMarkers.length === images?.length ? [...imageMarkers] : undefined;
+		this._followUpMessages.push({
+			text,
+			...(images ? { images: [...images] } : {}),
+			...(markers ? { imageMarkers: markers } : {}),
+		});
 		this._emitQueueUpdate();
 		const content: (TextContent | ImageContent)[] = [{ type: "text", text }];
 		if (images) {
@@ -1954,14 +1975,18 @@ export class AgentSession {
 		});
 	}
 
-	/**
-	 * Clear all queued messages and return them.
-	 * Useful for restoring to editor when user aborts.
-	 * @returns Object with steering and followUp arrays
-	 */
-	clearQueue(): { steering: string[]; followUp: string[] } {
-		const steering = [...this._steeringMessages];
-		const followUp = [...this._followUpMessages];
+	/** Clear all queued messages with their attachments for an editor restore. */
+	clearQueueWithContent(): { steering: SubmittedInput[]; followUp: SubmittedInput[] } {
+		const steering = this._steeringMessages.map((input) => ({
+			...input,
+			...(input.images ? { images: [...input.images] } : {}),
+			...(input.imageMarkers ? { imageMarkers: [...input.imageMarkers] } : {}),
+		}));
+		const followUp = this._followUpMessages.map((input) => ({
+			...input,
+			...(input.images ? { images: [...input.images] } : {}),
+			...(input.imageMarkers ? { imageMarkers: [...input.imageMarkers] } : {}),
+		}));
 		this._steeringMessages = [];
 		this._followUpMessages = [];
 		const cleared = this.agent.clearAllQueues();
@@ -1986,6 +2011,15 @@ export class AgentSession {
 		return { steering, followUp };
 	}
 
+	/** Clear queued messages while preserving the existing text-only public contract. */
+	clearQueue(): { steering: string[]; followUp: string[] } {
+		const { steering, followUp } = this.clearQueueWithContent();
+		return {
+			steering: steering.map((input) => input.text),
+			followUp: followUp.map((input) => input.text),
+		};
+	}
+
 	/** Number of pending messages (includes both steering and follow-up) */
 	get pendingMessageCount(): number {
 		return this._steeringMessages.length + this._followUpMessages.length;
@@ -1993,12 +2027,12 @@ export class AgentSession {
 
 	/** Get pending steering messages (read-only) */
 	getSteeringMessages(): readonly string[] {
-		return this._steeringMessages;
+		return this._steeringMessages.map((input) => input.text);
 	}
 
 	/** Get pending follow-up messages (read-only) */
 	getFollowUpMessages(): readonly string[] {
-		return this._followUpMessages;
+		return this._followUpMessages.map((input) => input.text);
 	}
 
 	get resourceLoader(): ResourceLoader {
@@ -3332,7 +3366,7 @@ export class AgentSession {
 		const err = message.errorMessage;
 		if (this._isNonRetryableProviderLimitError(err)) return false;
 		// Match: overloaded_error, provider returned error, rate limit, 429, 500, 502, 503, 504, service unavailable, network/connection errors (including connection lost), WebSocket transport closes/errors, fetch failed, premature stream endings, HTTP/2 closed before response, terminated, retry delay exceeded
-		return /overloaded|provider.?returned.?error|rate.?limit|too many requests|429|500|502|503|504|service.?unavailable|server.?error|internal.?error|network.?error|connection.?error|connection.?refused|connection.?lost|websocket.?closed|websocket.?error|other side closed|fetch failed|upstream.?connect|reset before headers|socket hang up|ended without|stream ended before message_stop|http2 request did not get a response|timed? out|timeout|terminated|retry delay/i.test(
+		return /overloaded|provider.?returned.?error|rate.?limit|too many requests|429|500|502|503|504|service.?unavailable|server.?error|internal.?error|network.?error|connection.?error|connection.?refused|connection.?lost|websocket.?closed|websocket.?error|other side closed|fetch failed|upstream.?connect|reset before headers|socket hang up|ended without|stream ended before (?:message_stop|a terminal response event)|http2 request did not get a response|timed? out|timeout|terminated|retry delay/i.test(
 			err,
 		);
 	}

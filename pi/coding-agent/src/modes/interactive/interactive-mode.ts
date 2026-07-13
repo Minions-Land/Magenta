@@ -3,7 +3,6 @@
  * Handles TUI rendering and user interaction, delegating business logic to AgentSession.
  */
 
-import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -26,6 +25,7 @@ import type {
 	MarkdownTheme,
 	OverlayHandle,
 	OverlayOptions,
+	PasteMarkerSnapshot,
 	SlashCommand,
 } from "@earendil-works/pi-tui";
 import {
@@ -65,7 +65,12 @@ import {
 	getShareViewerUrl,
 	VERSION,
 } from "../../config.ts";
-import { type AgentSession, type AgentSessionEvent, parseSkillBlock } from "../../core/agent-session.ts";
+import {
+	type AgentSession,
+	type AgentSessionEvent,
+	parseSkillBlock,
+	type SubmittedInput,
+} from "../../core/agent-session.ts";
 import { type AgentSessionRuntime, SessionImportFileNotFoundError } from "../../core/agent-session-runtime.ts";
 import { applyCommandAlias } from "../../core/command-aliases.ts";
 import type {
@@ -91,11 +96,12 @@ import {
 	hasHarnessComponent,
 } from "../../core/harness-switches.ts";
 import { configureHttpDispatcher, formatHttpIdleTimeoutMs } from "../../core/http-dispatcher.ts";
-import { ImageTokenController } from "../../core/image-tokens.ts";
+import { ImageTokenController, readClipboardFilePaths } from "../../core/image-tokens.ts";
 import { type AppKeybinding, KeybindingsManager } from "../../core/keybindings.ts";
 import { createCompactionSummaryMessage } from "../../core/messages.ts";
 import { defaultModelPerProvider, findExactModelReferenceMatch, resolveModelScope } from "../../core/model-resolver.ts";
 import { DefaultPackageManager } from "../../core/package-manager.ts";
+import { PendingImageController } from "../../core/pending-images.ts";
 import { BUILT_IN_PROVIDER_DISPLAY_NAMES } from "../../core/provider-display-names.ts";
 import type { ResourceDiagnostic } from "../../core/resource-loader.ts";
 import { formatMissingSessionCwdPrompt, MissingSessionCwdError } from "../../core/session-cwd.ts";
@@ -112,10 +118,12 @@ import {
 } from "../../core/trust-manager.ts";
 import { getChangelogPath, getNewEntries, normalizeChangelogLinks, parseChangelog } from "../../utils/changelog.ts";
 import { copyToClipboard } from "../../utils/clipboard.ts";
-import { extensionForImageMimeType, readClipboardImage } from "../../utils/clipboard-image.ts";
+import { readClipboardImage } from "../../utils/clipboard-image.ts";
 import { parseGitUrl } from "../../utils/git.ts";
 import type { UpdateCheckResult } from "../../utils/github-release-update.ts";
+import { resizeImage } from "../../utils/image-resize.ts";
 import { type checkForMagentaUpdate, recompileMagenta, runMagentaUpdate } from "../../utils/magenta-update.ts";
+import { detectSupportedImageMimeTypeFromFile } from "../../utils/mime.ts";
 import {
 	HcpClientdiscoverofficialpackages,
 	type HcpClientpackagecatalogresult,
@@ -228,8 +236,7 @@ class ExpandableText extends Text implements Expandable {
 	}
 }
 
-type CompactionQueuedMessage = {
-	text: string;
+type CompactionQueuedMessage = SubmittedInput & {
 	mode: "steer" | "followUp";
 };
 
@@ -239,9 +246,10 @@ type CompactionQueuedMessage = {
  * an idle peer-message wake already appended its payload to session state and
  * the loop should run one turn to consume it (via runExternalActivation).
  */
-type Activation = { type: "user_input"; text: string } | { type: "peer_wake" };
+type Activation = { type: "user_input"; input: SubmittedInput } | { type: "peer_wake" };
 
 const DEAD_TERMINAL_ERROR_CODES = new Set(["EIO", "EPIPE", "ENOTCONN"]);
+const ULTRA_BORDER_ANIMATION_INTERVAL_MS = 120;
 
 function isDeadTerminalError(error: unknown): boolean {
 	if (!error || typeof error !== "object" || !("code" in error)) {
@@ -371,6 +379,10 @@ export class InteractiveMode {
 	private statusContainer: Container;
 	private defaultEditor: CustomEditor;
 	private readonly imageTokenController = new ImageTokenController();
+	private readonly pendingImageController = new PendingImageController();
+	private clipboardImagePasteQueue: Promise<void> = Promise.resolve();
+	private clipboardImagePastePending = 0;
+	private clipboardImageDraftGeneration = 0;
 	private editor: EditorComponent;
 	private editorComponentFactory: EditorFactory | undefined;
 	private autocompleteProvider: AutocompleteProvider | undefined;
@@ -383,8 +395,9 @@ export class InteractiveMode {
 	private keybindings: KeybindingsManager;
 	private version: string;
 	private isInitialized = false;
-	private onInputCallback?: (text: string) => void;
-	private pendingUserInputs: string[] = [];
+	private isTuiActive = false;
+	private onInputCallback?: (input: SubmittedInput) => void;
+	private pendingUserInputs: SubmittedInput[] = [];
 	// Magenta feature: unified activation queue. The main loop consumes
 	// Activations from a single source; producers are the keyboard (user_input)
 	// and idle peer wake (peer_wake). This keeps one turn-runner and lets future
@@ -452,6 +465,8 @@ export class InteractiveMode {
 
 	// Track if editor is in bash mode (text starts with !)
 	private isBashMode = false;
+	private ultraBorderAnimationTimer: NodeJS.Timeout | undefined = undefined;
+	private ultraBorderAnimationPhase = 0;
 
 	// Track current bash execution component
 	private bashComponent: BashExecutionComponent | undefined = undefined;
@@ -788,6 +803,7 @@ export class InteractiveMode {
 
 		// Start the UI before initializing extensions so session_start handlers can use interactive dialogs
 		this.ui.start();
+		this.isTuiActive = true;
 		this.isInitialized = true;
 
 		await this.themeController.applyFromSettings();
@@ -965,14 +981,24 @@ export class InteractiveMode {
 		// the input prompt.
 		while (true) {
 			const activation = await this.getNextActivation();
+			let promptAccepted = false;
 			try {
 				if (activation.type === "user_input") {
-					await this.session.prompt(activation.text);
+					await this.session.prompt(activation.input.text, {
+						images: activation.input.images,
+						imageMarkers: activation.input.imageMarkers,
+						preflightResult: (success) => {
+							promptAccepted = success;
+						},
+					});
 				} else {
 					// peer_wake: the payload is already in session state; run one turn.
 					await this.session.runExternalActivation();
 				}
 			} catch (error: unknown) {
+				if (activation.type === "user_input" && !promptAccepted) {
+					this.restoreSubmittedInputToEditor(activation.input);
+				}
 				const errorMessage = error instanceof Error ? error.message : "Unknown error occurred";
 				this.showError(errorMessage);
 			}
@@ -2514,8 +2540,11 @@ export class InteractiveMode {
 	private setCustomEditorComponent(factory: EditorFactory | undefined): void {
 		this.editorComponentFactory = factory;
 
-		// Save text from current editor before switching
+		// Save the complete draft surface before switching editor implementations.
 		const currentText = this.editor.getText();
+		const pasteMarkers: PasteMarkerSnapshot =
+			this.editor.getPasteMarkerSnapshot?.() ?? this.defaultEditor.getPasteMarkerSnapshot();
+		this.invalidateClipboardImagePastes();
 
 		this.editorContainer.clear();
 
@@ -2527,8 +2556,9 @@ export class InteractiveMode {
 			newEditor.onSubmit = this.defaultEditor.onSubmit;
 			newEditor.onChange = this.defaultEditor.onChange;
 
-			// Copy text from previous editor
+			// Copy text and registered atomic markers from the previous editor.
 			newEditor.setText(currentText);
+			newEditor.restorePasteMarkerSnapshot?.(pasteMarkers);
 
 			// Copy appearance settings if supported
 			if (newEditor.borderColor !== undefined) {
@@ -2573,8 +2603,9 @@ export class InteractiveMode {
 
 			this.editor = newEditor;
 		} else {
-			// Restore default editor with text from custom editor
+			// Restore the default editor with the custom editor's complete draft state.
 			this.defaultEditor.setText(currentText);
+			this.defaultEditor.restorePasteMarkerSnapshot(pasteMarkers);
 			this.editor = this.defaultEditor;
 		}
 
@@ -2768,39 +2799,114 @@ export class InteractiveMode {
 
 		// Handle clipboard image paste (triggered on Ctrl+V)
 		this.defaultEditor.onPasteImage = () => {
-			this.handleClipboardImagePaste();
+			const generation = this.clipboardImageDraftGeneration;
+			const targetEditor = this.editor;
+			this.clipboardImagePastePending++;
+			const pasteTask = this.clipboardImagePasteQueue.then(() =>
+				this.handleClipboardImagePaste(generation, targetEditor),
+			);
+			this.clipboardImagePasteQueue = pasteTask.finally(() => {
+				this.clipboardImagePastePending--;
+			});
+			return this.clipboardImagePasteQueue;
 		};
 	}
 
-	private async handleClipboardImagePaste(): Promise<void> {
+	private invalidateClipboardImagePastes(): void {
+		this.clipboardImageDraftGeneration++;
+	}
+
+	private async settleClipboardImagePastes(): Promise<void> {
+		if (this.clipboardImagePastePending <= 0) return;
+		const targetEditor = this.editor;
+		this.ui.setFocus(null);
 		try {
-			const image = await readClipboardImage();
-			if (!image) {
-				return;
+			await this.clipboardImagePasteQueue;
+		} finally {
+			if (!this.isShuttingDown && targetEditor === this.editor) {
+				this.ui.setFocus(this.editor as Component);
 			}
+		}
+	}
 
-			// Write to temp file
-			const tmpDir = os.tmpdir();
-			const ext = extensionForImageMimeType(image.mimeType) ?? "png";
-			const fileName = `pi-clipboard-${crypto.randomUUID()}.${ext}`;
-			const filePath = path.join(tmpDir, fileName);
-			fs.writeFileSync(filePath, Buffer.from(image.bytes));
+	private isClipboardImagePasteCurrent(generation: number, targetEditor: EditorComponent): boolean {
+		return generation === this.clipboardImageDraftGeneration && targetEditor === this.editor && !this.isShuttingDown;
+	}
 
-			// Insert file path; CustomEditor may render it as a compact [imageN] token.
-			this.editor.insertTextAtCursor?.(filePath);
-			this.ui.requestRender();
+	private async prepareClipboardImage(bytes: Uint8Array, mimeType: string): Promise<ImageContent | undefined> {
+		if (!this.settingsManager.getImageAutoResize()) {
+			return { type: "image", mimeType, data: Buffer.from(bytes).toString("base64") };
+		}
+		const resized = await resizeImage(bytes, mimeType);
+		if (!resized) return undefined;
+		return { type: "image", mimeType: resized.mimeType, data: resized.data };
+	}
+
+	private insertPendingImage(
+		image: ImageContent,
+		targetEditor: EditorComponent = this.editor,
+		generation = this.clipboardImageDraftGeneration,
+	): boolean {
+		if (!this.isClipboardImagePasteCurrent(generation, targetEditor)) return false;
+		const paste = targetEditor.insertPasteMarker?.("Image");
+		if (!paste) {
+			this.showWarning("The active editor does not support clipboard image markers");
+			return false;
+		}
+		this.pendingImageController.add(paste.marker, image);
+		this.ui.requestRender();
+		return true;
+	}
+
+	private async handleClipboardImagePaste(generation: number, targetEditor: EditorComponent): Promise<void> {
+		try {
+			if (!this.isClipboardImagePasteCurrent(generation, targetEditor)) return;
+			const clipboardPaths = readClipboardFilePaths();
+			let handledPath = false;
+			for (const clipboardPath of clipboardPaths) {
+				if (!this.isClipboardImagePasteCurrent(generation, targetEditor)) return;
+				const mimeType = await detectSupportedImageMimeTypeFromFile(clipboardPath);
+				if (!this.isClipboardImagePasteCurrent(generation, targetEditor)) return;
+				if (!mimeType) {
+					targetEditor.insertTextAtCursor?.(`${clipboardPath} `);
+					handledPath = true;
+					continue;
+				}
+				const bytes = await fs.promises.readFile(clipboardPath);
+				const content = await this.prepareClipboardImage(bytes, mimeType);
+				if (content && this.insertPendingImage(content, targetEditor, generation)) handledPath = true;
+			}
+			if (handledPath || !this.isClipboardImagePasteCurrent(generation, targetEditor)) return;
+
+			const image = await readClipboardImage();
+			if (!image || !this.isClipboardImagePasteCurrent(generation, targetEditor)) return;
+			const content = await this.prepareClipboardImage(image.bytes, image.mimeType);
+			if (content) this.insertPendingImage(content, targetEditor, generation);
 		} catch {
-			// Silently ignore clipboard errors (may not have permission, etc.)
+			// Clipboard access is best-effort and can be denied by the OS or terminal.
 		}
 	}
 
 	private setupEditorSubmitHandler(): void {
 		this.defaultEditor.onSubmit = async (text: string) => {
+			if (this.clipboardImagePastePending > 0) {
+				await this.settleClipboardImagePastes();
+				const latePasteText = (this.editor.getExpandedText?.() ?? this.editor.getText()).trim();
+				if (latePasteText) {
+					text = [text, latePasteText].filter((value) => value.trim()).join(" ");
+					this.editor.setText("");
+					this.editor.clearPasteMarkers?.();
+				}
+			}
+			this.invalidateClipboardImagePastes();
 			text = this.defaultEditor.transformImageTokenInput(text);
-			text = text.trim();
+			this.defaultEditor.clearImageTokens();
+			const submittedInput = this.pendingImageController.takeForText(text.trim());
+			text = submittedInput.text;
 			if (!text) return;
 
 			text = applyCommandAlias(text);
+			submittedInput.text = text;
 
 			// Handle commands
 			if (text === "/settings") {
@@ -2974,9 +3080,12 @@ export class InteractiveMode {
 				if (this.isExtensionCommand(text)) {
 					this.editor.addToHistory?.(text);
 					this.editor.setText("");
-					await this.session.prompt(text);
+					await this.session.prompt(text, {
+						images: submittedInput.images,
+						imageMarkers: submittedInput.imageMarkers,
+					});
 				} else {
-					this.queueCompactionMessage(text, "steer");
+					this.queueCompactionMessage(submittedInput, "steer");
 				}
 				return;
 			}
@@ -2986,7 +3095,11 @@ export class InteractiveMode {
 			if (this.session.isStreaming) {
 				this.editor.addToHistory?.(text);
 				this.editor.setText("");
-				await this.session.prompt(text, { streamingBehavior: "steer" });
+				await this.session.prompt(text, {
+					streamingBehavior: "steer",
+					images: submittedInput.images,
+					imageMarkers: submittedInput.imageMarkers,
+				});
 				this.updatePendingMessagesDisplay();
 				this.ui.requestRender();
 				return;
@@ -2997,9 +3110,9 @@ export class InteractiveMode {
 			this.flushPendingBashComponents();
 
 			if (this.onInputCallback) {
-				this.onInputCallback(text);
+				this.onInputCallback(submittedInput);
 			} else {
-				this.pendingUserInputs.push(text);
+				this.pendingUserInputs.push(submittedInput);
 			}
 			this.editor.addToHistory?.(text);
 		};
@@ -3667,13 +3780,13 @@ export class InteractiveMode {
 	async getUserInput(): Promise<string> {
 		const queuedInput = this.pendingUserInputs.shift();
 		if (queuedInput !== undefined) {
-			return queuedInput;
+			return queuedInput.text;
 		}
 
 		return new Promise((resolve) => {
-			this.onInputCallback = (text: string) => {
+			this.onInputCallback = (input: SubmittedInput) => {
 				this.onInputCallback = undefined;
-				resolve(text);
+				resolve(input.text);
 			};
 		});
 	}
@@ -3689,7 +3802,7 @@ export class InteractiveMode {
 		// loop was ready lives in pendingUserInputs; fold it in as a user_input.
 		const queuedInput = this.pendingUserInputs.shift();
 		if (queuedInput !== undefined) {
-			return { type: "user_input", text: queuedInput };
+			return { type: "user_input", input: queuedInput };
 		}
 		const queued = this.activationQueue.shift();
 		if (queued !== undefined) {
@@ -3699,10 +3812,10 @@ export class InteractiveMode {
 		return new Promise((resolve) => {
 			// Keyboard producer: reuse the existing onInputCallback contract so the
 			// submit handler and the startup-input test keep working unchanged.
-			this.onInputCallback = (text: string) => {
+			this.onInputCallback = (input: SubmittedInput) => {
 				this.onInputCallback = undefined;
 				this.onActivationCallback = undefined;
-				resolve({ type: "user_input", text });
+				resolve({ type: "user_input", input });
 			};
 			// Peer-wake producer: pushActivation resolves through this.
 			this.onActivationCallback = (activation: Activation) => {
@@ -3765,6 +3878,8 @@ export class InteractiveMode {
 	private async shutdown(options?: { fromSignal?: boolean }): Promise<void> {
 		if (this.isShuttingDown) return;
 		this.isShuttingDown = true;
+		this.invalidateClipboardImagePastes();
+		this.stopUltraBorderAnimation();
 		// Keep signal handlers registered until terminal cleanup has completed.
 		// `signal-exit` checks the listener list during the same SIGTERM/SIGHUP
 		// dispatch and re-sends the signal if only its own listeners remain.
@@ -3834,6 +3949,8 @@ export class InteractiveMode {
 	private async respawnAndExit(args: string[]): Promise<void> {
 		if (this.isShuttingDown) return;
 		this.isShuttingDown = true;
+		this.invalidateClipboardImagePastes();
+		this.stopUltraBorderAnimation();
 
 		// Clean shutdown before restart
 		this.themeController.disableAutoSync();
@@ -3859,6 +3976,8 @@ export class InteractiveMode {
 
 	private emergencyTerminalExit(): never {
 		this.isShuttingDown = true;
+		this.invalidateClipboardImagePastes();
+		this.stopUltraBorderAnimation();
 		this.unregisterSignalHandlers();
 		killTrackedDetachedChildren();
 		// The terminal is gone. Do not run normal shutdown because TUI and
@@ -3882,6 +4001,8 @@ export class InteractiveMode {
 			process.exit(1);
 		}
 		this.isShuttingDown = true;
+		this.invalidateClipboardImagePastes();
+		this.stopUltraBorderAnimation();
 		try {
 			this.unregisterSignalHandlers();
 		} catch {}
@@ -3889,6 +4010,7 @@ export class InteractiveMode {
 			killTrackedDetachedChildren();
 		} catch {}
 		try {
+			this.isTuiActive = false;
 			this.ui.stop();
 		} catch {}
 		console.error(`${APP_NAME} exiting due to uncaughtException:`);
@@ -3972,11 +4094,15 @@ export class InteractiveMode {
 			clearInterval(suspendKeepAlive);
 			process.removeListener("SIGINT", ignoreSigint);
 			this.ui.start();
+			this.isTuiActive = true;
+			this.updateEditorBorderColor();
 			this.ui.requestRender(true);
 		});
 
 		try {
 			// Stop the TUI (restore terminal to normal mode)
+			this.stopUltraBorderAnimation();
+			this.isTuiActive = false;
 			this.ui.stop();
 
 			// Send SIGTSTP to process group (pid=0 means all processes in group)
@@ -3989,17 +4115,23 @@ export class InteractiveMode {
 	}
 
 	private async handleFollowUp(): Promise<void> {
-		const text = (this.editor.getExpandedText?.() ?? this.editor.getText()).trim();
+		await this.settleClipboardImagePastes();
+		this.invalidateClipboardImagePastes();
+		let text = (this.editor.getExpandedText?.() ?? this.editor.getText()).trim();
+		text = this.defaultEditor.transformImageTokenInput(text);
+		this.defaultEditor.clearImageTokens();
 		if (!text) return;
 
 		// Queue input during compaction (extension commands execute immediately)
 		if (this.session.isCompacting) {
+			const input = this.pendingImageController.takeForText(text);
 			if (this.isExtensionCommand(text)) {
 				this.editor.addToHistory?.(text);
 				this.editor.setText("");
-				await this.session.prompt(text);
+				this.editor.clearPasteMarkers?.();
+				await this.session.prompt(text, { images: input.images, imageMarkers: input.imageMarkers });
 			} else {
-				this.queueCompactionMessage(text, "followUp");
+				this.queueCompactionMessage(input, "followUp");
 			}
 			return;
 		}
@@ -4007,15 +4139,22 @@ export class InteractiveMode {
 		// Alt+Enter queues a follow-up message (waits until agent finishes)
 		// This handles extension commands (execute immediately), prompt template expansion, and queueing
 		if (this.session.isStreaming) {
+			const input = this.pendingImageController.takeForText(text);
 			this.editor.addToHistory?.(text);
 			this.editor.setText("");
-			await this.session.prompt(text, { streamingBehavior: "followUp" });
+			this.editor.clearPasteMarkers?.();
+			await this.session.prompt(text, {
+				streamingBehavior: "followUp",
+				images: input.images,
+				imageMarkers: input.imageMarkers,
+			});
 			this.updatePendingMessagesDisplay();
 			this.ui.requestRender();
 		}
 		// If not streaming, Alt+Enter acts like regular Enter (trigger onSubmit)
 		else if (this.editor.onSubmit) {
 			this.editor.setText("");
+			this.editor.clearPasteMarkers?.();
 			this.editor.onSubmit(text);
 		}
 	}
@@ -4029,14 +4168,52 @@ export class InteractiveMode {
 		}
 	}
 
-	private updateEditorBorderColor(): void {
+	private shouldAnimateUltraBorder(): boolean {
+		return (
+			this.isInitialized &&
+			this.isTuiActive &&
+			!this.isShuttingDown &&
+			!this.isBashMode &&
+			this.session.executionProfile === "ultra"
+		);
+	}
+
+	private applyEditorBorderColor(): void {
 		const borderColor = this.isBashMode
 			? theme.getBashModeBorderColor()
 			: this.session.executionProfile === "ultra"
-				? theme.getUltraBorderColor()
+				? theme.getUltraBorderColor(this.ultraBorderAnimationPhase)
 				: theme.getThinkingBorderColor(this.session.thinkingLevel || "off");
 		this.defaultEditor.borderColor = borderColor;
 		if (this.editor !== this.defaultEditor) this.editor.borderColor = borderColor;
+	}
+
+	private startUltraBorderAnimation(): void {
+		if (this.ultraBorderAnimationTimer || !this.shouldAnimateUltraBorder()) return;
+		this.ultraBorderAnimationTimer = setInterval(() => {
+			if (!this.shouldAnimateUltraBorder()) {
+				this.stopUltraBorderAnimation();
+				return;
+			}
+			this.ultraBorderAnimationPhase++;
+			this.applyEditorBorderColor();
+			this.ui.requestRender();
+		}, ULTRA_BORDER_ANIMATION_INTERVAL_MS);
+		this.ultraBorderAnimationTimer.unref();
+	}
+
+	private stopUltraBorderAnimation(): void {
+		if (this.ultraBorderAnimationTimer) {
+			clearInterval(this.ultraBorderAnimationTimer);
+			this.ultraBorderAnimationTimer = undefined;
+		}
+		this.ultraBorderAnimationPhase = 0;
+	}
+
+	private updateEditorBorderColor(): void {
+		if (this.shouldAnimateUltraBorder()) this.startUltraBorderAnimation();
+		else this.stopUltraBorderAnimation();
+		this.applyEditorBorderColor();
 		this.ui.requestRender();
 	}
 
@@ -4125,6 +4302,9 @@ export class InteractiveMode {
 			fs.writeFileSync(tmpFile, currentText, "utf-8");
 
 			// Stop TUI to release terminal
+			this.invalidateClipboardImagePastes();
+			this.stopUltraBorderAnimation();
+			this.isTuiActive = false;
 			this.ui.stop();
 
 			// Split by space to support editor arguments (e.g., "code --wait")
@@ -4160,6 +4340,8 @@ export class InteractiveMode {
 
 			// Restart TUI
 			this.ui.start();
+			this.isTuiActive = true;
+			this.updateEditorBorderColor();
 			// Force full re-render since external editor uses alternate screen
 			this.ui.requestRender(true);
 		}
@@ -4170,7 +4352,11 @@ export class InteractiveMode {
 	// =========================================================================
 
 	clearEditor(): void {
+		this.invalidateClipboardImagePastes();
 		this.editor.setText("");
+		this.editor.clearPasteMarkers?.();
+		this.defaultEditor.clearImageTokens();
+		this.pendingImageController.clear();
 		this.ui.requestRender();
 	}
 
@@ -4376,14 +4562,14 @@ export class InteractiveMode {
 	 * Clear all queued messages and return their contents.
 	 * Clears both session queue and compaction queue.
 	 */
-	private clearAllQueues(): { steering: string[]; followUp: string[] } {
-		const { steering, followUp } = this.session.clearQueue();
+	private clearAllQueues(): { steering: SubmittedInput[]; followUp: SubmittedInput[] } {
+		const { steering, followUp } = this.session.clearQueueWithContent();
 		const compactionSteering = this.compactionQueuedMessages
-			.filter((msg) => msg.mode === "steer")
-			.map((msg) => msg.text);
+			.filter((message) => message.mode === "steer")
+			.map(({ mode: _mode, ...input }) => input);
 		const compactionFollowUp = this.compactionQueuedMessages
-			.filter((msg) => msg.mode === "followUp")
-			.map((msg) => msg.text);
+			.filter((message) => message.mode === "followUp")
+			.map(({ mode: _mode, ...input }) => input);
 		this.compactionQueuedMessages = [];
 		return {
 			steering: [...steering, ...compactionSteering],
@@ -4410,6 +4596,29 @@ export class InteractiveMode {
 		}
 	}
 
+	private restoreQueuedInput(input: SubmittedInput): string {
+		let text = input.text;
+		const oldMarkers = input.imageMarkers ?? [];
+		for (let index = 0; index < (input.images?.length ?? 0); index++) {
+			const candidate = oldMarkers[index];
+			const oldMarker = candidate && text.includes(candidate) ? candidate : undefined;
+			const paste = this.editor.createPasteMarker?.("Image");
+			const marker = paste?.marker ?? oldMarker;
+			if (!marker) continue;
+			if (oldMarker && marker !== oldMarker) text = text.replaceAll(oldMarker, marker);
+			else if (!oldMarker) text = [text, marker].filter(Boolean).join(" ");
+			this.pendingImageController.add(marker, input.images![index]!);
+		}
+		return text;
+	}
+
+	private restoreSubmittedInputToEditor(input: SubmittedInput): void {
+		const restoredText = this.restoreQueuedInput(input);
+		const currentText = this.editor.getText();
+		this.editor.setText([restoredText, currentText].filter((value) => value.trim()).join("\n\n"));
+		this.ui.requestRender();
+	}
+
 	private restoreQueuedMessagesToEditor(options?: { abort?: boolean; currentText?: string }): number {
 		const { steering, followUp } = this.clearAllQueues();
 		const allQueued = [...steering, ...followUp];
@@ -4420,9 +4629,9 @@ export class InteractiveMode {
 			}
 			return 0;
 		}
-		const queuedText = allQueued.join("\n\n");
+		const queuedText = allQueued.map((input) => this.restoreQueuedInput(input)).join("\n\n");
 		const currentText = options?.currentText ?? this.editor.getText();
-		const combinedText = [queuedText, currentText].filter((t) => t.trim()).join("\n\n");
+		const combinedText = [queuedText, currentText].filter((value) => value.trim()).join("\n\n");
 		this.editor.setText(combinedText);
 		this.updatePendingMessagesDisplay();
 		if (options?.abort) {
@@ -4431,10 +4640,11 @@ export class InteractiveMode {
 		return allQueued.length;
 	}
 
-	private queueCompactionMessage(text: string, mode: "steer" | "followUp"): void {
-		this.compactionQueuedMessages.push({ text, mode });
-		this.editor.addToHistory?.(text);
+	private queueCompactionMessage(input: SubmittedInput, mode: "steer" | "followUp"): void {
+		this.compactionQueuedMessages.push({ ...input, mode });
+		this.editor.addToHistory?.(input.text);
 		this.editor.setText("");
+		this.editor.clearPasteMarkers?.();
 		this.updatePendingMessagesDisplay();
 		this.showStatus("Queued message for after compaction");
 	}
@@ -4477,11 +4687,14 @@ export class InteractiveMode {
 				// When retry is pending, queue messages for the retry turn
 				for (const message of queuedMessages) {
 					if (this.isExtensionCommand(message.text)) {
-						await this.session.prompt(message.text);
+						await this.session.prompt(message.text, {
+							images: message.images,
+							imageMarkers: message.imageMarkers,
+						});
 					} else if (message.mode === "followUp") {
-						await this.session.followUp(message.text);
+						await this.session.followUp(message.text, message.images, message.imageMarkers);
 					} else {
-						await this.session.steer(message.text);
+						await this.session.steer(message.text, message.images, message.imageMarkers);
 					}
 				}
 				this.updatePendingMessagesDisplay();
@@ -4493,7 +4706,10 @@ export class InteractiveMode {
 			if (firstPromptIndex === -1) {
 				// All extension commands - execute them all
 				for (const message of queuedMessages) {
-					await this.session.prompt(message.text);
+					await this.session.prompt(message.text, {
+						images: message.images,
+						imageMarkers: message.imageMarkers,
+					});
 				}
 				return;
 			}
@@ -4504,22 +4720,33 @@ export class InteractiveMode {
 			const rest = queuedMessages.slice(firstPromptIndex + 1);
 
 			for (const message of preCommands) {
-				await this.session.prompt(message.text);
+				await this.session.prompt(message.text, {
+					images: message.images,
+					imageMarkers: message.imageMarkers,
+				});
 			}
 
 			// Send first prompt (starts streaming)
-			const promptPromise = this.session.prompt(firstPrompt.text).catch((error) => {
-				restoreQueue(error);
-			});
+			const promptPromise = this.session
+				.prompt(firstPrompt.text, {
+					images: firstPrompt.images,
+					imageMarkers: firstPrompt.imageMarkers,
+				})
+				.catch((error) => {
+					restoreQueue(error);
+				});
 
 			// Queue remaining messages
 			for (const message of rest) {
 				if (this.isExtensionCommand(message.text)) {
-					await this.session.prompt(message.text);
+					await this.session.prompt(message.text, {
+						images: message.images,
+						imageMarkers: message.imageMarkers,
+					});
 				} else if (message.mode === "followUp") {
-					await this.session.followUp(message.text);
+					await this.session.followUp(message.text, message.images, message.imageMarkers);
 				} else {
-					await this.session.steer(message.text);
+					await this.session.steer(message.text, message.images, message.imageMarkers);
 				}
 			}
 			this.updatePendingMessagesDisplay();
@@ -8024,6 +8251,9 @@ export class InteractiveMode {
 	}
 
 	stop(): void {
+		this.invalidateClipboardImagePastes();
+		this.stopUltraBorderAnimation();
+		this.isTuiActive = false;
 		if (this.settingsManager.getShowTerminalProgress()) {
 			this.ui.terminal.setProgress(false);
 		}
