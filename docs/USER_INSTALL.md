@@ -12,6 +12,12 @@ Do not install the executable alone. It may start, but packaged prompts, themes,
 
 The maintained PowerShell installer downloads the Windows executable and resources archive, verifies both SHA-256 entries, extracts into a staging directory, smoke-tests the staged binary, and swaps the installation with rollback on failure.
 
+On restricted networks (e.g., mainland China), set the `MAGENTA_GITHUB_MIRROR` environment variable before running the installer:
+
+```powershell
+$env:MAGENTA_GITHUB_MIRROR = "https://ghfast.top"
+```
+
 Review [`scripts/install.ps1`](../scripts/install.ps1), then download the installer published with the Release:
 
 ```powershell
@@ -40,6 +46,11 @@ Useful options:
 
 The release workflow currently builds macOS for Apple Silicon and Intel, and Linux for x64. The following Bash script detects those targets, verifies both downloads, smoke-tests a staged runtime, and swaps a dedicated installation directory before atomically writing a small command wrapper. Keeping the executable and resources in that dedicated directory also gives the built-in updater the correct installation boundary.
 
+The script honors two optional environment variables for restricted networks (see [China Network Guide](./CHINA_NETWORK.md)):
+
+- `MAGENTA_GITHUB_MIRROR` — a GitHub proxy prefix (e.g. `https://ghfast.top`). When set, all downloads are routed through it.
+- It automatically uses `aria2c` with 16 connections when that tool is available, and falls back to `curl` otherwise. On slow links `aria2c` is dramatically faster for the ~180 MB executable.
+
 ```bash
 set -euo pipefail
 
@@ -50,7 +61,12 @@ case "$(uname -s)-$(uname -m)" in
   *) echo "No standalone Magenta release for $(uname -s)/$(uname -m)" >&2; exit 1 ;;
 esac
 
-base=https://github.com/Minions-Land/Magenta-CLI/releases/latest/download
+# Optional GitHub mirror prefix for restricted networks, e.g. https://ghfast.top
+mirror="${MAGENTA_GITHUB_MIRROR:-}"
+mirror="${mirror%/}"
+gh="https://github.com/Minions-Land/Magenta-CLI/releases/latest/download"
+base="${mirror:+$mirror/}$gh"
+
 root="$HOME/.local/share/magenta"
 install_dir="$root/runtime"
 bin_dir="$HOME/.local/bin"
@@ -58,9 +74,21 @@ mkdir -p "$root" "$bin_dir"
 stage="$(mktemp -d "$root/.install.XXXXXX")"
 trap 'rm -rf "$stage"' EXIT
 
-curl -fL "$base/$asset" -o "$stage/$asset"
-curl -fL "$base/magenta-resources-universal.tar.gz" -o "$stage/magenta-resources-universal.tar.gz"
-curl -fL "$base/SHA256SUMS" -o "$stage/SHA256SUMS"
+# Prefer aria2c (16 parallel connections) for speed; fall back to curl.
+fetch() {
+  url=$1; out=$2
+  if command -v aria2c >/dev/null 2>&1; then
+    aria2c -x16 -s16 -k1M --retry-wait=2 --max-tries=5 \
+      --allow-overwrite=true --auto-file-renaming=false \
+      -d "$(dirname "$out")" -o "$(basename "$out")" "$url"
+  else
+    curl -fL --retry 5 --retry-delay 2 "$url" -o "$out"
+  fi
+}
+
+fetch "$base/$asset" "$stage/$asset"
+fetch "$base/magenta-resources-universal.tar.gz" "$stage/magenta-resources-universal.tar.gz"
+fetch "$base/SHA256SUMS" "$stage/SHA256SUMS"
 
 verify() {
   file=$1
@@ -125,6 +153,15 @@ magenta --update
 ```
 
 The updater reads the public CLI Release, verifies the selected executable and resources archive against `SHA256SUMS`, stages and smoke-tests the replacement, and rolls back if activation fails. It refuses an unsupported platform or an incomplete release instead of installing a partial update.
+
+On restricted networks, set `MAGENTA_GITHUB_MIRROR` before running the updater so both the GitHub API check and the asset downloads route through a proxy:
+
+```bash
+export MAGENTA_GITHUB_MIRROR=https://ghfast.top
+magenta --update
+```
+
+See the [China Network Guide](./CHINA_NETWORK.md) for mirror choices and troubleshooting.
 
 A source checkout is updated through Git and the workspace build, not the standalone updater:
 

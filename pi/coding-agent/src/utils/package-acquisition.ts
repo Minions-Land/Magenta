@@ -23,6 +23,7 @@ import { pipeline } from "node:stream/promises";
 import lockfile from "proper-lockfile";
 import { compare as compareSemver, valid as validSemver } from "semver";
 import { parse as parseToml } from "smol-toml";
+import { resolveGitHubUrl } from "./github-mirror.ts";
 
 const HcpClientpackagedownloadtimeoutms = 300_000; // 5 minutes for package download
 const HcpClientpackagecatalogtimeoutms = 5_000;
@@ -165,7 +166,9 @@ export async function HcpClientdiscoverofficialpackages(
 		const token = process.env.MAGENTA_GITHUB_TOKEN;
 		if (token) headers.Authorization = `Bearer ${token}`;
 		const response = await fetchPackageCatalog(
-			`https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/releases?per_page=100`,
+			resolveGitHubUrl(
+				`https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/releases?per_page=100`,
+			),
 			{ headers, signal: controller.signal },
 		);
 		if (!response.ok) {
@@ -434,7 +437,9 @@ async function HcpClientacquiregithubpackagelocked(
 		mkdirSync(stagingDir);
 		const tag = `${selector.package}-v${selector.version}`;
 		const artifact = `${tag}-${packagePlatform}.tar.gz`;
-		const artifactUrl = `https://github.com/${encodeURIComponent(selector.owner)}/${encodeURIComponent(selector.repo)}/releases/download/${encodeURIComponent(tag)}/${encodeURIComponent(artifact)}`;
+		const artifactUrl = resolveGitHubUrl(
+			`https://github.com/${encodeURIComponent(selector.owner)}/${encodeURIComponent(selector.repo)}/releases/download/${encodeURIComponent(tag)}/${encodeURIComponent(artifact)}`,
+		);
 		const checksumUrl = `${artifactUrl}.sha256`;
 
 		const tempDir = join(stagingDir, ".download");

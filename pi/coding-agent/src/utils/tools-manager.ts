@@ -7,6 +7,7 @@ import { join } from "path";
 import { Readable } from "stream";
 import { pipeline } from "stream/promises";
 import { APP_NAME, getBinDir } from "../config.ts";
+import { resolveGitHubUrl } from "./github-mirror.ts";
 
 const TOOLS_DIR = getBinDir();
 const NETWORK_TIMEOUT_MS = 10_000;
@@ -112,7 +113,7 @@ export function getToolPath(tool: "fd" | "rg"): string | null {
 
 // Fetch latest release version from GitHub
 async function getLatestVersion(repo: string): Promise<string> {
-	const response = await fetch(`https://api.github.com/repos/${repo}/releases/latest`, {
+	const response = await fetch(resolveGitHubUrl(`https://api.github.com/repos/${repo}/releases/latest`), {
 		headers: { "User-Agent": `${APP_NAME}-coding-agent` },
 		signal: AbortSignal.timeout(NETWORK_TIMEOUT_MS),
 	});
@@ -267,7 +268,9 @@ async function downloadTool(tool: "fd" | "rg"): Promise<string> {
 	// Create tools directory
 	mkdirSync(TOOLS_DIR, { recursive: true });
 
-	const downloadUrl = `https://github.com/${config.repo}/releases/download/${config.tagPrefix}${version}/${assetName}`;
+	const downloadUrl = resolveGitHubUrl(
+		`https://github.com/${config.repo}/releases/download/${config.tagPrefix}${version}/${assetName}`,
+	);
 	const archivePath = join(TOOLS_DIR, assetName);
 	const binaryExt = plat === "win32" ? ".exe" : "";
 	const binaryPath = join(TOOLS_DIR, config.binaryName + binaryExt);
