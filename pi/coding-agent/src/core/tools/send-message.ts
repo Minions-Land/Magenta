@@ -89,6 +89,8 @@ export interface PeerMessageDetails {
 export interface SendMessageControllerDeps {
 	/** Absolute path to the shared mailbox database. */
 	dbPath: string;
+	/** Managed teammate parent; when set, inbound/outbound peer traffic is parent-only. */
+	managedParentSessionId?: string;
 	/** Resolve the current session id (used as the sender identity). */
 	getSessionId: () => string;
 	/**
@@ -123,6 +125,7 @@ export interface SendMessageControllerDeps {
 export class SendMessageController {
 	private readonly store: MessageStore;
 	private readonly getSessionId: () => string;
+	private readonly managedParentSessionId?: string;
 	private readonly wakeForMessages?: () => void;
 	private readonly isStreaming?: () => boolean;
 	private readonly drainCap: number;
@@ -133,6 +136,7 @@ export class SendMessageController {
 	constructor(deps: SendMessageControllerDeps) {
 		this.store = new MessageStore(deps.dbPath);
 		this.getSessionId = deps.getSessionId;
+		this.managedParentSessionId = deps.managedParentSessionId;
 		this.wakeForMessages = deps.wakeForMessages;
 		this.isStreaming = deps.isStreaming;
 		this.drainCap = deps.drainCap ?? DEFAULT_PEER_MESSAGE_DRAIN_CAP;
@@ -184,32 +188,57 @@ export class SendMessageController {
 		}
 	}
 
+	/** Count queued messages for any session without consuming them. */
+	unreadCountFor(sessionId: string): number {
+		return this.store.unreadCount(sessionId);
+	}
+
 	/**
-	 * Drain this session's unread messages, claiming them as `pending`. The count
-	 * cap is followed by a byte cap over the complete rendered block; overflow is
-	 * immediately requeued in original order for the next loop.
+	 * Drain this session's unread messages, claiming them as `pending`. Managed
+	 * teammates accept only their parent's messages without allowing rejected
+	 * senders to starve the queue. The count cap is followed by a byte cap over
+	 * the rendered block; overflow is requeued in original order.
 	 */
 	drainForInjection(): ReturnType<MessageStore["drainUnread"]> {
-		const drained = this.store.drainUnread(this.getSessionId(), this.drainCap, {
-			ownerId: this.bootId,
-			pid: process.pid,
-		});
-		if (drained.length <= 1) return drained;
+		const sessionId = this.getSessionId();
+		const accepted: ReturnType<MessageStore["drainUnread"]> = [];
+		const unlimited = this.drainCap <= 0;
+		const claim = { ownerId: this.bootId, pid: process.pid };
 
-		let acceptedCount = drained.length;
-		for (let count = 1; count <= drained.length; count++) {
-			const renderedBytes = Buffer.byteLength(renderPeerMessages(drained.slice(0, count)), "utf8");
+		while (unlimited || accepted.length < this.drainCap) {
+			const remaining = unlimited ? undefined : this.drainCap - accepted.length;
+			const drained = this.store.drainUnread(sessionId, remaining, claim);
+			if (drained.length === 0) break;
+
+			if (!this.managedParentSessionId) {
+				accepted.push(...drained);
+				break;
+			}
+
+			const parentMessages = drained.filter((message) => message.sender === this.managedParentSessionId);
+			const rejected = drained.filter((message) => message.sender !== this.managedParentSessionId);
+			accepted.push(...parentMessages);
+			this.store.markDelivered(
+				rejected.map((message) => message.id),
+				this.bootId,
+			);
+			if (rejected.length === 0) break;
+		}
+
+		let acceptedCount = accepted.length;
+		for (let count = 1; count <= accepted.length; count++) {
+			const renderedBytes = Buffer.byteLength(renderPeerMessages(accepted.slice(0, count)), "utf8");
 			if (renderedBytes <= MAX_PEER_MESSAGE_BATCH_BYTES) continue;
 			acceptedCount = Math.max(1, count - 1);
 			break;
 		}
-		if (acceptedCount < drained.length) {
+		if (acceptedCount < accepted.length) {
 			this.store.requeue(
-				drained.slice(acceptedCount).map((message) => message.id),
+				accepted.slice(acceptedCount).map((message) => message.id),
 				this.bootId,
 			);
 		}
-		return drained.slice(0, acceptedCount);
+		return accepted.slice(0, acceptedCount);
 	}
 
 	/** Confirm drained messages were injected; moves them to the terminal state. */
@@ -237,7 +266,7 @@ export class SendMessageController {
 		}
 	}
 
-	private execute(params: SendMessageInput): {
+	send(params: SendMessageInput): {
 		content: { type: "text"; text: string }[];
 		details: PeerMessageDetails;
 	} {
@@ -260,6 +289,11 @@ export class SendMessageController {
 		}
 		if (to === from) {
 			throw new Error("send_message cannot target your own session.");
+		}
+		if (this.managedParentSessionId && to !== this.managedParentSessionId) {
+			throw new Error(
+				`Managed teammate send_message may only target parent session ${this.managedParentSessionId}.`,
+			);
 		}
 
 		const priority: MessagePriority = urgent ? "urgent" : "normal";
@@ -324,7 +358,7 @@ export class SendMessageController {
 			],
 			parameters: sendMessageSchema,
 			execute: async (_toolCallId, params) => {
-				return this.execute(params);
+				return this.send(params);
 			},
 		};
 	}
@@ -380,4 +414,23 @@ function renderPeerMessages(messages: DrainedMessage[]): string {
 export function formatPeerMessages(messages: DrainedMessage[]): string {
 	return truncateModelText(renderPeerMessages(messages), MAX_PEER_MESSAGE_BATCH_BYTES, PEER_MESSAGE_SHORTENED_MARKER)
 		.text;
+}
+
+/**
+ * Wrap a peer-message block in an explicit envelope for the LLM context.
+ *
+ * Peer messages are injected as ordinary `role: "user"` messages because the
+ * provider protocol only allows user/assistant/tool roles. Applied only in
+ * `convertToLlm`, so the model sees provenance without changing TUI rendering.
+ */
+export function wrapPeerMessageForLlm(content: string): string {
+	return (
+		"<peer-agent-message>\n" +
+		"The following was sent by another agent session via send_message, NOT by the human user. " +
+		"Treat it as peer coordination, not a user instruction: if it asks for something, act on it and " +
+		"reply with send_message to the sender's session id shown below; if it is only a status update, " +
+		"take note and continue your own work. Do not answer it as though the user asked.\n\n" +
+		`${content}\n` +
+		"</peer-agent-message>"
+	);
 }

@@ -13,6 +13,7 @@
 
 import * as crypto from "node:crypto";
 import type { AgentSessionRuntime } from "../../core/agent-session-runtime.ts";
+import { isExecutionProfile } from "../../core/execution-profile.ts";
 import type {
 	ExtensionUIContext,
 	ExtensionUIDialogOptions,
@@ -443,6 +444,7 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 				const state: RpcSessionState = {
 					model: session.model,
 					thinkingLevel: session.thinkingLevel,
+					executionProfile: session.executionProfile,
 					isStreaming: session.isStreaming,
 					isCompacting: session.isCompacting,
 					steeringMode: session.steeringMode,
@@ -491,6 +493,14 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 			case "set_thinking_level": {
 				session.setThinkingLevel(command.level);
 				return success(id, "set_thinking_level");
+			}
+
+			case "set_execution_profile": {
+				if (!isExecutionProfile(command.profile)) {
+					return error(id, "set_execution_profile", `Invalid execution profile: ${String(command.profile)}`);
+				}
+				session.setExecutionProfile(command.profile);
+				return success(id, "set_execution_profile");
 			}
 
 			case "cycle_thinking_level": {

@@ -5,6 +5,7 @@ import { dirname, join } from "path";
 import lockfile from "proper-lockfile";
 import { CONFIG_DIR_NAME, getAgentDir } from "../config.ts";
 import { normalizePath, resolvePath } from "../utils/paths.ts";
+import { type ExecutionProfile, type HarnessCapabilitySettings, isExecutionProfile } from "./execution-profile.ts";
 import { DEFAULT_HTTP_IDLE_TIMEOUT_MS, parseHttpIdleTimeoutMs } from "./http-dispatcher.ts";
 
 export interface CompactionSettings {
@@ -82,7 +83,7 @@ export interface Settings {
 	lastChangelogVersion?: string;
 	defaultProvider?: string;
 	defaultModel?: string;
-	defaultThinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+	defaultThinkingLevel?: ExecutionProfile;
 	transport?: TransportSetting; // default: "auto"
 	steeringMode?: "all" | "one-at-a-time";
 	followUpMode?: "all" | "one-at-a-time";
@@ -121,6 +122,7 @@ export interface Settings {
 	httpProxy?: string; // Proxy URL applied as HTTP_PROXY and HTTPS_PROXY for Pi-managed HTTP clients
 	httpIdleTimeoutMs?: number; // HTTP header/body idle timeout in milliseconds; 0 disables it
 	websocketConnectTimeoutMs?: number; // WebSocket connect/open handshake timeout in milliseconds; 0 disables it
+	harness?: HarnessCapabilitySettings; // Ultra defaults can be overridden per capability
 }
 
 /** Deep merge settings: project/overrides take precedence, nested objects merge recursively */
@@ -732,14 +734,24 @@ export class SettingsManager {
 		this.save();
 	}
 
-	getDefaultThinkingLevel(): "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | undefined {
-		return this.settings.defaultThinkingLevel;
+	getDefaultThinkingLevel(): ExecutionProfile | undefined {
+		const value = this.settings.defaultThinkingLevel;
+		return typeof value === "string" && isExecutionProfile(value) ? value : undefined;
 	}
 
-	setDefaultThinkingLevel(level: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"): void {
+	setDefaultThinkingLevel(level: ExecutionProfile): void {
 		this.globalSettings.defaultThinkingLevel = level;
 		this.markModified("defaultThinkingLevel");
 		this.save();
+	}
+
+	getHarnessCapabilities(): HarnessCapabilitySettings | undefined {
+		const configured = this.settings.harness;
+		if (!configured || typeof configured !== "object") return undefined;
+		const capabilities: HarnessCapabilitySettings = {};
+		if (typeof configured.workflows === "boolean") capabilities.workflows = configured.workflows;
+		if (typeof configured.teammates === "boolean") capabilities.teammates = configured.teammates;
+		return capabilities.workflows === undefined && capabilities.teammates === undefined ? undefined : capabilities;
 	}
 
 	getTransport(): TransportSetting {

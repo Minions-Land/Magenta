@@ -90,13 +90,15 @@ interface AgentSession {
   // Model control
   setModel(model: Model): Promise<void>;
   setThinkingLevel(level: ThinkingLevel): void;
+  setExecutionProfile(profile: ExecutionProfile): void;
   cycleModel(): Promise<ModelCycleResult | undefined>;
-  cycleThinkingLevel(): ThinkingLevel | undefined;
+  cycleThinkingLevel(): ExecutionProfile | undefined;
 
   // State access
   agent: Agent;
   model: Model | undefined;
-  thinkingLevel: ThinkingLevel;
+  thinkingLevel: ThinkingLevel; // effective provider-native value
+  executionProfile: ExecutionProfile; // includes "ultra"
   messages: AgentMessage[];
   isStreaming: boolean;
 
@@ -388,7 +390,11 @@ const available = modelRegistry.getAvailable();
 
 const { session } = await createAgentSession({
   model: opus,
-  thinkingLevel: "medium", // off, minimal, low, medium, high, xhigh, max
+  executionProfile: "ultra", // maps to the model's highest native level
+  harnessCapabilities: {
+    workflows: true, // explicit overrides beat profile defaults
+    teammates: false,
+  },
   
   // Models for cycling (Ctrl+P in interactive mode)
   scopedModels: [
@@ -471,8 +477,10 @@ const { session } = await createAgentSession({ resourceLoader: loader });
 
 Specify which tools to enable:
 
-- Default active tools: `read`, `bash`, `edit`, `write`, `bg_shell`,
-  `sub_agent`, `web-search`, and `web-fetch`
+- Standard profiles activate `read`, `bash`, `edit`, `write`, `bg_shell`,
+  `sub_agent`, `send_message`, `show`, `grep`, `find`, `ls`, `web-search`, and `web-fetch`
+- Ultra also enables `sub_agent` workflow templates and `teammate_agent` by default
+- `harnessCapabilities.workflows` and `harnessCapabilities.teammates` override those defaults
 - Optional read-only tools: `grep`, `find`, and `ls`
 - `noTools: "all"` disables all tools
 - `noTools: "builtin"` disables default application and HCP tools while keeping extension and custom tools enabled

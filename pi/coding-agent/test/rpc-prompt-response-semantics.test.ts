@@ -6,7 +6,6 @@ import {
 	type AssistantMessage,
 	type AssistantMessageEvent,
 	EventStream,
-	getModel,
 	type Model,
 } from "@earendil-works/pi-ai/compat";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -18,6 +17,19 @@ import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 import { runRpcMode } from "../src/modes/rpc/rpc-mode.ts";
 import { createTestResourceLoader } from "./utilities.ts";
+
+const DEFAULT_TEST_MODEL: Model<any> = {
+	id: "rpc-test-model",
+	name: "RPC Test Model",
+	api: "anthropic-messages",
+	provider: "anthropic",
+	baseUrl: "https://example.invalid",
+	reasoning: true,
+	input: ["text"],
+	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+	contextWindow: 100_000,
+	maxTokens: 8_192,
+};
 
 const rpcIo = vi.hoisted(() => ({
 	outputLines: [] as string[],
@@ -102,10 +114,7 @@ function createRuntimeHost(options: { withAuth: boolean; responseDelayMs: number
 	const tempDir = join(tmpdir(), `pi-rpc-prompt-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 	mkdirSync(tempDir, { recursive: true });
 
-	const model = options.model ?? getModel("anthropic", "claude-sonnet-4-5");
-	if (!model) {
-		throw new Error("Test model not found");
-	}
+	const model = options.model ?? DEFAULT_TEST_MODEL;
 
 	const agent = new Agent({
 		getApiKey: () => "test-key",
@@ -188,6 +197,24 @@ describe("RPC prompt response semantics", () => {
 	afterEach(() => {
 		rpcIo.outputLines = [];
 		rpcIo.lineHandler = undefined;
+	});
+
+	it("rejects invalid execution profiles at the JSON boundary", async () => {
+		const { lineHandler, cleanup } = await startRpcMode({ withAuth: false, responseDelayMs: 0 });
+		try {
+			lineHandler(JSON.stringify({ id: "profile-invalid", type: "set_execution_profile", profile: "warp" }));
+			await vi.waitFor(() => {
+				const response = parseOutputLines(rpcIo.outputLines).find((line) => line.id === "profile-invalid");
+				expect(response).toMatchObject({
+					type: "response",
+					command: "set_execution_profile",
+					success: false,
+					error: "Invalid execution profile: warp",
+				});
+			});
+		} finally {
+			await cleanup();
+		}
 	});
 
 	it("emits one failure response when prompt preflight rejects", async () => {

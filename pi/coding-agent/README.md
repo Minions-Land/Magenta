@@ -110,10 +110,10 @@ Use `/model` or Ctrl+L to select a configured model. Use Shift+Tab to cycle only
 The shared reasoning vocabulary is:
 
 ```text
-off, minimal, low, medium, high, xhigh, max
+off, minimal, low, medium, high, xhigh, max, ultra
 ```
 
-This is a vocabulary, not a claim that every model supports every value. Model metadata supplies the actual mapping. Built-in GPT-5.6 entries for OpenAI, Azure OpenAI Responses, and OpenRouter expose `off`, `low`, `medium`, `high`, `xhigh`, and `max`; they do not expose `minimal`, and Magenta does not support an `ultra` level. `max` is their highest GPT-5.6 request value.
+The native levels are a vocabulary, not a claim that every model supports every value. Model metadata supplies the actual mapping. `ultra` is different: it is a Magenta execution profile that maps to the selected model's highest native level and enables Harness workflows and persistent teammates by default. Providers never receive `ultra` as a thinking value.
 
 Examples:
 
@@ -123,7 +123,7 @@ magenta --provider anthropic --model claude-sonnet-4-6 --thinking high
 magenta --list-models gpt-5.6
 ```
 
-The CLI accepts every library-level value for `--thinking`, then resolves it against the selected model. Prefer the TUI selector when you need to see the exact supported subset.
+The CLI accepts every native value plus `ultra` for `--thinking`, then resolves it against the selected model. Prefer the TUI selector when you need to see the exact supported subset.
 
 ## Interactive Use
 
@@ -134,8 +134,12 @@ cd /path/to/project
 magenta
 ```
 
-The default coding surface includes `read`, `bash`, `edit`, `write`, `bg_shell`,
-`sub_agent`, `web-search`, and `web-fetch`. The two web tools are autoloaded
+The standard coding surface includes `read`, `bash`, `edit`, `write`, `bg_shell`,
+`sub_agent`, `send_message`, `web-search`, and `web-fetch`. Standard profiles expose
+one-shot `sub_agent` tasks but not workflow templates or `teammate_agent`. Ultra enables both by default;
+`harness.workflows` and `harness.teammates` can override either behavior. Use `sub_agent` for disposable
+work and `teammate_agent` for a persistent hidden collaborator whose assignments and results travel through
+`send_message`. The two web tools are autoloaded
 through HCP. Read-only `grep`, `find`, and `ls` tools are available but disabled
 by default. Use `--tools`, `--exclude-tools`, `--no-tools`, or
 `--no-builtin-tools` to control the active set.
@@ -277,6 +281,7 @@ Important environment variables:
 | `MAGENTA_CODING_AGENT_DIR` | Override `~/.magenta/agent` |
 | `MAGENTA_CODING_AGENT_SESSION_DIR` | Override the session directory |
 | `MAGENTA_HARNESS_PACKAGES` | Comma-separated Harness package selectors |
+| `MAGENTA_PEER_MESSAGE_DB` | Override the shared peer-message mailbox path (used by managed teammates) |
 | `PI_OFFLINE=1` | Disable startup network operations |
 | `PI_TELEMETRY=0` | Disable install telemetry and optional provider attribution |
 | `PI_SKIP_VERSION_CHECK=1` | Disable the startup version check |

@@ -39,6 +39,20 @@ async function flushAutocomplete(): Promise<void> {
 }
 
 describe("Editor component", () => {
+	it("passes the complete horizontal border to the colorizer", () => {
+		const editor = new Editor(createTestTUI(), defaultEditorTheme);
+		const colored: string[] = [];
+		editor.borderColor = (value) => {
+			colored.push(value);
+			return value;
+		};
+
+		const rendered = editor.render(8);
+		assert.ok(colored.includes("─".repeat(8)));
+		assert.strictEqual(visibleWidth(rendered[0]), 8);
+		assert.strictEqual(visibleWidth(rendered[rendered.length - 1]), 8);
+	});
+
 	describe("Prompt history navigation", () => {
 		it("does nothing on Up arrow when history is empty", () => {
 			const editor = new Editor(createTestTUI(), defaultEditorTheme);

@@ -112,6 +112,22 @@ describe("SettingsManager", () => {
 		});
 	});
 
+	describe("Ultra and Harness capabilities", () => {
+		it("round-trips the Ultra default and reads explicit capability overrides", async () => {
+			const settingsPath = join(agentDir, "settings.json");
+			writeFileSync(settingsPath, JSON.stringify({ harness: { workflows: false, teammates: true } }));
+			const manager = SettingsManager.create(projectDir, agentDir);
+
+			manager.setDefaultThinkingLevel("ultra");
+			await manager.flush();
+
+			expect(manager.getDefaultThinkingLevel()).toBe("ultra");
+			expect(manager.getHarnessCapabilities()).toEqual({ workflows: false, teammates: true });
+			const saved = JSON.parse(readFileSync(settingsPath, "utf-8"));
+			expect(saved.defaultThinkingLevel).toBe("ultra");
+		});
+	});
+
 	describe("packages migration", () => {
 		it("should keep local-only extensions in extensions array", () => {
 			const settingsPath = join(agentDir, "settings.json");

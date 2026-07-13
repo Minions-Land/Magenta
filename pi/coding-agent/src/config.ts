@@ -569,6 +569,8 @@ export const INFRA_VERSION: string = pkg.version || "0.0.0";
 // e.g., MAGENTA_CODING_AGENT_DIR or PI_CODING_AGENT_DIR
 export const ENV_AGENT_DIR = `${APP_NAME.toUpperCase()}_CODING_AGENT_DIR`;
 export const ENV_SESSION_DIR = `${APP_NAME.toUpperCase()}_CODING_AGENT_SESSION_DIR`;
+export const ENV_PEER_MESSAGE_DB = `${APP_NAME.toUpperCase()}_PEER_MESSAGE_DB`;
+export const ENV_TEAMMATE_PARENT_SESSION_ID = `${APP_NAME.toUpperCase()}_TEAMMATE_PARENT_SESSION_ID`;
 
 export function expandTildePath(path: string): string {
 	return normalizePath(path);
@@ -614,6 +616,8 @@ export function getConfigRootDir(): string {
  * config root rather than under any single session's agent dir.
  */
 export function getPeerMessageDbPath(): string {
+	const envPath = process.env[ENV_PEER_MESSAGE_DB];
+	if (envPath) return expandTildePath(envPath);
 	return join(getConfigRootDir(), "messages.db");
 }
 

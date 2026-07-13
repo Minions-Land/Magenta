@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { Agent, type AgentMessage, type ThinkingLevel } from "@earendil-works/pi-agent-core";
-import { clampThinkingLevel, type Message, type Model, streamSimple } from "@earendil-works/pi-ai/compat";
+import { type Message, type Model, streamSimple } from "@earendil-works/pi-ai/compat";
 import type { SshTarget } from "@magenta/harness";
 import { getAgentDir } from "../config.ts";
 import { resolvePath } from "../utils/paths.ts";
@@ -8,6 +8,13 @@ import { AgentSession } from "./agent-session.ts";
 import { formatNoModelsAvailableMessage } from "./auth-guidance.ts";
 import { AuthStorage } from "./auth-storage.ts";
 import { DEFAULT_NATIVE_ACTIVE_TOOLS, DEFAULT_THINKING_LEVEL } from "./defaults.ts";
+import {
+	type ExecutionProfile,
+	type HarnessCapabilitySettings,
+	isExecutionProfile,
+	resolveExecutionProfile,
+	resolveHarnessCapabilities,
+} from "./execution-profile.ts";
 import type { ExtensionRunner, LoadExtensionsResult, SessionStartEvent, ToolDefinition } from "./extensions/index.ts";
 import { HcpClientassembletools } from "./HcpClienttools.ts";
 import { configureHttpDispatcher } from "./http-dispatcher.ts";
@@ -48,10 +55,14 @@ export interface CreateAgentSessionOptions {
 
 	/** Model to use. Default: from settings, else first available */
 	model?: Model<any>;
-	/** Thinking level. Default: from settings, else 'medium' (clamped to model capabilities) */
+	/** Provider-native thinking level retained for SDK compatibility. */
 	thinkingLevel?: ThinkingLevel;
+	/** User-facing execution profile. Takes precedence over thinkingLevel when set. */
+	executionProfile?: ExecutionProfile;
 	/** Models available for cycling (Ctrl+P in interactive mode) */
-	scopedModels?: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel }>;
+	scopedModels?: Array<{ model: Model<any>; thinkingLevel?: ExecutionProfile }>;
+	/** Per-session Harness capability overrides. Explicit values override settings and Ultra defaults. */
+	harnessCapabilities?: HarnessCapabilitySettings;
 
 	/**
 	 * Optional default tool suppression mode when no explicit allowlist is provided.
@@ -65,8 +76,8 @@ export interface CreateAgentSessionOptions {
 	 * Optional allowlist of tool names.
 	 *
 	 * When omitted, pi enables the default application tools (read, bash, edit, write,
-	 * bg_shell, sub_agent), repository-default HCP tools, package tools, user MCP tools,
-	 * and extension/custom tools unless `noTools` changes that default.
+	 * bg_shell, sub_agent, send_message), repository-default HCP tools, package tools, user MCP tools,
+	 * and extension/custom tools unless `noTools` changes that default. Ultra also enables teammate_agent.
 	 * When provided, only the listed tool names are enabled.
 	 */
 	tools?: string[];
@@ -102,6 +113,7 @@ export interface CreateAgentSessionResult {
 // Re-exports
 
 export * from "./agent-session-runtime.ts";
+export type { ExecutionProfile, HarnessCapabilities, HarnessCapabilitySettings } from "./execution-profile.ts";
 export type {
 	ExtensionAPI,
 	ExtensionCommandContext,
@@ -240,28 +252,35 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		}
 	}
 
-	let thinkingLevel = options.thinkingLevel;
+	let executionProfile = options.executionProfile ?? options.thinkingLevel;
 
-	// If session has data, restore thinking level from it
-	if (thinkingLevel === undefined && hasExistingSession) {
-		thinkingLevel = hasThinkingEntry
-			? (existingSession.thinkingLevel as ThinkingLevel)
-			: (settingsManager.getDefaultThinkingLevel() ?? DEFAULT_THINKING_LEVEL);
+	// If session has data, restore the user-facing execution profile.
+	if (executionProfile === undefined && hasExistingSession) {
+		const savedProfile = existingSession.thinkingLevel;
+		executionProfile =
+			hasThinkingEntry && isExecutionProfile(savedProfile)
+				? savedProfile
+				: (settingsManager.getDefaultThinkingLevel() ?? DEFAULT_THINKING_LEVEL);
 	}
 
-	// Fall back to settings default
-	if (thinkingLevel === undefined) {
-		thinkingLevel = settingsManager.getDefaultThinkingLevel() ?? DEFAULT_THINKING_LEVEL;
+	if (executionProfile === undefined) {
+		executionProfile = settingsManager.getDefaultThinkingLevel() ?? DEFAULT_THINKING_LEVEL;
 	}
 
-	// Clamp to model capabilities
-	if (!model) {
-		thinkingLevel = "off";
-	} else {
-		thinkingLevel = clampThinkingLevel(model, thinkingLevel) as ThinkingLevel;
-	}
-
-	const defaultActiveToolNames: string[] = [...DEFAULT_NATIVE_ACTIVE_TOOLS];
+	// Resolve before constructing Agent so providers only ever see native levels.
+	const thinkingLevel = resolveExecutionProfile(model, executionProfile);
+	// Native profiles retain the historic clamped behavior. Only Ultra remains
+	// distinct from the effective provider level across model changes.
+	executionProfile = executionProfile === "ultra" ? "ultra" : thinkingLevel;
+	const harnessCapabilities = resolveHarnessCapabilities(
+		executionProfile,
+		settingsManager.getHarnessCapabilities(),
+		options.harnessCapabilities,
+	);
+	const defaultActiveToolNames: string[] = [
+		...DEFAULT_NATIVE_ACTIVE_TOOLS,
+		...(harnessCapabilities.teammates ? ["teammate_agent"] : []),
+	];
 	const sessionHcp = resourceLoader.HcpClientgetsession?.();
 	if (sessionHcp && !HcpClientprepared) {
 		try {
@@ -416,14 +435,14 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	if (hasExistingSession) {
 		agent.state.messages = existingSession.messages;
 		if (!hasThinkingEntry) {
-			sessionManager.appendThinkingLevelChange(thinkingLevel);
+			sessionManager.appendThinkingLevelChange(executionProfile);
 		}
 	} else {
 		// Save initial model and thinking level for new sessions so they can be restored on resume
 		if (model) {
 			sessionManager.appendModelChange(model.provider, model.id);
 		}
-		sessionManager.appendThinkingLevelChange(thinkingLevel);
+		sessionManager.appendThinkingLevelChange(executionProfile);
 	}
 
 	const session = new AgentSession({
@@ -433,6 +452,8 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		cwd,
 		agentDir,
 		scopedModels: options.scopedModels,
+		executionProfile,
+		harnessCapabilities: options.harnessCapabilities,
 		resourceLoader,
 		customTools: options.customTools,
 		sshTarget: options.sshTarget,

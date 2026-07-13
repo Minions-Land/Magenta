@@ -65,6 +65,7 @@ This is a **true iterative cycle**: PLAN → IMPLEMENT → OBSERVE → REFLECT �
      - Finalize: write the agreed assertions to `contract.md`. Each assertion must be checkable as PASS / FAIL / UNCLEAR.
    - State working hypotheses and what evidence would support or reject them.
    - Identify risks, unknowns, constraints, and independent work units.
+   - For multi-step work, consider using the `todo` tool to persist the execution plan when it is available. Seed or revise the plan with one atomic `apply` batch, update it only at meaningful milestones, and skip Todo for trivial tasks or per-command bookkeeping. Todo is optional, not a prerequisite for this skill.
    - Write `plan.md` and initialize `progress.md`.
    - **If iteration N > 1**: incorporate findings from the previous REFINE step; if the contract itself was wrong, renegotiate it here.
 

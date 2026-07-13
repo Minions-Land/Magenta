@@ -1,5 +1,5 @@
-import type { HcpClient, SshTarget, SshToolOperations, TodoState } from "@magenta/harness";
-import { createSshToolOperations, HcpClientassemble } from "@magenta/harness";
+import type { HcpClient, SshTarget, SshToolOperations, TodoPlanState } from "@magenta/harness";
+import { cloneTodoPlanState, createSshToolOperations, HcpClientassemble, isTodoPlanState } from "@magenta/harness";
 import type { SessionManager } from "./session-manager.ts";
 import type { SettingsManager } from "./settings-manager.ts";
 import { createLocalBashOperations } from "./tools/bash.ts";
@@ -46,7 +46,7 @@ export async function HcpClientassembletools(options: HcpClienttoolassemblyoptio
 			...(todoSessionManager
 				? {
 						"tools/todo": {
-							loadState: () => HcpClientloadtodostate(todoSessionManager),
+							loadState: () => loadTodoPlanStateFromBranch(todoSessionManager),
 						},
 					}
 				: {}),
@@ -59,36 +59,18 @@ export async function HcpClientassembletools(options: HcpClienttoolassemblyoptio
 	}
 }
 
-function HcpClientloadtodostate(sessionManager: Pick<SessionManager, "getBranch">): TodoState | undefined {
+export function loadTodoPlanStateFromBranch(
+	sessionManager: Pick<SessionManager, "getBranch">,
+): TodoPlanState | undefined {
 	const branch = sessionManager.getBranch();
 	for (let index = branch.length - 1; index >= 0; index--) {
 		const entry = branch[index]!;
 		if (entry.type !== "message") continue;
 		const message = entry.message;
 		if (message.role !== "toolResult" || message.toolName !== "todo") continue;
-		if (!HcpClientistodostate(message.details)) continue;
-		return {
-			todos: message.details.todos.map((todo) => ({ ...todo })),
-			nextId: message.details.nextId,
-		};
+		const details = message.details as { state?: unknown } | undefined;
+		if (!isTodoPlanState(details?.state)) continue;
+		return cloneTodoPlanState(details.state);
 	}
 	return undefined;
-}
-
-function HcpClientistodostate(value: unknown): value is TodoState {
-	if (!value || typeof value !== "object") return false;
-	const state = value as Partial<TodoState>;
-	return (
-		Number.isInteger(state.nextId) &&
-		state.nextId! >= 1 &&
-		Array.isArray(state.todos) &&
-		state.todos.every(
-			(todo) =>
-				todo !== null &&
-				typeof todo === "object" &&
-				Number.isInteger(todo.id) &&
-				typeof todo.text === "string" &&
-				typeof todo.done === "boolean",
-		)
-	);
 }

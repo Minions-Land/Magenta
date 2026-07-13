@@ -1,6 +1,9 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { describe, expect, test } from "vitest";
-import { AssistantMessageComponent } from "../src/modes/interactive/components/assistant-message.ts";
+import {
+	AssistantMessageComponent,
+	normalizeThinkingTags,
+} from "../src/modes/interactive/components/assistant-message.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 
 const OSC133_ZONE_START = "\x1b]133;A\x07";
@@ -53,5 +56,56 @@ describe("AssistantMessageComponent", () => {
 		expect(rendered.includes(OSC133_ZONE_START)).toBe(false);
 		expect(rendered.includes(OSC133_ZONE_END)).toBe(false);
 		expect(rendered.includes(OSC133_ZONE_FINAL)).toBe(false);
+	});
+});
+
+describe("normalizeThinkingTags", () => {
+	test("converts a text block wrapped in <thinking> tags into a thinking block", () => {
+		const result = normalizeThinkingTags([
+			{ type: "text", text: "<thinking>Inspecting HCP compaction core</thinking>" },
+		]);
+		expect(result).toEqual([{ type: "thinking", thinking: "Inspecting HCP compaction core" }]);
+	});
+
+	test("splits leading reasoning from trailing answer text", () => {
+		const result = normalizeThinkingTags([
+			{ type: "text", text: "<thinking>plan the change</thinking>Here is the answer." },
+		]);
+		expect(result).toEqual([
+			{ type: "thinking", thinking: "plan the change" },
+			{ type: "text", text: "Here is the answer." },
+		]);
+	});
+
+	test("treats an unterminated <thinking> block (streaming) as reasoning", () => {
+		const result = normalizeThinkingTags([{ type: "text", text: "<thinking>partial reasoning still stre" }]);
+		expect(result).toEqual([{ type: "thinking", thinking: "partial reasoning still stre" }]);
+	});
+
+	test("leaves <thinking> appearing mid-text untouched", () => {
+		const content: AssistantMessage["content"] = [
+			{ type: "text", text: "Use a literal <thinking> tag in your prompt like this." },
+		];
+		expect(normalizeThinkingTags(content)).toEqual(content);
+	});
+
+	test("leaves fenced code examples that start with a <thinking> tag untouched", () => {
+		const content: AssistantMessage["content"] = [
+			{ type: "text", text: "```html\n<thinking>example</thinking>\n```" },
+		];
+		expect(normalizeThinkingTags(content)).toEqual(content);
+	});
+
+	test("does not modify proper thinking or tool-call blocks", () => {
+		const content: AssistantMessage["content"] = [
+			{ type: "thinking", thinking: "real reasoning" },
+			{ type: "toolCall", id: "t1", name: "read", arguments: { path: "a.txt" } },
+		];
+		expect(normalizeThinkingTags(content)).toEqual(content);
+	});
+
+	test("handles leading whitespace before the opening tag", () => {
+		const result = normalizeThinkingTags([{ type: "text", text: "  \n<thinking>indented</thinking>" }]);
+		expect(result).toEqual([{ type: "thinking", thinking: "indented" }]);
 	});
 });

@@ -99,6 +99,16 @@ describe("buildSessionContext", () => {
 			expect(ctx.messages).toHaveLength(2);
 		});
 
+		it("preserves Ultra as the user-facing execution profile", () => {
+			const entries: SessionEntry[] = [
+				msg("1", null, "user", "hello"),
+				thinkingLevel("2", "1", "ultra"),
+				msg("3", "2", "assistant", "delegating deeply"),
+			];
+			const ctx = buildSessionContext(entries);
+			expect(ctx.thinkingLevel).toBe("ultra");
+		});
+
 		it("tracks model from assistant message", () => {
 			const entries: SessionEntry[] = [msg("1", null, "user", "hello"), msg("2", "1", "assistant", "hi")];
 			const ctx = buildSessionContext(entries);

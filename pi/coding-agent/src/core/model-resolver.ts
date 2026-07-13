@@ -2,12 +2,12 @@
  * Model resolution, scoping, and initial selection
  */
 
-import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { type Api, type KnownProvider, type Model, modelsAreEqual } from "@earendil-works/pi-ai";
 import chalk from "chalk";
 import { minimatch } from "minimatch";
 import { isValidThinkingLevel } from "../cli/args.ts";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
+import type { ExecutionProfile } from "./execution-profile.ts";
 import type { ModelRegistry } from "./model-registry.ts";
 
 /** Default model IDs for each known provider */
@@ -51,8 +51,8 @@ export const defaultModelPerProvider: Record<KnownProvider, string> = {
 
 export interface ScopedModel {
 	model: Model<Api>;
-	/** Thinking level if explicitly specified in pattern (e.g., "model:high"), undefined otherwise */
-	thinkingLevel?: ThinkingLevel;
+	/** Execution profile if explicitly specified in pattern (e.g., "model:ultra"), undefined otherwise */
+	thinkingLevel?: ExecutionProfile;
 }
 
 /**
@@ -155,8 +155,8 @@ function tryMatchModel(modelPattern: string, availableModels: Model<Api>[]): Mod
 
 export interface ParsedModelResult {
 	model: Model<Api> | undefined;
-	/** Thinking level if explicitly specified in pattern, undefined otherwise */
-	thinkingLevel?: ThinkingLevel;
+	/** Execution profile if explicitly specified in pattern, undefined otherwise */
+	thinkingLevel?: ExecutionProfile;
 	warning: string | undefined;
 }
 
@@ -265,7 +265,7 @@ export async function resolveModelScope(patterns: string[], modelRegistry: Model
 			// Extract optional thinking level suffix (e.g., "provider/*:high")
 			const colonIdx = pattern.lastIndexOf(":");
 			let globPattern = pattern;
-			let thinkingLevel: ThinkingLevel | undefined;
+			let thinkingLevel: ExecutionProfile | undefined;
 
 			if (colonIdx !== -1) {
 				const suffix = pattern.substring(colonIdx + 1);
@@ -317,7 +317,7 @@ export async function resolveModelScope(patterns: string[], modelRegistry: Model
 
 export interface ResolveCliModelResult {
 	model: Model<Api> | undefined;
-	thinkingLevel?: ThinkingLevel;
+	thinkingLevel?: ExecutionProfile;
 	warning: string | undefined;
 	/**
 	 * Error message suitable for CLI display.
@@ -340,7 +340,7 @@ export interface ResolveCliModelResult {
 export function resolveCliModel(options: {
 	cliProvider?: string;
 	cliModel?: string;
-	cliThinking?: ThinkingLevel;
+	cliThinking?: ExecutionProfile;
 	modelRegistry: ModelRegistry;
 }): ResolveCliModelResult {
 	const { cliProvider, cliModel, cliThinking, modelRegistry } = options;
@@ -477,7 +477,7 @@ export function resolveCliModel(options: {
 		// but only when --thinking is not explicitly provided.
 		// e.g. "zai-org/GLM-5.1-FP8:high" → modelId="zai-org/GLM-5.1-FP8", fallbackThinking="high"
 		let fallbackPattern = pattern;
-		let fallbackThinking: ThinkingLevel | undefined;
+		let fallbackThinking: ExecutionProfile | undefined;
 		if (!cliThinking) {
 			const lastColon = pattern.lastIndexOf(":");
 			if (lastColon !== -1) {
@@ -512,7 +512,7 @@ export function resolveCliModel(options: {
 
 export interface InitialModelResult {
 	model: Model<Api> | undefined;
-	thinkingLevel: ThinkingLevel;
+	thinkingLevel: ExecutionProfile;
 	fallbackMessage: string | undefined;
 }
 
@@ -531,7 +531,7 @@ export async function findInitialModel(options: {
 	isContinuing: boolean;
 	defaultProvider?: string;
 	defaultModelId?: string;
-	defaultThinkingLevel?: ThinkingLevel;
+	defaultThinkingLevel?: ExecutionProfile;
 	modelRegistry: ModelRegistry;
 }): Promise<InitialModelResult> {
 	const {
@@ -546,7 +546,7 @@ export async function findInitialModel(options: {
 	} = options;
 
 	let model: Model<Api> | undefined;
-	let thinkingLevel: ThinkingLevel = DEFAULT_THINKING_LEVEL;
+	let thinkingLevel: ExecutionProfile = DEFAULT_THINKING_LEVEL;
 
 	// 1. CLI args take priority
 	if (cliProvider && cliModel) {

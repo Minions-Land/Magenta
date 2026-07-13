@@ -101,6 +101,8 @@ describe("harness switches", () => {
 		expect(formatHarnessComponentsSummary(components)).toContain("tool/read, memory/memory");
 
 		const summary = formatHarnessRuntimeSummary({
+			executionProfile: "ultra",
+			capabilities: { workflows: true, teammates: false },
 			autoCompact: true,
 			skillCommands: false,
 			loadedSkills: 2,
@@ -113,6 +115,9 @@ describe("harness switches", () => {
 			components,
 		});
 
+		expect(summary).toContain("Execution profile: ultra");
+		expect(summary).toContain("Workflows: enabled");
+		expect(summary).toContain("Teammates: disabled");
 		expect(summary).toContain("Auto-compact: enabled");
 		expect(summary).toContain("Skill commands: disabled (2 skills loaded)");
 		expect(summary).toContain("Packages: AutOmicScience; tools:1; diagnostics:0");
