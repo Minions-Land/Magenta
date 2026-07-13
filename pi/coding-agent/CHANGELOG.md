@@ -4,7 +4,22 @@ All notable changes to Magenta CLI are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## [0.0.16] - 2026-07-13
+## [0.0.17] - 2026-07-13
+
+### Added
+- Headless mode gains a versioned JSON/RPC protocol emitting `runtime_manifest` (startup readiness with resolved model, resources, and policies), `non_interactive_ui` (blocking-UI dispositions), and `run_end` (turn statistics) events; `docs/headless-protocol.schema.json` publishes the draft 2020-12 contract
+- `--background-policy <cancel|wait|error>` controls how leftover background work (sub-agents, bg-shell) is settled when a one-shot run finishes, with `--background-wait-timeout <seconds>` (default 60) bounding the `wait` deadline
+- `--non-interactive-ui <deny|error>` enforces non-blocking extension UI in headless contexts, and `--validate-config` performs a dry-run of model, auth, and resource resolution without calling the model
+- `Dockerfile.headless` and `.dockerignore` provide a multi-stage container build running as an unprivileged user under `tini`, with three documented deployment patterns in `docs/containerization.md`
+- TUI incremental rendering: a `StaticPrefixContainer` caches the immutable history prefix and re-renders only the mutable tail, and markdown gains a per-token render cache keyed by a structural fingerprint for smoother streaming; `bench/render-performance.ts` validates the gain
+- `MarkdownOptions.preserveOrderedListMarkers` keeps author-supplied ordered-list numbering instead of normalizing it
+
+### Changed
+- `RpcClient` waits on the runtime manifest for a deterministic readiness handshake and derives feature detection from the manifest instead of a fixed startup delay
+- Refreshed generated OpenRouter pricing and context metadata
+
+### Fixed
+- GPT-5 context-window overrides are covered by tests documenting the OpenAI 272k/372k caps versus the 1M ceiling reported by Azure and OpenRouter
 
 ### Added
 - GitHub mirror support via the `MAGENTA_GITHUB_MIRROR` environment variable, which rewrites every GitHub URL (self-update, harness package acquisition, and `fd`/`rg` helper-tool downloads) through a proxy prefix for restricted networks; unset preserves the previous direct-download behavior
