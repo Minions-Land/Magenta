@@ -11,12 +11,13 @@ import {
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AgentSession } from "../src/core/agent-session.ts";
 import type { AgentSessionRuntime } from "../src/core/agent-session-runtime.ts";
+import type { ExtensionFactory } from "../src/core/extensions/types.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { ModelRegistry } from "../src/core/model-registry.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 import { runRpcMode } from "../src/modes/rpc/rpc-mode.ts";
-import { createTestResourceLoader } from "./utilities.ts";
+import { createTestExtensionsResult, createTestResourceLoader } from "./utilities.ts";
 
 const DEFAULT_TEST_MODEL: Model<any> = {
 	id: "rpc-test-model",
@@ -107,10 +108,17 @@ function sleep(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function createRuntimeHost(options: { withAuth: boolean; responseDelayMs: number; model?: Model<any> }): {
+interface RuntimeOptions {
+	withAuth: boolean;
+	responseDelayMs: number;
+	model?: Model<any>;
+	extensionFactory?: ExtensionFactory;
+}
+
+async function createRuntimeHost(options: RuntimeOptions): Promise<{
 	runtimeHost: AgentSessionRuntime;
 	cleanup: () => Promise<void>;
-} {
+}> {
 	const tempDir = join(tmpdir(), `pi-rpc-prompt-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 	mkdirSync(tempDir, { recursive: true });
 
@@ -143,13 +151,16 @@ function createRuntimeHost(options: { withAuth: boolean; responseDelayMs: number
 		authStorage.setRuntimeApiKey("anthropic", "test-key");
 	}
 
+	const extensionsResult = options.extensionFactory
+		? await createTestExtensionsResult([options.extensionFactory], tempDir)
+		: undefined;
 	const session = new AgentSession({
 		agent,
 		sessionManager,
 		settingsManager,
 		cwd: tempDir,
 		modelRegistry,
-		resourceLoader: createTestResourceLoader(),
+		resourceLoader: createTestResourceLoader({ extensionsResult }),
 	});
 
 	const runtimeHost = {
@@ -179,14 +190,14 @@ function createRuntimeHost(options: { withAuth: boolean; responseDelayMs: number
 	};
 }
 
-async function startRpcMode(options: { withAuth: boolean; responseDelayMs: number; model?: Model<any> }): Promise<{
+async function startRpcMode(options: RuntimeOptions): Promise<{
 	lineHandler: (line: string) => void;
 	cleanup: () => Promise<void>;
 }> {
 	rpcIo.outputLines = [];
 	rpcIo.lineHandler = undefined;
 
-	const { runtimeHost, cleanup } = createRuntimeHost(options);
+	const { runtimeHost, cleanup } = await createRuntimeHost(options);
 	void runRpcMode(runtimeHost);
 	await vi.waitFor(() => expect(rpcIo.lineHandler).toBeDefined());
 
@@ -197,6 +208,81 @@ describe("RPC prompt response semantics", () => {
 	afterEach(() => {
 		rpcIo.outputLines = [];
 		rpcIo.lineHandler = undefined;
+	});
+
+	it("emits a versioned runtime manifest and exposes background controls", async () => {
+		const { lineHandler, cleanup } = await startRpcMode({ withAuth: false, responseDelayMs: 0 });
+		try {
+			await vi.waitFor(() => {
+				expect(parseOutputLines(rpcIo.outputLines)).toContainEqual(
+					expect.objectContaining({ type: "runtime_manifest", protocolVersion: 1, mode: "rpc" }),
+				);
+			});
+
+			lineHandler(JSON.stringify({ id: "background-list", type: "get_background_events" }));
+			lineHandler(
+				JSON.stringify({
+					id: "background-cancel",
+					type: "cancel_background_event",
+					sourceId: "agents",
+					eventId: "missing",
+				}),
+			);
+			await vi.waitFor(() => {
+				const records = parseOutputLines(rpcIo.outputLines);
+				expect(records).toContainEqual(
+					expect.objectContaining({
+						id: "background-list",
+						command: "get_background_events",
+						success: true,
+						data: { events: [] },
+					}),
+				);
+				expect(records).toContainEqual(
+					expect.objectContaining({
+						id: "background-cancel",
+						command: "cancel_background_event",
+						success: true,
+						data: { cancelled: false },
+					}),
+				);
+			});
+		} finally {
+			await cleanup();
+		}
+	});
+
+	it("accepts extension UI responses while session_start is still binding", async () => {
+		let confirmed: boolean | undefined;
+		const { lineHandler, cleanup } = await startRpcMode({
+			withAuth: false,
+			responseDelayMs: 0,
+			extensionFactory: (pi) => {
+				pi.on("session_start", async (_event, ctx) => {
+					confirmed = await ctx.ui.confirm("Startup", "Continue?");
+				});
+			},
+		});
+		try {
+			let requestId: string | undefined;
+			await vi.waitFor(() => {
+				const request = parseOutputLines(rpcIo.outputLines).find(
+					(record) => record.type === "extension_ui_request" && record.method === "confirm",
+				);
+				expect(request?.id).toEqual(expect.any(String));
+				requestId = request?.id as string;
+			});
+
+			lineHandler(JSON.stringify({ type: "extension_ui_response", id: requestId, confirmed: true }));
+			await vi.waitFor(() => {
+				expect(confirmed).toBe(true);
+				expect(parseOutputLines(rpcIo.outputLines)).toContainEqual(
+					expect.objectContaining({ type: "runtime_manifest", protocolVersion: 1 }),
+				);
+			});
+		} finally {
+			await cleanup();
+		}
 	});
 
 	it("rejects invalid execution profiles at the JSON boundary", async () => {

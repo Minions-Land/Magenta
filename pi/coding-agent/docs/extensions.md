@@ -849,7 +849,7 @@ Fired when user input is received, after extension commands are checked but befo
 pi.on("input", async (event, ctx) => {
   // event.text - raw input (before skill/template expansion)
   // event.images - attached images, if any
-  // event.source - "interactive" (typed), "rpc" (API), or "extension" (via sendUserMessage)
+  // event.source - "interactive", "print", "json", "rpc", or "extension" (via sendUserMessage)
   // event.streamingBehavior - "steer" | "followUp" | undefined
   //   undefined when idle, "steer" for mid-stream interrupts,
   //   "followUp" for messages queued until the agent finishes
@@ -897,7 +897,7 @@ Current run mode: `"tui"`, `"rpc"`, `"json"`, or `"print"`. Use `ctx.mode === "t
 
 ### ctx.hasUI
 
-`true` in TUI and RPC modes. `false` in print mode (`-p`) and JSON mode. Use this to guard dialog methods (`select`, `confirm`, `input`, `editor`) and fire-and-forget methods (`notify`, `setStatus`, `setWidget`, `setTitle`, `setEditorText`) that work in both TUI and RPC modes. In RPC mode, some TUI-specific methods are no-ops or return defaults (see [rpc.md](rpc.md#extension-ui-protocol)).
+`true` in TUI and RPC modes. `false` in print mode (`-p`) and JSON mode. Use this to guard dialog methods (`select`, `confirm`, `input`, `editor`) and fire-and-forget methods (`notify`, `setStatus`, `setWidget`, `setTitle`, `setEditorText`) that work in both TUI and RPC modes. In RPC mode, some TUI-specific methods are no-ops or return defaults (see [rpc.md](rpc.md#extension-ui-protocol)). In print/JSON, Magenta supplies an observable non-interactive UI context while keeping `ctx.hasUI === false`: blocking calls are denied by default and emit `non_interactive_ui`; `--non-interactive-ui error` makes them throw. Cosmetic calls remain non-rendering and are reported at most once per method.
 
 ### ctx.cwd
 
@@ -2593,10 +2593,10 @@ const highlighted = highlightCode(code, lang, theme);
 |------|------------|-------------|-------|
 | Interactive | `"tui"` | `true` | Full TUI with terminal rendering |
 | RPC (`--mode rpc`) | `"rpc"` | `true` | Dialogs and notifications via JSON protocol; `custom()` returns `undefined`. See [rpc.md](rpc.md) |
-| JSON (`--mode json`) | `"json"` | `false` | Event stream to stdout; UI methods are no-ops |
-| Print (`-p`) | `"print"` | `false` | Extensions run but can't prompt |
+| JSON (`--mode json`) | `"json"` | `false` | Versioned event stream; unavailable UI calls emit `non_interactive_ui`, with deny/error policy |
+| Print (`-p`) | `"print"` | `false` | Extensions run; blocking UI is observably denied or fails by policy |
 
-Use `ctx.mode === "tui"` before TUI-specific features (`custom()`, component factories, terminal input). Use `ctx.hasUI` before dialog and notification methods that work in both TUI and RPC modes.
+Use `ctx.mode === "tui"` before TUI-specific features (`custom()`, component factories, terminal input). Use `ctx.hasUI` before dialog and notification methods that work in both TUI and RPC modes. Do not infer `InputEvent.source` from `ctx.mode`: one-shot prompts now report `"print"` or `"json"` explicitly.
 
 ## Examples Reference
 

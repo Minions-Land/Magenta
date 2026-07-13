@@ -621,7 +621,7 @@ export const OPENAI_MODELS = {
 			cacheRead: 0.5,
 			cacheWrite: 6.25,
 		},
-		contextWindow: 1050000,
+		contextWindow: 372000,
 		maxTokens: 128000,
 	} satisfies Model<"openai-responses">,
 	"gpt-5.6-luna": {
@@ -639,7 +639,7 @@ export const OPENAI_MODELS = {
 			cacheRead: 0.1,
 			cacheWrite: 1.25,
 		},
-		contextWindow: 1050000,
+		contextWindow: 372000,
 		maxTokens: 128000,
 	} satisfies Model<"openai-responses">,
 	"gpt-5.6-sol": {
@@ -657,7 +657,7 @@ export const OPENAI_MODELS = {
 			cacheRead: 0.5,
 			cacheWrite: 6.25,
 		},
-		contextWindow: 1050000,
+		contextWindow: 372000,
 		maxTokens: 128000,
 	} satisfies Model<"openai-responses">,
 	"gpt-5.6-terra": {
@@ -675,7 +675,7 @@ export const OPENAI_MODELS = {
 			cacheRead: 0.25,
 			cacheWrite: 3.125,
 		},
-		contextWindow: 1050000,
+		contextWindow: 372000,
 		maxTokens: 128000,
 	} satisfies Model<"openai-responses">,
 	"gpt-realtime-2.1": {

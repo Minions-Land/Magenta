@@ -40,6 +40,7 @@ import {
 	ProcessTerminal,
 	Spacer,
 	setKeybindings,
+	StaticPrefixContainer,
 	Text,
 	TruncatedText,
 	TUI,
@@ -249,8 +250,6 @@ type CompactionQueuedMessage = SubmittedInput & {
 type Activation = { type: "user_input"; input: SubmittedInput } | { type: "peer_wake" };
 
 const DEAD_TERMINAL_ERROR_CODES = new Set(["EIO", "EPIPE", "ENOTCONN"]);
-const ULTRA_BORDER_ANIMATION_INTERVAL_MS = 120;
-
 function isDeadTerminalError(error: unknown): boolean {
 	if (!error || typeof error !== "object" || !("code" in error)) {
 		return false;
@@ -374,7 +373,7 @@ export class InteractiveMode {
 	private runtimeHost: AgentSessionRuntime;
 	private ui: TUI;
 	private loadedResourcesContainer: Container;
-	private chatContainer: Container;
+	private chatContainer: StaticPrefixContainer;
 	private pendingMessagesContainer: Container;
 	private statusContainer: Container;
 	private defaultEditor: CustomEditor;
@@ -546,7 +545,7 @@ export class InteractiveMode {
 		this.ui.setClearOnShrink(this.settingsManager.getClearOnShrink());
 		this.headerContainer = new Container();
 		this.loadedResourcesContainer = new Container();
-		this.chatContainer = new Container();
+		this.chatContainer = new StaticPrefixContainer();
 		this.pendingMessagesContainer = new Container();
 		this.statusContainer = new Container();
 		this.widgetContainerAbove = new Container();
@@ -1917,7 +1916,12 @@ export class InteractiveMode {
 			this.sessionManager.getCwd(),
 		);
 		component.setExpanded(this.toolOutputExpanded);
+		component.setRenderInvalidationListener(() => this.chatContainer.invalidateChild?.(component));
 		return component;
+	}
+
+	private bindToolGroupInvalidation(group: ToolExecutionGroupComponent): void {
+		group.setRenderInvalidationListener(() => this.chatContainer.invalidateChild?.(group));
 	}
 
 	private ensureStreamingToolGroup(): ToolExecutionGroupComponent {
@@ -1926,6 +1930,7 @@ export class InteractiveMode {
 				showImages: this.settingsManager.getShowImages(),
 			});
 			this.streamingToolGroup.setExpanded(this.toolOutputExpanded);
+			this.bindToolGroupInvalidation(this.streamingToolGroup);
 			this.chatContainer.addChild(this.streamingToolGroup);
 		}
 		return this.streamingToolGroup;
@@ -2071,6 +2076,7 @@ export class InteractiveMode {
 		if (this.streamingComponent) {
 			this.streamingComponent.setHiddenThinkingLabel(this.hiddenThinkingLabel);
 		}
+		this.chatContainer.invalidateCache?.();
 		this.ui.requestRender();
 	}
 
@@ -3133,8 +3139,6 @@ export class InteractiveMode {
 			await this.init();
 		}
 
-		this.footer.invalidate();
-
 		switch (event.type) {
 			case "agent_start":
 				this.clearPendingToolDisplays();
@@ -3196,6 +3200,7 @@ export class InteractiveMode {
 					this.updatePendingMessagesDisplay();
 					this.ui.requestRender();
 				} else if (event.message.role === "assistant") {
+					this.chatContainer.beginMutableTail?.();
 					this.streamingComponent = new AssistantMessageComponent(
 						undefined,
 						this.hideThinkingBlock,
@@ -3274,8 +3279,13 @@ export class InteractiveMode {
 						this.clearPendingToolDisplays();
 					} else {
 						// Args are now complete - trigger diff computation for edit tools
-						for (const [, component] of this.pendingTools.entries()) {
-							component.setArgsComplete();
+						for (const [toolCallId, component] of this.pendingTools.entries()) {
+							const group = this.pendingToolGroups.get(toolCallId);
+							if (group) {
+								group.setArgsComplete(toolCallId);
+							} else {
+								component.setArgsComplete();
+							}
 						}
 					}
 					this.stopStreamingAnimation();
@@ -3343,6 +3353,7 @@ export class InteractiveMode {
 					this.streamingMessage = undefined;
 				}
 				this.clearPendingToolDisplays();
+				this.chatContainer.commitMutableTail?.();
 
 				await this.checkShutdownRequested();
 
@@ -3535,6 +3546,7 @@ export class InteractiveMode {
 
 		if (last && secondLast && last === this.lastStatusText && secondLast === this.lastStatusSpacer) {
 			this.lastStatusText.setText(theme.fg("dim", message));
+			this.chatContainer.invalidateCache?.();
 			this.ui.requestRender();
 			return;
 		}
@@ -3685,6 +3697,7 @@ export class InteractiveMode {
 								showImages: this.settingsManager.getShowImages(),
 							});
 							group.setExpanded(this.toolOutputExpanded);
+							this.bindToolGroupInvalidation(group);
 							this.chatContainer.addChild(group);
 						}
 						const component = this.createToolExecutionComponent(content.name, content.id, content.arguments);
@@ -4168,16 +4181,6 @@ export class InteractiveMode {
 		}
 	}
 
-	private shouldAnimateUltraBorder(): boolean {
-		return (
-			this.isInitialized &&
-			this.isTuiActive &&
-			!this.isShuttingDown &&
-			!this.isBashMode &&
-			this.session.executionProfile === "ultra"
-		);
-	}
-
 	private applyEditorBorderColor(): void {
 		const borderColor = this.isBashMode
 			? theme.getBashModeBorderColor()
@@ -4186,20 +4189,6 @@ export class InteractiveMode {
 				: theme.getThinkingBorderColor(this.session.thinkingLevel || "off");
 		this.defaultEditor.borderColor = borderColor;
 		if (this.editor !== this.defaultEditor) this.editor.borderColor = borderColor;
-	}
-
-	private startUltraBorderAnimation(): void {
-		if (this.ultraBorderAnimationTimer || !this.shouldAnimateUltraBorder()) return;
-		this.ultraBorderAnimationTimer = setInterval(() => {
-			if (!this.shouldAnimateUltraBorder()) {
-				this.stopUltraBorderAnimation();
-				return;
-			}
-			this.ultraBorderAnimationPhase++;
-			this.applyEditorBorderColor();
-			this.ui.requestRender();
-		}, ULTRA_BORDER_ANIMATION_INTERVAL_MS);
-		this.ultraBorderAnimationTimer.unref();
 	}
 
 	private stopUltraBorderAnimation(): void {
@@ -4211,8 +4200,9 @@ export class InteractiveMode {
 	}
 
 	private updateEditorBorderColor(): void {
-		if (this.shouldAnimateUltraBorder()) this.startUltraBorderAnimation();
-		else this.stopUltraBorderAnimation();
+		// Ultra keeps its distinctive border, but a static frame avoids repainting
+		// the entire conversation on a timer while the TUI is otherwise idle.
+		this.stopUltraBorderAnimation();
 		this.applyEditorBorderColor();
 		this.ui.requestRender();
 	}
@@ -4265,6 +4255,7 @@ export class InteractiveMode {
 				}
 			}
 		}
+		this.chatContainer.invalidateCache?.();
 		this.ui.requestRender();
 	}
 
@@ -6365,6 +6356,7 @@ export class InteractiveMode {
 								child.setShowImages(enabled);
 							}
 						}
+						this.chatContainer.invalidateCache?.();
 					},
 					onImageWidthCellsChange: (width) => {
 						this.settingsManager.setImageWidthCells(width);
@@ -6375,6 +6367,7 @@ export class InteractiveMode {
 								child.setImageWidthCells(width);
 							}
 						}
+						this.chatContainer.invalidateCache?.();
 					},
 					onAutoResizeImagesChange: (enabled) => {
 						this.settingsManager.setImageAutoResize(enabled);
@@ -8126,6 +8119,7 @@ export class InteractiveMode {
 	}
 
 	private handleArminSaysHi(): void {
+		this.chatContainer.beginMutableTail?.();
 		this.chatContainer.addChild(new Spacer(1));
 		this.chatContainer.addChild(new ArminComponent(this.ui));
 		this.ui.requestRender();
@@ -8138,6 +8132,7 @@ export class InteractiveMode {
 	}
 
 	private handleDaxnuts(): void {
+		this.chatContainer.beginMutableTail?.();
 		this.chatContainer.addChild(new Spacer(1));
 		this.chatContainer.addChild(new DaxnutsComponent(this.ui));
 		this.ui.requestRender();
@@ -8163,13 +8158,15 @@ export class InteractiveMode {
 		// If extension returned a full result, use it directly
 		if (eventResult?.result) {
 			const result = eventResult.result;
+			const isDeferred = this.session.isStreaming;
 
 			// Create UI component for display
 			this.bashComponent = new BashExecutionComponent(command, this.ui, excludeFromContext);
-			if (this.session.isStreaming) {
+			if (isDeferred) {
 				this.pendingMessagesContainer.addChild(this.bashComponent);
 				this.pendingBashComponents.push(this.bashComponent);
 			} else {
+				this.chatContainer.beginMutableTail?.();
 				this.chatContainer.addChild(this.bashComponent);
 			}
 
@@ -8187,6 +8184,7 @@ export class InteractiveMode {
 			// Record the result in session
 			this.session.recordBashResult(command, result, { excludeFromContext });
 			this.bashComponent = undefined;
+			if (!isDeferred) this.chatContainer.commitMutableTail?.();
 			this.ui.requestRender();
 			return;
 		}
@@ -8201,6 +8199,7 @@ export class InteractiveMode {
 			this.pendingBashComponents.push(this.bashComponent);
 		} else {
 			// Show in chat immediately when agent is idle
+			this.chatContainer.beginMutableTail?.();
 			this.chatContainer.addChild(this.bashComponent);
 		}
 		this.ui.requestRender();
@@ -8233,6 +8232,7 @@ export class InteractiveMode {
 		}
 
 		this.bashComponent = undefined;
+		if (!isDeferred) this.chatContainer.commitMutableTail?.();
 		this.ui.requestRender();
 	}
 

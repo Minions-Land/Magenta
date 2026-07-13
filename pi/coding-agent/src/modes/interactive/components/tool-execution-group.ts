@@ -29,10 +29,28 @@ export class ToolExecutionGroupComponent extends Container {
 	private readonly entries = new Map<string, ToolEntry>();
 	private expanded = false;
 	private showImages: boolean;
+	private revision = 0;
+	private cachedRender: { width: number; revision: number; lines: string[] } | undefined;
+	private renderInvalidationListener: (() => void) | undefined;
+	private readonly handleChildInvalidation = () => this.markDirty();
 
 	constructor(options: { showImages: boolean }) {
 		super();
 		this.showImages = options.showImages;
+	}
+
+	setRenderInvalidationListener(listener: (() => void) | undefined): void {
+		this.renderInvalidationListener = listener;
+	}
+
+	private markDirty(): void {
+		this.revision += 1;
+		this.cachedRender = undefined;
+		this.renderInvalidationListener?.();
+	}
+
+	override invalidate(): void {
+		for (const entry of this.entries.values()) entry.component.invalidate();
 	}
 
 	addOrUpdateTool(id: string, name: string, args: unknown, component: ToolExecutionComponent): void {
@@ -40,13 +58,16 @@ export class ToolExecutionGroupComponent extends Container {
 		if (existing) {
 			existing.name = name;
 			existing.args = args;
+			if (existing.component !== component) existing.component.setRenderInvalidationListener(undefined);
 			existing.component = component;
+			existing.component.setRenderInvalidationListener(this.handleChildInvalidation);
 			existing.component.updateArgs(args);
 			if (existing.status === "success" || existing.status === "error") {
 				existing.status = existing.result?.isError ? "error" : "success";
 			}
 			return;
 		}
+		component.setRenderInvalidationListener(this.handleChildInvalidation);
 		this.entries.set(id, {
 			id,
 			name,
@@ -55,11 +76,21 @@ export class ToolExecutionGroupComponent extends Container {
 			status: "pending",
 			sortIndex: this.entries.size,
 		});
+		this.markDirty();
 	}
 
 	markExecutionStarted(id: string): void {
 		const entry = this.entries.get(id);
-		if (entry) entry.status = "running";
+		if (entry) {
+			entry.status = "running";
+			this.markDirty();
+		}
+	}
+
+	setArgsComplete(id: string): void {
+		const entry = this.entries.get(id);
+		if (!entry) return;
+		entry.component.setArgsComplete();
 	}
 
 	updateResult(id: string, result: ToolResultLike, isPartial: boolean): void {
@@ -107,6 +138,15 @@ export class ToolExecutionGroupComponent extends Container {
 	}
 
 	override render(width: number): string[] {
+		if (this.cachedRender?.width === width && this.cachedRender.revision === this.revision) {
+			return this.cachedRender.lines;
+		}
+		const lines = this.renderUncached(width);
+		this.cachedRender = { width, revision: this.revision, lines };
+		return lines;
+	}
+
+	private renderUncached(width: number): string[] {
 		const tiles = this.tiles();
 		if (tiles.length === 0) return [];
 		if (!this.expanded) {

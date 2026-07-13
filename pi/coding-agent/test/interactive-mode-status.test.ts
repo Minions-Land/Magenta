@@ -118,6 +118,23 @@ describe("InteractiveMode.showStatus", () => {
 	});
 });
 
+describe("InteractiveMode footer invalidation", () => {
+	test("does not invalidate cumulative usage for a streaming message update", async () => {
+		const fakeThis: any = {
+			isInitialized: true,
+			footer: { invalidate: vi.fn() },
+			streamingComponent: undefined,
+		};
+
+		await (InteractiveMode as any).prototype.handleEvent.call(fakeThis, {
+			type: "message_update",
+			message: { role: "assistant" },
+		});
+
+		expect(fakeThis.footer.invalidate).not.toHaveBeenCalled();
+	});
+});
+
 describe("InteractiveMode.setToolsExpanded", () => {
 	test("applies expansion state to the active header and chat entries", () => {
 		const header = { setExpanded: vi.fn() };

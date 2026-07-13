@@ -52,6 +52,7 @@ function createSession(options: {
 		},
 		sessionManager: {
 			getEntries: () => entries,
+			getLeafId: () => `leaf-${entries.length}`,
 			getSessionName: () => options.sessionName,
 			getCwd: () => "/tmp/project",
 		},
@@ -170,5 +171,40 @@ describe("FooterComponent width handling", () => {
 		const statsLine = stripAnsi(footer.render(120)[1]);
 		expect(statsLine).toContain("cost?");
 		expect(statsLine).not.toContain("$0.000");
+	});
+
+	it("reuses usage aggregation until the session leaf changes or the footer is invalidated", () => {
+		const session = createSession({
+			sessionName: "",
+			usage: {
+				input: 100,
+				output: 10,
+				cacheRead: 0,
+				cacheWrite: 0,
+				cost: { total: 0.001 },
+			},
+		});
+		const manager = session.sessionManager;
+		const getEntries = manager.getEntries.bind(manager);
+		let getEntriesCalls = 0;
+		let leafId = "leaf-1";
+		manager.getEntries = () => {
+			getEntriesCalls += 1;
+			return getEntries();
+		};
+		manager.getLeafId = () => leafId;
+		const footer = new FooterComponent(session, createFooterData(1));
+
+		footer.render(120);
+		footer.render(80);
+		expect(getEntriesCalls).toBe(1);
+
+		leafId = "leaf-2";
+		footer.render(120);
+		expect(getEntriesCalls).toBe(2);
+
+		footer.invalidate();
+		footer.render(120);
+		expect(getEntriesCalls).toBe(3);
 	});
 });

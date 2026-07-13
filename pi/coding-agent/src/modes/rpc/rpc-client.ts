@@ -5,14 +5,22 @@
  */
 
 import { type ChildProcess, spawn } from "node:child_process";
-import type { AgentEvent, AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
+import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { ImageContent } from "@earendil-works/pi-ai";
 import type { SessionStats } from "../../core/agent-session.ts";
+import type { BackgroundEventSnapshot } from "../../core/background-events.ts";
 import type { BashResult } from "../../core/bash-executor.ts";
 import type { CompactionResult } from "../../core/compaction/index.ts";
 import type { ExecutionProfile } from "../../core/execution-profile.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.ts";
-import type { RpcCommand, RpcResponse, RpcSessionState, RpcSlashCommand } from "./rpc-types.ts";
+import type {
+	RpcCommand,
+	RpcEvent,
+	RpcExtensionUIResponse,
+	RpcResponse,
+	RpcSessionState,
+	RpcSlashCommand,
+} from "./rpc-types.ts";
 
 // ============================================================================
 // Types
@@ -37,6 +45,8 @@ export interface RpcClientOptions {
 	model?: string;
 	/** Additional CLI arguments */
 	args?: string[];
+	/** Max time to wait for the child's first runtime_manifest before proceeding (default 10s). */
+	readyTimeoutMs?: number;
 }
 
 export interface ModelInfo {
@@ -46,7 +56,7 @@ export interface ModelInfo {
 	reasoning: boolean;
 }
 
-export type RpcEventListener = (event: AgentEvent) => void;
+export type RpcEventListener = (event: RpcEvent) => void;
 
 // ============================================================================
 // RPC Client
@@ -62,6 +72,9 @@ export class RpcClient {
 	private stderr = "";
 	private exitError: Error | null = null;
 	private options: RpcClientOptions;
+	/** Resolves when the child emits its first runtime_manifest (protocol readiness). */
+	private readyResolve: (() => void) | null = null;
+	private ready = false;
 
 	constructor(options: RpcClientOptions = {}) {
 		this.options = options;
@@ -128,8 +141,34 @@ export class RpcClient {
 			this.handleLine(line);
 		});
 
-		// Wait a moment for process to initialize
-		await new Promise((resolve) => setTimeout(resolve, 100));
+		// Wait for the child to announce protocol readiness via its runtime_manifest,
+		// rather than relying on a fixed sleep. Fall back to a bounded deadline so a
+		// child that never emits a manifest cannot hang startup forever.
+		const readyTimeoutMs = this.options.readyTimeoutMs ?? 10_000;
+		await new Promise<void>((resolve, reject) => {
+			if (this.ready) {
+				resolve();
+				return;
+			}
+			const timer = setTimeout(() => {
+				this.readyResolve = null;
+				if (this.exitError) reject(this.exitError);
+				else resolve();
+			}, readyTimeoutMs);
+			if (timer.unref) timer.unref();
+			this.readyResolve = () => {
+				clearTimeout(timer);
+				this.readyResolve = null;
+				resolve();
+			};
+			childProcess.once("exit", () => {
+				clearTimeout(timer);
+				if (this.readyResolve) {
+					this.readyResolve = null;
+					reject(this.exitError ?? this.createProcessExitError(childProcess.exitCode, childProcess.signalCode));
+				}
+			});
+		});
 
 		if (this.process.exitCode !== null) {
 			const error = this.exitError ?? this.createProcessExitError(this.process.exitCode, this.process.signalCode);
@@ -142,25 +181,36 @@ export class RpcClient {
 	 * Stop the RPC agent process.
 	 */
 	async stop(): Promise<void> {
-		if (!this.process) return;
+		const childProcess = this.process;
+		if (!childProcess) return;
 
-		this.stopReadingStdout?.();
-		this.stopReadingStdout = null;
-		this.process.kill("SIGTERM");
+		try {
+			if (childProcess.exitCode === null && childProcess.stdin?.writable && !childProcess.stdin.destroyed) {
+				await this.send({ type: "shutdown" });
+			}
+		} catch {
+			if (childProcess.exitCode === null) childProcess.kill("SIGTERM");
+		}
 
-		// Wait for process to exit
 		await new Promise<void>((resolve) => {
-			const timeout = setTimeout(() => {
-				this.process?.kill("SIGKILL");
+			if (childProcess.exitCode !== null) {
 				resolve();
-			}, 1000);
-
-			this.process?.on("exit", () => {
-				clearTimeout(timeout);
+				return;
+			}
+			const termTimeout = setTimeout(() => childProcess.kill("SIGTERM"), 1000);
+			const killTimeout = setTimeout(() => {
+				childProcess.kill("SIGKILL");
+				resolve();
+			}, 2000);
+			childProcess.once("exit", () => {
+				clearTimeout(termTimeout);
+				clearTimeout(killTimeout);
 				resolve();
 			});
 		});
 
+		this.stopReadingStdout?.();
+		this.stopReadingStdout = null;
 		this.process = null;
 		this.pendingRequests.clear();
 	}
@@ -176,6 +226,33 @@ export class RpcClient {
 				this.eventListeners.splice(index, 1);
 			}
 		};
+	}
+
+	/**
+	 * Send an extension UI response (fire-and-forget). The RPC protocol does not
+	 * acknowledge these writes. If the stdin write fails or the child has exited,
+	 * this call throws synchronously.
+	 */
+	sendExtensionUIResponse(response: RpcExtensionUIResponse): void {
+		const childProcess = this.process;
+		const stdin = childProcess?.stdin;
+		if (!childProcess || !stdin) {
+			throw new Error("Client not started");
+		}
+		if (this.exitError) {
+			throw this.exitError;
+		}
+		if (childProcess.exitCode !== null) {
+			const error = this.createProcessExitError(childProcess.exitCode, childProcess.signalCode);
+			this.exitError = error;
+			throw error;
+		}
+		if (stdin.destroyed || !stdin.writable) {
+			const error = new Error(`Agent process stdin is not writable. Stderr: ${this.stderr}`);
+			this.exitError = error;
+			throw error;
+		}
+		stdin.write(serializeJsonLine(response));
 	}
 
 	/**
@@ -217,6 +294,11 @@ export class RpcClient {
 	 */
 	async abort(): Promise<void> {
 		await this.send({ type: "abort" });
+	}
+
+	/** Request a graceful RPC process shutdown. */
+	async shutdown(): Promise<void> {
+		await this.send({ type: "shutdown" });
 	}
 
 	/**
@@ -343,6 +425,18 @@ export class RpcClient {
 		await this.send({ type: "abort_bash" });
 	}
 
+	/** Get serializable background shell, sub-agent, teammate, and package events. */
+	async getBackgroundEvents(): Promise<BackgroundEventSnapshot[]> {
+		const response = await this.send({ type: "get_background_events" });
+		return this.getData<{ events: BackgroundEventSnapshot[] }>(response).events;
+	}
+
+	/** Cancel one background event through its owning source. */
+	async cancelBackgroundEvent(sourceId: string, eventId: string): Promise<boolean> {
+		const response = await this.send({ type: "cancel_background_event", sourceId, eventId });
+		return this.getData<{ cancelled: boolean }>(response).cancelled;
+	}
+
 	/**
 	 * Get session statistics.
 	 */
@@ -453,9 +547,9 @@ export class RpcClient {
 	/**
 	 * Collect events until agent becomes idle.
 	 */
-	collectEvents(timeout = 60000): Promise<AgentEvent[]> {
+	collectEvents(timeout = 60000): Promise<RpcEvent[]> {
 		return new Promise((resolve, reject) => {
-			const events: AgentEvent[] = [];
+			const events: RpcEvent[] = [];
 			const timer = setTimeout(() => {
 				unsubscribe();
 				reject(new Error(`Timeout collecting events. Stderr: ${this.stderr}`));
@@ -475,7 +569,7 @@ export class RpcClient {
 	/**
 	 * Send prompt and wait for completion, returning all events.
 	 */
-	async promptAndWait(message: string, images?: ImageContent[], timeout = 60000): Promise<AgentEvent[]> {
+	async promptAndWait(message: string, images?: ImageContent[], timeout = 60000): Promise<RpcEvent[]> {
 		const eventsPromise = this.collectEvents(timeout);
 		await this.prompt(message, images);
 		return eventsPromise;
@@ -489,6 +583,12 @@ export class RpcClient {
 		try {
 			const data = JSON.parse(line);
 
+			// The first runtime_manifest signals protocol readiness.
+			if (!this.ready && data.type === "runtime_manifest") {
+				this.ready = true;
+				this.readyResolve?.();
+			}
+
 			// Check if it's a response to a pending request
 			if (data.type === "response" && data.id && this.pendingRequests.has(data.id)) {
 				const pending = this.pendingRequests.get(data.id)!;
@@ -499,7 +599,7 @@ export class RpcClient {
 
 			// Otherwise it's an event
 			for (const listener of this.eventListeners) {
-				listener(data as AgentEvent);
+				listener(data as RpcEvent);
 			}
 		} catch {
 			// Ignore non-JSON lines

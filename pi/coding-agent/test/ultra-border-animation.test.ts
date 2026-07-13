@@ -45,12 +45,12 @@ function createMode(): UltraBorderTestMode {
 	return mode;
 }
 
-describe("Ultra border animation lifecycle", () => {
+describe("Ultra border rendering", () => {
 	afterEach(() => {
 		vi.useRealTimers();
 	});
 
-	it("moves the rainbow without changing width and stops outside Ultra", () => {
+	it("keeps the rainbow static without scheduling repaint timers", () => {
 		vi.useFakeTimers();
 		const mode = createMode();
 		const requestRender = vi.mocked(mode.ui.requestRender);
@@ -58,40 +58,23 @@ describe("Ultra border animation lifecycle", () => {
 
 		mode.updateEditorBorderColor();
 		mode.updateEditorBorderColor();
-		expect(vi.getTimerCount()).toBe(1);
-		expect(mode.ultraBorderAnimationTimer?.hasRef()).toBe(false);
+		expect(vi.getTimerCount()).toBe(0);
 
 		const firstFrame = mode.defaultEditor.borderColor(border);
-		vi.advanceTimersByTime(120);
+		vi.advanceTimersByTime(480);
 		const secondFrame = mode.defaultEditor.borderColor(border);
 
-		expect(secondFrame).not.toBe(firstFrame);
-		expect(mode.editor.borderColor(border)).toBe(secondFrame);
+		expect(secondFrame).toBe(firstFrame);
+		expect(mode.editor.borderColor(border)).toBe(firstFrame);
 		expect(visibleWidth(secondFrame)).toBe(21);
 		expect(stripVTControlCharacters(secondFrame)).toBe(border);
-		expect(requestRender).toHaveBeenCalledTimes(3);
+		expect(requestRender).toHaveBeenCalledTimes(2);
 
 		mode.isBashMode = true;
 		mode.updateEditorBorderColor();
-		expect(vi.getTimerCount()).toBe(0);
-		const rendersAfterBash = requestRender.mock.calls.length;
-		vi.advanceTimersByTime(480);
-		expect(requestRender).toHaveBeenCalledTimes(rendersAfterBash);
-
 		mode.isBashMode = false;
 		mode.runtimeHost.session.executionProfile = "high";
 		mode.updateEditorBorderColor();
-		expect(vi.getTimerCount()).toBe(0);
-
-		mode.runtimeHost.session.executionProfile = "ultra";
-		mode.isTuiActive = false;
-		mode.updateEditorBorderColor();
-		expect(vi.getTimerCount()).toBe(0);
-
-		mode.isTuiActive = true;
-		mode.updateEditorBorderColor();
-		expect(vi.getTimerCount()).toBe(1);
-		mode.stopUltraBorderAnimation();
 		expect(vi.getTimerCount()).toBe(0);
 	});
 });

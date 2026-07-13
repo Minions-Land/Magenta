@@ -1,0 +1,40 @@
+# syntax=docker/dockerfile:1.7
+
+FROM node:24-bookworm-slim AS node-base
+
+FROM rust:1.88.0-bookworm AS build
+
+COPY --from=node-base /usr/local/ /usr/local/
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends bash build-essential ca-certificates git python3 ripgrep \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /opt/magenta
+COPY . .
+RUN npm ci --ignore-scripts \
+    && ./node_modules/.bin/tsgo -p pi/ai/tsconfig.build.json \
+    && npm --prefix pi/tui run build \
+    && npm --prefix pi/agent run build \
+    && npm --prefix HarnessComponentProtocol run build \
+    && npm --prefix HarnessComponentProtocol/memory run build \
+    && npm --prefix pi/coding-agent run build
+
+FROM node-base AS runtime
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends bash ca-certificates git openssh-client procps ripgrep tini \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --create-home --uid 10001 --shell /bin/bash magenta \
+    && mkdir -p /workspace /home/magenta/.magenta/agent \
+    && chown -R magenta:magenta /workspace /home/magenta
+
+WORKDIR /opt/magenta
+COPY --from=build --chown=magenta:magenta /opt/magenta /opt/magenta
+
+ENV MAGENTA_CODING_AGENT_DIR=/home/magenta/.magenta/agent \
+    PI_SKIP_VERSION_CHECK=1 \
+    PI_TELEMETRY=0
+
+USER magenta
+WORKDIR /workspace
+ENTRYPOINT ["/usr/bin/tini", "--", "node", "/opt/magenta/pi/coding-agent/dist/cli.js"]

@@ -264,6 +264,7 @@ export class ExtensionRunner {
 	private extensions: Extension[];
 	private runtime: ExtensionRuntime;
 	private uiContext: ExtensionUIContext;
+	private uiAvailable = false;
 	private mode: ExtensionMode = "print";
 	private cwd: string;
 	private sessionManager: SessionManager;
@@ -436,8 +437,9 @@ export class ExtensionRunner {
 		this.reloadHandler = async () => {};
 	}
 
-	setUIContext(uiContext?: ExtensionUIContext, mode: ExtensionMode = "print"): void {
+	setUIContext(uiContext?: ExtensionUIContext, mode: ExtensionMode = "print", hasUI = uiContext !== undefined): void {
 		this.uiContext = uiContext ?? noOpUIContext;
+		this.uiAvailable = hasUI;
 		this.mode = mode;
 	}
 
@@ -446,7 +448,7 @@ export class ExtensionRunner {
 	}
 
 	hasUI(): boolean {
-		return this.uiContext !== noOpUIContext;
+		return this.uiAvailable;
 	}
 
 	getExtensionPaths(): string[] {

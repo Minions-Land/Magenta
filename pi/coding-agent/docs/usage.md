@@ -119,7 +119,7 @@ On interactive startup, Magenta asks before trusting a project folder that conta
 
 Before the trust decision, Magenta loads only context files, user/global extensions, and CLI `-e` extensions so they can handle the `project_trust` event. Project-local extensions, project package-managed extensions, and project settings are loaded only after the project is trusted. This split also applies when switching to a session from a different cwd whose trust has not been resolved in the current process.
 
-Non-interactive modes (`-p`, `--mode json`, and `--mode rpc`) do not show a trust prompt. Without an applicable saved trust decision, they use `defaultProjectTrust` from global settings: `ask` (default) and `never` ignore those project resources, while `always` trusts them. Pass `--approve`/`-a` or `--no-approve`/`-na` to override project trust for one run.
+Non-interactive modes (`-p`, `--mode json`, and `--mode rpc`) do not show a trust prompt. Without an applicable saved trust decision, they use `defaultProjectTrust` from global settings: `ask` (default) and `never` ignore those project resources, while `always` trusts them. Pass `--approve`/`-a` or `--no-approve`/`-na` to override project trust for one run. When trust-required resources are excluded, headless startup emits an explicit diagnostic; JSON/RPC also include the effective decision in `runtime_manifest.projectTrust`.
 
 If no extension or saved decision applies, `defaultProjectTrust` controls the fallback behavior. Set it to `"ask"`, `"always"`, or `"never"` in `~/.magenta/agent/settings.json`, or change it with `/settings`.
 
@@ -167,8 +167,9 @@ See [Extension Packages](packages.md) for package sources and security notes.
 |------|-------------|
 | default | Interactive mode |
 | `-p`, `--print` | Print response and exit |
-| `--mode json` | Output all events as JSON lines; see [JSON mode](json.md) |
-| `--mode rpc` | RPC mode over stdin/stdout; see [RPC mode](rpc.md) |
+| `--mode json` | Versioned JSONL manifest, event stream, and terminal `run_end`; see [JSON mode](json.md) |
+| `--mode rpc` | Persistent JSONL RPC over stdin/stdout; see [RPC mode](rpc.md) |
+| `--validate-config` | Validate headless model/auth/resources without sending a model request |
 | `--export <in> [out]` | Export a session to HTML |
 
 In print mode, Magenta also reads piped stdin and merges it into the initial prompt:
@@ -210,12 +211,14 @@ The native levels use each model's `thinkingLevelMap`. Ultra is a Magenta execut
 | `--exclude-tools <list>`, `-xt <list>` | Disable tool names across every configured source |
 | `--no-builtin-tools`, `-nbt` | Disable native application and repository-default HCP tools; keep extension/custom, Package, and user MCP tools enabled |
 | `--no-tools`, `-nt` | Disable all tools |
+| `--harness-workflows`, `--no-harness-workflows` | Explicitly enable or disable `sub_agent` workflow templates |
+| `--harness-teammates`, `--no-harness-teammates` | Explicitly enable or disable `teammate_agent` |
 
 Standard profiles activate native `read`, `bash`, `edit`, `write`, `bg_shell`,
 `sub_agent`, `send_message`, `show`, `grep`, `find`, and `ls`. They retain one-shot
 `sub_agent` tasks but omit workflow templates and `teammate_agent`. Ultra activates
-both by default. `harness.workflows` and `harness.teammates` explicitly override
-those defaults in either direction. Use `sub_agent` for disposable delegated work
+both by default. `harness.workflows`, `harness.teammates`, and the matching CLI flags explicitly override
+those defaults in either direction. CLI flags have per-run precedence and do not change the provider thinking level. Use `sub_agent` for disposable delegated work
 and `teammate_agent` for a persistent hidden collaborator whose assignments and
 results travel through `send_message`.
 
@@ -252,6 +255,9 @@ magenta --no-extensions -e ./my-extension.ts
 | `--system-prompt <text>` | Replace default prompt; context files and skills are still appended |
 | `--append-system-prompt <text>` | Append to system prompt |
 | `--verbose` | Force verbose startup |
+| `--background-policy <cancel\|wait\|error>` | One-shot policy for work still running when the main agent becomes idle |
+| `--background-wait-timeout <seconds>` | Total deadline for the `wait` policy; default 60 seconds |
+| `--non-interactive-ui <deny\|error>` | Observable fallback or hard failure for blocking extension UI requests |
 | `-a`, `--approve` | Trust project-local files for this run |
 | `-na`, `--no-approve` | Ignore project-local files for this run |
 | `-h`, `--help` | Show help |
@@ -275,6 +281,12 @@ magenta "List all .ts files in src/"
 
 # Non-interactive
 magenta -p "Summarize this codebase"
+
+# Auditable JSON one-shot with strict leftover-work handling
+magenta --mode json -p --background-policy error "Fix the tests"
+
+# Validate a container/runtime without spending model tokens
+magenta --validate-config --mode json --no-session
 
 # Non-interactive with piped stdin
 cat README.md | magenta -p "Summarize this text"

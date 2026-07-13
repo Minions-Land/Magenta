@@ -80,10 +80,23 @@ export function formatCwdForFooter(cwd: string, home: string | undefined): strin
  * Footer component that shows pwd, token stats, and context usage.
  * Computes token/context stats from session, gets git branch and extension statuses from provider.
  */
+interface FooterUsageTotals {
+	totalInput: number;
+	totalOutput: number;
+	totalCacheRead: number;
+	totalCacheWrite: number;
+	totalCost: number;
+	costUnknown: boolean;
+	assistantMessageCount: number;
+}
+
 export class FooterComponent implements Component {
 	private autoCompactEnabled = true;
 	private session: AgentSession;
 	private footerData: ReadonlyFooterDataProvider;
+	private usageCache:
+		| { sessionId: string; leafId: string | null; totals: FooterUsageTotals }
+		| undefined;
 
 	constructor(session: AgentSession, footerData: ReadonlyFooterDataProvider) {
 		this.session = session;
@@ -92,18 +105,16 @@ export class FooterComponent implements Component {
 
 	setSession(session: AgentSession): void {
 		this.session = session;
+		this.usageCache = undefined;
 	}
 
 	setAutoCompactEnabled(enabled: boolean): void {
 		this.autoCompactEnabled = enabled;
 	}
 
-	/**
-	 * No-op: git branch caching now handled by provider.
-	 * Kept for compatibility with existing call sites in interactive-mode.
-	 */
+	/** Git branch caching is handled by the provider; clear local usage aggregation. */
 	invalidate(): void {
-		// No-op: git branch is cached/invalidated by provider
+		this.usageCache = undefined;
 	}
 
 	/**
@@ -114,32 +125,50 @@ export class FooterComponent implements Component {
 		// Git watcher cleanup handled by provider
 	}
 
-	render(width: number): string[] {
-		const state = this.session.state;
+	private getUsageTotals(): FooterUsageTotals {
+		const sessionId = this.session.sessionId;
+		const leafId = this.session.sessionManager.getLeafId();
+		if (this.usageCache?.sessionId === sessionId && this.usageCache.leafId === leafId) {
+			return this.usageCache.totals;
+		}
 
-		// Calculate cumulative usage from ALL session entries (not just post-compaction messages)
-		let totalInput = 0;
-		let totalOutput = 0;
-		let totalCacheRead = 0;
-		let totalCacheWrite = 0;
-		let totalCost = 0;
-		let costUnknown = false;
-		let assistantMessageCount = 0;
-
+		const totals: FooterUsageTotals = {
+			totalInput: 0,
+			totalOutput: 0,
+			totalCacheRead: 0,
+			totalCacheWrite: 0,
+			totalCost: 0,
+			costUnknown: false,
+			assistantMessageCount: 0,
+		};
 		for (const entry of this.session.sessionManager.getEntries()) {
-			if (entry.type === "message" && entry.message.role === "assistant") {
-				assistantMessageCount++;
-				totalInput += entry.message.usage.input;
-				totalOutput += entry.message.usage.output;
-				totalCacheRead += entry.message.usage.cacheRead;
-				totalCacheWrite += entry.message.usage.cacheWrite;
-				if (entry.message.usage.cost.unknown) {
-					costUnknown = true;
-				} else {
-					totalCost += entry.message.usage.cost.total;
-				}
+			if (entry.type !== "message" || entry.message.role !== "assistant") continue;
+			totals.assistantMessageCount += 1;
+			totals.totalInput += entry.message.usage.input;
+			totals.totalOutput += entry.message.usage.output;
+			totals.totalCacheRead += entry.message.usage.cacheRead;
+			totals.totalCacheWrite += entry.message.usage.cacheWrite;
+			if (entry.message.usage.cost.unknown) {
+				totals.costUnknown = true;
+			} else {
+				totals.totalCost += entry.message.usage.cost.total;
 			}
 		}
+		this.usageCache = { sessionId, leafId, totals };
+		return totals;
+	}
+
+	render(width: number): string[] {
+		const state = this.session.state;
+		const {
+			totalInput,
+			totalOutput,
+			totalCacheRead,
+			totalCacheWrite,
+			totalCost,
+			costUnknown,
+			assistantMessageCount,
+		} = this.getUsageTotals();
 
 		// Calculate average cache hit rate across all messages
 		const totalPromptTokens = totalInput + totalCacheRead + totalCacheWrite;

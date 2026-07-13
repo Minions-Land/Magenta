@@ -100,6 +100,7 @@ export {
 	type Component,
 	Container,
 	CURSOR_MARKER,
+	StaticPrefixContainer,
 	type Focusable,
 	isFocusable,
 	type OverlayAnchor,
@@ -109,6 +110,8 @@ export {
 	type OverlayUnfocusOptions,
 	type SizeValue,
 	TUI,
+	type TUIComponentRenderProfile,
+	type TUIRenderProfileSnapshot,
 } from "./tui.ts";
 // Utilities
 export { sliceByColumn, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "./utils.ts";

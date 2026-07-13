@@ -322,13 +322,21 @@ export {
 export { type MainOptions, main } from "./main.ts";
 // Run modes for programmatic SDK usage
 export {
+	type BackgroundPolicy,
+	HEADLESS_PROTOCOL_VERSION,
+	type HeadlessProtocolEvent,
+	type HeadlessRunEndEvent,
+	type HeadlessRuntimeManifest,
+	type HeadlessUiEvent,
 	InteractiveMode,
 	type InteractiveModeOptions,
 	type ModelInfo,
+	type NonInteractiveUiPolicy,
 	type PrintModeOptions,
 	RpcClient,
 	type RpcClientOptions,
 	type RpcCommand,
+	type RpcEvent,
 	type RpcEventListener,
 	type RpcExtensionUIRequest,
 	type RpcExtensionUIResponse,

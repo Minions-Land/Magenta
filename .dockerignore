@@ -1,0 +1,19 @@
+.git
+.gitignore
+.magenta
+**/node_modules
+**/dist
+**/coverage
+**/.cache
+HarnessComponentProtocol/eval/results
+pi/coding-agent/test/fixtures
+*.log
+.DS_Store
+
+# Credentials and secrets
+auth.json
+.env
+*.key
+*.pem
+*credentials*
+*secret*

@@ -7,11 +7,13 @@
 
 import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { ImageContent, Model } from "@earendil-works/pi-ai";
-import type { SessionStats } from "../../core/agent-session.ts";
+import type { AgentSessionEvent, SessionStats } from "../../core/agent-session.ts";
+import type { BackgroundEventSnapshot } from "../../core/background-events.ts";
 import type { BashResult } from "../../core/bash-executor.ts";
 import type { CompactionResult } from "../../core/compaction/index.ts";
 import type { ExecutionProfile } from "../../core/execution-profile.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
+import type { HeadlessRuntimeManifest } from "../headless-protocol.ts";
 
 // ============================================================================
 // RPC Commands (stdin)
@@ -23,6 +25,7 @@ export type RpcCommand =
 	| { id?: string; type: "steer"; message: string; images?: ImageContent[] }
 	| { id?: string; type: "follow_up"; message: string; images?: ImageContent[] }
 	| { id?: string; type: "abort" }
+	| { id?: string; type: "shutdown" }
 	| { id?: string; type: "new_session"; parentSession?: string }
 
 	// State
@@ -53,6 +56,10 @@ export type RpcCommand =
 	// Bash
 	| { id?: string; type: "bash"; command: string; excludeFromContext?: boolean }
 	| { id?: string; type: "abort_bash" }
+
+	// Background work
+	| { id?: string; type: "get_background_events" }
+	| { id?: string; type: "cancel_background_event"; sourceId: string; eventId: string }
 
 	// Session
 	| { id?: string; type: "get_session_stats" }
@@ -117,6 +124,7 @@ export type RpcResponse =
 	| { id?: string; type: "response"; command: "steer"; success: true }
 	| { id?: string; type: "response"; command: "follow_up"; success: true }
 	| { id?: string; type: "response"; command: "abort"; success: true }
+	| { id?: string; type: "response"; command: "shutdown"; success: true }
 	| { id?: string; type: "response"; command: "new_session"; success: true; data: { cancelled: boolean } }
 
 	// State
@@ -177,6 +185,22 @@ export type RpcResponse =
 	| { id?: string; type: "response"; command: "bash"; success: true; data: BashResult }
 	| { id?: string; type: "response"; command: "abort_bash"; success: true }
 
+	// Background work
+	| {
+			id?: string;
+			type: "response";
+			command: "get_background_events";
+			success: true;
+			data: { events: BackgroundEventSnapshot[] };
+	  }
+	| {
+			id?: string;
+			type: "response";
+			command: "cancel_background_event";
+			success: true;
+			data: { cancelled: boolean };
+	  }
+
 	// Session
 	| { id?: string; type: "response"; command: "get_session_stats"; success: true; data: SessionStats }
 	| { id?: string; type: "response"; command: "export_html"; success: true; data: { path: string } }
@@ -219,6 +243,15 @@ export type RpcResponse =
 // ============================================================================
 
 /** Emitted when an extension needs user input */
+export type RpcExtensionErrorEvent = {
+	type: "extension_error";
+	extensionPath: string;
+	event: string;
+	error: string;
+};
+
+export type RpcEvent = AgentSessionEvent | HeadlessRuntimeManifest | RpcExtensionUIRequest | RpcExtensionErrorEvent;
+
 export type RpcExtensionUIRequest =
 	| { type: "extension_ui_request"; id: string; method: "select"; title: string; options: string[]; timeout?: number }
 	| { type: "extension_ui_request"; id: string; method: "confirm"; title: string; message: string; timeout?: number }

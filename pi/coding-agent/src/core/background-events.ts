@@ -39,6 +39,12 @@ export type EventEntry = {
 	key: string;
 };
 
+/** Plain-data event view for headless protocols and SDK callers. */
+export type BackgroundEventSnapshot = MonitoredEvent & {
+	sourceId: string;
+	sourceTitle: string;
+};
+
 export type NotifyLevel = "info" | "warning" | "error";
 
 export type TuiLike = {
@@ -52,6 +58,7 @@ function eventKey(sourceId: string, eventId: string): string {
 export class BackgroundEventManager {
 	private sources = new Map<string, EventSource>();
 	private acknowledgedFailures = new Set<string>();
+	private changeListeners = new Set<(disposed: boolean) => void>();
 	private statusCtx: ExtensionContext | undefined;
 	private statusTimer: NodeJS.Timeout | undefined;
 	private overlayVisible = false;
@@ -65,6 +72,7 @@ export class BackgroundEventManager {
 	}
 
 	update(ctx?: ExtensionContext): void {
+		for (const listener of this.changeListeners) listener(false);
 		if (ctx?.hasUI) this.statusCtx = ctx;
 		if (!this.statusCtx?.hasUI) return;
 
@@ -132,11 +140,59 @@ export class BackgroundEventManager {
 		else await this.show(ctx, "all");
 	}
 
+	/** Return a stable, serializable snapshot of all registered background work. */
+	getEvents(): BackgroundEventSnapshot[] {
+		return this.allEntries().map(({ source, event }) => ({
+			...event,
+			...(event.progress ? { progress: { ...event.progress } } : {}),
+			sourceId: source.id,
+			sourceTitle: source.title,
+		}));
+	}
+
+	/** Cancel one event through its owning controller. */
+	cancelEvent(sourceId: string, eventId: string, ctx?: ExtensionContext): boolean {
+		return this.sources.get(sourceId)?.cancelEvent?.(eventId, ctx) ?? false;
+	}
+
+	/** Wait until no source reports running work, or until the optional deadline/abort fires. */
+	waitForIdle(options: { timeoutMs?: number; signal?: AbortSignal } = {}): Promise<boolean> {
+		if (this.runningEvents().length === 0) return Promise.resolve(true);
+		if (options.signal?.aborted) return Promise.resolve(false);
+
+		return new Promise((resolve) => {
+			let timeout: NodeJS.Timeout | undefined;
+			let settled = false;
+
+			const finish = (idle: boolean) => {
+				if (settled) return;
+				settled = true;
+				if (timeout) clearTimeout(timeout);
+				options.signal?.removeEventListener("abort", onAbort);
+				this.changeListeners.delete(onChange);
+				resolve(idle);
+			};
+			const onAbort = () => finish(false);
+			const onChange = (disposed: boolean) => {
+				if (disposed) finish(false);
+				else if (this.runningEvents().length === 0) finish(true);
+			};
+
+			this.changeListeners.add(onChange);
+			options.signal?.addEventListener("abort", onAbort, { once: true });
+			if (options.timeoutMs !== undefined) {
+				timeout = setTimeout(() => finish(false), Math.max(0, options.timeoutMs));
+			}
+		});
+	}
+
 	dispose(): void {
 		this.statusCtx?.ui.setStatus(STATUS_KEY, undefined);
 		this.hide();
 		this.statusCtx = undefined;
 		this.stopTimer();
+		for (const listener of this.changeListeners) listener(true);
+		this.changeListeners.clear();
 	}
 
 	private sourceEntries(): EventSource[] {

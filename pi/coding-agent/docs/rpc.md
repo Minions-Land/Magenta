@@ -17,11 +17,15 @@ Common options:
 - `--no-session`: Disable session persistence
 - `--session-dir <path>`: Custom session storage directory
 
+RPC reserves stdin for JSONL. Positional prompts and `@file` arguments are rejected instead of being silently ignored. The interactive `--resume` selector is also rejected in headless modes; use `--session`, `--continue`, or the session commands below.
+
 ## Protocol Overview
 
 - **Commands**: JSON objects sent to stdin, one per line
 - **Responses**: JSON objects with `type: "response"` indicating command success/failure
-- **Events**: Agent events streamed to stdout as JSON lines
+- **Events**: Runtime, agent, extension, and tool events streamed to stdout as JSON lines
+
+After extensions finish binding, RPC emits a versioned `runtime_manifest` describing the effective model, execution profile, tools, resources, project trust, policies, and diagnostics. Session replacement emits another manifest with the same `runId` and an incremented `sequence`.
 
 All commands support an optional `id` field for request/response correlation. If provided, the corresponding response will include the same `id`.
 
@@ -133,6 +137,23 @@ Response:
 ```json
 {"type": "response", "command": "abort", "success": true}
 ```
+
+#### shutdown
+
+Request graceful process shutdown. The success response is flushed first. If the agent is streaming, shutdown waits for the current agent run to reach idle; clients can still use `abort` first when immediate cancellation is required.
+
+```json
+{"id": "quit-1", "type": "shutdown"}
+```
+
+Response:
+```json
+{"id": "quit-1", "type": "response", "command": "shutdown", "success": true}
+```
+
+Extension `ctx.shutdown()` uses the same idle-aware path and no longer requires another stdin command to make progress.
+
+The process also shuts down gracefully on `SIGINT` (Ctrl+C, exit 130), `SIGTERM` (exit 143), and `SIGHUP` (exit 129, non-Windows). Each disposes the runtime, emits `session_shutdown`, and terminates tracked detached background children (shell, sub-agent, teammate) so they do not outlive the RPC parent.
 
 #### new_session
 
@@ -496,6 +517,58 @@ Response:
 {"type": "response", "command": "abort_bash", "success": true}
 ```
 
+### Background Work
+
+#### get_background_events
+
+Return serializable snapshots from every registered background source, including shell jobs, sub-agents, teammates, and Package acquisition:
+
+```json
+{"id": "bg-list", "type": "get_background_events"}
+```
+
+```json
+{
+  "id": "bg-list",
+  "type": "response",
+  "command": "get_background_events",
+  "success": true,
+  "data": {
+    "events": [
+      {
+        "sourceId": "agents",
+        "sourceTitle": "agents",
+        "id": "agent_001",
+        "status": "running",
+        "startedAt": 1733234567890,
+        "label": "review",
+        "canCancel": true
+      }
+    ]
+  }
+}
+```
+
+#### cancel_background_event
+
+Cancel one event through its owning controller. Both `sourceId` and `eventId` are required because identifiers are only unique within a source.
+
+```json
+{"id": "bg-cancel", "type": "cancel_background_event", "sourceId": "agents", "eventId": "agent_001"}
+```
+
+```json
+{
+  "id": "bg-cancel",
+  "type": "response",
+  "command": "cancel_background_event",
+  "success": true,
+  "data": {"cancelled": true}
+}
+```
+
+`success: true` means the RPC command was valid. `data.cancelled: false` means the source or running event was not found.
+
 ### Session
 
 #### get_session_stats
@@ -749,6 +822,7 @@ Events are streamed to stdout as JSON lines during agent operation. Events do NO
 
 | Event | Description |
 |-------|-------------|
+| `runtime_manifest` | Versioned effective runtime configuration emitted after each session bind |
 | `agent_start` | Agent begins processing |
 | `agent_end` | Agent completes (includes all generated messages) |
 | `turn_start` | New turn begins |
@@ -765,6 +839,10 @@ Events are streamed to stdout as JSON lines during agent operation. Events do NO
 | `auto_retry_start` | Auto-retry begins (after transient error) |
 | `auto_retry_end` | Auto-retry completes (success or final failure) |
 | `extension_error` | Extension threw an error |
+
+### runtime_manifest
+
+Emitted after initial extension/resource binding and after every successful session replacement. It uses headless protocol version `1` and has the same auditable fields documented in [JSON mode](json.md#runtime-manifest). Startup extension UI requests can precede the manifest because RPC must service those dialogs while binding; agent events raised during binding are buffered and emitted after the manifest.
 
 ### agent_start
 
@@ -1356,6 +1434,8 @@ for event in read_events():
 ## Example: Interactive Client (Node.js)
 
 See [`test/rpc-example.ts`](../test/rpc-example.ts) for a complete interactive example, or [`src/modes/rpc/rpc-client.ts`](../src/modes/rpc/rpc-client.ts) for a typed client implementation.
+
+The bundled `RpcClient` awaits the child's first `runtime_manifest` before `start()` resolves, so the client is guaranteed to be able to service startup extension dialogs. This readiness wait is bounded by `readyTimeoutMs` (default 10s); if the child never emits a manifest, `start()` resolves after the deadline instead of hanging. To answer a startup `extension_ui_request` (for example, a `session_start` dialog), use the fire-and-forget `sendExtensionUIResponse(...)` method, which writes an `extension_ui_response` to the child's stdin without waiting for acknowledgment.
 
 For a complete example of handling the extension UI protocol, see [`examples/rpc-extension-ui.ts`](../examples/rpc-extension-ui.ts) which pairs with the [`examples/extensions/rpc-demo.ts`](../examples/extensions/rpc-demo.ts) extension.
 

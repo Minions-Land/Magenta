@@ -1449,4 +1449,74 @@ bar`,
 			assert.strictEqual(partial.render(80).length, complete.render(80).length);
 		});
 	});
+
+	describe("Incremental rendering", () => {
+		it("matches a fresh renderer for every streamed prefix", () => {
+			const streams = [
+				[
+					"# Heading",
+					"",
+					"Paragraph with **bold** and `code`.",
+					"",
+					"- first",
+					"  - nested",
+					"- second",
+					"",
+					"```ts",
+					"const value = 42;",
+					"```",
+				].join("\n"),
+				[
+					"Setext heading",
+					"---",
+					"",
+					"| Name | Value |",
+					"| --- | ---: |",
+					"| alpha | 1 |",
+					"",
+					"> quoted text that wraps across the viewport width",
+				].join("\n"),
+				"Reference [documentation][guide] appears before its definition.\n\n[guide]: https://example.com/docs",
+			];
+
+			for (const stream of streams) {
+				const incremental = new Markdown("", 1, 0, defaultMarkdownTheme);
+				for (let end = 1; end <= stream.length; end++) {
+					const prefix = stream.slice(0, end);
+					incremental.setText(prefix);
+					const fresh = new Markdown(prefix, 1, 0, defaultMarkdownTheme);
+					assert.deepStrictEqual(
+						incremental.render(48),
+						fresh.render(48),
+						`render mismatch at streamed prefix ${end}: ${JSON.stringify(prefix)}`,
+					);
+				}
+			}
+		});
+
+		it("reuses stable token rendering and invalidates it on width or theme changes", () => {
+			let highlightCalls = 0;
+			const markdownTheme = {
+				...defaultMarkdownTheme,
+				highlightCode: (code: string) => {
+					highlightCalls += 1;
+					return code.split("\n");
+				},
+			};
+			const initial = "```ts\nconst value = 42;\n```\n\nFirst paragraph";
+			const markdown = new Markdown(initial, 0, 0, markdownTheme);
+			markdown.render(80);
+			assert.strictEqual(highlightCalls, 1);
+
+			markdown.setText(`${initial} keeps growing`);
+			markdown.render(80);
+			assert.strictEqual(highlightCalls, 1, "stable code token should not be highlighted again");
+
+			markdown.render(60);
+			assert.strictEqual(highlightCalls, 2, "width changes invalidate wrapped token output");
+			markdown.invalidate();
+			markdown.render(60);
+			assert.strictEqual(highlightCalls, 3, "theme invalidation clears the token cache");
+		});
+	});
 });

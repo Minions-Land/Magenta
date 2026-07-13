@@ -62,7 +62,7 @@ export class AssistantMessageComponent extends Container {
 	// Character-by-character animation state
 	private targetTexts: string[] = []; // Target text for each content block
 	private displayedTexts: string[] = []; // Currently displayed text for each block
-	private displayedMarkdowns: (Markdown | Text)[] = []; // Components for each block
+	private displayedBlocks: (Markdown | Text | undefined)[] = []; // Component aligned with each animated block
 
 	constructor(
 		message?: AssistantMessage,
@@ -192,9 +192,13 @@ export class AssistantMessageComponent extends Container {
 			const target = this.targetTexts[i] || "";
 			const displayed = this.displayedTexts[i] || "";
 			if (displayed.length < target.length) {
+				const hadVisibleContent = this.displayedTexts.some((text) => text.trim());
 				const newLength = Math.min(displayed.length + charsToAdvance, target.length);
 				this.displayedTexts[i] = target.slice(0, newLength);
-				this.renderContent();
+				const hasVisibleContent = this.displayedTexts.some((text) => text.trim());
+				if (hadVisibleContent !== hasVisibleContent || !this.updateDisplayedBlock(i)) {
+					this.renderContent();
+				}
 				return true; // More content remains
 			}
 		}
@@ -202,12 +206,23 @@ export class AssistantMessageComponent extends Container {
 		return false;
 	}
 
+	private updateDisplayedBlock(blockIndex: number): boolean {
+		const component = this.displayedBlocks[blockIndex];
+		if (!component) return false;
+		if (component instanceof Markdown) {
+			component.setText(this.displayedTexts[blockIndex] || "");
+			return true;
+		}
+		// Hidden thinking blocks render a fixed label while their text advances.
+		return component instanceof Text && this.hideThinkingBlock;
+	}
+
 	private renderContent(): void {
 		if (!this.lastMessage) return;
 
 		// Clear content container
 		this.contentContainer.clear();
-		this.displayedMarkdowns = [];
+		this.displayedBlocks = [];
 
 		const hasVisibleContent = this.displayedTexts.some((text) => text.trim());
 
@@ -224,7 +239,7 @@ export class AssistantMessageComponent extends Container {
 				if (displayedText) {
 					const md = new Markdown(displayedText, 1, 0, this.markdownTheme);
 					this.contentContainer.addChild(md);
-					this.displayedMarkdowns.push(md);
+					this.displayedBlocks[blockIndex] = md;
 				}
 				blockIndex++;
 			} else if (content.type === "thinking" && content.thinking.trim()) {
@@ -236,7 +251,7 @@ export class AssistantMessageComponent extends Container {
 				if (this.hideThinkingBlock) {
 					const label = new Text(theme.italic(theme.fg("thinkingText", this.hiddenThinkingLabel)), 1, 0);
 					this.contentContainer.addChild(label);
-					this.displayedMarkdowns.push(label);
+					this.displayedBlocks[blockIndex] = label;
 					if (hasVisibleContentAfter) {
 						this.contentContainer.addChild(new Spacer(1));
 					}
@@ -246,7 +261,7 @@ export class AssistantMessageComponent extends Container {
 						italic: true,
 					});
 					this.contentContainer.addChild(md);
-					this.displayedMarkdowns.push(md);
+					this.displayedBlocks[blockIndex] = md;
 					if (hasVisibleContentAfter) {
 						this.contentContainer.addChild(new Spacer(1));
 					}

@@ -1061,8 +1061,13 @@ await runPrintMode(runtime, {
   initialMessage: "Hello",
   initialImages: [],
   messages: ["Follow up"],
+  backgroundPolicy: "cancel", // "cancel" | "wait" | "error"
+  backgroundWaitTimeoutMs: 60_000,
+  nonInteractiveUiPolicy: "deny", // "deny" | "error"
 });
 ```
+
+With `mode: "json"`, stdout receives a versioned `runtime_manifest`, agent events, and exactly one terminal `run_end`; the returned numeric exit code agrees with that terminal result. Set `validateOnly: true` to bind and validate model authentication/resources without sending a prompt. The public headless types and `HEADLESS_PROTOCOL_VERSION` are exported from the package.
 
 ### runRpcMode
 
@@ -1096,7 +1101,7 @@ const runtime = await createAgentSessionRuntime(createRuntime, {
 await runRpcMode(runtime);
 ```
 
-See [RPC documentation](rpc.md) for the JSON protocol.
+See [RPC documentation](rpc.md) for the JSON protocol. RPC emits the same runtime manifest, supports `shutdown`, and exposes `get_background_events` / `cancel_background_event`. `RpcClient.stop()` first requests graceful protocol shutdown, then falls back to process signals if the child does not exit.
 
 ## RPC Mode Alternative
 

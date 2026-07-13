@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://magenta.dev/schemas/headless-protocol-v1.json",
+  "title": "Magenta headless protocol v1 records",
+  "oneOf": [
+    { "$ref": "#/$defs/runtimeManifest" },
+    { "$ref": "#/$defs/nonInteractiveUi" },
+    { "$ref": "#/$defs/runEnd" }
+  ],
+  "$defs": {
+    "runtimeManifest": {
+      "type": "object",
+      "required": [
+        "type",
+        "protocolVersion",
+        "runId",
+        "sequence",
+        "mode",
+        "timestamp",
+        "product",
+        "cwd",
+        "session",
+        "execution",
+        "tools",
+        "resources",
+        "projectTrust",
+        "policies",
+        "diagnostics"
+      ],
+      "properties": {
+        "type": { "const": "runtime_manifest" },
+        "protocolVersion": { "const": 1 },
+        "runId": { "type": "string", "minLength": 1 },
+        "sequence": { "type": "integer", "minimum": 1 },
+        "mode": { "enum": ["json", "rpc"] },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "product": { "type": "object" },
+        "cwd": { "type": "string" },
+        "session": { "type": "object" },
+        "model": { "type": "object" },
+        "execution": { "type": "object" },
+        "tools": { "type": "object" },
+        "resources": { "type": "object" },
+        "projectTrust": { "type": "object" },
+        "policies": { "type": "object" },
+        "diagnostics": { "type": "array" }
+      },
+      "additionalProperties": true
+    },
+    "nonInteractiveUi": {
+      "type": "object",
+      "required": ["type", "protocolVersion", "mode", "method", "disposition", "message"],
+      "properties": {
+        "type": { "const": "non_interactive_ui" },
+        "protocolVersion": { "const": 1 },
+        "mode": { "enum": ["print", "json"] },
+        "method": { "type": "string" },
+        "disposition": { "enum": ["denied", "error", "reported", "ignored"] },
+        "message": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "runEnd": {
+      "type": "object",
+      "required": [
+        "type",
+        "protocolVersion",
+        "runId",
+        "status",
+        "exitCode",
+        "startedAt",
+        "endedAt",
+        "durationMs",
+        "stats",
+        "background",
+        "nonInteractiveUi"
+      ],
+      "properties": {
+        "type": { "const": "run_end" },
+        "protocolVersion": { "const": 1 },
+        "runId": { "type": "string", "minLength": 1 },
+        "status": { "enum": ["success", "error", "aborted"] },
+        "exitCode": { "type": "integer", "minimum": 0 },
+        "startedAt": { "type": "string", "format": "date-time" },
+        "endedAt": { "type": "string", "format": "date-time" },
+        "durationMs": { "type": "integer", "minimum": 0 },
+        "stopReason": { "type": "string" },
+        "error": { "type": "string" },
+        "stats": { "type": "object" },
+        "background": {
+          "type": "object",
+          "required": ["policy", "settled", "events"],
+          "properties": {
+            "policy": { "enum": ["cancel", "wait", "error"] },
+            "settled": { "type": "boolean" },
+            "events": { "type": "array" }
+          },
+          "additionalProperties": true
+        },
+        "nonInteractiveUi": { "type": "object" }
+      },
+      "additionalProperties": true
+    }
+  }
+}

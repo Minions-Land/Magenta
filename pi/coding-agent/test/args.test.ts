@@ -125,6 +125,24 @@ describe("parseArgs", () => {
 			expect(result.mode).toBe("rpc");
 		});
 
+		test("rejects an invalid --mode value with a diagnostic", () => {
+			const result = parseArgs(["--mode", "bogus", "-p", "hi"]);
+			expect(result.mode).toBeUndefined();
+			expect(result.messages).toEqual(["hi"]);
+			expect(result.diagnostics).toEqual([
+				expect.objectContaining({ type: "error", message: expect.stringContaining("--mode requires one of") }),
+			]);
+		});
+
+		test("does not consume the next flag when --mode has no value", () => {
+			const result = parseArgs(["--mode", "--print"]);
+			expect(result.mode).toBeUndefined();
+			expect(result.print).toBe(true);
+			expect(result.diagnostics).toEqual([
+				expect.objectContaining({ type: "error", message: expect.stringContaining("--mode requires one of") }),
+			]);
+		});
+
 		test("parses --session", () => {
 			const result = parseArgs(["--session", "/path/to/session.jsonl"]);
 			expect(result.session).toBe("/path/to/session.jsonl");
@@ -411,6 +429,55 @@ describe("parseArgs", () => {
 			const result = parseArgs(["--no-builtin-tools", "--tools", "read,bash"]);
 			expect(result.noBuiltinTools).toBe(true);
 			expect(result.tools).toEqual(["read", "bash"]);
+		});
+	});
+
+	describe("headless and harness capability flags", () => {
+		test("parses explicit workflow and teammate overrides", () => {
+			const enabled = parseArgs(["--harness-workflows", "--harness-teammates"]);
+			expect(enabled.harnessWorkflows).toBe(true);
+			expect(enabled.harnessTeammates).toBe(true);
+
+			const disabled = parseArgs(["--no-harness-workflows", "--no-harness-teammates"]);
+			expect(disabled.harnessWorkflows).toBe(false);
+			expect(disabled.harnessTeammates).toBe(false);
+		});
+
+		test("parses validation-only mode", () => {
+			const result = parseArgs(["--validate-config", "--mode", "json"]);
+			expect(result.validateConfig).toBe(true);
+			expect(result.mode).toBe("json");
+		});
+
+		test("parses background and non-interactive UI policies", () => {
+			const result = parseArgs([
+				"--background-policy",
+				"wait",
+				"--background-wait-timeout",
+				"12.5",
+				"--non-interactive-ui",
+				"error",
+			]);
+			expect(result.backgroundPolicy).toBe("wait");
+			expect(result.backgroundWaitTimeoutMs).toBe(12_500);
+			expect(result.nonInteractiveUiPolicy).toBe("error");
+			expect(result.diagnostics).toEqual([]);
+		});
+
+		test("rejects invalid headless policy values", () => {
+			const result = parseArgs([
+				"--background-policy",
+				"forever",
+				"--background-wait-timeout",
+				"-1",
+				"--non-interactive-ui",
+				"prompt",
+			]);
+			expect(result.diagnostics).toEqual([
+				expect.objectContaining({ type: "error", message: expect.stringContaining("--background-policy") }),
+				expect.objectContaining({ type: "error", message: expect.stringContaining("--background-wait-timeout") }),
+				expect.objectContaining({ type: "error", message: expect.stringContaining("--non-interactive-ui") }),
+			]);
 		});
 	});
 

@@ -509,6 +509,19 @@ describe("ExtensionRunner", () => {
 			expect(ctx.isProjectTrusted()).toBe(false);
 		});
 
+		it("can expose an observable JSON UI context while keeping hasUI false", async () => {
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			runner.bindCore(extensionActions, extensionContextActions);
+			const uiContext = {} as ExtensionUIContext;
+			runner.setUIContext(uiContext, "json", false);
+
+			const ctx = runner.createContext();
+			expect(ctx.mode).toBe("json");
+			expect(ctx.hasUI).toBe(false);
+			expect(ctx.ui).toBe(uiContext);
+		});
+
 		it("exposes rpc mode with hasUI true when an RPC UI context is provided", async () => {
 			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
 			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);

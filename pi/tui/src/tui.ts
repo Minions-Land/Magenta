@@ -290,12 +290,161 @@ export class Container implements Component {
 }
 
 /**
+ * Container for append-only views with a long immutable prefix and an explicitly
+ * mutable tail. Call beginMutableTail() before adding live components, then
+ * commitMutableTail() once they stop changing.
+ */
+export class StaticPrefixContainer extends Container {
+	private mutableTailStart: number | undefined;
+	private cachedPrefixLines: string[] | undefined;
+	private cachedPrefixWidth: number | undefined;
+	private cachedPrefixChildCount = -1;
+	private prefixRevision = 0;
+	private lastDirtyFrom: number | null = 0;
+
+	override addChild(component: Component): void {
+		super.addChild(component);
+		if (this.mutableTailStart === undefined) {
+			this.invalidateCache();
+		}
+	}
+
+	override removeChild(component: Component): void {
+		const index = this.children.indexOf(component);
+		if (index === -1) return;
+		super.removeChild(component);
+		if (this.mutableTailStart === undefined || index < this.mutableTailStart) {
+			if (this.mutableTailStart !== undefined) this.mutableTailStart -= 1;
+			this.invalidateCache();
+		}
+	}
+
+	override clear(): void {
+		super.clear();
+		this.mutableTailStart = undefined;
+		this.invalidateCache();
+	}
+
+	override invalidate(): void {
+		super.invalidate();
+		this.invalidateCache();
+	}
+
+	/** Mark all subsequently appended children as live and mutable. */
+	beginMutableTail(): void {
+		if (this.mutableTailStart !== undefined) return;
+		this.mutableTailStart = this.children.length;
+	}
+
+	/** Promote the current mutable tail into the immutable prefix. */
+	commitMutableTail(): void {
+		if (this.mutableTailStart === undefined) return;
+		this.mutableTailStart = undefined;
+		this.invalidateCache();
+	}
+
+	/** Clear only the concatenated prefix cache, without invalidating child caches. */
+	invalidateCache(): void {
+		this.cachedPrefixLines = undefined;
+		this.cachedPrefixWidth = undefined;
+		this.cachedPrefixChildCount = -1;
+		this.prefixRevision += 1;
+		this.lastDirtyFrom = 0;
+	}
+
+	invalidateChild(component: Component): void {
+		const index = this.children.indexOf(component);
+		if (index === -1 || this.mutableTailStart === undefined || index < this.mutableTailStart) {
+			this.invalidateCache();
+		}
+	}
+
+	getPrefixRevision(): number {
+		return this.prefixRevision;
+	}
+
+	/** Dirty line within the most recent render, or null when output was reused unchanged. */
+	getLastDirtyFrom(): number | null {
+		return this.lastDirtyFrom;
+	}
+
+	override render(width: number): string[] {
+		const prefixChildCount = this.mutableTailStart ?? this.children.length;
+		const prefixCacheValid =
+			this.cachedPrefixLines !== undefined &&
+			this.cachedPrefixWidth === width &&
+			this.cachedPrefixChildCount === prefixChildCount;
+
+		let prefixLines: string[];
+		if (prefixCacheValid) {
+			prefixLines = this.cachedPrefixLines as string[];
+		} else {
+			prefixLines = [];
+			for (let i = 0; i < prefixChildCount; i++) {
+				prefixLines.push(...this.children[i].render(width));
+			}
+			this.cachedPrefixLines = prefixLines;
+			this.cachedPrefixWidth = width;
+			this.cachedPrefixChildCount = prefixChildCount;
+		}
+
+		if (prefixChildCount === this.children.length) {
+			this.lastDirtyFrom = prefixCacheValid ? null : 0;
+			return prefixLines;
+		}
+
+		const lines = [...prefixLines];
+		for (let i = prefixChildCount; i < this.children.length; i++) {
+			lines.push(...this.children[i].render(width));
+		}
+		this.lastDirtyFrom = prefixCacheValid ? prefixLines.length : 0;
+		return lines;
+	}
+}
+
+export interface TUIComponentRenderProfile {
+	calls: number;
+	totalMs: number;
+	maxMs: number;
+}
+
+export interface TUIRenderProfileSnapshot {
+	renders: number;
+	fullRedraws: number;
+	totalMs: number;
+	maxFrameMs: number;
+	rootRenderMs: number;
+	overlayMs: number;
+	normalizationMs: number;
+	diffMs: number;
+	terminalWriteMs: number;
+	comparedLines: number;
+	resetLines: number;
+	components: Record<string, TUIComponentRenderProfile>;
+}
+
+interface MutableTUIRenderProfile extends Omit<TUIRenderProfileSnapshot, "fullRedraws"> {}
+
+interface RenderFrameMetrics {
+	rootRenderMs: number;
+	overlayMs: number;
+	normalizationMs: number;
+	diffMs: number;
+	terminalWriteMs: number;
+	comparedLines: number;
+	resetLines: number;
+}
+
+/**
  * TUI - Main class for managing terminal UI with differential rendering
  */
 export class TUI extends Container {
 	public terminal: Terminal;
 	private previousLines: string[] = [];
 	private previousKittyImageIds = new Set<number>();
+	private previousRootChildren: Component[] = [];
+	private rootChildSnapshots = new Map<Component, string[]>();
+	private staticPrefixRevisions = new Map<StaticPrefixContainer, number>();
 	private previousWidth = 0;
 	private previousHeight = 0;
 	private focusedComponent: Component | null = null;
@@ -313,12 +462,16 @@ export class TUI extends Container {
 	private clearOnShrink = process.env.PI_CLEAR_ON_SHRINK === "1"; // Clear empty rows when content shrinks (default: off)
 	private maxLinesRendered = 0; // Track terminal's working area (max lines ever rendered)
 	private previousViewportTop = 0; // Track previous viewport top for resize-aware cursor moves
+	private previousFrameHadOverlays = false;
 	private fullRedrawCount = 0;
 	private stopped = false;
 	private pendingOsc11BackgroundReplies = 0;
 	private pendingOsc11BackgroundQueries: PendingOsc11BackgroundQuery[] = [];
 	private terminalColorSchemeListeners = new Set<(scheme: TerminalColorScheme) => void>();
 	private terminalColorSchemeNotificationsEnabled = false;
+	private renderProfile: MutableTUIRenderProfile | undefined;
+	private renderProfileOutput: string | undefined;
+	private renderProfileWritten = false;
 
 	// Overlay stack for modal components rendered on top of base content
 	private focusOrderCounter = 0;
@@ -331,10 +484,77 @@ export class TUI extends Container {
 		if (showHardwareCursor !== undefined) {
 			this.showHardwareCursor = showHardwareCursor;
 		}
+		const profileOutput = process.env.PI_TUI_PROFILE?.trim();
+		if (profileOutput && profileOutput !== "0" && profileOutput !== "false") {
+			this.renderProfileOutput = profileOutput;
+			this.renderProfile = {
+				renders: 0,
+				totalMs: 0,
+				maxFrameMs: 0,
+				rootRenderMs: 0,
+				overlayMs: 0,
+				normalizationMs: 0,
+				diffMs: 0,
+				terminalWriteMs: 0,
+				comparedLines: 0,
+				resetLines: 0,
+				components: {},
+			};
+		}
 	}
 
 	get fullRedraws(): number {
 		return this.fullRedrawCount;
+	}
+
+	getRenderProfile(): TUIRenderProfileSnapshot | undefined {
+		if (!this.renderProfile) return undefined;
+		return {
+			...this.renderProfile,
+			fullRedraws: this.fullRedrawCount,
+			components: Object.fromEntries(
+				Object.entries(this.renderProfile.components).map(([name, profile]) => [name, { ...profile }]),
+			),
+		};
+	}
+
+	private recordComponentRender(component: Component, elapsedMs: number): void {
+		if (!this.renderProfile) return;
+		const name = component.constructor.name || "AnonymousComponent";
+		const current = this.renderProfile.components[name] ?? { calls: 0, totalMs: 0, maxMs: 0 };
+		current.calls += 1;
+		current.totalMs += elapsedMs;
+		current.maxMs = Math.max(current.maxMs, elapsedMs);
+		this.renderProfile.components[name] = current;
+	}
+
+	private writeFrameOutput(data: string, metrics: RenderFrameMetrics | undefined): void {
+		if (!metrics) {
+			this.terminal.write(data);
+			return;
+		}
+		const started = performance.now();
+		this.terminal.write(data);
+		metrics.terminalWriteMs += performance.now() - started;
+	}
+
+	private flushRenderProfile(): void {
+		if (!this.renderProfileOutput || this.renderProfileWritten) return;
+		this.renderProfileWritten = true;
+		const snapshot = this.getRenderProfile();
+		if (!snapshot) return;
+		const serialized = `${JSON.stringify(snapshot, null, 2)}\n`;
+		try {
+			if (this.renderProfileOutput === "1" || this.renderProfileOutput === "true") {
+				process.stderr.write(`[pi-tui-profile] ${JSON.stringify(snapshot)}\n`);
+			} else {
+				const outputPath = path.resolve(this.renderProfileOutput);
+				fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+				fs.writeFileSync(outputPath, serialized);
+			}
+		} catch (error) {
+			process.stderr.write(`[pi-tui-profile] failed to write profile: ${String(error)}\n`);
+		}
 	}
 
 	getShowHardwareCursor(): boolean {
@@ -707,6 +927,7 @@ export class TUI extends Container {
 
 		this.terminal.showCursor();
 		this.terminal.stop();
+		this.flushRenderProfile();
 	}
 
 	requestRender(force = false): void {
@@ -1114,6 +1335,13 @@ export class TUI extends Container {
 		return ids;
 	}
 
+	private collectKittyImageIdsForDirtySuffix(lines: string[], dirtyFrom: number): Set<number> {
+		if (dirtyFrom <= 0 || this.previousKittyImageIds.size > 0) {
+			return this.collectKittyImageIds(lines);
+		}
+		return this.collectKittyImageIds(lines.slice(dirtyFrom));
+	}
+
 	private deleteKittyImages(ids: Iterable<number>): string {
 		let buffer = "";
 		for (const id of ids) {
@@ -1143,6 +1371,19 @@ export class TUI extends Container {
 	): { firstChanged: number; lastChanged: number } {
 		let expandedFirstChanged = firstChanged;
 		let expandedLastChanged = lastChanged;
+
+		if (this.previousKittyImageIds.size === 0) {
+			const scanStart = Math.max(0, firstChanged);
+			const scanEnd = Math.min(lastChanged, newLines.length - 1);
+			for (let i = scanStart; i <= scanEnd; i++) {
+				if (extractKittyImageIds(newLines[i] ?? "").length === 0) continue;
+				const blockEnd = i + this.getKittyImageReservedRows(newLines, i) - 1;
+				expandedFirstChanged = Math.min(expandedFirstChanged, i);
+				expandedLastChanged = Math.max(expandedLastChanged, blockEnd);
+			}
+			return { firstChanged: expandedFirstChanged, lastChanged: expandedLastChanged };
+		}
+
 		const expandForLines = (lines: string[]): void => {
 			for (let i = 0; i < lines.length; i++) {
 				if (extractKittyImageIds(lines[i]).length === 0) continue;
@@ -1232,6 +1473,77 @@ export class TUI extends Container {
 	 * @param height - Terminal height (visible viewport size)
 	 * @returns Cursor position { row, col } or null if no marker found
 	 */
+	private renderRoot(width: number): { lines: string[]; dirtyFrom: number } {
+		if (this.render !== Container.prototype.render) {
+			this.previousRootChildren = [];
+			this.rootChildSnapshots.clear();
+			this.staticPrefixRevisions.clear();
+			return { lines: this.render(width), dirtyFrom: 0 };
+		}
+
+		const lines: string[] = [];
+		const nextSnapshots = new Map<Component, string[]>();
+		const nextStaticPrefixRevisions = new Map<StaticPrefixContainer, number>();
+		let dirtyFrom = Number.POSITIVE_INFINITY;
+		let lineOffset = 0;
+
+		for (let index = 0; index < this.children.length; index++) {
+			const child = this.children[index];
+			const componentStarted = this.renderProfile ? performance.now() : 0;
+			const childLines = child.render(width);
+			if (this.renderProfile) {
+				this.recordComponentRender(child, performance.now() - componentStarted);
+			}
+			const samePosition = this.previousRootChildren[index] === child;
+
+			if (!samePosition) {
+				dirtyFrom = Math.min(dirtyFrom, lineOffset);
+			} else if (child instanceof StaticPrefixContainer) {
+				const prefixRevision = child.getPrefixRevision();
+				if (this.staticPrefixRevisions.get(child) !== prefixRevision) {
+					dirtyFrom = Math.min(dirtyFrom, lineOffset);
+				} else {
+					const childDirtyFrom = child.getLastDirtyFrom();
+					if (childDirtyFrom !== null) {
+						dirtyFrom = Math.min(dirtyFrom, lineOffset + childDirtyFrom);
+					}
+				}
+			} else {
+				const previousChildLines = this.rootChildSnapshots.get(child);
+				if (!previousChildLines) {
+					dirtyFrom = Math.min(dirtyFrom, lineOffset);
+				} else {
+					const maxLines = Math.max(previousChildLines.length, childLines.length);
+					for (let childLine = 0; childLine < maxLines; childLine++) {
+						if (previousChildLines[childLine] !== childLines[childLine]) {
+							dirtyFrom = Math.min(dirtyFrom, lineOffset + childLine);
+							break;
+						}
+					}
+				}
+			}
+
+			lines.push(...childLines);
+			lineOffset += childLines.length;
+			nextSnapshots.set(child, child instanceof StaticPrefixContainer ? childLines : [...childLines]);
+			if (child instanceof StaticPrefixContainer) {
+				nextStaticPrefixRevisions.set(child, child.getPrefixRevision());
+			}
+		}
+
+		if (this.previousRootChildren.length > this.children.length) {
+			dirtyFrom = Math.min(dirtyFrom, lines.length);
+		}
+		this.previousRootChildren = [...this.children];
+		this.rootChildSnapshots = nextSnapshots;
+		this.staticPrefixRevisions = nextStaticPrefixRevisions;
+
+		return {
+			lines,
+			dirtyFrom: Number.isFinite(dirtyFrom) ? dirtyFrom : lines.length,
+		};
+	}
+
 	private extractCursorPosition(lines: string[], height: number): { row: number; col: number } | null {
 		// Only scan the bottom `height` lines (visible viewport)
 		const viewportTop = Math.max(0, lines.length - height);
@@ -1254,8 +1566,43 @@ export class TUI extends Container {
 
 	private doRender(): void {
 		if (this.stopped) return;
+		const metrics: RenderFrameMetrics | undefined = this.renderProfile
+			? {
+					rootRenderMs: 0,
+					overlayMs: 0,
+					normalizationMs: 0,
+					diffMs: 0,
+					terminalWriteMs: 0,
+					comparedLines: 0,
+					resetLines: 0,
+				}
+			: undefined;
+		const started = metrics ? performance.now() : 0;
+		try {
+			this.renderFrame(metrics);
+		} finally {
+			if (metrics && this.renderProfile) {
+				const totalMs = performance.now() - started;
+				this.renderProfile.renders += 1;
+				this.renderProfile.totalMs += totalMs;
+				this.renderProfile.maxFrameMs = Math.max(this.renderProfile.maxFrameMs, totalMs);
+				this.renderProfile.rootRenderMs += metrics.rootRenderMs;
+				this.renderProfile.overlayMs += metrics.overlayMs;
+				this.renderProfile.normalizationMs += metrics.normalizationMs;
+				this.renderProfile.diffMs += metrics.diffMs;
+				this.renderProfile.terminalWriteMs += metrics.terminalWriteMs;
+				this.renderProfile.comparedLines += metrics.comparedLines;
+				this.renderProfile.resetLines += metrics.resetLines;
+			}
+		}
+	}
+
+	private renderFrame(metrics: RenderFrameMetrics | undefined): void {
 		const width = this.terminal.columns;
 		const height = this.terminal.rows;
+		const previousFrameHadOverlays = this.previousFrameHadOverlays;
+		const frameHasOverlays = this.overlayStack.length > 0;
+		this.previousFrameHadOverlays = frameHasOverlays;
 		const widthChanged = this.previousWidth !== 0 && this.previousWidth !== width;
 		const heightChanged = this.previousHeight !== 0 && this.previousHeight !== height;
 		const previousBufferLength = this.previousHeight > 0 ? this.previousViewportTop + this.previousHeight : height;
@@ -1268,18 +1615,47 @@ export class TUI extends Container {
 			return targetScreenRow - currentScreenRow;
 		};
 
-		// Render all components to get new lines
-		let newLines = this.render(width);
+		// Render top-level children separately so a static-prefix container can
+		// prove which leading lines are unchanged.
+		const rootStarted = metrics ? performance.now() : 0;
+		const rootRender = this.renderRoot(width);
+		if (metrics) metrics.rootRenderMs += performance.now() - rootStarted;
+		let newLines = rootRender.lines;
+		let dirtyFrom = rootRender.dirtyFrom;
 
-		// Composite overlays into the rendered lines (before differential compare)
-		if (this.overlayStack.length > 0) {
+		// Overlay composition can alter any visible row, so it deliberately
+		// disables dirty-prefix reuse for this frame.
+		if (frameHasOverlays) {
+			const overlayStarted = metrics ? performance.now() : 0;
 			newLines = this.compositeOverlays(newLines, width, height);
+			if (metrics) metrics.overlayMs += performance.now() - overlayStarted;
+			dirtyFrom = 0;
 		}
 
 		// Extract cursor position before applying line resets (marker must be found first)
 		const cursorPos = this.extractCursorPosition(newLines, height);
 
-		newLines = this.applyLineResets(newLines);
+		const normalizationStarted = metrics ? performance.now() : 0;
+		const canReuseNormalizedPrefix =
+			this.previousLines.length > 0 &&
+			!widthChanged &&
+			!heightChanged &&
+			!frameHasOverlays &&
+			!previousFrameHadOverlays;
+		if (canReuseNormalizedPrefix && dirtyFrom > 0) {
+			const reusablePrefixLength = Math.min(dirtyFrom, newLines.length, this.previousLines.length);
+			if (metrics) metrics.resetLines += newLines.length - reusablePrefixLength;
+			newLines = [
+				...this.previousLines.slice(0, reusablePrefixLength),
+				...this.applyLineResets(newLines.slice(reusablePrefixLength)),
+			];
+			dirtyFrom = reusablePrefixLength;
+		} else {
+			if (metrics) metrics.resetLines += newLines.length;
+			newLines = this.applyLineResets(newLines);
+			dirtyFrom = 0;
+		}
+		if (metrics) metrics.normalizationMs += performance.now() - normalizationStarted;
 
 		// Helper to clear scrollback and viewport and render all new lines
 		const fullRender = (clear: boolean): void => {
@@ -1307,7 +1683,7 @@ export class TUI extends Container {
 				buffer += line;
 			}
 			buffer += "\x1b[?2026l"; // End synchronized output
-			this.terminal.write(buffer);
+			this.writeFrameOutput(buffer, metrics);
 			this.cursorRow = Math.max(0, newLines.length - 1);
 			this.hardwareCursorRow = this.cursorRow;
 			// Reset max lines when clearing, otherwise track growth
@@ -1366,10 +1742,13 @@ export class TUI extends Container {
 		}
 
 		// Find first and last changed lines
+		const diffStarted = metrics ? performance.now() : 0;
 		let firstChanged = -1;
 		let lastChanged = -1;
 		const maxLines = Math.max(newLines.length, this.previousLines.length);
-		for (let i = 0; i < maxLines; i++) {
+		const diffStartLine = Math.min(dirtyFrom, maxLines);
+		if (metrics) metrics.comparedLines += maxLines - diffStartLine;
+		for (let i = diffStartLine; i < maxLines; i++) {
 			const oldLine = i < this.previousLines.length ? this.previousLines[i] : "";
 			const newLine = i < newLines.length ? newLines[i] : "";
 
@@ -1393,6 +1772,7 @@ export class TUI extends Container {
 			lastChanged = expandedRange.lastChanged;
 		}
 		const appendStart = appendedLines && firstChanged === this.previousLines.length && firstChanged > 0;
+		if (metrics) metrics.diffMs += performance.now() - diffStarted;
 
 		// No changes - but still need to update hardware cursor position if it moved
 		if (firstChanged === -1) {
@@ -1438,13 +1818,13 @@ export class TUI extends Container {
 					buffer += `\x1b[${moveBack}A`;
 				}
 				buffer += "\x1b[?2026l";
-				this.terminal.write(buffer);
+				this.writeFrameOutput(buffer, metrics);
 				this.cursorRow = targetRow;
 				this.hardwareCursorRow = targetRow;
 			}
 			this.positionHardwareCursor(cursorPos, newLines.length);
 			this.previousLines = newLines;
-			this.previousKittyImageIds = this.collectKittyImageIds(newLines);
+			this.previousKittyImageIds = this.collectKittyImageIdsForDirtySuffix(newLines, dirtyFrom);
 			this.previousWidth = width;
 			this.previousHeight = height;
 			this.previousViewportTop = prevViewportTop;
@@ -1600,7 +1980,7 @@ export class TUI extends Container {
 		}
 
 		// Write entire buffer at once
-		this.terminal.write(buffer);
+		this.writeFrameOutput(buffer, metrics);
 
 		// Track cursor position for next render
 		// cursorRow tracks end of content (for viewport calculation)
@@ -1615,7 +1995,7 @@ export class TUI extends Container {
 		this.positionHardwareCursor(cursorPos, newLines.length);
 
 		this.previousLines = newLines;
-		this.previousKittyImageIds = this.collectKittyImageIds(newLines);
+		this.previousKittyImageIds = this.collectKittyImageIdsForDirtySuffix(newLines, dirtyFrom);
 		this.previousWidth = width;
 		this.previousHeight = height;
 	}

@@ -49,7 +49,7 @@ import { getThemeByName, theme } from "../modes/interactive/theme/theme.ts";
 import { resolvePath } from "../utils/paths.ts";
 import { sleep } from "../utils/sleep.ts";
 import { formatNoApiKeyFoundMessage, formatNoModelSelectedMessage } from "./auth-guidance.ts";
-import { BackgroundEventManager } from "./background-events.ts";
+import { type BackgroundEventSnapshot, BackgroundEventManager } from "./background-events.ts";
 import { type BashResult, executeBashWithOperations } from "./bash-executor.ts";
 import {
 	CompactionError,
@@ -255,6 +255,8 @@ export interface AgentSessionConfig {
 
 export interface ExtensionBindings {
 	uiContext?: ExtensionUIContext;
+	/** Override UI availability when a protocol supplies an observable but non-interactive context. */
+	hasUI?: boolean;
 	mode?: ExtensionMode;
 	commandContextActions?: ExtensionCommandContextActions;
 	abortHandler?: () => void;
@@ -420,6 +422,7 @@ export class AgentSession {
 	private _baseToolsOverride?: Record<string, AgentTool>;
 	private _sessionStartEvent: SessionStartEvent;
 	private _extensionUIContext?: ExtensionUIContext;
+	private _extensionHasUI?: boolean;
 	private _extensionMode: ExtensionMode = "print";
 	private _extensionCommandContextActions?: ExtensionCommandContextActions;
 	private _extensionAbortHandler?: () => void;
@@ -1145,6 +1148,21 @@ export class AgentSession {
 	 */
 	getActiveToolNames(): string[] {
 		return this.agent.state.tools.map((t) => t.name);
+	}
+
+	/** Serializable view of background shell, sub-agent, teammate, and package work. */
+	getBackgroundEvents(): BackgroundEventSnapshot[] {
+		return this._backgroundEvents.getEvents();
+	}
+
+	/** Wait for every registered background source to stop reporting running work. */
+	waitForBackgroundIdle(options?: { timeoutMs?: number; signal?: AbortSignal }): Promise<boolean> {
+		return this._backgroundEvents.waitForIdle(options);
+	}
+
+	/** Cancel one background event through its owning source controller. */
+	cancelBackgroundEvent(sourceId: string, eventId: string): boolean {
+		return this._backgroundEvents.cancelEvent(sourceId, eventId);
 	}
 
 	/**
@@ -2785,6 +2803,9 @@ export class AgentSession {
 		if (bindings.uiContext !== undefined) {
 			this._extensionUIContext = bindings.uiContext;
 		}
+		if (bindings.hasUI !== undefined) {
+			this._extensionHasUI = bindings.hasUI;
+		}
 		if (bindings.mode !== undefined) {
 			this._extensionMode = bindings.mode;
 		}
@@ -2860,7 +2881,7 @@ export class AgentSession {
 	}
 
 	private _applyExtensionBindings(runner: ExtensionRunner): void {
-		runner.setUIContext(this._extensionUIContext, this._extensionMode);
+		runner.setUIContext(this._extensionUIContext, this._extensionMode, this._extensionHasUI);
 		runner.bindCommandContext(this._extensionCommandContextActions);
 
 		this._extensionErrorUnsubscriber?.();

@@ -124,6 +124,9 @@ function resolveAppMode(parsed: Args, stdinIsTTY: boolean, stdoutIsTTY: boolean)
 	if (parsed.mode === "json") {
 		return "json";
 	}
+	if (parsed.validateConfig) {
+		return "print";
+	}
 	if (parsed.print || !stdinIsTTY || !stdoutIsTTY) {
 		return "print";
 	}
@@ -454,6 +457,12 @@ function buildSessionOptions(
 	if (parsed.excludeTools) {
 		options.excludeTools = [...parsed.excludeTools];
 	}
+	if (parsed.harnessWorkflows !== undefined || parsed.harnessTeammates !== undefined) {
+		options.harnessCapabilities = {
+			workflows: parsed.harnessWorkflows,
+			teammates: parsed.harnessTeammates,
+		};
+	}
 
 	return { options, cliThinkingFromModel, diagnostics };
 }
@@ -623,8 +632,38 @@ export async function main(args: string[], options?: MainOptions) {
 		takeOverStdout();
 	}
 
-	if (parsed.mode === "rpc" && parsed.fileArgs.length > 0) {
+	if (appMode === "rpc" && parsed.fileArgs.length > 0) {
 		console.error(chalk.red("Error: @file arguments are not supported in RPC mode"));
+		process.exit(1);
+	}
+	if (appMode === "rpc" && parsed.messages.length > 0) {
+		console.error(chalk.red("Error: positional prompts are not supported in RPC mode; send a prompt command over stdin"));
+		process.exit(1);
+	}
+	if (appMode !== "interactive" && parsed.resume) {
+		console.error(
+			chalk.red("Error: --resume requires the interactive session selector; use --session, --continue, or RPC session commands"),
+		);
+		process.exit(1);
+	}
+	const oneShotHeadless = appMode === "print" || appMode === "json";
+	if (parsed.validateConfig && !oneShotHeadless) {
+		console.error(chalk.red("Error: --validate-config supports text or JSON output, not RPC mode"));
+		process.exit(1);
+	}
+	if (parsed.validateConfig && (parsed.messages.length > 0 || parsed.fileArgs.length > 0)) {
+		console.error(chalk.red("Error: --validate-config cannot be combined with prompts or @file arguments"));
+		process.exit(1);
+	}
+	if (
+		!oneShotHeadless &&
+		(parsed.backgroundPolicy !== undefined ||
+			parsed.backgroundWaitTimeoutMs !== undefined ||
+			parsed.nonInteractiveUiPolicy !== undefined)
+	) {
+		console.error(
+			chalk.red("Error: --background-policy, --background-wait-timeout, and --non-interactive-ui require print or JSON mode"),
+		);
 		process.exit(1);
 	}
 
@@ -777,6 +816,13 @@ export async function main(args: string[], options?: MainOptions) {
 			...resourceLoader.getPackageTools().diagnostics.map(toRuntimeDiagnostic),
 			...resourceLoader.getUserMcpTools().diagnostics.map(toRuntimeDiagnostic),
 		];
+		if (appMode !== "interactive" && hasTrustRequiringResources && !settingsManager.isProjectTrusted()) {
+			diagnostics.push({
+				type: "warning",
+				message:
+					"Project-local settings and executable resources were not loaded because the project is untrusted. Use --approve to trust them for this run or --no-approve to make the exclusion explicit.",
+			});
+		}
 
 		const modelPatterns = parsed.models ?? settingsManager.getEnabledModels();
 		const scopedModels =
@@ -870,7 +916,7 @@ export async function main(args: string[], options?: MainOptions) {
 
 	// Read piped stdin content (if any) - skip for RPC mode which uses stdin for JSON-RPC
 	let stdinContent: string | undefined;
-	if (appMode !== "rpc") {
+	if (appMode !== "rpc" && !parsed.validateConfig) {
 		stdinContent = await readPipedStdin();
 		if (stdinContent !== undefined && appMode === "interactive") {
 			appMode = "print";
@@ -894,17 +940,23 @@ export async function main(args: string[], options?: MainOptions) {
 
 	time("resolveModelScope");
 	reportDiagnostics(runtime.diagnostics);
-	if (runtime.diagnostics.some((diagnostic) => diagnostic.type === "error")) {
-		if (runtime.diagnostics.some((diagnostic) => diagnostic.message.includes("Failed to load extension"))) {
+	const oneShotMode = appMode === "print" || appMode === "json";
+	const startupErrors: string[] = [];
+	const runtimeErrors = runtime.diagnostics.filter((diagnostic) => diagnostic.type === "error");
+	if (runtimeErrors.length > 0) {
+		if (runtimeErrors.some((diagnostic) => diagnostic.message.includes("Failed to load extension"))) {
 			console.error(chalk.yellow(EXTENSION_LOAD_FAILURE_HINT));
 		}
-		process.exit(1);
+		if (oneShotMode) startupErrors.push(...runtimeErrors.map(({ message }) => message));
+		else process.exit(1);
 	}
 	time("createAgentSession");
 
 	if (appMode !== "interactive" && !session.model) {
-		console.error(chalk.red(formatNoModelsAvailableMessage()));
-		process.exit(1);
+		const message = formatNoModelsAvailableMessage();
+		console.error(chalk.red(message));
+		if (oneShotMode) startupErrors.push(message);
+		else process.exit(1);
 	}
 
 	const startupBenchmark = isTruthyEnvFlag(process.env.PI_STARTUP_BENCHMARK);
@@ -956,6 +1008,11 @@ export async function main(args: string[], options?: MainOptions) {
 			messages: parsed.messages,
 			initialMessage,
 			initialImages,
+			backgroundPolicy: parsed.backgroundPolicy,
+			backgroundWaitTimeoutMs: parsed.backgroundWaitTimeoutMs,
+			nonInteractiveUiPolicy: parsed.nonInteractiveUiPolicy,
+			validateOnly: parsed.validateConfig,
+			startupError: startupErrors.length > 0 ? startupErrors.join("\n") : undefined,
 		});
 		stopThemeWatcher();
 		restoreStdout();

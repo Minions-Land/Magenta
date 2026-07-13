@@ -1,4 +1,5 @@
 import assert from "node:assert";
+import * as fs from "node:fs";
 import { describe, it } from "node:test";
 import type { Terminal as XtermTerminalType } from "@xterm/headless";
 import { Image } from "../src/components/image.ts";
@@ -9,7 +10,7 @@ import {
 	setCapabilities,
 	setCellDimensions,
 } from "../src/terminal-image.ts";
-import { type Component, TUI } from "../src/tui.ts";
+import { type Component, StaticPrefixContainer, TUI } from "../src/tui.ts";
 import { VirtualTerminal } from "./virtual-terminal.ts";
 
 class TestComponent implements Component {
@@ -763,5 +764,132 @@ describe("TUI differential rendering", () => {
 		]);
 
 		tui.stop();
+	});
+});
+
+describe("TUI static-prefix rendering", () => {
+	it("restores base content after the final overlay closes", async () => {
+		const terminal = new VirtualTerminal(40, 6);
+		const tui = new TUI(terminal);
+		const base = new TestComponent();
+		base.lines = ["base content"];
+		tui.addChild(base);
+		tui.start();
+		await terminal.waitForRender();
+
+		const overlay = new TestComponent();
+		overlay.lines = ["overlay"];
+		const handle = tui.showOverlay(overlay, { row: 0, col: 0, width: 10, nonCapturing: true });
+		await terminal.waitForRender();
+		assert.ok(terminal.getViewport()[0]?.includes("overlay"));
+
+		handle.hide();
+		await terminal.waitForRender();
+		assert.ok(terminal.getViewport()[0]?.includes("base content"));
+		assert.ok(!terminal.getViewport()[0]?.includes("overlay"));
+		tui.stop();
+	});
+
+	it("falls back to a custom TUI render override", async () => {
+		class CustomRenderTUI extends TUI {
+			override render(_width: number): string[] {
+				return ["custom root"];
+			}
+		}
+		const terminal = new VirtualTerminal(40, 6);
+		const tui = new CustomRenderTUI(terminal);
+		tui.start();
+		await terminal.waitForRender();
+		assert.ok(terminal.getViewport()[0]?.includes("custom root"));
+		tui.stop();
+	});
+
+	it("reuses immutable children while rendering only the mutable tail", () => {
+		let staticRenders = 0;
+		let liveRenders = 0;
+		const staticComponent: Component = {
+			render: () => {
+				staticRenders += 1;
+				return ["history"];
+			},
+			invalidate: () => {},
+		};
+		const liveComponent: Component = {
+			render: () => {
+				liveRenders += 1;
+				return [`live ${liveRenders}`];
+			},
+			invalidate: () => {},
+		};
+		const container = new StaticPrefixContainer();
+		container.addChild(staticComponent);
+		assert.deepStrictEqual(container.render(80), ["history"]);
+
+		container.beginMutableTail();
+		container.addChild(liveComponent);
+		assert.deepStrictEqual(container.render(80), ["history", "live 1"]);
+		assert.deepStrictEqual(container.render(80), ["history", "live 2"]);
+		assert.strictEqual(staticRenders, 1);
+		assert.strictEqual(liveRenders, 2);
+		assert.strictEqual(container.getLastDirtyFrom(), 1);
+
+		container.commitMutableTail();
+		assert.deepStrictEqual(container.render(80), ["history", "live 3"]);
+		assert.deepStrictEqual(container.render(80), ["history", "live 3"]);
+		assert.strictEqual(container.getLastDirtyFrom(), null);
+	});
+
+	it("retains invalidation until the owning TUI consumes it", async () => {
+		const terminal = new VirtualTerminal(40, 6);
+		const tui = new TUI(terminal);
+		const chat = new StaticPrefixContainer();
+		const history = new TestComponent();
+		history.lines = ["before"];
+		chat.addChild(history);
+		tui.addChild(chat);
+		tui.start();
+		await terminal.waitForRender();
+
+		history.lines = ["after"];
+		chat.invalidateCache();
+		chat.render(40);
+		chat.render(40);
+		tui.requestRender();
+		await terminal.waitForRender();
+		assert.ok(terminal.getViewport()[0]?.includes("after"));
+		tui.stop();
+	});
+
+	it("profiles and normalizes only the proven dirty suffix", async () => {
+		const profilePath = `/tmp/pi-tui-profile-test-${process.pid}-${Math.random().toString(36).slice(2)}.json`;
+		await withEnv({ PI_TUI_PROFILE: profilePath }, async () => {
+			const terminal = new VirtualTerminal(120, 30);
+			const tui = new TUI(terminal);
+			const chat = new StaticPrefixContainer();
+			const history = new TestComponent();
+			const live = new TestComponent();
+			history.lines = Array.from({ length: 200 }, (_, index) => `history ${index}`);
+			live.lines = ["live 0"];
+			chat.addChild(history);
+			chat.beginMutableTail();
+			chat.addChild(live);
+			tui.addChild(chat);
+
+			tui.start();
+			await terminal.waitForRender();
+			live.lines = ["live 1"];
+			tui.requestRender();
+			await terminal.waitForRender();
+
+			const profile = tui.getRenderProfile();
+			assert.ok(profile);
+			assert.strictEqual(profile.renders, 2);
+			assert.strictEqual(profile.comparedLines, 1);
+			assert.strictEqual(profile.resetLines, 202);
+			assert.strictEqual(profile.components.StaticPrefixContainer?.calls, 2);
+			tui.stop();
+			assert.ok(fs.existsSync(profilePath));
+		});
+		fs.rmSync(profilePath, { force: true });
 	});
 });

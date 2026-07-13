@@ -211,10 +211,15 @@ magenta -p "Summarize this repository"
 cat build.log | magenta -p "Explain this failure"
 magenta --mode json -p "Review src/"
 magenta --mode rpc
+magenta --validate-config --mode json --no-session
 magenta --ssh user@host:/workspace
 ```
 
-Print mode emits the final text response. JSON mode emits JSONL events. RPC mode accepts JSONL commands on stdin and writes responses and events to stdout. See [docs/json.md](docs/json.md), [docs/rpc.md](docs/rpc.md), and [docs/sdk.md](docs/sdk.md).
+Print mode emits the final text response. JSON mode emits versioned JSONL with a `runtime_manifest`, the complete agent event stream, and one terminal `run_end`; its exit code agrees with that terminal status. RPC mode accepts JSONL commands on stdin and writes responses and events to stdout, including a startup manifest and graceful `shutdown` control.
+
+Headless runs default to `--background-policy cancel`, preserving one-shot cleanup while reporting every cancelled background event in `run_end`. Use `wait` with `--background-wait-timeout`, or `error` to fail when the main agent leaves work running. Blocking extension UI defaults to an observable deny; `--non-interactive-ui error` makes any such request fail the run. `--harness-workflows` and `--harness-teammates` enable those capabilities independently of the selected thinking profile.
+
+A source-built reference image is provided in [`Dockerfile.headless`](../../Dockerfile.headless). See [docs/json.md](docs/json.md), [docs/rpc.md](docs/rpc.md), [docs/containerization.md](docs/containerization.md), and [docs/sdk.md](docs/sdk.md).
 
 ## Customization
 

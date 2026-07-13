@@ -46,6 +46,7 @@ export class ToolExecutionComponent extends Container {
 	};
 	private convertedImages: Map<number, { data: string; mimeType: string }> = new Map();
 	private hideComponent = false;
+	private renderInvalidationListener: (() => void) | undefined;
 
 	constructor(
 		toolName: string,
@@ -84,6 +85,10 @@ export class ToolExecutionComponent extends Container {
 		}
 
 		this.updateDisplay();
+	}
+
+	setRenderInvalidationListener(listener: (() => void) | undefined): void {
+		this.renderInvalidationListener = listener;
 	}
 
 	/** Renderer resolved from the registry by renderKind, if any. */
@@ -381,6 +386,7 @@ export class ToolExecutionComponent extends Container {
 		if (this.hasRendererDefinition() && !hasContent && this.imageComponents.length === 0) {
 			this.hideComponent = true;
 		}
+		this.renderInvalidationListener?.();
 	}
 
 	private getTextOutput(): string {

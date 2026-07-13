@@ -44,37 +44,39 @@ Requirements: Node.js >= 23.6.0 for `@earendil-works/gondolin`, plus QEMU (requi
 
 ## Plain Docker
 
-Run the whole `magenta` process in Docker when you want the simplest local container boundary.
+Run the whole `magenta` process in Docker when you want the simplest local container boundary. The repository includes [`Dockerfile.headless`](../../../Dockerfile.headless), which builds the current checkout and its version-matched workspace runtime instead of installing a floating package. It uses `tini` for signal forwarding/child reaping and runs as the unprivileged `magenta` user.
 
-`Dockerfile.magenta`:
-
-```dockerfile
-FROM node:24-bookworm-slim
-
-RUN apt-get update \
-  && apt-get install -y --no-install-recommends bash ca-certificates git ripgrep \
-  && rm -rf /var/lib/apt/lists/*
-RUN npm install -g --ignore-scripts @earendil-works/pi-coding-agent
-
-WORKDIR /workspace
-ENTRYPOINT ["magenta"]
-```
-
-Build and run:
+Build and validate the image:
 
 ```bash
-docker build -t magenta-sandbox -f Dockerfile.magenta .
+docker build -t magenta-headless -f Dockerfile.headless .
 
-docker run --rm -it \
+docker run --rm \
   -e ANTHROPIC_API_KEY \
-  -v "$PWD:/workspace" \
-  -v magenta-agent-home:/root/.magenta/agent \
-  magenta-sandbox
+  magenta-headless \
+  --validate-config --mode json --no-session --model anthropic/claude-sonnet-4-6
 ```
 
-The `-v "$PWD:/workspace"` mounts your current directory into the container at /workspace such that reads and writes in `/workspace` inside Docker directly affect your host files, like in the Gondolin example.
+Run a one-shot task:
 
-Use a named volume for `/root/.magenta/agent` if you want container-local settings and sessions. Mounting your host `~/.magenta/agent` exposes host auth and session files to the container.
+```bash
+docker run --rm \
+  -e ANTHROPIC_API_KEY \
+  -v "$PWD:/workspace" \
+  magenta-headless \
+  --print --mode json --no-session --approve \
+  --background-policy error \
+  --model anthropic/claude-sonnet-4-6 \
+  "Run the repository tests and fix the failure"
+```
+
+The bind mount exposes the current directory as `/workspace`; writes affect the host. The image stores Magenta state under `/home/magenta/.magenta/agent`. Add a named volume there only when persistence is intentional:
+
+```bash
+-v magenta-agent-home:/home/magenta/.magenta/agent
+```
+
+Do not mount the host `~/.magenta/agent` into untrusted containers because that exposes host credentials and sessions. The image disables version checks and telemetry by default but does not disable provider inference or tool network access.
 
 ## OpenShell
 

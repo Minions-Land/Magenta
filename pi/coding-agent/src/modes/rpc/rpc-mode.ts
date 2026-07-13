@@ -27,6 +27,7 @@ import {
 	writeRawStdout,
 } from "../../core/output-guard.ts";
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
+import { createHeadlessRuntimeManifest } from "../headless-protocol.ts";
 import { type Theme, theme } from "../interactive/theme/theme.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.ts";
 import type {
@@ -56,6 +57,8 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 	let session = runtimeHost.session;
 	let unsubscribe: (() => void) | undefined;
 	let unsubscribeBackpressure: (() => void) | undefined;
+	const runId = crypto.randomUUID();
+	let manifestSequence = 0;
 
 	const output = (obj: RpcResponse | RpcExtensionUIRequest | object) => {
 		writeRawStdout(serializeJsonLine(obj));
@@ -82,9 +85,31 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 		{ resolve: (value: any) => void; reject: (error: Error) => void }
 	>();
 
+	const handleExtensionUiResponse = (parsed: unknown): boolean => {
+		if (
+			typeof parsed !== "object" ||
+			parsed === null ||
+			!("type" in parsed) ||
+			parsed.type !== "extension_ui_response"
+		) {
+			return false;
+		}
+		const response = parsed as RpcExtensionUIResponse;
+		const pending = pendingExtensionRequests.get(response.id);
+		if (pending) {
+			pendingExtensionRequests.delete(response.id);
+			pending.resolve(response);
+		}
+		return true;
+	};
+
 	// Shutdown request flag
 	let shutdownRequested = false;
 	let shuttingDown = false;
+	let inputReady = false;
+	let inputEnded = false;
+	let detachInput = () => {};
+	const queuedInputLines: string[] = [];
 	const signalCleanupHandlers: Array<() => void> = [];
 
 	/** Helper for dialog methods with signal/timeout support */
@@ -310,58 +335,78 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 		},
 	});
 
+	const requestExtensionShutdown = (): void => {
+		shutdownRequested = true;
+		if (!inputReady || session.isStreaming) return;
+		setImmediate(() => {
+			if (shutdownRequested && !session.isStreaming) void shutdown();
+		});
+	};
+
 	runtimeHost.setRebindSession(async () => {
 		await rebindSession();
 	});
 
 	const rebindSession = async (): Promise<void> => {
 		session = runtimeHost.session;
-		await session.bindExtensions({
-			uiContext: createExtensionUIContext(),
-			mode: "rpc",
-			commandContextActions: {
-				waitForIdle: () => session.agent.waitForIdle(),
-				newSession: async (options) => runtimeHost.newSession(options),
-				fork: async (entryId, forkOptions) => {
-					const result = await runtimeHost.fork(entryId, forkOptions);
-					return { cancelled: result.cancelled };
-				},
-				navigateTree: async (targetId, options) => {
-					const result = await session.navigateTree(targetId, {
-						summarize: options?.summarize,
-						customInstructions: options?.customInstructions,
-						replaceInstructions: options?.replaceInstructions,
-						label: options?.label,
-					});
-					return { cancelled: result.cancelled };
-				},
-				switchSession: async (sessionPath, options) => {
-					return runtimeHost.switchSession(sessionPath, options);
-				},
-				reload: async () => {
-					await session.reload();
-				},
-			},
-			shutdownHandler: () => {
-				shutdownRequested = true;
-			},
-			onError: (err) => {
-				output({ type: "extension_error", extensionPath: err.extensionPath, event: err.event, error: err.error });
-			},
-		});
-
 		unsubscribe?.();
 		unsubscribeBackpressure?.();
+
+		const bufferedEvents: object[] = [];
+		let binding = true;
 		unsubscribe = session.subscribe((event) => {
-			output(event);
+			if (binding) bufferedEvents.push(event);
+			else output(event);
+			if (event.type === "agent_end" && shutdownRequested && inputReady) void shutdown();
 		});
 		unsubscribeBackpressure = session.agent.subscribe(async () => {
 			await waitForRawStdoutBackpressure();
 		});
+
+		let bound = false;
+		try {
+			await session.bindExtensions({
+				uiContext: createExtensionUIContext(),
+				mode: "rpc",
+				commandContextActions: {
+					waitForIdle: () => session.agent.waitForIdle(),
+					newSession: async (options) => runtimeHost.newSession(options),
+					fork: async (entryId, forkOptions) => {
+						const result = await runtimeHost.fork(entryId, forkOptions);
+						return { cancelled: result.cancelled };
+					},
+					navigateTree: async (targetId, options) => {
+						const result = await session.navigateTree(targetId, {
+							summarize: options?.summarize,
+							customInstructions: options?.customInstructions,
+							replaceInstructions: options?.replaceInstructions,
+							label: options?.label,
+						});
+						return { cancelled: result.cancelled };
+					},
+					switchSession: async (sessionPath, options) => runtimeHost.switchSession(sessionPath, options),
+					reload: async () => {
+						await session.reload();
+					},
+				},
+				shutdownHandler: requestExtensionShutdown,
+				onError: (err) => {
+					output({ type: "extension_error", extensionPath: err.extensionPath, event: err.event, error: err.error });
+				},
+			});
+			bound = true;
+		} finally {
+			binding = false;
+			if (bound) {
+				manifestSequence += 1;
+				output(createHeadlessRuntimeManifest(runtimeHost, { mode: "rpc", runId, sequence: manifestSequence }));
+			}
+			for (const event of bufferedEvents) output(event);
+		}
 	};
 
 	const registerSignalHandlers = (): void => {
-		const signals: NodeJS.Signals[] = ["SIGTERM"];
+		const signals: NodeJS.Signals[] = ["SIGTERM", "SIGINT"];
 		if (process.platform !== "win32") {
 			signals.push("SIGHUP");
 		}
@@ -369,15 +414,13 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 		for (const signal of signals) {
 			const handler = () => {
 				killTrackedDetachedChildren();
-				void shutdown(signal === "SIGHUP" ? 129 : 143, signal);
+				const exitCode = signal === "SIGHUP" ? 129 : signal === "SIGINT" ? 130 : 143;
+				void shutdown(exitCode, signal);
 			};
 			process.on(signal, handler);
 			signalCleanupHandlers.push(() => process.off(signal, handler));
 		}
 	};
-
-	await rebindSession();
-	registerSignalHandlers();
 
 	// Handle a single command
 	const handleCommand = async (command: RpcCommand): Promise<RpcResponse | undefined> => {
@@ -427,12 +470,14 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 				return success(id, "abort");
 			}
 
+			case "shutdown": {
+				shutdownRequested = true;
+				return success(id, "shutdown");
+			}
+
 			case "new_session": {
 				const options = command.parentSession ? { parentSession: command.parentSession } : undefined;
 				const result = await runtimeHost.newSession(options);
-				if (!result.cancelled) {
-					await rebindSession();
-				}
 				return success(id, "new_session", result);
 			}
 
@@ -570,6 +615,19 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 			}
 
 			// =================================================================
+			// Background work
+			// =================================================================
+
+			case "get_background_events": {
+				return success(id, "get_background_events", { events: session.getBackgroundEvents() });
+			}
+
+			case "cancel_background_event": {
+				const cancelled = session.cancelBackgroundEvent(command.sourceId, command.eventId);
+				return success(id, "cancel_background_event", { cancelled });
+			}
+
+			// =================================================================
 			// Session
 			// =================================================================
 
@@ -585,17 +643,11 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 
 			case "switch_session": {
 				const result = await runtimeHost.switchSession(command.sessionPath);
-				if (!result.cancelled) {
-					await rebindSession();
-				}
 				return success(id, "switch_session", result);
 			}
 
 			case "fork": {
 				const result = await runtimeHost.fork(command.entryId);
-				if (!result.cancelled) {
-					await rebindSession();
-				}
 				return success(id, "fork", { text: result.selectedText, cancelled: result.cancelled });
 			}
 
@@ -605,9 +657,6 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 					return error(id, "clone", "Cannot clone session: no current entry selected");
 				}
 				const result = await runtimeHost.fork(leafId, { position: "at" });
-				if (!result.cancelled) {
-					await rebindSession();
-				}
 				return success(id, "clone", { cancelled: result.cancelled });
 			}
 
@@ -686,8 +735,6 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 	 * Check if shutdown was requested and perform shutdown if so.
 	 * Called after handling each command when waiting for the next command.
 	 */
-	let detachInput = () => {};
-
 	async function shutdown(exitCode = 0, signal?: NodeJS.Signals): Promise<never> {
 		if (shuttingDown) {
 			process.exit(exitCode);
@@ -698,6 +745,10 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 		}
 		unsubscribe?.();
 		unsubscribeBackpressure?.();
+		for (const pending of pendingExtensionRequests.values()) {
+			pending.reject(new Error("RPC session is shutting down"));
+		}
+		pendingExtensionRequests.clear();
 		await runtimeHost.dispose();
 		detachInput();
 		process.stdin.pause();
@@ -708,7 +759,7 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 	}
 
 	async function checkShutdownRequested(): Promise<void> {
-		if (!shutdownRequested) return;
+		if (!shutdownRequested || session.isStreaming) return;
 		await shutdown();
 	}
 
@@ -728,19 +779,10 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 			return;
 		}
 
-		// Handle extension UI responses
-		if (
-			typeof parsed === "object" &&
-			parsed !== null &&
-			"type" in parsed &&
-			parsed.type === "extension_ui_response"
-		) {
-			const response = parsed as RpcExtensionUIResponse;
-			const pending = pendingExtensionRequests.get(response.id);
-			if (pending) {
-				pendingExtensionRequests.delete(response.id);
-				pending.resolve(response);
-			}
+		if (handleExtensionUiResponse(parsed)) return;
+		if (typeof parsed !== "object" || parsed === null || !("type" in parsed) || typeof parsed.type !== "string") {
+			output(error(undefined, "parse", "RPC command must be a JSON object with a string type field"));
+			await waitForRawStdoutBackpressure();
 			return;
 		}
 
@@ -765,19 +807,40 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 	};
 
 	const onInputEnd = () => {
-		void shutdown();
+		inputEnded = true;
+		// Defer shutdown until after inputReady and queued commands are replayed.
+		if (inputReady) void shutdown();
 	};
 	process.stdin.on("end", onInputEnd);
 
+	// Attach stdin before extension binding so session_start dialogs can receive
+	// extension_ui_response records instead of deadlocking startup.
 	detachInput = (() => {
 		const detachJsonl = attachJsonlLineReader(process.stdin, (line) => {
-			void handleInputLine(line);
+			if (inputReady) {
+				void handleInputLine(line);
+				return;
+			}
+			try {
+				if (handleExtensionUiResponse(JSON.parse(line))) return;
+			} catch {
+				// Preserve malformed input for the normal parser once startup completes.
+			}
+			queuedInputLines.push(line);
 		});
 		return () => {
 			detachJsonl();
 			process.stdin.off("end", onInputEnd);
 		};
 	})();
+
+	await rebindSession();
+	registerSignalHandlers();
+	inputReady = true;
+	// Replay queued commands before evaluating inputEnded/shutdownRequested so a command
+	// arriving while extension binding was still in flight is not lost.
+	for (const line of queuedInputLines.splice(0)) void handleInputLine(line);
+	if (inputEnded || (shutdownRequested && !session.isStreaming)) await shutdown();
 
 	// Keep process alive forever
 	return new Promise(() => {});

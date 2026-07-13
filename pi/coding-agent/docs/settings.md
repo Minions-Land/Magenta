@@ -55,7 +55,7 @@ Use `/trust` in interactive mode to save a project trust decision for future ses
 | `harness.workflows` | boolean | profile default | Enable `sub_agent` workflow templates |
 | `harness.teammates` | boolean | profile default | Enable persistent `teammate_agent` sessions |
 
-Both capabilities default to `true` in Ultra and `false` in other profiles. Explicit settings win in either direction, so standard profiles can enable them and Ultra can disable them.
+Both capabilities default to `true` in Ultra and `false` in other profiles. Explicit settings win in either direction, so standard profiles can enable them and Ultra can disable them. Per-run `--harness-workflows` / `--no-harness-workflows` and `--harness-teammates` / `--no-harness-teammates` flags override both settings and profile defaults without changing the provider thinking level.
 
 ### UI & Display
 

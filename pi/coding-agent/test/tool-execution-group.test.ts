@@ -1,6 +1,6 @@
-import { Text, type TUI } from "@earendil-works/pi-tui";
+import { StaticPrefixContainer, Text, type TUI } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import { beforeAll, describe, expect, test } from "vitest";
+import { beforeAll, describe, expect, test, vi } from "vitest";
 import type { ToolDefinition } from "../src/core/extensions/types.ts";
 import { ToolExecutionComponent } from "../src/modes/interactive/components/tool-execution.ts";
 import { ToolExecutionGroupComponent } from "../src/modes/interactive/components/tool-execution-group.ts";
@@ -69,5 +69,68 @@ describe("ToolExecutionGroupComponent", () => {
 		group.addOrUpdateTool("single", "custom_single", { value: 3 }, child);
 
 		expect(stripAnsi(group.render(100).join("\n"))).toContain("call custom_single");
+	});
+
+	test("propagates child-driven invalidation through a cached chat prefix", () => {
+		const chat = new StaticPrefixContainer();
+		const group = new ToolExecutionGroupComponent({ showImages: true });
+		let rendererInvalidate: (() => void) | undefined;
+		const toolDefinition = definition("custom_async");
+		toolDefinition.renderCall = (_args, _theme, context) => {
+			rendererInvalidate = context.invalidate;
+			return new Text("async renderer", 0, 0);
+		};
+		const child = new ToolExecutionComponent(
+			"custom_async",
+			"async",
+			{ value: 1 },
+			{},
+			toolDefinition,
+			fakeTui(),
+			process.cwd(),
+		);
+		const renderSpy = vi.spyOn(child, "render");
+		group.addOrUpdateTool("async", "custom_async", { value: 1 }, child);
+		group.setRenderInvalidationListener(() => chat.invalidateChild(group));
+		chat.addChild(group);
+
+		chat.render(100);
+		const cached = chat.render(100);
+		expect(renderSpy).toHaveBeenCalledTimes(1);
+
+		expect(rendererInvalidate).toBeDefined();
+		rendererInvalidate?.();
+		const updated = chat.render(100);
+		expect(updated).not.toBe(cached);
+		expect(renderSpy).toHaveBeenCalledTimes(2);
+	});
+
+	test("reuses rendered output until state, width, or theme invalidation changes", () => {
+		const group = new ToolExecutionGroupComponent({ showImages: true });
+		const child = component("custom_cached", "cached", { value: 1 });
+		const renderSpy = vi.spyOn(child, "render");
+		group.addOrUpdateTool("cached", "custom_cached", { value: 1 }, child);
+
+		const first = group.render(100);
+		expect(group.render(100)).toBe(first);
+		expect(renderSpy).toHaveBeenCalledTimes(1);
+
+		child.invalidate();
+		group.render(100);
+		expect(renderSpy).toHaveBeenCalledTimes(2);
+
+		group.setArgsComplete("cached");
+		group.render(100);
+		expect(renderSpy).toHaveBeenCalledTimes(3);
+
+		group.updateResult("cached", { content: [{ type: "text", text: "done" }], isError: false }, false);
+		group.render(100);
+		expect(renderSpy).toHaveBeenCalledTimes(4);
+
+		group.render(80);
+		expect(renderSpy).toHaveBeenCalledTimes(5);
+		group.invalidate();
+		group.render(80);
+		expect(renderSpy).toHaveBeenCalledTimes(6);
 	});
 });

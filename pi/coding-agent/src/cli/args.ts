@@ -6,6 +6,7 @@ import chalk from "chalk";
 import { APP_BINARY_NAME, APP_NAME, CONFIG_DIR_NAME, ENV_AGENT_DIR, ENV_SESSION_DIR } from "../config.ts";
 import { EXECUTION_PROFILES, type ExecutionProfile, isExecutionProfile } from "../core/execution-profile.ts";
 import type { ExtensionFlag } from "../core/extensions/types.ts";
+import type { BackgroundPolicy, NonInteractiveUiPolicy } from "../modes/headless-protocol.ts";
 
 export type Mode = "text" | "json" | "rpc";
 
@@ -33,6 +34,11 @@ export interface Args {
 	excludeTools?: string[];
 	noTools?: boolean;
 	noBuiltinTools?: boolean;
+	harnessWorkflows?: boolean;
+	harnessTeammates?: boolean;
+	backgroundPolicy?: BackgroundPolicy;
+	backgroundWaitTimeoutMs?: number;
+	nonInteractiveUiPolicy?: NonInteractiveUiPolicy;
 	extensions?: string[];
 	noExtensions?: boolean;
 	print?: boolean;
@@ -48,6 +54,7 @@ export interface Args {
 	noThemes?: boolean;
 	noContextFiles?: boolean;
 	listModels?: string | true;
+	validateConfig?: boolean;
 	offline?: boolean;
 	verbose?: boolean;
 	projectTrustOverride?: boolean;
@@ -80,10 +87,17 @@ export function parseArgs(args: string[]): Args {
 			result.version = true;
 		} else if (arg === "--update") {
 			result.update = true;
-		} else if (arg === "--mode" && i + 1 < args.length) {
-			const mode = args[++i];
+		} else if (arg === "--mode") {
+			const mode = args[i + 1];
 			if (mode === "text" || mode === "json" || mode === "rpc") {
 				result.mode = mode;
+				i++;
+			} else {
+				result.diagnostics.push({
+					type: "error",
+					message: `--mode requires one of: text, json, rpc${mode !== undefined && !mode.startsWith("-") ? ` (got "${mode}")` : ""}`,
+				});
+				if (mode !== undefined && !mode.startsWith("-")) i++;
 			}
 		} else if (arg === "--continue" || arg === "-c") {
 			result.continue = true;
@@ -122,6 +136,45 @@ export function parseArgs(args: string[]): Args {
 			result.noTools = true;
 		} else if (arg === "--no-builtin-tools" || arg === "-nbt") {
 			result.noBuiltinTools = true;
+		} else if (arg === "--harness-workflows") {
+			result.harnessWorkflows = true;
+		} else if (arg === "--no-harness-workflows") {
+			result.harnessWorkflows = false;
+		} else if (arg === "--harness-teammates") {
+			result.harnessTeammates = true;
+		} else if (arg === "--no-harness-teammates") {
+			result.harnessTeammates = false;
+		} else if (arg === "--background-policy") {
+			const policy = args[++i];
+			if (policy === "cancel" || policy === "wait" || policy === "error") {
+				result.backgroundPolicy = policy;
+			} else {
+				result.diagnostics.push({
+					type: "error",
+					message: "--background-policy requires one of: cancel, wait, error",
+				});
+			}
+		} else if (arg === "--background-wait-timeout") {
+			const value = args[++i];
+			const seconds = Number(value);
+			if (value !== undefined && Number.isFinite(seconds) && seconds >= 0) {
+				result.backgroundWaitTimeoutMs = seconds * 1000;
+			} else {
+				result.diagnostics.push({
+					type: "error",
+					message: "--background-wait-timeout requires a non-negative number of seconds",
+				});
+			}
+		} else if (arg === "--non-interactive-ui") {
+			const policy = args[++i];
+			if (policy === "deny" || policy === "error") {
+				result.nonInteractiveUiPolicy = policy;
+			} else {
+				result.diagnostics.push({
+					type: "error",
+					message: "--non-interactive-ui requires one of: deny, error",
+				});
+			}
 		} else if ((arg === "--tools" || arg === "-t") && i + 1 < args.length) {
 			result.tools = args[++i]
 				.split(",")
@@ -180,6 +233,8 @@ export function parseArgs(args: string[]): Args {
 			result.noThemes = true;
 		} else if (arg === "--no-context-files" || arg === "-nc") {
 			result.noContextFiles = true;
+		} else if (arg === "--validate-config") {
+			result.validateConfig = true;
 		} else if (arg === "--list-models") {
 			// Check if next arg is a search pattern (not a flag or file arg)
 			if (i + 1 < args.length && !args[i + 1].startsWith("-") && !args[i + 1].startsWith("@")) {
@@ -273,6 +328,13 @@ ${chalk.bold("Options:")}
                                  Supports globs (anthropic/*, *sonnet*) and fuzzy matching
   --no-tools, -nt                Disable all tools by default
   --no-builtin-tools, -nbt       Disable app/HCP defaults; keep explicit Package, MCP, and extension tools
+  --harness-workflows            Enable sub_agent workflow templates independently of thinking level
+  --no-harness-workflows         Disable sub_agent workflow templates independently of thinking level
+  --harness-teammates            Enable teammate_agent independently of thinking level
+  --no-harness-teammates         Disable teammate_agent independently of thinking level
+  --background-policy <policy>   Headless leftover work policy: cancel (default), wait, or error
+  --background-wait-timeout <s>  Total wait deadline for --background-policy wait (default: 60)
+  --non-interactive-ui <policy>  Blocking extension UI policy: deny (default) or error
   --tools, -t <tools>            Comma-separated allowlist of tool names to enable
                                  Applies to every configured tool source
   --exclude-tools, -xt <tools>   Comma-separated denylist of tool names to disable
@@ -292,6 +354,7 @@ ${chalk.bold("Options:")}
   --no-context-files, -nc        Disable AGENTS.md and CLAUDE.md discovery and loading
   --export <file>                Export session file to HTML and exit
   --list-models [search]         List available models (with optional fuzzy search)
+  --validate-config              Load and validate headless model/auth/resources without calling the model
   --verbose                      Force verbose startup (overrides quietStartup setting)
   --approve, -a                  Trust project-local files for this run
   --no-approve, -na              Ignore project-local files for this run
