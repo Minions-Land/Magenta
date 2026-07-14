@@ -5,6 +5,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { _clearMirrorCache } from "../src/utils/github-mirror.ts";
 import {
 	checkForUpdate,
 	consumePreviousWindowsUpdateError,
@@ -27,9 +28,11 @@ import {
 	RESOURCE_FILE_NAMES,
 	type ReleaseArchiveEntry,
 	resolveReleaseAssetPlan,
+	shouldUseMirrorForReleaseAsset,
 	validateExtractedReleaseResources,
 	validateReleaseArchiveEntries,
 	verifyReleaseArtifactChecksums,
+	verifyReleaseAssetDigest,
 } from "../src/utils/github-release-update-support.ts";
 
 const temporaryDirectories: string[] = [];
@@ -96,6 +99,8 @@ async function createValidResourceArchive(root: string, version = "0.0.12"): Pro
 
 afterEach(async () => {
 	vi.unstubAllGlobals();
+	vi.unstubAllEnvs();
+	_clearMirrorCache();
 	await Promise.all(
 		temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })),
 	);
@@ -114,6 +119,32 @@ describe("release asset planning", () => {
 			resources: { name: RELEASE_RESOURCES_ASSET_NAME, downloadUrl: "https://example.test/v1/resources" },
 			checksums: { name: RELEASE_CHECKSUMS_ASSET_NAME, downloadUrl: "https://example.test/v1/checksums" },
 		});
+	});
+
+	it("preserves a trusted GitHub API SHA-256 digest and rejects malformed digests", () => {
+		const sha256 = "A".repeat(64);
+		const assets = [
+			{
+				name: "magenta-linux-x64",
+				browser_download_url: "https://example.test/binary",
+				digest: `sha256:${sha256}`,
+			},
+			{ name: RELEASE_RESOURCES_ASSET_NAME, browser_download_url: "https://example.test/resources" },
+			{ name: RELEASE_CHECKSUMS_ASSET_NAME, browser_download_url: "https://example.test/checksums" },
+		];
+
+		const plan = resolveReleaseAssetPlan(assets, "magenta-linux-x64");
+		expect(plan.binary.sha256).toBe(sha256.toLowerCase());
+		expect(shouldUseMirrorForReleaseAsset(plan.binary)).toBe(true);
+		expect(shouldUseMirrorForReleaseAsset(plan.checksums)).toBe(false);
+		expect(shouldUseMirrorForReleaseAsset({ ...plan.checksums, sha256: "" })).toBe(false);
+		expect(shouldUseMirrorForReleaseAsset({ ...plan.checksums, sha256: sha256.toLowerCase() })).toBe(true);
+		expect(() =>
+			resolveReleaseAssetPlan(
+				[{ ...assets[0]!, digest: "md5:invalid" }, assets[1]!, assets[2]!],
+				"magenta-linux-x64",
+			),
+		).toThrow(/invalid SHA-256 digest/i);
 	});
 
 	it("rejects missing or ambiguous release assets", () => {
@@ -147,6 +178,22 @@ describe("release checksums", () => {
 		["duplicate", `${"a".repeat(64)}  magenta-linux-x64\n${"b".repeat(64)}  magenta-linux-x64\n`],
 	])("rejects %s checksum input", (_label, content) => {
 		expect(() => parseReleaseChecksums(content)).toThrow();
+	});
+
+	it("verifies a downloaded asset against the direct GitHub API digest", async () => {
+		const root = await makeTemporaryDirectory();
+		const artifactPath = join(root, "artifact");
+		await writeText(artifactPath, "trusted bytes");
+		const sha256 = createHash("sha256").update("trusted bytes").digest("hex");
+		const asset = { name: "artifact", downloadUrl: "https://example.test/artifact", sha256 };
+
+		await expect(verifyReleaseAssetDigest(asset, artifactPath)).resolves.toBe(true);
+		await expect(verifyReleaseAssetDigest({ ...asset, sha256: "0".repeat(64) }, artifactPath)).rejects.toThrow(
+			/GitHub API digest verification failed/i,
+		);
+		await expect(
+			verifyReleaseAssetDigest({ name: asset.name, downloadUrl: asset.downloadUrl }, artifactPath),
+		).resolves.toBe(false);
 	});
 
 	it("rejects a mismatched artifact before any installed files are touched", async () => {
@@ -223,6 +270,8 @@ describe("startup resource bootstrap", () => {
 		await writeText(join(installDirectory, "other-program"), "do not touch");
 
 		const assetBaseUrl = "https://example.test/releases/download/v0.0.12";
+		vi.stubEnv("MAGENTA_GITHUB_MIRROR", "https://untrusted-mirror.example");
+		_clearMirrorCache();
 		const fetchMock = vi.fn(async (input: string | URL | Request) => {
 			const url = String(input);
 			if (url === `${assetBaseUrl}/${RELEASE_CHECKSUMS_ASSET_NAME}`) {
@@ -501,6 +550,44 @@ describe("Windows update helper", () => {
 });
 
 describe("checkForUpdate error surfacing", () => {
+	it("fetches integrity-bearing release metadata directly even when a mirror is configured", async () => {
+		vi.stubEnv("MAGENTA_GITHUB_MIRROR", "https://untrusted-mirror.example");
+		_clearMirrorCache();
+		const sha256 = "a".repeat(64);
+		const asset = (name: string) => ({
+			name,
+			browser_download_url: `https://github.com/Minions-Land/Magenta-CLI/releases/download/v999.0.0/${name}`,
+			digest: `sha256:${sha256}`,
+		});
+		const fetchMock = vi.fn(
+			async () =>
+				new Response(
+					JSON.stringify({
+						tag_name: "v999.0.0",
+						name: "test",
+						body: "",
+						published_at: "2026-07-14T00:00:00Z",
+						assets: [
+							asset("magenta-macos-arm64"),
+							asset("magenta-macos-x64"),
+							asset("magenta-linux-x64"),
+							asset("magenta-windows-x64.exe"),
+							asset(RELEASE_RESOURCES_ASSET_NAME),
+							asset(RELEASE_CHECKSUMS_ASSET_NAME),
+						],
+					}),
+				),
+		);
+		vi.stubGlobal("fetch", fetchMock);
+
+		const result = await checkForUpdate({ force: true });
+		expect(fetchMock).toHaveBeenCalledWith(
+			"https://api.github.com/repos/Minions-Land/Magenta-CLI/releases/latest",
+			expect.anything(),
+		);
+		expect(result.releaseAssets?.checksums.sha256).toBe(sha256);
+	});
+
 	it("surfaces a rate-limit reason instead of swallowing the API error", async () => {
 		const resetEpoch = Math.floor(Date.now() / 1000) + 3600;
 		const fetchMock = vi.fn(async () => {

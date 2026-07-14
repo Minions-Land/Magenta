@@ -44,95 +44,42 @@ Useful options:
 
 ## macOS And Linux
 
-The release workflow currently builds macOS for Apple Silicon and Intel, and Linux for x64. The following Bash script detects those targets, verifies both downloads, smoke-tests a staged runtime, and swaps a dedicated installation directory before atomically writing a small command wrapper. Keeping the executable and resources in that dedicated directory also gives the built-in updater the correct installation boundary.
+The maintained Unix installer lives in the public distribution repository so
+there is one implementation to audit and update. It detects the supported
+platform, obtains release metadata directly from GitHub, rotates payload
+sources, uses `aria2c` or parallel range requests when available, verifies
+direct API digests with an official-manifest fallback, and validates the staged
+version before installation.
 
-The script honors two optional environment variables for restricted networks (see [China Network Guide](./CHINA_NETWORK.md)):
-
-- `MAGENTA_GITHUB_MIRROR` — a GitHub proxy prefix (e.g. `https://ghfast.top`). When set, all downloads are routed through it.
-- It automatically uses `aria2c` with 16 connections when that tool is available, and falls back to `curl` otherwise. On slow links `aria2c` is dramatically faster for the standalone executable.
+Review the [canonical `install.sh`](https://github.com/Minions-Land/Magenta-CLI/blob/main/install.sh), then run it:
 
 ```bash
-set -euo pipefail
-
-case "$(uname -s)-$(uname -m)" in
-  Darwin-arm64) asset=magenta-macos-arm64 ;;
-  Darwin-x86_64) asset=magenta-macos-x64 ;;
-  Linux-x86_64) asset=magenta-linux-x64 ;;
-  *) echo "No standalone Magenta release for $(uname -s)/$(uname -m)" >&2; exit 1 ;;
-esac
-
-# Optional GitHub mirror prefix for restricted networks, e.g. https://ghfast.top
-mirror="${MAGENTA_GITHUB_MIRROR:-}"
-mirror="${mirror%/}"
-gh="https://github.com/Minions-Land/Magenta-CLI/releases/latest/download"
-base="${mirror:+$mirror/}$gh"
-
-root="$HOME/.local/share/magenta"
-install_dir="$root/runtime"
-bin_dir="$HOME/.local/bin"
-mkdir -p "$root" "$bin_dir"
-stage="$(mktemp -d "$root/.install.XXXXXX")"
-trap 'rm -rf "$stage"' EXIT
-
-# Prefer aria2c (16 parallel connections) for speed; fall back to curl.
-fetch() {
-  url=$1; out=$2
-  if command -v aria2c >/dev/null 2>&1; then
-    aria2c -x16 -s16 -k1M --retry-wait=2 --max-tries=5 \
-      --allow-overwrite=true --auto-file-renaming=false \
-      -d "$(dirname "$out")" -o "$(basename "$out")" "$url"
-  else
-    curl -fL --retry 5 --retry-delay 2 "$url" -o "$out"
-  fi
-}
-
-fetch "$base/$asset" "$stage/$asset"
-fetch "$base/magenta-resources-universal.tar.gz" "$stage/magenta-resources-universal.tar.gz"
-fetch "$base/SHA256SUMS" "$stage/SHA256SUMS"
-
-verify() {
-  file=$1
-  expected=$(awk -v name="$file" '$2 == name || $2 == "*" name { print $1; exit }' "$stage/SHA256SUMS")
-  test -n "$expected" || { echo "Missing checksum for $file" >&2; exit 1; }
-  if command -v sha256sum >/dev/null 2>&1; then
-    actual=$(sha256sum "$stage/$file" | awk '{print $1}')
-  else
-    actual=$(shasum -a 256 "$stage/$file" | awk '{print $1}')
-  fi
-  test "$actual" = "$expected" || { echo "Checksum mismatch for $file" >&2; exit 1; }
-}
-verify "$asset"
-verify magenta-resources-universal.tar.gz
-
-tar -xzf "$stage/magenta-resources-universal.tar.gz" -C "$stage"
-mv "$stage/$asset" "$stage/magenta"
-chmod +x "$stage/magenta"
-rm "$stage/magenta-resources-universal.tar.gz" "$stage/SHA256SUMS"
-"$stage/magenta" --help >/dev/null
-
-backup="$root/.runtime.backup.$$"
-if [ -e "$install_dir" ]; then mv "$install_dir" "$backup"; fi
-if ! mv "$stage" "$install_dir"; then
-  if [ -e "$backup" ]; then mv "$backup" "$install_dir"; fi
-  exit 1
-fi
-trap - EXIT
-
-printf '%s\n' '#!/usr/bin/env sh' \
-  'exec "$HOME/.local/share/magenta/runtime/magenta" "$@"' \
-  > "$bin_dir/.magenta.new"
-chmod +x "$bin_dir/.magenta.new"
-mv -f "$bin_dir/.magenta.new" "$bin_dir/magenta"
-rm -rf "$backup"
+installer="$(mktemp)"
+curl -fsSL https://raw.githubusercontent.com/Minions-Land/Magenta-CLI/main/install.sh -o "$installer"
+bash "$installer"
+rm -f "$installer"
 ```
 
-Ensure `~/.local/bin` is on `PATH`, then open a new shell:
+For a restricted or slow network, set the payload mirror first:
+
+```bash
+export MAGENTA_GITHUB_MIRROR=https://ghfast.top
+```
+
+The bootstrap script and `api.github.com` metadata endpoint must still be
+reachable directly; the mirror is used only for large payloads. Other useful
+environment variables include `MAGENTA_INSTALL_DIR`, `MAGENTA_CHUNKS`,
+`MAGENTA_NO_PARALLEL`, and `MAGENTA_NO_ARIA2`.
+
+The default installation directory is `~/.local/bin`. Ensure it is on `PATH`,
+then open a new shell:
 
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-Add that export to the appropriate shell profile only if the directory is not already configured.
+Add that export to the appropriate shell profile only if the directory is not
+already configured.
 
 ## Verify
 
@@ -152,9 +99,15 @@ Standalone installations can use the built-in updater:
 magenta --update
 ```
 
-The updater reads the public CLI Release, verifies the selected executable and resources archive against `SHA256SUMS`, stages and smoke-tests the replacement, and rolls back if activation fails. It refuses an unsupported platform or an incomplete release instead of installing a partial update.
+The updater reads release metadata directly from GitHub, verifies the selected
+executable and resources archive against API digests and `SHA256SUMS`, stages
+and smoke-tests the replacement, and rolls back if activation fails. It refuses
+an unsupported platform or an incomplete release instead of installing a
+partial update.
 
-On restricted networks, set `MAGENTA_GITHUB_MIRROR` before running the updater so both the GitHub API check and the asset downloads route through a proxy:
+On restricted networks, set `MAGENTA_GITHUB_MIRROR` before running the updater
+to accelerate the executable and resources payloads. The integrity-bearing API
+metadata remains direct:
 
 ```bash
 export MAGENTA_GITHUB_MIRROR=https://ghfast.top
@@ -169,7 +122,7 @@ If `magenta --update` fails with verification errors or "Could not fetch latest 
 
 1. **Old binary incompatibility**: Early releases used a different format and cannot auto-update to the current split-asset release layout (binary + resources archive + checksums). Reinstall using the installation script above instead of `--update`.
 
-2. **Network or rate-limit issues**: GitHub API has a 60 requests/hour limit for unauthenticated clients. If you see "Rate limit exceeded", either wait for the reset time shown in the error, or set `MAGENTA_GITHUB_TOKEN` to a personal access token (no special scopes needed for public repositories). For restricted networks, configure `MAGENTA_GITHUB_MIRROR` as documented in the [China Network Guide](./CHINA_NETWORK.md).
+2. **Network or rate-limit issues**: GitHub API has a 60 requests/hour limit for unauthenticated clients. If you see "Rate limit exceeded", either wait for the reset time shown in the error, or set `MAGENTA_GITHUB_TOKEN` to a personal access token (no special scopes needed for public repositories). The API must be reachable directly; configure `MAGENTA_GITHUB_MIRROR` only to accelerate payloads as documented in the [China Network Guide](./CHINA_NETWORK.md).
 
 3. **Partial or interrupted installation**: If a previous update left incomplete resources, the binary may fail to start. Reinstall using the installation script to repair the runtime directory.
 
@@ -183,12 +136,18 @@ npm run build
 
 ## Remove
 
-For the Unix layout above:
+The Unix installer does not currently expose an uninstall switch. Remove the
+executable from the configured install directory:
 
 ```bash
-rm "$HOME/.local/bin/magenta"
-rm -rf "$HOME/.local/share/magenta"
+install_dir="${MAGENTA_INSTALL_DIR:-$HOME/.local/bin}"
+rm -f "$install_dir/magenta"
 ```
+
+Runtime resources are installed beside the executable. Do not remove a shared
+install directory wholesale; inspect its contents before deleting Magenta-owned
+resource files. A dedicated `MAGENTA_INSTALL_DIR` is preferable when clean
+removal is a requirement.
 
 On Windows, rerun the downloaded installer with `-Uninstall`.
 

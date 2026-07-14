@@ -565,7 +565,7 @@ export async function main(args: string[], options?: MainOptions) {
 			} else if (result.error.includes("fetch") || result.error.includes("network")) {
 				console.log(
 					chalk.dim(
-						"\nTip: Check network connectivity and consider setting MAGENTA_GITHUB_MIRROR for restricted networks.",
+						"\nTip: Check direct connectivity to api.github.com. Payload mirrors are used only after release metadata is authenticated.",
 					),
 				);
 				console.log(chalk.dim("See: https://github.com/Minions-Land/Magenta-CLI/blob/main/docs/CHINA_NETWORK.md"));

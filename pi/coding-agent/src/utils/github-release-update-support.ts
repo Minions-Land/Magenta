@@ -34,17 +34,24 @@ export const REQUIRED_RESOURCE_PATHS = [
 export interface ReleaseAssetDescriptor {
 	name: string;
 	browser_download_url: string;
+	digest?: string | null;
 }
 
 export interface ReleaseAssetDownload {
 	name: string;
 	downloadUrl: string;
+	/** SHA-256 published in the direct GitHub API release response. */
+	sha256?: string;
 }
 
 export interface ReleaseAssetPlan {
 	binary: ReleaseAssetDownload;
 	resources: ReleaseAssetDownload;
 	checksums: ReleaseAssetDownload;
+}
+
+export function shouldUseMirrorForReleaseAsset(asset: ReleaseAssetDownload): boolean {
+	return asset.name !== RELEASE_CHECKSUMS_ASSET_NAME || Boolean(asset.sha256);
 }
 
 export function resolveReleaseAssetPlan(
@@ -59,11 +66,19 @@ export function resolveReleaseAssetPlan(
 		if (matches.length !== 1) {
 			throw new Error(`Release contains duplicate assets named: ${name}`);
 		}
-		const downloadUrl = matches[0]?.browser_download_url;
+		const descriptor = matches[0];
+		const downloadUrl = descriptor?.browser_download_url;
 		if (!downloadUrl) {
 			throw new Error(`Release asset has no download URL: ${name}`);
 		}
-		return { name, downloadUrl };
+		const digest = descriptor?.digest;
+		if (digest == null) return { name, downloadUrl };
+		const digestMatch = /^sha256:([0-9a-f]{64})$/i.exec(digest);
+		const sha256 = digestMatch?.[1];
+		if (!sha256) {
+			throw new Error(`Release asset has an invalid SHA-256 digest: ${name}`);
+		}
+		return { name, downloadUrl, sha256: sha256.toLowerCase() };
 	};
 
 	return {
@@ -117,6 +132,16 @@ export async function calculateFileSha256(filePath: string): Promise<string> {
 		hash.update(chunk);
 	}
 	return hash.digest("hex");
+}
+
+/** Verify an asset against the digest obtained from the direct GitHub API. */
+export async function verifyReleaseAssetDigest(asset: ReleaseAssetDownload, filePath: string): Promise<boolean> {
+	if (!asset.sha256) return false;
+	const actual = await calculateFileSha256(filePath);
+	if (actual !== asset.sha256) {
+		throw new Error(`GitHub API digest verification failed for ${asset.name}`);
+	}
+	return true;
 }
 
 export async function verifyReleaseArtifactChecksums(

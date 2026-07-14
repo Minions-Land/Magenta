@@ -32,8 +32,10 @@ import {
 	RELEASE_RESOURCES_ASSET_NAME,
 	type ReleaseAssetPlan,
 	resolveReleaseAssetPlan,
+	shouldUseMirrorForReleaseAsset,
 	validateExtractedReleaseResources,
 	verifyReleaseArtifactChecksums,
+	verifyReleaseAssetDigest,
 } from "./github-release-update-support.ts";
 
 const GITHUB_REPO = process.env.MAGENTA_GITHUB_REPO || "Minions-Land/Magenta-CLI";
@@ -54,6 +56,7 @@ interface GitHubRelease {
 		browser_download_url: string;
 		url: string;
 		size: number;
+		digest?: string | null;
 	}>;
 }
 
@@ -167,7 +170,9 @@ async function fetchWithTimeout(
 
 async function getLatestRelease(): Promise<GitHubRelease | null> {
 	try {
-		const url = resolveGitHubUrl(`https://api.github.com/repos/${GITHUB_REPO}/releases/latest`);
+		// Release metadata is the integrity root for asset digests, so it must
+		// come directly from GitHub rather than the payload mirror.
+		const url = `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`;
 		const response = await fetchWithTimeout(url, {
 			headers: buildGitHubHeaders("application/vnd.github+json"),
 		});
@@ -214,12 +219,14 @@ function buildGitHubHeaders(accept: string): Record<string, string> {
 async function downloadReleaseAsset(
 	asset: ReleaseAssetPlan[keyof ReleaseAssetPlan],
 	destination: string,
+	options: { useMirror?: boolean } = {},
 ): Promise<void> {
 	const controller = new AbortController();
 	const timeout = setTimeout(() => controller.abort(), DOWNLOAD_TIMEOUT_MS);
 
 	try {
-		const response = await fetch(resolveGitHubUrl(asset.downloadUrl), {
+		const downloadUrl = options.useMirror === false ? asset.downloadUrl : resolveGitHubUrl(asset.downloadUrl);
+		const response = await fetch(downloadUrl, {
 			headers: buildGitHubHeaders("application/octet-stream"),
 			signal: controller.signal,
 		});
@@ -384,6 +391,7 @@ export async function ensureCurrentReleaseResources(
 					downloadUrl: `${assetBaseUrl}/${RELEASE_CHECKSUMS_ASSET_NAME}`,
 				},
 				checksumsPath,
+				{ useMirror: false },
 			);
 			await downloadReleaseAsset(
 				{
@@ -391,6 +399,7 @@ export async function ensureCurrentReleaseResources(
 					downloadUrl: `${assetBaseUrl}/${RELEASE_RESOURCES_ASSET_NAME}`,
 				},
 				resourcesPath,
+				{ useMirror: options.assetBaseUrl === undefined },
 			);
 
 			const checksums = parseReleaseChecksums(await readFile(checksumsPath, "utf8"));
@@ -524,10 +533,20 @@ export async function installUpdate(): Promise<UpdateInstallResult> {
 
 	try {
 		await mkdir(stagingDirectory, { mode: 0o700 });
-		await downloadReleaseAsset(checkResult.releaseAssets.checksums, checksumsPath);
+		const checksumAsset = checkResult.releaseAssets.checksums;
+		// A mirrored checksum manifest is safe only when the direct GitHub API
+		// supplied a digest that can authenticate the manifest itself.
+		await downloadReleaseAsset(checksumAsset, checksumsPath, {
+			useMirror: shouldUseMirrorForReleaseAsset(checksumAsset),
+		});
+		await verifyReleaseAssetDigest(checksumAsset, checksumsPath);
 		await downloadReleaseAsset(checkResult.releaseAssets.binary, stagedBinary);
 		await downloadReleaseAsset(checkResult.releaseAssets.resources, resourcesPath);
 
+		// Verify API digests when GitHub publishes them, then also enforce the
+		// release manifest so older releases without API digests remain safe.
+		await verifyReleaseAssetDigest(checkResult.releaseAssets.binary, stagedBinary);
+		await verifyReleaseAssetDigest(checkResult.releaseAssets.resources, resourcesPath);
 		const checksums = parseReleaseChecksums(await readFile(checksumsPath, "utf8"));
 		await verifyReleaseArtifactChecksums(checksums, [
 			{ name: checkResult.releaseAssets.binary.name, path: stagedBinary },

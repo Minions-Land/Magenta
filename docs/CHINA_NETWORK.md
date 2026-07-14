@@ -7,11 +7,13 @@ GitHub, so those operations can stall without a mirror.
 
 This guide covers two independent accelerators:
 
-1. **Mirror routing** \u2014 rewrite every GitHub URL through a proxy prefix.
+1. **Payload mirror routing** \u2014 route large release assets through a proxy prefix.
 2. **Parallel download** \u2014 use `aria2c` for multi-connection transfers during
    install.
 
-Both are optional. When unset, Magenta behaves exactly as before.
+Both are optional. Integrity-bearing release metadata stays on the direct
+`api.github.com` TLS connection so a payload mirror cannot replace both an
+artifact and the checksum used to verify it.
 
 ## Quick Diagnosis
 
@@ -23,22 +25,23 @@ curl -I https://api.github.com/repos/Minions-Land/Magenta-CLI/releases/latest
 
 Interpret the result:
 
-- **Connection timeout or refused**: GitHub is blocked on this network. Set a mirror (section 1 below).
+- **Connection timeout or refused**: release metadata is unreachable. A payload mirror does not proxy this integrity-bearing API request; configure a network path or HTTPS proxy that can reach `api.github.com`.
 - **HTTP 403** with `x-ratelimit-remaining: 0`: The unauthenticated API rate limit (60/hour) is exhausted. Wait for the reset time in the error, or set `MAGENTA_GITHUB_TOKEN`.
 - **HTTP 200**: The API is reachable, so the failure is elsewhere. If the running binary predates the split-asset release format (binary + resources archive + checksums), it cannot auto-update and must be reinstalled with the installation script from [User Install](./USER_INSTALL.md).
 
 ## 1. Mirror Routing
 
-Set the `MAGENTA_GITHUB_MIRROR` environment variable to a GitHub proxy prefix.
-Magenta prepends it to every GitHub URL it fetches:
+Set the `MAGENTA_GITHUB_MIRROR` environment variable to a GitHub payload
+proxy prefix. Eligible release asset URLs are rewritten through it:
 
 ```
 MAGENTA_GITHUB_MIRROR=https://ghfast.top
   https://github.com/owner/repo/releases/download/v1/asset
     -> https://ghfast.top/https://github.com/owner/repo/releases/download/v1/asset
-  https://api.github.com/repos/owner/repo/releases/latest
-    -> https://ghfast.top/https://api.github.com/repos/owner/repo/releases/latest
 ```
+
+Release metadata remains direct: `api.github.com` supplies trusted asset digests
+and must be reachable before a mirrored payload can be accepted.
 
 Add it to your shell profile so it applies to every session:
 
@@ -47,11 +50,10 @@ Add it to your shell profile so it applies to every session:
 export MAGENTA_GITHUB_MIRROR=https://ghfast.top
 ```
 
-Once set, it covers all Magenta download paths:
-
-- `magenta --update` (self-update: GitHub API check + asset downloads)
-- `magenta install <package>` (harness package catalog + artifact downloads)
-- automatic `fd` / `rg` helper-tool downloads on first run
+For standalone installation and `magenta --update`, the mirror accelerates the
+large executable and resources archive after the direct release metadata check.
+Other package and helper-tool acquisition paths also honor the setting where
+supported, but may have their own metadata requirements.
 
 ### Choosing a mirror
 
@@ -66,9 +68,11 @@ time of writing:
 | ghproxy.net | `https://ghproxy.net` |
 | gh.llkk.cc | `https://gh.llkk.cc` |
 
-These are third-party services. Every artifact Magenta downloads is still
-verified against the official `SHA256SUMS`, so a mirror cannot substitute
-tampered content without failing the checksum step.
+These are third-party services. Standalone release payloads are authenticated
+with direct GitHub API digests and/or an official checksum manifest kept outside
+the payload mirror. A checksum manifest may travel through a mirror only when
+its own API digest authenticates it; otherwise it is fetched directly from
+GitHub.
 
 ## 2. Parallel Download With aria2
 
@@ -97,11 +101,13 @@ To fetch the release yourself with a mirror and aria2:
 
 ```bash
 mirror=https://ghfast.top
-base="$mirror/https://github.com/Minions-Land/Magenta-CLI/releases/latest/download"
+release=https://github.com/Minions-Land/Magenta-CLI/releases/latest/download
+base="$mirror/$release"
 
 aria2c -x16 -s16 -k1M "$base/magenta-linux-x64"
 aria2c -x16 -s16 -k1M "$base/magenta-resources-universal.tar.gz"
-aria2c -x16 -s16 -k1M "$base/SHA256SUMS"
+# The manifest is the fallback trust root, so fetch it directly.
+curl -fL "$release/SHA256SUMS" -o SHA256SUMS
 
 # Verify before using
 sha256sum -c --ignore-missing SHA256SUMS
@@ -109,9 +115,10 @@ sha256sum -c --ignore-missing SHA256SUMS
 
 ## Verifying Integrity
 
-Whichever mirror or downloader you use, always confirm the checksums match the
-official manifest. The install scripts do this automatically; for manual
-downloads run:
+Whichever mirror or downloader you use, always confirm the payloads against a
+trust root obtained outside that mirror. The install scripts use direct GitHub
+API digests plus the official manifest automatically; for manual downloads,
+fetch the manifest directly as shown above and run:
 
 ```bash
 sha256sum magenta-linux-x64 magenta-resources-universal.tar.gz
