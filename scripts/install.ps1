@@ -208,12 +208,13 @@ $builtinMirrors = @(
 
 # Robust download: try BITS (background, resumable) then Invoke-WebRequest, across
 # the direct URL plus mirror candidates, until the file is fully retrieved.
-function Invoke-MagentaDownload([string]$DirectUrl, [string]$OutFile, [long]$MinBytes = 0) {
+# Use -TrustedOnly to skip third-party mirrors (e.g. for SHA256SUMS trust root).
+function Invoke-MagentaDownload([string]$DirectUrl, [string]$OutFile, [long]$MinBytes = 0, [switch]$TrustedOnly) {
     $candidates = New-Object System.Collections.Generic.List[string]
     # Mirrors only make sense for public github.com asset URLs. A custom base
     # (e.g. -AssetBaseUrl for CI smoke tests or a private host) is used verbatim.
     $mirrorable = $DirectUrl -like "https://github.com/*"
-    if ($mirrorable) {
+    if ($mirrorable -and -not $TrustedOnly) {
         if ($env:MAGENTA_GITHUB_MIRROR) {
             $candidates.Add(($env:MAGENTA_GITHUB_MIRROR.TrimEnd('/')) + "/" + $DirectUrl)
         }
@@ -276,7 +277,11 @@ try {
 
     Write-Host "Downloading Magenta for Windows..."
     Write-Host "[SHA256SUMS]"
-    Invoke-MagentaDownload "$directBase/SHA256SUMS" $checksumsPath
+    # SHA256SUMS is the integrity trust root: never fetch it through third-party
+    # mirrors, otherwise a mirror could swap both the checksum file and the
+    # payload it verifies. A custom -AssetBaseUrl (CI/private host) is still used
+    # verbatim because it is explicitly trusted by the operator.
+    Invoke-MagentaDownload "$directBase/SHA256SUMS" $checksumsPath -TrustedOnly
     Write-Host "[magenta-windows-x64.exe] (~160-190MB)"
     Invoke-MagentaDownload "$directBase/magenta-windows-x64.exe" $binaryPath 1000000
     Write-Host "[magenta-resources-universal.tar.gz] (~4MB)"
