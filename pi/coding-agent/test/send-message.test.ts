@@ -39,7 +39,7 @@ describe("SendMessageController", () => {
 		});
 	}
 
-	async function call(c: SendMessageController, params: { to: string; content: string; urgent?: boolean }) {
+	async function call(c: SendMessageController, params: { to: string; content: string }) {
 		const def = c.createToolDefinition();
 		return def.execute("call-1", params, undefined, undefined, {} as never);
 	}
@@ -114,7 +114,7 @@ describe("SendMessageController", () => {
 			await expect(call(teammate, { to: "stranger", content: "leak" })).rejects.toThrow(
 				"may only target parent session parent",
 			);
-			await expect(call(teammate, { to: "parent", content: "result", urgent: true })).resolves.toBeDefined();
+			await expect(call(teammate, { to: "parent", content: "result" })).resolves.toBeDefined();
 		} finally {
 			parent.shutdown();
 			stranger.shutdown();
@@ -167,11 +167,11 @@ describe("SendMessageController", () => {
 		}
 	});
 
-	it("marks a message urgent and drains it with urgent priority", async () => {
+	it("always marks a message urgent and drains it with urgent priority", async () => {
 		const alice = controller("alice");
 		const bob = controller("bob");
 		try {
-			const res = await call(alice, { to: "bob", content: "drop everything", urgent: true });
+			const res = await call(alice, { to: "bob", content: "drop everything" });
 			expect(res.details?.urgent).toBe(true);
 			const text = res.content.map((p) => ("text" in p ? p.text : "")).join("");
 			expect(text).toContain("[urgent]");
@@ -183,7 +183,7 @@ describe("SendMessageController", () => {
 		}
 	});
 
-	it("defaults to urgent priority when urgent is omitted", async () => {
+	it("is always urgent even when the caller passes no priority hint", async () => {
 		const alice = controller("alice");
 		const bob = controller("bob");
 		try {
@@ -197,21 +197,7 @@ describe("SendMessageController", () => {
 		}
 	});
 
-	it("uses normal priority only when urgent is explicitly false", async () => {
-		const alice = controller("alice");
-		const bob = controller("bob");
-		try {
-			const res = await call(alice, { to: "bob", content: "whenever", urgent: false });
-			expect(res.details?.urgent).toBe(false);
-			const drained = bob.drainForInjection();
-			expect(drained[0].priority).toBe("normal");
-		} finally {
-			alice.shutdown();
-			bob.shutdown();
-		}
-	});
-
-	it("wakes an idle recipient on an urgent message", async () => {
+	it("wakes an idle recipient (every message is urgent)", async () => {
 		let woke = 0;
 		const alice = controller("alice");
 		// bob is wakeable and idle: an urgent message should signal its process,
@@ -219,7 +205,7 @@ describe("SendMessageController", () => {
 		const bob = controller("bob", { wakeForMessages: () => woke++, isStreaming: () => false });
 		try {
 			bob.recordPresence("idle");
-			const res = await call(alice, { to: "bob", content: "urgent!", urgent: true });
+			const res = await call(alice, { to: "bob", content: "urgent!" });
 			// The wake signal is delivered synchronously within the same process, but
 			// signal handlers run on the next tick; allow the microtask/timer to flush.
 			await new Promise((r) => setTimeout(r, 20));
@@ -231,21 +217,6 @@ describe("SendMessageController", () => {
 		}
 	});
 
-	it("does not wake an idle recipient on a normal (urgent: false) message", async () => {
-		let woke = 0;
-		const alice = controller("alice");
-		const bob = controller("bob", { wakeForMessages: () => woke++, isStreaming: () => false });
-		try {
-			bob.recordPresence("idle");
-			const res = await call(alice, { to: "bob", content: "whenever", urgent: false });
-			await new Promise((r) => setTimeout(r, 20));
-			expect(res.details?.woken).toBe(false);
-			expect(woke).toBe(0);
-		} finally {
-			alice.shutdown();
-			bob.shutdown();
-		}
-	});
 
 	// Regression: a freshly constructed wakeable session must advertise itself as
 	// idle+online immediately, before it has ever run an agent loop. Previously
@@ -258,7 +229,7 @@ describe("SendMessageController", () => {
 		// bob is wakeable but has NEVER called recordPresence explicitly.
 		const bob = controller("bob", { wakeForMessages: () => woke++, isStreaming: () => false });
 		try {
-			const res = await call(alice, { to: "bob", content: "urgent on a fresh session!", urgent: true });
+			const res = await call(alice, { to: "bob", content: "urgent on a fresh session!" });
 			await new Promise((r) => setTimeout(r, 20));
 			const text = res.content.map((p) => ("text" in p ? p.text : "")).join("");
 			// The sender sees bob as idle (not "no presence record yet") and wakes it.
@@ -279,7 +250,7 @@ describe("SendMessageController", () => {
 		const alice = controller("alice");
 		const bob = controller("bob"); // no wakeForMessages => not wakeable
 		try {
-			const res = await call(alice, { to: "bob", content: "hi", urgent: true });
+			const res = await call(alice, { to: "bob", content: "hi" });
 			await new Promise((r) => setTimeout(r, 20));
 			// Without a live pid, getPresence computes online=false, so the sender is
 			// told the recipient is effectively offline and no wake is attempted.

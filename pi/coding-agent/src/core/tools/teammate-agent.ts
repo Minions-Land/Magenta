@@ -24,7 +24,7 @@ import {
 } from "../background-shell-utils.ts";
 import type { ExtensionContext, ToolDefinition } from "../extensions/types.ts";
 import { SessionManager } from "../session-manager.ts";
-import type { PeerMessageDetails, SendMessageInput } from "./send-message.ts";
+import type { PeerMessageDetails, PeerSendInput } from "./send-message.ts";
 
 const MAX_TEAMMATES = 8;
 const RPC_TIMEOUT_MS = 30_000;
@@ -96,7 +96,7 @@ export type TeammateAgentModelSelection = {
 	model: string;
 };
 
-export type TeammatePeerSend = (params: SendMessageInput) => {
+export type TeammatePeerSend = (params: PeerSendInput) => {
 	content: { type: "text"; text: string }[];
 	details: PeerMessageDetails;
 };

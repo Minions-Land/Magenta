@@ -65,15 +65,22 @@ const sendMessageSchema = Type.Object({
 	content: Type.String({
 		description: `Message content to send (the text body of the message; maximum ${MAX_PEER_MESSAGE_CONTENT_BYTES / 1024} KiB).`,
 	}),
-	urgent: Type.Optional(
-		Type.Boolean({
-			description:
-				"Delivery priority. Defaults to true (urgent): the message is injected before the recipient's next tool-calling turn (steering), and if the recipient is idle its process is woken immediately. This is the normal mode — teammate coordination is almost always time-sensitive. Set to false only for a low-priority note that can wait until the end of the recipient's current loop (follow-up), which is a rarely-needed fallback.",
-		}),
-	),
+	// The `urgent` parameter has been removed: every peer message is always urgent
+	// (injected before the recipient's next tool-calling turn and waking an idle
+	// recipient immediately). Teammate coordination is time-sensitive by nature, so a
+	// low-priority/follow-up mode is intentionally not offered.
 });
 
 export type SendMessageInput = Static<typeof sendMessageSchema>;
+
+/**
+ * Internal input to {@link SendMessageController.send}. The public `send_message`
+ * tool schema deliberately omits `urgent` so an agent-issued message is ALWAYS
+ * urgent (steer + idle wake) — peer coordination is time-sensitive by nature.
+ * The optional `urgent` here exists only for internal callers such as the
+ * teammate_agent controller, which may enqueue a lower-priority assignment.
+ */
+export type PeerSendInput = SendMessageInput & { urgent?: boolean };
 
 export interface PeerMessageDetails {
 	id: string;
@@ -266,16 +273,16 @@ export class SendMessageController {
 		}
 	}
 
-	send(params: SendMessageInput): {
+	send(params: PeerSendInput): {
 		content: { type: "text"; text: string }[];
 		details: PeerMessageDetails;
 	} {
 		const to = params.to?.trim();
 		const content = params.content;
 		const from = this.getSessionId();
-		// Urgent is the default: teammate coordination is almost always time-sensitive,
-		// so a message steers the recipient's next turn and wakes it if idle unless the
-		// sender explicitly opts out with `urgent: false` (a rarely-needed low-priority note).
+		// Urgent by default. The public tool schema has no `urgent` field, so a message
+		// sent via the send_message tool is always urgent; only internal callers (e.g.
+		// teammate_agent) can pass `urgent: false` for a low-priority assignment.
 		const urgent = params.urgent !== false;
 
 		if (!to) {
@@ -350,12 +357,12 @@ export class SendMessageController {
 			name: "send_message",
 			label: "Send Message",
 			description:
-				"Send a plain-text message to another agent session. The message is stored in a shared mailbox. By default (urgent) it is delivered before the recipient's next tool-calling turn and immediately wakes the recipient if it is idle (alive but waiting), so time-sensitive coordination arrives promptly. Your own session id is filled in automatically as the sender. Set `urgent: false` only for a low-priority note that can wait until the end of the recipient's current loop — a rarely-needed fallback. The result reports the recipient's presence (active, idle, or offline) so you know whether your message will be seen soon. Use this to coordinate with a teammate session — for example to ask for help on a hard change or to answer a question a teammate sent you.",
+				"Send a plain-text message to another agent session. The message is stored in a shared mailbox and is always delivered urgently: it is injected before the recipient's next tool-calling turn and immediately wakes the recipient if it is idle (alive but waiting). Your own session id is filled in automatically as the sender. The result reports the recipient's presence (active, idle, or offline) so you know whether your message will be seen soon. Use this to coordinate with a teammate session — for example to ask for help on a hard change or to answer a question a teammate sent you.",
 			promptSnippet: "Send a plain-text message to another agent session",
 			promptGuidelines: [
 				"Use send_message to coordinate with another agent session: ask for help, share findings, or reply to a message a teammate sent you.",
 				"Messages you receive from teammates are injected automatically at the start of your next loop; you do not poll for them.",
-				"Messages are urgent by default: they are injected before the recipient's next tool-calling turn, and an idle recipient is woken immediately. This is the normal mode for teammate coordination. Pass urgent: false only for a low-priority note that can wait until the recipient's current loop ends — a rarely-needed fallback.",
+				"All messages are urgent: they are injected before the recipient's next tool-calling turn, and an idle recipient is woken immediately. This is the only mode — teammate coordination is time-sensitive by nature.",
 				"Each injected message shows the sender's presence (active/idle/offline). If a sender is offline, a reply will wait until they come back, so decide accordingly.",
 				"Address the recipient by its session id in `to`. Your own session id is attached as the sender automatically.",
 			],

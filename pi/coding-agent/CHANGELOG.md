@@ -7,7 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Changed
-- `send_message` now delivers as **urgent by default**: a peer message steers the recipient's next tool-calling turn and wakes an idle recipient immediately, matching how teammate coordination is used in practice. Pass `urgent: false` for the rarely-needed low-priority note that can wait until the recipient's current loop ends (previously the default was normal/follow-up and `urgent: true` had to be set explicitly)
+- `send_message` now delivers **always urgent**: every peer message steers the recipient's next tool-calling turn and wakes an idle recipient immediately. The `urgent` parameter has been removed from the tool schema — teammate coordination is time-sensitive by nature, so a low-priority/follow-up mode is no longer offered. (Previously messages were normal/follow-up by default and `urgent: true` had to be set explicitly.)
 
 ### Fixed
 - `/clear` now starts a fresh session exactly like `/new`; previously only the bare `clear` alias was normalized, so the documented slash form could fall through as a normal prompt
