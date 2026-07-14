@@ -10,7 +10,7 @@ describe("BackgroundEventManager headless APIs", () => {
 				status: "running",
 				startedAt: 10,
 				label: "review",
-				progress: { value: 0.5, source: "explicit" },
+				progress: { value: 0.5, source: "output" },
 				canCancel: true,
 			},
 		];

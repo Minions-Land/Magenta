@@ -130,7 +130,10 @@ process.stdin.resume();
 		await new Promise((resolve) => setTimeout(resolve, 50));
 		await client.stop();
 
-		const received = readFileSync(outputPath, "utf8").split("\n").filter(Boolean).map(JSON.parse);
+		const received = readFileSync(outputPath, "utf8")
+			.split("\n")
+			.filter(Boolean)
+			.map((line) => JSON.parse(line));
 		expect(received).toContainEqual({ type: "extension_ui_response", id: "ui-123", confirmed: true });
 	});
 });
