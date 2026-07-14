@@ -10,6 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `send_message` now delivers as **urgent by default**: a peer message steers the recipient's next tool-calling turn and wakes an idle recipient immediately, matching how teammate coordination is used in practice. Pass `urgent: false` for the rarely-needed low-priority note that can wait until the recipient's current loop ends (previously the default was normal/follow-up and `urgent: true` had to be set explicitly)
 
 ### Fixed
+- `/clear` now starts a fresh session exactly like `/new`; previously only the bare `clear` alias was normalized, so the documented slash form could fall through as a normal prompt
 - `magenta --update` now surfaces the actual reason when the release check fails instead of a bare "Could not fetch latest release": non-404 GitHub API responses, rate-limit exhaustion (with reset time and a `MAGENTA_GITHUB_TOKEN` hint), and network errors are all reported, and `--update` prints targeted follow-up tips (set a token, set `MAGENTA_GITHUB_MIRROR`, or reinstall via the install script when a checksum/verification failure indicates a pre-v0.0.12 binary)
 - A failed release check no longer records a successful update-check timestamp, so transient network failures do not suppress the next check for 24h
 - `docs/USER_INSTALL.md` and `docs/CHINA_NETWORK.md` document update-failure troubleshooting: old-binary incompatibility, rate limits, and API-reachability diagnosis
