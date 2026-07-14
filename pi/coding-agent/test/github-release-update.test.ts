@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+	checkForUpdate,
 	consumePreviousWindowsUpdateError,
 	ensureCurrentReleaseResources,
 	shouldSkipConcurrentUpdateTransaction,
@@ -496,5 +497,62 @@ describe("Windows update helper", () => {
 		);
 		expect(existsSync(errorLog)).toBe(false);
 		await expect(consumePreviousWindowsUpdateError({ currentBinary, force: true })).resolves.toBeUndefined();
+	});
+});
+
+describe("checkForUpdate error surfacing", () => {
+	it("surfaces a rate-limit reason instead of swallowing the API error", async () => {
+		const resetEpoch = Math.floor(Date.now() / 1000) + 3600;
+		const fetchMock = vi.fn(async () => {
+			return new Response("rate limited", {
+				status: 403,
+				headers: {
+					"x-ratelimit-remaining": "0",
+					"x-ratelimit-reset": String(resetEpoch),
+				},
+			});
+		});
+		vi.stubGlobal("fetch", fetchMock);
+
+		const result = await checkForUpdate({ force: true });
+
+		expect(result.updateAvailable).toBe(false);
+		expect(result.error).toContain("Could not fetch latest release");
+		expect(result.error).toContain("Rate limit exceeded");
+		expect(result.error).toContain("MAGENTA_GITHUB_TOKEN");
+	});
+
+	it("surfaces a generic API error with status detail", async () => {
+		const fetchMock = vi.fn(async () => new Response("boom", { status: 500, statusText: "Server Error" }));
+		vi.stubGlobal("fetch", fetchMock);
+
+		const result = await checkForUpdate({ force: true });
+
+		expect(result.updateAvailable).toBe(false);
+		expect(result.error).toContain("Could not fetch latest release");
+		expect(result.error).toContain("500");
+	});
+
+	it("surfaces a network failure reason", async () => {
+		const fetchMock = vi.fn(async () => {
+			throw new Error("getaddrinfo ENOTFOUND api.github.com");
+		});
+		vi.stubGlobal("fetch", fetchMock);
+
+		const result = await checkForUpdate({ force: true });
+
+		expect(result.updateAvailable).toBe(false);
+		expect(result.error).toContain("Could not fetch latest release");
+		expect(result.error).toContain("ENOTFOUND");
+	});
+
+	it("reports the 404/empty case distinctly", async () => {
+		const fetchMock = vi.fn(async () => new Response("not found", { status: 404 }));
+		vi.stubGlobal("fetch", fetchMock);
+
+		const result = await checkForUpdate({ force: true });
+
+		expect(result.updateAvailable).toBe(false);
+		expect(result.error).toContain("404 or empty response");
 	});
 });

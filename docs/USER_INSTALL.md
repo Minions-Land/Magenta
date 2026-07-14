@@ -163,6 +163,16 @@ magenta --update
 
 See the [China Network Guide](./CHINA_NETWORK.md) for mirror choices and troubleshooting.
 
+### Troubleshooting Update Failures
+
+If `magenta --update` fails with verification errors or "Could not fetch latest release":
+
+1. **Old binary incompatibility**: Early releases used a different format and cannot auto-update to the current split-asset release layout (binary + resources archive + checksums). Reinstall using the installation script above instead of `--update`.
+
+2. **Network or rate-limit issues**: GitHub API has a 60 requests/hour limit for unauthenticated clients. If you see "Rate limit exceeded", either wait for the reset time shown in the error, or set `MAGENTA_GITHUB_TOKEN` to a personal access token (no special scopes needed for public repositories). For restricted networks, configure `MAGENTA_GITHUB_MIRROR` as documented in the [China Network Guide](./CHINA_NETWORK.md).
+
+3. **Partial or interrupted installation**: If a previous update left incomplete resources, the binary may fail to start. Reinstall using the installation script to repair the runtime directory.
+
 A source checkout is updated through Git and the workspace build, not the standalone updater:
 
 ```bash

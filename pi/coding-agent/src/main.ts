@@ -560,6 +560,16 @@ export async function main(args: string[], options?: MainOptions) {
 
 		if (result.error) {
 			console.error(chalk.red(`Update check failed: ${result.error}`));
+			if (result.error.includes("Rate limit")) {
+				console.log(chalk.dim("\nTip: Set MAGENTA_GITHUB_TOKEN to increase API rate limits."));
+			} else if (result.error.includes("fetch") || result.error.includes("network")) {
+				console.log(
+					chalk.dim(
+						"\nTip: Check network connectivity and consider setting MAGENTA_GITHUB_MIRROR for restricted networks.",
+					),
+				);
+				console.log(chalk.dim("See: https://github.com/Minions-Land/Magenta-CLI/blob/main/docs/CHINA_NETWORK.md"));
+			}
 			process.exit(1);
 		}
 
@@ -579,6 +589,23 @@ export async function main(args: string[], options?: MainOptions) {
 
 		if (!installResult.success) {
 			console.error(chalk.red(`\n✗ Update failed: ${installResult.error}`));
+			if (installResult.error?.includes("verification") || installResult.error?.includes("checksum")) {
+				console.log(
+					chalk.yellow("\nIf you are upgrading from an old version, the built-in updater may be incompatible."),
+				);
+				console.log(chalk.dim("Please reinstall using the installation script:"));
+				if (process.platform === "win32") {
+					console.log(
+						chalk.cyan("  https://github.com/Minions-Land/Magenta-CLI/blob/main/docs/USER_INSTALL.md#windows"),
+					);
+				} else {
+					console.log(
+						chalk.cyan(
+							"  https://github.com/Minions-Land/Magenta-CLI/blob/main/docs/USER_INSTALL.md#macos-and-linux",
+						),
+					);
+				}
+			}
 			process.exit(1);
 		}
 

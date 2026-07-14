@@ -174,12 +174,20 @@ async function getLatestRelease(): Promise<GitHubRelease | null> {
 
 		if (!response.ok) {
 			if (response.status === 404) return null;
-			throw new Error(`GitHub API returned ${response.status}: ${response.statusText}`);
+			const rateLimitRemaining = response.headers.get("x-ratelimit-remaining");
+			const rateLimitReset = response.headers.get("x-ratelimit-reset");
+			let detail = `GitHub API returned ${response.status}: ${response.statusText}`;
+			if (response.status === 403 && rateLimitRemaining === "0" && rateLimitReset) {
+				const resetDate = new Date(Number(rateLimitReset) * 1000);
+				detail += `. Rate limit exceeded (resets at ${resetDate.toLocaleTimeString()}). Set MAGENTA_GITHUB_TOKEN to increase the limit, or wait and retry.`;
+			}
+			throw new Error(detail);
 		}
 
 		return (await response.json()) as GitHubRelease;
-	} catch {
-		return null;
+	} catch (error) {
+		if (error instanceof Error) throw error;
+		throw new Error(`Failed to fetch latest release: ${String(error)}`);
 	}
 }
 
@@ -421,14 +429,24 @@ export async function checkForUpdate(options: { force?: boolean } = {}): Promise
 		};
 	}
 
-	const release = await getLatestRelease();
+	let release: GitHubRelease | null;
+	try {
+		release = await getLatestRelease();
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		return {
+			updateAvailable: false,
+			currentVersion: VERSION,
+			error: `Could not fetch latest release: ${message}`,
+		};
+	}
 	await recordUpdateCheck();
 
 	if (!release) {
 		return {
 			updateAvailable: false,
 			currentVersion: VERSION,
-			error: "Could not fetch latest release",
+			error: "Could not fetch latest release (API returned 404 or empty response)",
 		};
 	}
 

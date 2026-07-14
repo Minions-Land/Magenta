@@ -198,15 +198,67 @@ if ($mirror) {
     $mirror = $mirror.TrimEnd("/")
 }
 
-$releaseBase = if ($AssetBaseUrl) {
+# Built-in mirror candidates for restricted networks (used when direct download is slow/unreachable).
+$builtinMirrors = @(
+    "https://ghfast.top",
+    "https://ghproxy.net",
+    "https://gh.ddlc.top",
+    "https://github.moeyy.xyz"
+)
+
+# Robust download: try BITS (background, resumable) then Invoke-WebRequest, across
+# the direct URL plus mirror candidates, until the file is fully retrieved.
+function Invoke-MagentaDownload([string]$DirectUrl, [string]$OutFile, [long]$MinBytes = 0) {
+    $candidates = New-Object System.Collections.Generic.List[string]
+    # Mirrors only make sense for public github.com asset URLs. A custom base
+    # (e.g. -AssetBaseUrl for CI smoke tests or a private host) is used verbatim.
+    $mirrorable = $DirectUrl -like "https://github.com/*"
+    if ($mirrorable) {
+        if ($env:MAGENTA_GITHUB_MIRROR) {
+            $candidates.Add(($env:MAGENTA_GITHUB_MIRROR.TrimEnd('/')) + "/" + $DirectUrl)
+        }
+        foreach ($m in $builtinMirrors) { $candidates.Add($m + "/" + $DirectUrl) }
+    }
+    $candidates.Add($DirectUrl)
+
+    foreach ($url in $candidates) {
+        $srcHost = ([System.Uri]$url).Host
+        # 1) BITS transfer (uses Windows background service, supports resume)
+        try {
+            if (Get-Command Start-BitsTransfer -ErrorAction SilentlyContinue) {
+                if (Test-Path -LiteralPath $OutFile) { Remove-Item -Force -LiteralPath $OutFile }
+                Write-Host "  尝试下载源 (BITS): $srcHost"
+                Start-BitsTransfer -Source $url -Destination $OutFile -ErrorAction Stop
+                if ((Test-Path -LiteralPath $OutFile) -and ((Get-Item $OutFile).Length -ge $MinBytes)) {
+                    return
+                }
+            }
+        } catch {
+            Write-Host "  BITS 失败，改用 Invoke-WebRequest..."
+        }
+        # 2) Invoke-WebRequest
+        try {
+            Write-Host "  尝试下载源 (IWR): $srcHost"
+            Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $OutFile -ErrorAction Stop
+            if ((Test-Path -LiteralPath $OutFile) -and ((Get-Item $OutFile).Length -ge $MinBytes)) {
+                return
+            }
+        } catch {
+            Write-Host "  源不可用: $srcHost"
+        }
+    }
+    throw "所有下载源均不可用: $DirectUrl`n受限网络请设置镜像后重试: `$env:MAGENTA_GITHUB_MIRROR='https://ghfast.top'"
+}
+
+# Plain direct base (no mirror prefix). Invoke-MagentaDownload applies mirror
+# candidates itself, trying the user mirror, built-in mirrors, then direct.
+$directBase = if ($AssetBaseUrl) {
     $AssetBaseUrl.TrimEnd("/")
 } elseif ($Version -eq "latest") {
-    $base = "https://github.com/$Repository/releases/latest/download"
-    if ($mirror) { "$mirror/$base" } else { $base }
+    "https://github.com/$Repository/releases/latest/download"
 } else {
     $tag = if ($Version.StartsWith("v")) { $Version } else { "v$Version" }
-    $base = "https://github.com/$Repository/releases/download/$tag"
-    if ($mirror) { "$mirror/$base" } else { $base }
+    "https://github.com/$Repository/releases/download/$tag"
 }
 
 $operationId = [Guid]::NewGuid().ToString("N")
@@ -223,9 +275,12 @@ try {
     New-Item -ItemType Directory -Force -Path $stagingDir | Out-Null
 
     Write-Host "Downloading Magenta for Windows..."
-    Invoke-WebRequest -UseBasicParsing -Uri "$releaseBase/SHA256SUMS" -OutFile $checksumsPath
-    Invoke-WebRequest -UseBasicParsing -Uri "$releaseBase/magenta-windows-x64.exe" -OutFile $binaryPath
-    Invoke-WebRequest -UseBasicParsing -Uri "$releaseBase/magenta-resources-universal.tar.gz" -OutFile $resourcesPath
+    Write-Host "[SHA256SUMS]"
+    Invoke-MagentaDownload "$directBase/SHA256SUMS" $checksumsPath
+    Write-Host "[magenta-windows-x64.exe] (~160-190MB)"
+    Invoke-MagentaDownload "$directBase/magenta-windows-x64.exe" $binaryPath 1000000
+    Write-Host "[magenta-resources-universal.tar.gz] (~4MB)"
+    Invoke-MagentaDownload "$directBase/magenta-resources-universal.tar.gz" $resourcesPath
 
     $binarySize = (Get-Item $binaryPath).Length
     if ($binarySize -lt 1000000) {

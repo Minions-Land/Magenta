@@ -68,7 +68,7 @@ const sendMessageSchema = Type.Object({
 	urgent: Type.Optional(
 		Type.Boolean({
 			description:
-				"When true, deliver with priority: the message is injected before the recipient's next tool-calling turn (steering), and if the recipient is idle its process is woken immediately. When false or omitted, the message arrives at the end of the recipient's current loop (normal follow-up).",
+				"Delivery priority. Defaults to true (urgent): the message is injected before the recipient's next tool-calling turn (steering), and if the recipient is idle its process is woken immediately. This is the normal mode — teammate coordination is almost always time-sensitive. Set to false only for a low-priority note that can wait until the end of the recipient's current loop (follow-up), which is a rarely-needed fallback.",
 		}),
 	),
 });
@@ -273,7 +273,10 @@ export class SendMessageController {
 		const to = params.to?.trim();
 		const content = params.content;
 		const from = this.getSessionId();
-		const urgent = params.urgent === true;
+		// Urgent is the default: teammate coordination is almost always time-sensitive,
+		// so a message steers the recipient's next turn and wakes it if idle unless the
+		// sender explicitly opts out with `urgent: false` (a rarely-needed low-priority note).
+		const urgent = params.urgent !== false;
 
 		if (!to) {
 			throw new Error("send_message requires a non-empty `to` (recipient session id).");
@@ -347,12 +350,12 @@ export class SendMessageController {
 			name: "send_message",
 			label: "Send Message",
 			description:
-				"Send a plain-text message to another agent session. The message is stored in a shared mailbox and delivered to the recipient at the start of its next agent loop, without interrupting whatever it is currently doing. Your own session id is filled in automatically as the sender. Set `urgent: true` to deliver before the recipient's next tool-calling turn and to immediately wake the recipient if it is idle (alive but waiting). The result reports the recipient's presence (active, idle, or offline) so you know whether your message will be seen soon. Use this to coordinate with a teammate session — for example to ask for help on a hard change or to answer a question a teammate sent you.",
+				"Send a plain-text message to another agent session. The message is stored in a shared mailbox. By default (urgent) it is delivered before the recipient's next tool-calling turn and immediately wakes the recipient if it is idle (alive but waiting), so time-sensitive coordination arrives promptly. Your own session id is filled in automatically as the sender. Set `urgent: false` only for a low-priority note that can wait until the end of the recipient's current loop — a rarely-needed fallback. The result reports the recipient's presence (active, idle, or offline) so you know whether your message will be seen soon. Use this to coordinate with a teammate session — for example to ask for help on a hard change or to answer a question a teammate sent you.",
 			promptSnippet: "Send a plain-text message to another agent session",
 			promptGuidelines: [
 				"Use send_message to coordinate with another agent session: ask for help, share findings, or reply to a message a teammate sent you.",
 				"Messages you receive from teammates are injected automatically at the start of your next loop; you do not poll for them.",
-				"Set urgent: true for time-sensitive messages: they are injected before the recipient's next tool-calling turn, and an idle recipient is woken immediately instead of waiting for its next prompt. Use it sparingly — normal messages already arrive promptly at the recipient's loop boundary.",
+				"Messages are urgent by default: they are injected before the recipient's next tool-calling turn, and an idle recipient is woken immediately. This is the normal mode for teammate coordination. Pass urgent: false only for a low-priority note that can wait until the recipient's current loop ends — a rarely-needed fallback.",
 				"Each injected message shows the sender's presence (active/idle/offline). If a sender is offline, a reply will wait until they come back, so decide accordingly.",
 				"Address the recipient by its session id in `to`. Your own session id is attached as the sender automatically.",
 			],

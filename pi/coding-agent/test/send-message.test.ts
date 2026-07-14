@@ -183,11 +183,25 @@ describe("SendMessageController", () => {
 		}
 	});
 
-	it("defaults to normal priority when urgent is omitted", async () => {
+	it("defaults to urgent priority when urgent is omitted", async () => {
 		const alice = controller("alice");
 		const bob = controller("bob");
 		try {
 			const res = await call(alice, { to: "bob", content: "whenever" });
+			expect(res.details?.urgent).toBe(true);
+			const drained = bob.drainForInjection();
+			expect(drained[0].priority).toBe("urgent");
+		} finally {
+			alice.shutdown();
+			bob.shutdown();
+		}
+	});
+
+	it("uses normal priority only when urgent is explicitly false", async () => {
+		const alice = controller("alice");
+		const bob = controller("bob");
+		try {
+			const res = await call(alice, { to: "bob", content: "whenever", urgent: false });
 			expect(res.details?.urgent).toBe(false);
 			const drained = bob.drainForInjection();
 			expect(drained[0].priority).toBe("normal");
@@ -217,13 +231,13 @@ describe("SendMessageController", () => {
 		}
 	});
 
-	it("does not wake an idle recipient on a normal message", async () => {
+	it("does not wake an idle recipient on a normal (urgent: false) message", async () => {
 		let woke = 0;
 		const alice = controller("alice");
 		const bob = controller("bob", { wakeForMessages: () => woke++, isStreaming: () => false });
 		try {
 			bob.recordPresence("idle");
-			const res = await call(alice, { to: "bob", content: "whenever" });
+			const res = await call(alice, { to: "bob", content: "whenever", urgent: false });
 			await new Promise((r) => setTimeout(r, 20));
 			expect(res.details?.woken).toBe(false);
 			expect(woke).toBe(0);

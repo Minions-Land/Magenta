@@ -13,6 +13,20 @@ This guide covers two independent accelerators:
 
 Both are optional. When unset, Magenta behaves exactly as before.
 
+## Quick Diagnosis
+
+If `magenta --update` fails with "Could not fetch latest release", first check whether the GitHub API is reachable:
+
+```bash
+curl -I https://api.github.com/repos/Minions-Land/Magenta-CLI/releases/latest
+```
+
+Interpret the result:
+
+- **Connection timeout or refused**: GitHub is blocked on this network. Set a mirror (section 1 below).
+- **HTTP 403** with `x-ratelimit-remaining: 0`: The unauthenticated API rate limit (60/hour) is exhausted. Wait for the reset time in the error, or set `MAGENTA_GITHUB_TOKEN`.
+- **HTTP 200**: The API is reachable, so the failure is elsewhere. If the running binary predates the split-asset release format (binary + resources archive + checksums), it cannot auto-update and must be reinstalled with the installation script from [User Install](./USER_INSTALL.md).
+
 ## 1. Mirror Routing
 
 Set the `MAGENTA_GITHUB_MIRROR` environment variable to a GitHub proxy prefix.
