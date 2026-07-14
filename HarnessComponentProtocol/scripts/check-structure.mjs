@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import ts from "typescript";
+import ts from "@typescript/typescript6";
 import { findComponentSourceDirectories, findModuleSourceDirectories } from "./generate-hcp-sources.mjs";
 import { harnessRoot, isInside, pathLabel, readToml, repoRoot } from "./lib/files.mjs";
 

@@ -15,7 +15,7 @@
 		"dist"
 	],
 	"scripts": {
-		"build": "npm run clean && tsc -p tsconfig.build.json",
+		"build": "npm run clean && node ../../scripts/tsc.mjs -p tsconfig.build.json",
 		"clean": "rm -rf dist",
 		"test": "npm run build && node --test test/*.test.mjs"
 	},
@@ -23,6 +23,6 @@
 		"@earendil-works/pi-ai": "0.80.2"
 	},
 	"devDependencies": {
-		"typescript": "5.9.3"
+		"typescript": "7.0.2"
 	}
 }

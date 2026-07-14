@@ -12,7 +12,7 @@ RUN apt-get update \
 WORKDIR /opt/magenta
 COPY . .
 RUN npm ci --ignore-scripts \
-    && ./node_modules/.bin/tsgo -p pi/ai/tsconfig.build.json \
+    && npm run build -w @earendil-works/pi-ai \
     && npm --prefix pi/tui run build \
     && npm --prefix pi/agent run build \
     && npm --prefix HarnessComponentProtocol run build \

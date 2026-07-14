@@ -33,7 +33,7 @@ pi resolves tools + capabilities from that one HcpClient. Keep pi's Agent + TUI.
 Do NOT merge loops. HCP setup-only; hot path unchanged.
 
 ## Build / test
-- Root: `npm run build`, `npm test` (workspaces), `npm run check` (biome+tsgo).
+- Root: `npm run build`, `npm test` (workspaces), `npm run check` (biome + native tsc via scripts/tsc.mjs).
 - harness: `cd harness && npm test` (vitest).
 - pi: `cd pi/coding-agent && npm test` (vitest --run).
 

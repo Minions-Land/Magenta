@@ -17,7 +17,7 @@
 		"build": "npm run build -w @earendil-works/pi-ai -w @earendil-works/pi-agent-core -w @earendil-works/pi-tui -w @magenta/harness -w @magenta/memory -w @earendil-works/pi-coding-agent",
 		"sync-brand": "node scripts/sync-brand.mjs",
 		"check:docs": "node --test scripts/check-docs.test.mjs && node scripts/check-docs.mjs",
-		"check": "npm run check:docs && biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:ts-imports && npm run check:shrinkwrap && tsgo --noEmit && npm run check:browser-smoke",
+		"check": "npm run check:docs && biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:ts-imports && npm run check:shrinkwrap && node scripts/tsc.mjs --noEmit && npm run check:browser-smoke",
 		"check:browser-smoke": "node scripts/check-browser-smoke.mjs",
 		"check:pinned-deps": "node scripts/check-pinned-deps.mjs",
 		"check:shrinkwrap": "node scripts/generate-coding-agent-shrinkwrap.mjs --check",
@@ -45,14 +45,14 @@
 		"@biomejs/biome": "2.3.5",
 		"@playwright/test": "1.61.1",
 		"@types/node": "22.19.19",
-		"@typescript/native-preview": "7.0.0-dev.20260120.1",
+		"@typescript/typescript6": "6.0.2",
 		"esbuild": "0.28.1",
 		"husky": "9.1.7",
 		"jiti": "2.7.0",
 		"node-pty": "1.0.0",
 		"shx": "0.4.0",
 		"tsx": "4.22.1",
-		"typescript": "5.9.3"
+		"typescript": "7.0.2"
 	},
 	"engines": {
 		"node": ">=22.19.0"
