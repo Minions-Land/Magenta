@@ -60,7 +60,7 @@ tampered content without failing the checksum step.
 
 Single-connection `curl` over a public mirror can drop to a few hundred KB/s. The
 `aria2c` downloader opens many connections and typically sustains several MB/s for
-the ~180 MB executable.
+the standalone executable.
 
 Install it first:
 

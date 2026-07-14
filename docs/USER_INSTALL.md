@@ -49,7 +49,7 @@ The release workflow currently builds macOS for Apple Silicon and Intel, and Lin
 The script honors two optional environment variables for restricted networks (see [China Network Guide](./CHINA_NETWORK.md)):
 
 - `MAGENTA_GITHUB_MIRROR` — a GitHub proxy prefix (e.g. `https://ghfast.top`). When set, all downloads are routed through it.
-- It automatically uses `aria2c` with 16 connections when that tool is available, and falls back to `curl` otherwise. On slow links `aria2c` is dramatically faster for the ~180 MB executable.
+- It automatically uses `aria2c` with 16 connections when that tool is available, and falls back to `curl` otherwise. On slow links `aria2c` is dramatically faster for the standalone executable.
 
 ```bash
 set -euo pipefail
