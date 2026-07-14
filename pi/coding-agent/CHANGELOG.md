@@ -4,7 +4,7 @@ All notable changes to Magenta CLI are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## [Unreleased]
+## [0.0.19] - 2026-07-14
 
 ### Changed
 - `send_message` now delivers **always urgent**: every peer message steers the recipient's next tool-calling turn and wakes an idle recipient immediately. The `urgent` parameter has been removed from the tool schema — teammate coordination is time-sensitive by nature, so a low-priority/follow-up mode is no longer offered. (Previously messages were normal/follow-up by default and `urgent: true` had to be set explicitly.)
