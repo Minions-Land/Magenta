@@ -217,7 +217,6 @@ describe("SendMessageController", () => {
 		}
 	});
 
-
 	// Regression: a freshly constructed wakeable session must advertise itself as
 	// idle+online immediately, before it has ever run an agent loop. Previously
 	// presence was only recorded from agent_start/turn_start/agent_end, so a session
