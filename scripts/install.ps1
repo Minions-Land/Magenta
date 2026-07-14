@@ -208,13 +208,13 @@ $builtinMirrors = @(
 
 # Robust download: try BITS (background, resumable) then Invoke-WebRequest, across
 # the direct URL plus mirror candidates, until the file is fully retrieved.
-# Use -TrustedOnly to skip third-party mirrors (e.g. for SHA256SUMS trust root).
-function Invoke-MagentaDownload([string]$DirectUrl, [string]$OutFile, [long]$MinBytes = 0, [switch]$TrustedOnly) {
+# Set AllowMirrors to false for trust roots such as SHA256SUMS.
+function Invoke-MagentaDownload([string]$DirectUrl, [string]$OutFile, [long]$MinBytes = 0, [bool]$AllowMirrors = $true) {
     $candidates = New-Object System.Collections.Generic.List[string]
     # Mirrors only make sense for public github.com asset URLs. A custom base
     # (e.g. -AssetBaseUrl for CI smoke tests or a private host) is used verbatim.
     $mirrorable = $DirectUrl -like "https://github.com/*"
-    if ($mirrorable -and -not $TrustedOnly) {
+    if ($mirrorable -and $AllowMirrors) {
         if ($env:MAGENTA_GITHUB_MIRROR) {
             $candidates.Add(($env:MAGENTA_GITHUB_MIRROR.TrimEnd('/')) + "/" + $DirectUrl)
         }
@@ -228,27 +228,27 @@ function Invoke-MagentaDownload([string]$DirectUrl, [string]$OutFile, [long]$Min
         try {
             if (Get-Command Start-BitsTransfer -ErrorAction SilentlyContinue) {
                 if (Test-Path -LiteralPath $OutFile) { Remove-Item -Force -LiteralPath $OutFile }
-                Write-Host "  尝试下载源 (BITS): $srcHost"
+                Write-Host "  Trying download source (BITS): $srcHost"
                 Start-BitsTransfer -Source $url -Destination $OutFile -ErrorAction Stop
                 if ((Test-Path -LiteralPath $OutFile) -and ((Get-Item $OutFile).Length -ge $MinBytes)) {
                     return
                 }
             }
         } catch {
-            Write-Host "  BITS 失败，改用 Invoke-WebRequest..."
+            Write-Host "  BITS failed; falling back to Invoke-WebRequest..."
         }
         # 2) Invoke-WebRequest
         try {
-            Write-Host "  尝试下载源 (IWR): $srcHost"
+            Write-Host "  Trying download source (IWR): $srcHost"
             Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $OutFile -ErrorAction Stop
             if ((Test-Path -LiteralPath $OutFile) -and ((Get-Item $OutFile).Length -ge $MinBytes)) {
                 return
             }
         } catch {
-            Write-Host "  源不可用: $srcHost"
+            Write-Host "  Source unavailable: $srcHost"
         }
     }
-    throw "所有下载源均不可用: $DirectUrl`n受限网络请设置镜像后重试: `$env:MAGENTA_GITHUB_MIRROR='https://ghfast.top'"
+    throw "All download sources failed: $DirectUrl`nFor restricted networks, set `$env:MAGENTA_GITHUB_MIRROR='https://ghfast.top' and retry."
 }
 
 # Plain direct base (no mirror prefix). Invoke-MagentaDownload applies mirror
@@ -281,7 +281,7 @@ try {
     # mirrors, otherwise a mirror could swap both the checksum file and the
     # payload it verifies. A custom -AssetBaseUrl (CI/private host) is still used
     # verbatim because it is explicitly trusted by the operator.
-    Invoke-MagentaDownload "$directBase/SHA256SUMS" $checksumsPath -TrustedOnly
+    Invoke-MagentaDownload "$directBase/SHA256SUMS" $checksumsPath 0 $false
     Write-Host "[magenta-windows-x64.exe] (~160-190MB)"
     Invoke-MagentaDownload "$directBase/magenta-windows-x64.exe" $binaryPath 1000000
     Write-Host "[magenta-resources-universal.tar.gz] (~4MB)"

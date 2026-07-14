@@ -106,6 +106,22 @@ jobs:
         with:
           ref: refs/tags/${{ inputs.release_tag || github.ref_name }}
 
+      - name: Parse Windows installer
+        shell: powershell
+        run: |
+          $tokens = $null
+          $parseErrors = $null
+          $installerPath = (Resolve-Path ".\scripts\install.ps1").Path
+          [void][System.Management.Automation.Language.Parser]::ParseFile(
+            $installerPath,
+            [ref]$tokens,
+            [ref]$parseErrors
+          )
+          if ($parseErrors.Count -gt 0) {
+            $parseErrors | ForEach-Object { Write-Error $_.Message }
+            throw "scripts/install.ps1 failed PowerShell syntax validation"
+          }
+
       - name: Download release assets
         uses: actions/download-artifact@v4
         with:
