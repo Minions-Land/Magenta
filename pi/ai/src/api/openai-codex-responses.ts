@@ -324,6 +324,7 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 					throw new Error("Request was aborted");
 				}
 
+				await options?.onWirePayload?.(JSON.parse(bodyJson), model);
 				try {
 					const headerTimeout = createSSEHeaderTimeout();
 					const combinedSignal = combineAbortSignals([options?.signal, headerTimeout.signal]);
@@ -579,6 +580,14 @@ class CodexApiError extends Error {
 	}
 }
 
+class CodexCallbackError extends Error {
+	constructor(cause: unknown) {
+		super(cause instanceof Error ? cause.message : String(cause));
+		this.name = "CodexCallbackError";
+		this.cause = cause;
+	}
+}
+
 class CodexProtocolError extends Error {
 	readonly payload?: unknown;
 
@@ -591,7 +600,7 @@ class CodexProtocolError extends Error {
 }
 
 function isCodexNonTransportError(error: unknown): boolean {
-	return error instanceof CodexApiError || error instanceof CodexProtocolError;
+	return error instanceof CodexApiError || error instanceof CodexCallbackError || error instanceof CodexProtocolError;
 }
 
 function isWebSocketConnectionLimitReachedError(error: unknown): boolean {
@@ -1370,8 +1379,15 @@ async function processWebSocketStream(
 			stats.lastPreviousResponseId = undefined;
 		}
 	}
+	const wirePayload = { type: "response.create", ...requestBody };
+	const wireJson = JSON.stringify(wirePayload);
 	try {
-		socket.send(JSON.stringify({ type: "response.create", ...requestBody }));
+		try {
+			await options?.onWirePayload?.(JSON.parse(wireJson), model);
+		} catch (error) {
+			throw new CodexCallbackError(error);
+		}
+		socket.send(wireJson);
 		await processResponsesStream(
 			startWebSocketOutputOnFirstEvent(
 				mapCodexEvents(parseWebSocket(socket, options?.signal, idleTimeoutMs)),

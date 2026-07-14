@@ -152,7 +152,7 @@ describe("azure-openai-responses base URL normalization", () => {
 			sessionId: "x".repeat(67),
 		}).result();
 
-		expect(azureMock.lastParams?.prompt_cache_key).toBe("x".repeat(64));
+		expect(azureMock.lastParams?.prompt_cache_key).toMatch(/^x{31}-[a-f0-9]{32}$/);
 	});
 
 	it("disables server-side response storage", async () => {

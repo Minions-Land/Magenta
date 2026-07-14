@@ -331,14 +331,25 @@ export async function processResponsesStream<TApi extends Api>(
 			output.responseId = response.id;
 		}
 		if (response?.usage) {
-			const cachedTokens = response.usage.input_tokens_details?.cached_tokens || 0;
+			const promptTokens = Math.max(0, response.usage.input_tokens ?? 0);
+			const cachedTokens = Math.min(
+				promptTokens,
+				Math.max(0, response.usage.input_tokens_details?.cached_tokens ?? 0),
+			);
+			const cacheWriteTokens = Math.min(
+				promptTokens - cachedTokens,
+				Math.max(0, response.usage.input_tokens_details?.cache_write_tokens ?? 0),
+			);
+			const inputTokens = promptTokens - cachedTokens - cacheWriteTokens;
+			const outputTokens = Math.max(0, response.usage.output_tokens ?? 0);
 			output.usage = {
-				// OpenAI includes cached tokens in input_tokens, so subtract to get non-cached input
-				input: (response.usage.input_tokens || 0) - cachedTokens,
-				output: response.usage.output_tokens || 0,
+				// OpenAI includes cache reads and writes in input_tokens. Keep the
+				// normalized components disjoint so token totals and cost are not doubled.
+				input: inputTokens,
+				output: outputTokens,
 				cacheRead: cachedTokens,
-				cacheWrite: 0,
-				totalTokens: response.usage.total_tokens || 0,
+				cacheWrite: cacheWriteTokens,
+				totalTokens: response.usage.total_tokens ?? inputTokens + outputTokens + cachedTokens + cacheWriteTokens,
 				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 			};
 		}

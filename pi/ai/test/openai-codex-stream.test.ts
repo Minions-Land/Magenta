@@ -634,7 +634,7 @@ describe("openai-codex streaming", () => {
 			},
 		}).result();
 
-		expect(capturedPayload?.prompt_cache_key).toBe("x".repeat(64));
+		expect(capturedPayload?.prompt_cache_key).toMatch(/^x{31}-[a-f0-9]{32}$/);
 	});
 
 	it("preserves gpt-5.5 xhigh reasoning effort from simple options", async () => {
@@ -1447,6 +1447,7 @@ describe("openai-codex streaming", () => {
 	it("sends only response input deltas in websocket-cached mode", async () => {
 		const token = mockToken();
 		const sentBodies: unknown[] = [];
+		const wireBodies: unknown[] = [];
 		const responses = [
 			{ responseId: "resp_1", messageId: "msg_1", text: "Hello" },
 			{ responseId: "resp_2", messageId: "msg_2", text: "Done" },
@@ -1557,6 +1558,9 @@ describe("openai-codex streaming", () => {
 			apiKey: token,
 			sessionId: "session-1",
 			transport: "websocket-cached",
+			onWirePayload: (payload) => {
+				wireBodies.push(payload);
+			},
 		}).result();
 
 		const secondContext: Context = {
@@ -1567,9 +1571,13 @@ describe("openai-codex streaming", () => {
 			apiKey: token,
 			sessionId: "session-1",
 			transport: "websocket-cached",
+			onWirePayload: (payload) => {
+				wireBodies.push(payload);
+			},
 		}).result();
 
 		expect(sentBodies).toHaveLength(2);
+		expect(wireBodies).toEqual(sentBodies);
 		const firstBody = sentBodies[0] as { input: unknown[]; previous_response_id?: string; store?: boolean };
 		const secondBody = sentBodies[1] as { input: unknown[]; previous_response_id?: string; store?: boolean };
 		expect(firstBody.store).toBe(false);
@@ -1591,6 +1599,98 @@ describe("openai-codex streaming", () => {
 		});
 	});
 
+	it("does not retry or send when an SSE wire observer rejects", async () => {
+		const fetchMock = vi.fn();
+		vi.stubGlobal("fetch", fetchMock);
+		const onWirePayload = vi.fn(() => {
+			throw new Error("wire observer failed");
+		});
+		const model: Model<"openai-codex-responses"> = {
+			id: "gpt-5.1-codex",
+			name: "GPT-5.1 Codex",
+			api: "openai-codex-responses",
+			provider: "openai-codex",
+			baseUrl: "https://chatgpt.com/backend-api",
+			reasoning: true,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 400000,
+			maxTokens: 128000,
+		};
+		const result = await streamOpenAICodexResponses(
+			model,
+			{
+				systemPrompt: "You are a helpful assistant.",
+				messages: [{ role: "user", content: "Say hello", timestamp: Date.now() }],
+			},
+			{ apiKey: mockToken(), transport: "sse", maxRetries: 3, onWirePayload },
+		).result();
+
+		expect(result.stopReason).toBe("error");
+		expect(result.errorMessage).toBe("wire observer failed");
+		expect(onWirePayload).toHaveBeenCalledTimes(1);
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
+	it("does not classify a rejected WebSocket wire observer as a transport failure", async () => {
+		let sends = 0;
+		class MockWebSocket extends EventTarget {
+			static OPEN = 1;
+			readyState = MockWebSocket.OPEN;
+
+			constructor() {
+				super();
+				queueMicrotask(() => this.dispatchEvent(new Event("open")));
+			}
+
+			send(): void {
+				sends++;
+			}
+
+			close(): void {}
+		}
+		vi.stubGlobal("WebSocket", MockWebSocket);
+		const fetchMock = vi.fn();
+		vi.stubGlobal("fetch", fetchMock);
+		const model: Model<"openai-codex-responses"> = {
+			id: "gpt-5.1-codex",
+			name: "GPT-5.1 Codex",
+			api: "openai-codex-responses",
+			provider: "openai-codex",
+			baseUrl: "https://chatgpt.com/backend-api",
+			reasoning: true,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 400000,
+			maxTokens: 128000,
+		};
+		const result = await streamOpenAICodexResponses(
+			model,
+			{
+				systemPrompt: "You are a helpful assistant.",
+				messages: [{ role: "user", content: "Say hello", timestamp: Date.now() }],
+			},
+			{
+				apiKey: mockToken(),
+				transport: "auto",
+				sessionId: "wire-callback-failure",
+				onWirePayload: () => {
+					throw new Error("wire observer failed");
+				},
+			},
+		).result();
+
+		expect(result.stopReason).toBe("error");
+		expect(result.errorMessage).toBe("wire observer failed");
+		expect(result.diagnostics).toBeUndefined();
+		expect(sends).toBe(0);
+		expect(fetchMock).not.toHaveBeenCalled();
+		expect(getOpenAICodexWebSocketDebugStats("wire-callback-failure")).toMatchObject({
+			websocketFailures: 0,
+			sseFallbacks: 0,
+		});
+	});
+
 	it.each([
 		["retry-after-ms", () => ({ "content-type": "application/json", "retry-after-ms": "1500" }), 1500],
 		["retry-after seconds", () => ({ "content-type": "application/json", "retry-after": "60" }), 60_000],
@@ -1607,6 +1707,7 @@ describe("openai-codex streaming", () => {
 		const encoder = new TextEncoder();
 		const sse = buildSSEPayload({ status: "completed" });
 		let codexRequests = 0;
+		const wirePayloads: unknown[] = [];
 
 		const fetchMock = vi.fn(async (input: string | URL) => {
 			const url = typeof input === "string" ? input : input.toString();
@@ -1655,6 +1756,9 @@ describe("openai-codex streaming", () => {
 			apiKey: token,
 			transport: "sse",
 			maxRetries: 1,
+			onWirePayload: (payload) => {
+				wirePayloads.push(payload);
+			},
 		}).result();
 		await vi.advanceTimersByTimeAsync(0);
 		expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), expectedDelay);
@@ -1663,6 +1767,8 @@ describe("openai-codex streaming", () => {
 		const result = await resultPromise;
 		expect(result.content.find((content) => content.type === "text")?.text).toBe("Hello");
 		expect(codexRequests).toBe(2);
+		expect(wirePayloads).toHaveLength(2);
+		expect(wirePayloads[1]).toEqual(wirePayloads[0]);
 	});
 
 	it("uses exponential backoff across repeated SSE retries without retry headers", async () => {

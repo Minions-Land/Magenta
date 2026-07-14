@@ -166,6 +166,110 @@ export type AnthropicThinkingDisplay = "summarized" | "omitted";
 
 const FINE_GRAINED_TOOL_STREAMING_BETA = "fine-grained-tool-streaming-2025-05-14";
 const INTERLEAVED_THINKING_BETA = "interleaved-thinking-2025-05-14";
+const CACHE_DIAGNOSIS_BETA = "cache-diagnosis-2026-04-07";
+const CACHE_DIAGNOSTICS_ENV = "PI_CACHE_DIAGNOSTICS";
+const CACHE_CONTROL_MODE_ENV = "PI_ANTHROPIC_CACHE_CONTROL";
+const CACHE_MISS_REASONS = new Set([
+	"messages_changed",
+	"model_changed",
+	"previous_message_not_found",
+	"system_changed",
+	"tools_changed",
+	"unavailable",
+]);
+
+type AnthropicStreamingParams = MessageCreateParamsStreaming & {
+	diagnostics?: { previous_message_id?: string | null };
+};
+
+type AnthropicCacheDiagnostics = {
+	cache_miss_reason?: {
+		type: string;
+		cache_missed_input_tokens?: number;
+	} | null;
+};
+
+function isTruthy(value: string | undefined): boolean {
+	if (!value) return false;
+	return value === "1" || value.toLowerCase() === "true" || value.toLowerCase() === "yes";
+}
+
+function isFirstPartyAnthropicEndpoint(model: Model<"anthropic-messages">): boolean {
+	if (model.provider !== "anthropic" || !model.baseUrl) return false;
+	try {
+		const url = new URL(model.baseUrl);
+		return url.protocol === "https:" && url.hostname.toLowerCase() === "api.anthropic.com";
+	} catch {
+		return false;
+	}
+}
+
+function hasAnthropicApiKeyAuth(model: Model<"anthropic-messages">, options: AnthropicOptions | undefined): boolean {
+	if (options?.apiKey) return !isOAuthToken(options.apiKey);
+	const headers = mergeHeaders(model.headers, options?.headers);
+	return hasHeader(headers, "x-api-key") && !hasHeader(headers, "authorization");
+}
+
+function shouldUseCacheDiagnostics(model: Model<"anthropic-messages">, options: AnthropicOptions | undefined): boolean {
+	return (
+		isTruthy(getProviderEnvValue(CACHE_DIAGNOSTICS_ENV, options?.env)) &&
+		isFirstPartyAnthropicEndpoint(model) &&
+		!options?.client &&
+		hasAnthropicApiKeyAuth(model, options)
+	);
+}
+
+function shouldUseAutomaticCacheControl(
+	model: Model<"anthropic-messages">,
+	options: AnthropicOptions | undefined,
+): boolean {
+	const mode = getProviderEnvValue(CACHE_CONTROL_MODE_ENV, options?.env)?.toLowerCase();
+	return (
+		mode === "automatic" &&
+		isFirstPartyAnthropicEndpoint(model) &&
+		!options?.client &&
+		hasAnthropicApiKeyAuth(model, options)
+	);
+}
+
+function findPreviousAnthropicMessageId(messages: Message[], model: Model<"anthropic-messages">): string | null {
+	for (let index = messages.length - 1; index >= 0; index--) {
+		const message = messages[index];
+		if (
+			message?.role === "assistant" &&
+			message.api === "anthropic-messages" &&
+			message.provider === model.provider &&
+			message.responseId?.startsWith("msg_")
+		) {
+			return message.responseId;
+		}
+	}
+	return null;
+}
+
+function appendCacheMissDiagnostic(
+	output: AssistantMessage,
+	diagnostics: AnthropicCacheDiagnostics | null | undefined,
+): void {
+	const reason = diagnostics?.cache_miss_reason;
+	if (!reason || !CACHE_MISS_REASONS.has(reason.type)) return;
+	const details: Record<string, unknown> = { reason: reason.type };
+	if (
+		typeof reason.cache_missed_input_tokens === "number" &&
+		Number.isFinite(reason.cache_missed_input_tokens) &&
+		reason.cache_missed_input_tokens >= 0
+	) {
+		details.cacheMissedInputTokens = reason.cache_missed_input_tokens;
+	}
+	output.diagnostics = [
+		...(output.diagnostics ?? []),
+		{
+			type: "anthropic_cache_miss",
+			timestamp: Date.now(),
+			details,
+		},
+	];
+}
 
 function getAnthropicCompat(
 	model: Model<"anthropic-messages">,
@@ -494,13 +598,14 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 		try {
 			let client: Anthropic;
 			let isOAuth: boolean;
+			const useCacheDiagnostics = shouldUseCacheDiagnostics(model, options);
 
 			if (options?.client) {
 				client = options.client;
 				isOAuth = false;
 			} else {
 				const apiKey = options?.apiKey;
-				assertRequestAuth(model.provider, apiKey, options?.headers);
+				assertRequestAuth(model.provider, apiKey, mergeHeaders(model.headers, options?.headers));
 
 				let copilotDynamicHeaders: Record<string, string> | undefined;
 				if (model.provider === "github-copilot") {
@@ -522,21 +627,23 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 					options?.headers,
 					copilotDynamicHeaders,
 					cacheSessionId,
+					useCacheDiagnostics,
 				);
 				client = created.client;
 				isOAuth = created.isOAuthToken;
 			}
-			let params = buildParams(model, context, isOAuth, options);
+			let params = buildParams(model, context, isOAuth, options, useCacheDiagnostics);
 			const nextParams = await options?.onPayload?.(params, model);
 			if (nextParams !== undefined) {
-				params = nextParams as MessageCreateParamsStreaming;
+				params = nextParams as AnthropicStreamingParams;
 			}
 			const requestOptions = {
 				...(options?.signal ? { signal: options.signal } : {}),
 				...(options?.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
 				maxRetries: options?.maxRetries ?? 0,
 			};
-			const response = await client.messages.create({ ...params, stream: true }, requestOptions).asResponse();
+			const requestParams = { ...params, stream: true } as MessageCreateParamsStreaming;
+			const response = await client.messages.create(requestParams, requestOptions).asResponse();
 			await options?.onResponse?.({ status: response.status, headers: headersToRecord(response.headers) }, model);
 			stream.push({ type: "start", partial: output });
 
@@ -546,6 +653,11 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 			for await (const event of iterateAnthropicEvents(response, options?.signal)) {
 				if (event.type === "message_start") {
 					output.responseId = event.message.id;
+					appendCacheMissDiagnostic(
+						output,
+						(event.message as typeof event.message & { diagnostics?: AnthropicCacheDiagnostics | null })
+							.diagnostics,
+					);
 					// Capture initial token usage from message_start event
 					// This ensures we have input token counts even if the stream is aborted early
 					output.usage.input = event.message.usage.input_tokens || 0;
@@ -775,7 +887,7 @@ export const streamSimple: StreamFunction<"anthropic-messages", SimpleStreamOpti
 	context: Context,
 	options?: SimpleStreamOptions,
 ): AssistantMessageEventStream => {
-	assertRequestAuth(model.provider, options?.apiKey, options?.headers);
+	assertRequestAuth(model.provider, options?.apiKey, mergeHeaders(model.headers, options?.headers));
 
 	const base = buildBaseOptions(model, options, options?.apiKey);
 	if (!options?.reasoning) {
@@ -822,6 +934,7 @@ function createClient(
 	optionsHeaders?: ProviderHeaders,
 	dynamicHeaders?: Record<string, string>,
 	sessionId?: string,
+	useCacheDiagnostics = false,
 ): { client: Anthropic; isOAuthToken: boolean } {
 	// Adaptive thinking models have interleaved thinking built in, so skip the beta header.
 	const needsInterleavedBeta = interleavedThinking && model.compat?.forceAdaptiveThinking !== true;
@@ -831,6 +944,9 @@ function createClient(
 	}
 	if (needsInterleavedBeta) {
 		betaFeatures.push(INTERLEAVED_THINKING_BETA);
+	}
+	if (useCacheDiagnostics) {
+		betaFeatures.push(CACHE_DIAGNOSIS_BETA);
 	}
 
 	// Copilot: Bearer auth, selective betas.
@@ -907,15 +1023,29 @@ function buildParams(
 	context: Context,
 	isOAuthToken: boolean,
 	options?: AnthropicOptions,
-): MessageCreateParamsStreaming {
+	useCacheDiagnostics = false,
+): AnthropicStreamingParams {
 	const { cacheControl } = getCacheControl(model, options?.cacheRetention, options?.env);
 	const compat = getAnthropicCompat(model);
-	const params: MessageCreateParamsStreaming = {
+	const automaticCacheControl = shouldUseAutomaticCacheControl(model, options);
+	const params: AnthropicStreamingParams = {
 		model: model.id,
-		messages: convertMessages(context.messages, model, isOAuthToken, cacheControl, compat.allowEmptySignature),
+		messages: convertMessages(
+			context.messages,
+			model,
+			isOAuthToken,
+			automaticCacheControl ? undefined : cacheControl,
+			compat.allowEmptySignature,
+		),
 		max_tokens: options?.maxTokens ?? model.maxTokens,
 		stream: true,
 	};
+	if (automaticCacheControl && cacheControl) {
+		params.cache_control = cacheControl;
+	}
+	if (useCacheDiagnostics) {
+		params.diagnostics = { previous_message_id: findPreviousAnthropicMessageId(context.messages, model) };
+	}
 
 	// For OAuth tokens, we MUST include Claude Code identity
 	if (isOAuthToken) {

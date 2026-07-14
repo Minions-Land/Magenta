@@ -1,5 +1,5 @@
 import OpenAI from "openai";
-import type { ResponseCreateParamsStreaming } from "openai/resources/responses/responses.js";
+import type { ResponseCreateParamsStreaming, ResponseInput } from "openai/resources/responses/responses.js";
 import { clampThinkingLevel } from "../models.ts";
 import type {
 	Api,
@@ -24,6 +24,19 @@ import { convertResponsesMessages, convertResponsesTools, processResponsesStream
 import { buildBaseOptions } from "./simple-options.ts";
 
 const OPENAI_TOOL_CALL_PROVIDERS = new Set(["openai", "openai-codex", "opencode"]);
+const OPENAI_PROMPT_CACHE_MODE_ENV = "PI_OPENAI_PROMPT_CACHE_MODE";
+
+type OpenAIPromptCacheMode = "implicit" | "explicit";
+type MutableInputItem = {
+	type?: string;
+	role?: string;
+	content?: string | unknown[];
+	output?: string | unknown[];
+};
+type MutableCacheableBlock = {
+	type?: string;
+	prompt_cache_breakpoint?: { mode: "explicit" };
+};
 
 function hasHeader(headers: ProviderHeaders | undefined, name: string): boolean {
 	if (!headers) return false;
@@ -67,6 +80,105 @@ function getPromptCacheRetention(
 	cacheRetention: CacheRetention,
 ): "24h" | undefined {
 	return cacheRetention === "long" && compat.supportsLongCacheRetention ? "24h" : undefined;
+}
+
+function getPromptCacheMode(
+	model: Model<"openai-responses">,
+	options: OpenAIResponsesOptions | undefined,
+	cacheRetention: CacheRetention,
+): OpenAIPromptCacheMode | undefined {
+	if (
+		cacheRetention === "none" ||
+		model.provider !== "openai" ||
+		!options?.apiKey ||
+		!options.apiKey.startsWith("sk-")
+	) {
+		return undefined;
+	}
+	if (!/^gpt-5\.6(?:$|-)/i.test(model.id)) return undefined;
+	try {
+		const url = new URL(model.baseUrl);
+		if (url.protocol !== "https:" || url.hostname.toLowerCase() !== "api.openai.com") return undefined;
+	} catch {
+		return undefined;
+	}
+	const configured = getProviderEnvValue(OPENAI_PROMPT_CACHE_MODE_ENV, options.env)?.toLowerCase();
+	return configured === "implicit" || configured === "explicit" ? configured : undefined;
+}
+
+function isCacheableInputBlock(value: unknown): value is MutableCacheableBlock {
+	if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+	const type = (value as MutableCacheableBlock).type;
+	return type === "input_text" || type === "input_image" || type === "input_file";
+}
+
+function findLastCacheableInputBlock(values: unknown[]): MutableCacheableBlock | undefined {
+	for (let index = values.length - 1; index >= 0; index--) {
+		const value = values[index];
+		if (isCacheableInputBlock(value)) return value;
+	}
+	return undefined;
+}
+
+function applyPromptCacheBreakpoints(input: ResponseInput, mode: OpenAIPromptCacheMode): void {
+	const candidates: Array<{ stable: boolean; apply: () => void }> = [];
+	const marker = { mode: "explicit" } as const;
+
+	for (const rawItem of input) {
+		if (typeof rawItem !== "object" || rawItem === null || Array.isArray(rawItem)) continue;
+		const item = rawItem as MutableInputItem;
+		const stable = item.role === "system" || item.role === "developer";
+		if (typeof item.content === "string") {
+			const text = item.content;
+			candidates.push({
+				stable,
+				apply: () => {
+					item.content = [{ type: "input_text", text, prompt_cache_breakpoint: marker }];
+				},
+			});
+		} else if (Array.isArray(item.content)) {
+			const block = findLastCacheableInputBlock(item.content);
+			if (block) {
+				candidates.push({
+					stable,
+					apply: () => {
+						block.prompt_cache_breakpoint = marker;
+					},
+				});
+			}
+		}
+
+		if (item.type === "function_call_output") {
+			if (typeof item.output === "string") {
+				const text = item.output;
+				candidates.push({
+					stable: false,
+					apply: () => {
+						item.output = [{ type: "input_text", text, prompt_cache_breakpoint: marker }];
+					},
+				});
+			} else if (Array.isArray(item.output)) {
+				const block = findLastCacheableInputBlock(item.output);
+				if (block) {
+					candidates.push({
+						stable: false,
+						apply: () => {
+							block.prompt_cache_breakpoint = marker;
+						},
+					});
+				}
+			}
+		}
+	}
+
+	const limit = mode === "implicit" ? 3 : 4;
+	const selected = new Set<(typeof candidates)[number]>();
+	const stable = candidates.find((candidate) => candidate.stable);
+	if (stable) selected.add(stable);
+	for (let index = candidates.length - 1; index >= 0 && selected.size < limit; index--) {
+		selected.add(candidates[index]);
+	}
+	for (const candidate of selected) candidate.apply();
 }
 
 function formatOpenAIResponsesError(error: unknown): string {
@@ -124,7 +236,10 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 
 		try {
 			// Create OpenAI client
-			const apiKey = getClientApiKey(model.provider, options?.apiKey, options?.headers);
+			const apiKey = getClientApiKey(model.provider, options?.apiKey, {
+				...model.headers,
+				...options?.headers,
+			});
 			const cacheRetention = resolveCacheRetention(options?.cacheRetention, options?.env);
 			const cacheSessionId = cacheRetention === "none" ? undefined : options?.sessionId;
 			const client = createClient(model, context, apiKey, options?.headers, cacheSessionId);
@@ -178,7 +293,7 @@ export const streamSimple: StreamFunction<"openai-responses", SimpleStreamOption
 	context: Context,
 	options?: SimpleStreamOptions,
 ): AssistantMessageEventStream => {
-	getClientApiKey(model.provider, options?.apiKey, options?.headers);
+	getClientApiKey(model.provider, options?.apiKey, { ...model.headers, ...options?.headers });
 
 	const base = buildBaseOptions(model, options, options?.apiKey);
 	const clampedReasoning = options?.reasoning ? clampThinkingLevel(model, options.reasoning) : undefined;
@@ -233,12 +348,15 @@ function buildParams(model: Model<"openai-responses">, context: Context, options
 
 	const cacheRetention = resolveCacheRetention(options?.cacheRetention, options?.env);
 	const compat = getCompat(model);
+	const promptCacheMode = getPromptCacheMode(model, options, cacheRetention);
+	if (promptCacheMode) applyPromptCacheBreakpoints(messages, promptCacheMode);
 	const params: ResponseCreateParamsStreaming = {
 		model: model.id,
 		input: messages,
 		stream: true,
 		prompt_cache_key: cacheRetention === "none" ? undefined : clampOpenAIPromptCacheKey(options?.sessionId),
 		prompt_cache_retention: getPromptCacheRetention(compat, cacheRetention),
+		...(promptCacheMode ? { prompt_cache_options: { mode: promptCacheMode, ttl: "30m" as const } } : {}),
 		store: false,
 	};
 

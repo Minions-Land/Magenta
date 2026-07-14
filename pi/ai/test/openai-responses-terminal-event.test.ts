@@ -118,7 +118,7 @@ async function* createCompletedEvents(): AsyncIterable<ResponseStreamEvent> {
 				input_tokens: 20,
 				output_tokens: 7,
 				total_tokens: 27,
-				input_tokens_details: { cached_tokens: 2 },
+				input_tokens_details: { cached_tokens: 2, cache_write_tokens: 0 },
 			},
 		},
 	} as ResponseStreamEvent;
@@ -135,8 +135,32 @@ async function* createIncompleteEvents(): AsyncIterable<ResponseStreamEvent> {
 				input_tokens: 30,
 				output_tokens: 12,
 				total_tokens: 42,
-				input_tokens_details: { cached_tokens: 5 },
+				input_tokens_details: { cached_tokens: 5, cache_write_tokens: 0 },
 			},
+		},
+	} as ResponseStreamEvent;
+}
+
+async function* createCacheWriteEvents(overreported = false): AsyncIterable<ResponseStreamEvent> {
+	yield {
+		type: "response.completed",
+		sequence_number: 0,
+		response: {
+			id: "resp_cache_write",
+			status: "completed",
+			usage: overreported
+				? {
+						input_tokens: 10,
+						output_tokens: 5,
+						total_tokens: 15,
+						input_tokens_details: { cached_tokens: 20, cache_write_tokens: 30 },
+					}
+				: {
+						input_tokens: 100,
+						output_tokens: 5,
+						total_tokens: 105,
+						input_tokens_details: { cached_tokens: 50, cache_write_tokens: 30 },
+					},
 		},
 	} as ResponseStreamEvent;
 }
@@ -219,6 +243,43 @@ describe("OpenAI Responses terminal event handling", () => {
 			cacheWrite: 0,
 			totalTokens: 42,
 		});
+	});
+
+	it("normalizes GPT-5.6 cache reads and writes without double-counting input", async () => {
+		const model: Model<"openai-responses"> = {
+			...createModel(),
+			id: "gpt-5.6",
+			name: "GPT-5.6",
+			cost: { input: 5, output: 30, cacheRead: 0.5, cacheWrite: 6.25 },
+		};
+		const output = createOutput(model);
+		const stream = new AssistantMessageEventStream();
+
+		await processResponsesStream(createCacheWriteEvents(), output, stream, model);
+
+		expect(output.usage).toMatchObject({
+			input: 20,
+			output: 5,
+			cacheRead: 50,
+			cacheWrite: 30,
+			totalTokens: 105,
+		});
+		expect(output.usage.input + output.usage.output + output.usage.cacheRead + output.usage.cacheWrite).toBe(105);
+		expect(output.usage.cost.input).toBeCloseTo(0.0001, 12);
+		expect(output.usage.cost.output).toBeCloseTo(0.00015, 12);
+		expect(output.usage.cost.cacheRead).toBeCloseTo(0.000025, 12);
+		expect(output.usage.cost.cacheWrite).toBeCloseTo(0.0001875, 12);
+		expect(output.usage.cost.total).toBeCloseTo(0.0004625, 12);
+	});
+
+	it("clamps inconsistent cache components to the reported prompt-token total", async () => {
+		const model = createModel();
+		const output = createOutput(model);
+		const stream = new AssistantMessageEventStream();
+
+		await processResponsesStream(createCacheWriteEvents(true), output, stream, model);
+
+		expect(output.usage).toMatchObject({ input: 0, output: 5, cacheRead: 10, cacheWrite: 0, totalTokens: 15 });
 	});
 
 	it("rejects failed terminal events with the provider error", async () => {

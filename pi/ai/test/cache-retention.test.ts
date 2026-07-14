@@ -1,3 +1,4 @@
+import { Type } from "typebox";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { stream as streamAnthropic } from "../src/api/anthropic-messages.ts";
 import { stream as streamOpenAICompletions } from "../src/api/openai-completions.ts";
@@ -27,9 +28,11 @@ function stopAfterPayload<TPayload>(capture: (payload: TPayload) => void): (payl
 
 describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 	const originalEnv = process.env.PI_CACHE_RETENTION;
+	const originalAnthropicCacheControl = process.env.PI_ANTHROPIC_CACHE_CONTROL;
 
 	beforeEach(() => {
 		delete process.env.PI_CACHE_RETENTION;
+		delete process.env.PI_ANTHROPIC_CACHE_CONTROL;
 	});
 
 	afterEach(() => {
@@ -37,6 +40,11 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 			process.env.PI_CACHE_RETENTION = originalEnv;
 		} else {
 			delete process.env.PI_CACHE_RETENTION;
+		}
+		if (originalAnthropicCacheControl !== undefined) {
+			process.env.PI_ANTHROPIC_CACHE_CONTROL = originalAnthropicCacheControl;
+		} else {
+			delete process.env.PI_ANTHROPIC_CACHE_CONTROL;
 		}
 	});
 
@@ -206,6 +214,172 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 			expect(capturedPayload).not.toBeNull();
 			const lastMessage = capturedPayload.messages[capturedPayload.messages.length - 1];
 			expect(Array.isArray(lastMessage.content)).toBe(true);
+			const lastBlock = lastMessage.content[lastMessage.content.length - 1];
+			expect(lastBlock.cache_control).toEqual({ type: "ephemeral" });
+		});
+
+		it("accepts request authentication supplied by model headers", async () => {
+			const model = {
+				...getModel("anthropic", "claude-haiku-4-5"),
+				headers: { "x-api-key": "model-owned-key" },
+			};
+			let capturedPayload: any = null;
+
+			try {
+				const s = streamAnthropic(model, context, {
+					env: { PI_ANTHROPIC_CACHE_CONTROL: "automatic" },
+					onPayload: stopAfterPayload((payload) => {
+						capturedPayload = payload;
+					}),
+				});
+				for await (const event of s) {
+					if (event.type === "error") break;
+				}
+			} catch {
+				// Expected: the payload callback stops before network I/O.
+			}
+
+			expect(capturedPayload.model).toBe(model.id);
+			expect(capturedPayload.cache_control).toEqual({ type: "ephemeral" });
+		});
+
+		it("should use first-party automatic cache control only when explicitly enabled", async () => {
+			const model = getModel("anthropic", "claude-haiku-4-5");
+			let capturedPayload: any = null;
+
+			try {
+				const s = streamAnthropic(model, context, {
+					apiKey: "fake-key",
+					env: { PI_ANTHROPIC_CACHE_CONTROL: "automatic" },
+					onPayload: stopAfterPayload((payload) => {
+						capturedPayload = payload;
+					}),
+				});
+
+				for await (const event of s) {
+					if (event.type === "error") break;
+				}
+			} catch {
+				// Expected: the payload callback stops before network I/O.
+			}
+
+			expect(capturedPayload.cache_control).toEqual({ type: "ephemeral" });
+			const lastMessage = capturedPayload.messages[capturedPayload.messages.length - 1];
+			const lastBlock = lastMessage.content[lastMessage.content.length - 1];
+			expect(lastBlock.cache_control).toBeUndefined();
+			expect(capturedPayload.system[0].cache_control).toEqual({ type: "ephemeral" });
+		});
+
+		it("keeps static breakpoints and lets automatic mode cover histories beyond 20 content blocks", async () => {
+			const model = getModel("anthropic", "claude-haiku-4-5");
+			const messages: Context["messages"] = [];
+			for (let index = 0; index < 12; index++) {
+				messages.push({ role: "user", content: `question ${index}`, timestamp: index * 2 });
+				messages.push({
+					role: "assistant",
+					content: [{ type: "text", text: `answer ${index}` }],
+					api: "anthropic-messages",
+					provider: "anthropic",
+					model: model.id,
+					usage: {
+						input: 1,
+						output: 1,
+						cacheRead: 0,
+						cacheWrite: 0,
+						totalTokens: 2,
+						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+					},
+					stopReason: "stop",
+					timestamp: index * 2 + 1,
+				});
+			}
+			messages.push({ role: "user", content: "final question", timestamp: 30 });
+			const longContext: Context = {
+				systemPrompt: "stable system",
+				messages,
+				tools: [{ name: "lookup", description: "lookup", parameters: Type.Object({}) }],
+			};
+			const capture = async (automatic: boolean) => {
+				let captured: any;
+				try {
+					const s = streamAnthropic(model, longContext, {
+						apiKey: "fake-key",
+						env: automatic ? { PI_ANTHROPIC_CACHE_CONTROL: "automatic" } : undefined,
+						onPayload: stopAfterPayload((payload) => {
+							captured = payload;
+						}),
+					});
+					for await (const event of s) {
+						if (event.type === "error") break;
+					}
+				} catch {
+					// Expected: the payload callback stops before network I/O.
+				}
+				return captured;
+			};
+
+			const manual = await capture(false);
+			const automatic = await capture(true);
+			expect(manual.messages).toHaveLength(25);
+			expect(manual.cache_control).toBeUndefined();
+			expect(JSON.stringify(manual.messages)).toContain('"cache_control"');
+			expect(automatic.cache_control).toEqual({ type: "ephemeral" });
+			expect(JSON.stringify(automatic.messages)).not.toContain('"cache_control"');
+			expect(automatic.system[0].cache_control).toEqual({ type: "ephemeral" });
+			expect(automatic.tools[0].cache_control).toEqual({ type: "ephemeral" });
+		});
+
+		it("should keep manual cache control for first-party OAuth requests", async () => {
+			const model = getModel("anthropic", "claude-haiku-4-5");
+			let capturedPayload: any = null;
+
+			try {
+				const s = streamAnthropic(model, context, {
+					apiKey: "sk-ant-oat-test",
+					env: { PI_ANTHROPIC_CACHE_CONTROL: "automatic" },
+					onPayload: stopAfterPayload((payload) => {
+						capturedPayload = payload;
+					}),
+				});
+
+				for await (const event of s) {
+					if (event.type === "error") break;
+				}
+			} catch {
+				// Expected: the payload callback stops before network I/O.
+			}
+
+			expect(capturedPayload.cache_control).toBeUndefined();
+			const lastMessage = capturedPayload.messages[capturedPayload.messages.length - 1];
+			const lastBlock = lastMessage.content[lastMessage.content.length - 1];
+			expect(lastBlock.cache_control).toEqual({ type: "ephemeral" });
+		});
+
+		it("should keep manual cache control for compatible proxy endpoints", async () => {
+			const model = {
+				...getModel("anthropic", "claude-haiku-4-5"),
+				baseUrl: "https://proxy.example.test",
+			};
+			let capturedPayload: any = null;
+
+			try {
+				const s = streamAnthropic(model, context, {
+					apiKey: "fake-key",
+					env: { PI_ANTHROPIC_CACHE_CONTROL: "automatic" },
+					onPayload: stopAfterPayload((payload) => {
+						capturedPayload = payload;
+					}),
+				});
+
+				for await (const event of s) {
+					if (event.type === "error") break;
+				}
+			} catch {
+				// Expected: the payload callback stops before network I/O.
+			}
+
+			expect(capturedPayload.cache_control).toBeUndefined();
+			const lastMessage = capturedPayload.messages[capturedPayload.messages.length - 1];
 			const lastBlock = lastMessage.content[lastMessage.content.length - 1];
 			expect(lastBlock.cache_control).toEqual({ type: "ephemeral" });
 		});

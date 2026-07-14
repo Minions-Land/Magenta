@@ -135,6 +135,12 @@ export interface StreamOptions {
 	 */
 	onPayload?: (payload: unknown, model: Model<Api>) => unknown | undefined | Promise<unknown | undefined>;
 	/**
+	 * Optional observation callback for the exact payload sent on a transport
+	 * attempt after provider-internal continuation/delta transforms. Unlike
+	 * `onPayload`, this callback cannot replace the payload.
+	 */
+	onWirePayload?: (payload: unknown, model: Model<Api>) => void | Promise<void>;
+	/**
 	 * Optional callback invoked after an HTTP response is received and before
 	 * its body stream is consumed.
 	 */

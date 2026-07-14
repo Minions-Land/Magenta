@@ -233,7 +233,7 @@ describe("openai-responses provider defaults", () => {
 			if (event.type === "done" || event.type === "error") break;
 		}
 
-		expect(capturedPayload?.prompt_cache_key).toBe("x".repeat(64));
+		expect(capturedPayload?.prompt_cache_key).toMatch(/^x{31}-[a-f0-9]{32}$/);
 	});
 
 	it("sets cache-affinity headers for proxy OpenAI Responses requests with a sessionId", async () => {

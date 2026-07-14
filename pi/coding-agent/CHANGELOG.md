@@ -4,6 +4,23 @@ All notable changes to Magenta CLI are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [Unreleased]
+
+### Added
+- Long-running `bash` commands are promoted to a background `bg_shell` event after a 3s inline deadline instead of blocking the agent loop; the same child process keeps running across promotion, and the promoted event auto-returns its completed result to the main agent
+- `bg_shell` and `sub_agent` gain `returnToMain` (default true), `returnDelivery` (`steer`/`followUp`/`nextTurn`, default `followUp`), and `returnInstruction` parameters, plus `config` defaults; a terminal `wait`/`status` on an event cancels its pending automatic return so results are never delivered twice
+- Completed background returns are coalesced: near-simultaneous `bg_shell`/`sub_agent` completions batch into one delivery while the session is idle and deliver immediately while it is streaming, and any pending batch is flushed at turn boundaries
+- The Todo tool gains a `reset` operation that archives a fully completed plan into a running `history`, with a `/todo` overlay that switches between Current and History (Tab), opens an archived plan (Enter), and returns from detail (Escape); version-1 Todo snapshots migrate to the history-aware v2 shape automatically
+- Opt-in prompt-cache telemetry (`PI_CACHE_TELEMETRY=1`) records per-request cache fingerprints and outcomes as JSONL for local cache-efficiency analysis, and Anthropic cache diagnostics (`PI_CACHE_DIAGNOSTICS=1`) surface `anthropic_cache_miss` reasons with missed-token counts
+- Compaction accepts an optional `maxContextFraction` (0 < fraction ≤ 1) that caps the effective context budget below the model's raw window
+
+### Changed
+- Migrated the TypeScript toolchain to the native TypeScript 7 (7.0.2) compiler across every workspace; type-checking and builds run through the native `tsc`, with the classic Compiler API served by the `@typescript/typescript6` compatibility package for the scripts that need it
+- Long OpenAI session identifiers are hashed into a bounded `prompt_cache_key` (≤ 64 characters) so cache affinity is preserved without exceeding provider limits
+
+### Fixed
+- `EventStream` propagates terminal failures to all waiting async iterators instead of leaving them pending
+
 ## [0.0.17] - 2026-07-13
 
 ### Added
