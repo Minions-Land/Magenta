@@ -4,7 +4,7 @@ All notable changes to Magenta CLI are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## [Unreleased]
+## [0.0.18] - 2026-07-14
 
 ### Added
 - Long-running `bash` commands are promoted to a background `bg_shell` event after a 3s inline deadline instead of blocking the agent loop; the same child process keeps running across promotion, and the promoted event auto-returns its completed result to the main agent
