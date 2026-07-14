@@ -118,6 +118,9 @@ The HCP Todo tool is the session's single plan and progress source. Its complete
 - Every mutation is an atomic non-empty `operations` array under `action: "apply"`.
 - Mutation names such as `add`, `update`, and `set_status` belong only in `operations[].op`.
 - A one-operation change is still one `apply` batch.
+- `reset` may archive only a non-empty plan whose every node is `completed`; it clears the active plan while preserving globally allocated node IDs.
+- Completed-plan history is part of the complete Todo snapshot, so each selected session branch restores its own active plan and history.
+- Valid version-1 Todo snapshots migrate to the current state version without losing their active plan.
 - Research orchestration must keep plan, current item, completion criteria, progress, summary, and evaluation outcomes in Todo.
 - It must not mirror that state into `plan.md`, `progress.md`, `contract.md`, `reflection.md`, or an assistant-maintained parallel checklist.
 

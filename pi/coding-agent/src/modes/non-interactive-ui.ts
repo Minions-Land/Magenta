@@ -1,10 +1,6 @@
 import type { ExtensionUIContext } from "../core/extensions/types.ts";
+import { HEADLESS_PROTOCOL_VERSION, type HeadlessUiEvent, type NonInteractiveUiPolicy } from "./headless-protocol.ts";
 import { type Theme, theme } from "./interactive/theme/theme.ts";
-import {
-	HEADLESS_PROTOCOL_VERSION,
-	type HeadlessUiEvent,
-	type NonInteractiveUiPolicy,
-} from "./headless-protocol.ts";
 
 export class NonInteractiveUiError extends Error {
 	readonly method: string;

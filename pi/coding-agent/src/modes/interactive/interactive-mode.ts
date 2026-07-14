@@ -39,8 +39,8 @@ import {
 	matchesKey,
 	ProcessTerminal,
 	Spacer,
-	setKeybindings,
 	StaticPrefixContainer,
+	setKeybindings,
 	Text,
 	TruncatedText,
 	TUI,
@@ -394,9 +394,13 @@ export class InteractiveMode {
 	private keybindings: KeybindingsManager;
 	private version: string;
 	private isInitialized = false;
-	private isTuiActive = false;
 	private onInputCallback?: (input: SubmittedInput) => void;
 	private pendingUserInputs: SubmittedInput[] = [];
+	// Magenta feature: when bare Up pulls all pending messages back into the editor,
+	// the editor holds a "pending draft". Bare Down at the end of the document pushes
+	// that draft back onto the queue (inverse of the pull). The flag is cleared as
+	// soon as the draft leaves the editor by any other path (submit, clear, etc.).
+	private pendingDraftInEditor = false;
 	// Magenta feature: unified activation queue. The main loop consumes
 	// Activations from a single source; producers are the keyboard (user_input)
 	// and idle peer wake (peer_wake). This keeps one turn-runner and lets future
@@ -442,6 +446,11 @@ export class InteractiveMode {
 
 	// Tool output expansion state
 	private toolOutputExpanded = false;
+	// Ctrl+O expands only the most recent expandable chat outputs. Track the exact
+	// component identities that were expanded so the next toggle collapses the same
+	// set even if newer outputs have since been appended.
+	private expandedChatOutputs: Expandable[] = [];
+	private static readonly RECENT_EXPAND_LIMIT = 3;
 
 	// Thinking block visibility state
 	private hideThinkingBlock = false;
@@ -802,7 +811,6 @@ export class InteractiveMode {
 
 		// Start the UI before initializing extensions so session_start handlers can use interactive dialogs
 		this.ui.start();
-		this.isTuiActive = true;
 		this.isInitialized = true;
 
 		await this.themeController.applyFromSettings();
@@ -837,7 +845,7 @@ export class InteractiveMode {
 				rawKeyHint("!", "to run bash"),
 				rawKeyHint("!!", "to run bash (no context)"),
 				hint("app.message.followUp", "to queue follow-up"),
-				hint("app.message.dequeue", "to edit all queued messages"),
+				rawKeyHint("↑/↓", "to edit/restore queued messages"),
 				hint("app.clipboard.pasteImage", "to paste image"),
 				rawKeyHint("drop files", "to attach"),
 			].join("\n");
@@ -1915,7 +1923,8 @@ export class InteractiveMode {
 			this.ui,
 			this.sessionManager.getCwd(),
 		);
-		component.setExpanded(this.toolOutputExpanded);
+		// New outputs always start collapsed; Ctrl+O tracks a bounded recent set.
+		component.setExpanded(false);
 		component.setRenderInvalidationListener(() => this.chatContainer.invalidateChild?.(component));
 		return component;
 	}
@@ -1929,7 +1938,7 @@ export class InteractiveMode {
 			this.streamingToolGroup = new ToolExecutionGroupComponent({
 				showImages: this.settingsManager.getShowImages(),
 			});
-			this.streamingToolGroup.setExpanded(this.toolOutputExpanded);
+			this.streamingToolGroup.setExpanded(false);
 			this.bindToolGroupInvalidation(this.streamingToolGroup);
 			this.chatContainer.addChild(this.streamingToolGroup);
 		}
@@ -2745,7 +2754,10 @@ export class InteractiveMode {
 		// so they work correctly regardless of which editor is active
 		this.defaultEditor.onEscape = () => {
 			if (this.session.isStreaming) {
-				this.restoreQueuedMessagesToEditor({ abort: true });
+				// Esc while streaming: interrupt the current loop. If there are pending
+				// (queued) messages, they are fed back in as a fresh prompt; otherwise this
+				// is a plain abort. (Codex/Claude-code style interaction.)
+				this.interruptAndFeedPendingMessages();
 			} else if (this.session.isBashRunning) {
 				this.session.abortBash();
 			} else if (this.isBashMode) {
@@ -2771,6 +2783,31 @@ export class InteractiveMode {
 			}
 		};
 
+		// Bare Up (empty editor) restores pending messages back into the editor and
+		// cancels the pending. Returns true only when there were messages to restore,
+		// so an empty queue falls through to normal cursor/history navigation. On
+		// success the editor holds a "pending draft" that bare Down can push back.
+		this.defaultEditor.onDequeuePending = () => {
+			if (this.session.pendingMessageCount === 0 && this.compactionQueuedMessages.length === 0) {
+				return false;
+			}
+			if (this.restoreQueuedMessagesToEditor() > 0) {
+				this.pendingDraftInEditor = true;
+				return true;
+			}
+			return false;
+		};
+
+		// Bare Down (cursor at end of document) is the inverse of the Up dequeue: if the
+		// editor holds a pulled-back pending draft, re-queue the current editor contents
+		// as a single pending message and clear the editor.
+		this.defaultEditor.onRequeuePending = () => {
+			if (!this.pendingDraftInEditor) {
+				return false;
+			}
+			return this.requeuePendingDraft();
+		};
+
 		// Register app action handlers
 		this.defaultEditor.onAction("app.clear", () => this.handleCtrlC());
 		this.defaultEditor.onCtrlD = () => this.handleCtrlD();
@@ -2787,7 +2824,9 @@ export class InteractiveMode {
 		this.defaultEditor.onAction("app.thinking.toggle", () => this.toggleThinkingBlockVisibility());
 		this.defaultEditor.onAction("app.editor.external", () => this.openExternalEditor());
 		this.defaultEditor.onAction("app.message.followUp", () => this.handleFollowUp());
-		this.defaultEditor.onAction("app.message.dequeue", () => this.handleDequeue());
+		// Alt+Up dequeue is disabled: bare Up now restores queued messages via the
+		// defaultEditor.onDequeuePending handler wired above.
+		// this.defaultEditor.onAction("app.message.dequeue", () => this.handleDequeue());
 		this.defaultEditor.onAction("app.session.new", () => this.handleClearCommand());
 		this.defaultEditor.onAction("app.session.tree", () => this.showTreeSelector());
 		this.defaultEditor.onAction("app.session.fork", () => this.showUserMessageSelector());
@@ -2895,6 +2934,9 @@ export class InteractiveMode {
 
 	private setupEditorSubmitHandler(): void {
 		this.defaultEditor.onSubmit = async (text: string) => {
+			// The draft (if any) is leaving the editor via submit; it is no longer a
+			// pull-back candidate for bare Down.
+			this.pendingDraftInEditor = false;
 			if (this.clipboardImagePastePending > 0) {
 				await this.settleClipboardImagePastes();
 				const latePasteText = (this.editor.getExpandedText?.() ?? this.editor.getText()).trim();
@@ -3580,7 +3622,7 @@ export class InteractiveMode {
 				if (message.display) {
 					const renderer = this.session.extensionRunner.getMessageRenderer(message.customType);
 					const component = new CustomMessageComponent(message, renderer, this.getMarkdownThemeWithSettings());
-					component.setExpanded(this.toolOutputExpanded);
+					component.setExpanded(false);
 					this.chatContainer.addChild(component);
 				}
 				break;
@@ -3588,14 +3630,14 @@ export class InteractiveMode {
 			case "compactionSummary": {
 				this.chatContainer.addChild(new Spacer(1));
 				const component = new CompactionSummaryMessageComponent(message, this.getMarkdownThemeWithSettings());
-				component.setExpanded(this.toolOutputExpanded);
+				component.setExpanded(false);
 				this.chatContainer.addChild(component);
 				break;
 			}
 			case "branchSummary": {
 				this.chatContainer.addChild(new Spacer(1));
 				const component = new BranchSummaryMessageComponent(message, this.getMarkdownThemeWithSettings());
-				component.setExpanded(this.toolOutputExpanded);
+				component.setExpanded(false);
 				this.chatContainer.addChild(component);
 				break;
 			}
@@ -3612,7 +3654,7 @@ export class InteractiveMode {
 							skillBlock,
 							this.getMarkdownThemeWithSettings(),
 						);
-						component.setExpanded(this.toolOutputExpanded);
+						component.setExpanded(false);
 						this.chatContainer.addChild(component);
 						// Render user message separately if present
 						if (skillBlock.userMessage) {
@@ -3696,7 +3738,7 @@ export class InteractiveMode {
 							group = new ToolExecutionGroupComponent({
 								showImages: this.settingsManager.getShowImages(),
 							});
-							group.setExpanded(this.toolOutputExpanded);
+							group.setExpanded(false);
 							this.bindToolGroupInvalidation(group);
 							this.chatContainer.addChild(group);
 						}
@@ -3854,6 +3896,8 @@ export class InteractiveMode {
 
 	private rebuildChatFromMessages(): void {
 		this.chatContainer.clear();
+		// Tracked expansion identities are invalidated by clearing the chat.
+		this.expandedChatOutputs = [];
 		const context = this.sessionManager.buildSessionContext();
 		this.renderSessionContext(context);
 	}
@@ -4023,7 +4067,6 @@ export class InteractiveMode {
 			killTrackedDetachedChildren();
 		} catch {}
 		try {
-			this.isTuiActive = false;
 			this.ui.stop();
 		} catch {}
 		console.error(`${APP_NAME} exiting due to uncaughtException:`);
@@ -4107,7 +4150,6 @@ export class InteractiveMode {
 			clearInterval(suspendKeepAlive);
 			process.removeListener("SIGINT", ignoreSigint);
 			this.ui.start();
-			this.isTuiActive = true;
 			this.updateEditorBorderColor();
 			this.ui.requestRender(true);
 		});
@@ -4115,7 +4157,6 @@ export class InteractiveMode {
 		try {
 			// Stop the TUI (restore terminal to normal mode)
 			this.stopUltraBorderAnimation();
-			this.isTuiActive = false;
 			this.ui.stop();
 
 			// Send SIGTSTP to process group (pid=0 means all processes in group)
@@ -4172,14 +4213,16 @@ export class InteractiveMode {
 		}
 	}
 
-	private handleDequeue(): void {
-		const restored = this.restoreQueuedMessagesToEditor();
-		if (restored === 0) {
-			this.showStatus("No queued messages to restore");
-		} else {
-			this.showStatus(`Restored ${restored} queued message${restored > 1 ? "s" : ""} to editor`);
-		}
-	}
+	// Alt+Up dequeue is disabled (bare Up now handles dequeue via onDequeuePending).
+	// Kept for reference in case the Alt+Up binding is restored.
+	// private handleDequeue(): void {
+	// 	const restored = this.restoreQueuedMessagesToEditor();
+	// 	if (restored === 0) {
+	// 		this.showStatus("No queued messages to restore");
+	// 	} else {
+	// 		this.showStatus(`Restored ${restored} queued message${restored > 1 ? "s" : ""} to editor`);
+	// 	}
+	// }
 
 	private applyEditorBorderColor(): void {
 		const borderColor = this.isBashMode
@@ -4238,7 +4281,15 @@ export class InteractiveMode {
 	}
 
 	private toggleToolOutputExpansion(): void {
-		this.setToolsExpanded(!this.toolOutputExpanded);
+		// Base the toggle on whether a tracked expansion is still live in the chat.
+		// After a chat rebuild (compaction, /tree, thinking toggle) the tracked
+		// references become stale; treating that as "not expanded" makes the next
+		// Ctrl+O expand the newest outputs immediately instead of a dead toggle.
+		const children = this.chatContainer.children;
+		const hasLiveExpansion = this.expandedChatOutputs.some((output) =>
+			children.includes(output as unknown as Component),
+		);
+		this.setToolsExpanded(!hasLiveExpansion);
 	}
 
 	private setToolsExpanded(expanded: boolean): void {
@@ -4248,15 +4299,46 @@ export class InteractiveMode {
 			activeHeader.setExpanded(expanded);
 		}
 		this.showLoadedResources({ showDiagnosticsWhenQuiet: true });
-		for (const container of [this.loadedResourcesContainer, this.chatContainer]) {
-			for (const child of container.children) {
-				if (isExpandable(child)) {
-					child.setExpanded(expanded);
-				}
+		// Header and loaded-resource entries are bounded, so expanding all of them is
+		// cheap. The chat history is not: only the newest few outputs are toggled.
+		for (const child of this.loadedResourcesContainer.children) {
+			if (isExpandable(child)) {
+				child.setExpanded(expanded);
 			}
 		}
-		this.chatContainer.invalidateCache?.();
+		this.applyRecentChatExpansion(expanded);
 		this.ui.requestRender();
+	}
+
+	/**
+	 * Expand or collapse only the {@link RECENT_EXPAND_LIMIT} newest expandable chat
+	 * outputs. Uses per-child invalidation so untouched history is never re-rendered.
+	 */
+	private applyRecentChatExpansion(expanded: boolean): void {
+		const children = this.chatContainer.children;
+		const stillPresent = new Set<Component>(children);
+		// Always collapse the previously tracked set first (only those still in chat),
+		// so a re-expansion never leaves an old trio expanded alongside a new one.
+		for (const output of this.expandedChatOutputs) {
+			const component = output as unknown as Component;
+			if (stillPresent.has(component)) {
+				output.setExpanded(false);
+				this.chatContainer.invalidateChild?.(component);
+			}
+		}
+		this.expandedChatOutputs = [];
+		if (!expanded) return;
+
+		const selected: Expandable[] = [];
+		for (let i = children.length - 1; i >= 0 && selected.length < InteractiveMode.RECENT_EXPAND_LIMIT; i--) {
+			const child = children[i];
+			if (isExpandable(child)) {
+				child.setExpanded(true);
+				this.chatContainer.invalidateChild?.(child);
+				selected.push(child);
+			}
+		}
+		this.expandedChatOutputs = selected;
 	}
 
 	private toggleThinkingBlockVisibility(): void {
@@ -4295,7 +4377,6 @@ export class InteractiveMode {
 			// Stop TUI to release terminal
 			this.invalidateClipboardImagePastes();
 			this.stopUltraBorderAnimation();
-			this.isTuiActive = false;
 			this.ui.stop();
 
 			// Split by space to support editor arguments (e.g., "code --wait")
@@ -4331,7 +4412,6 @@ export class InteractiveMode {
 
 			// Restart TUI
 			this.ui.start();
-			this.isTuiActive = true;
 			this.updateEditorBorderColor();
 			// Force full re-render since external editor uses alternate screen
 			this.ui.requestRender(true);
@@ -4581,8 +4661,7 @@ export class InteractiveMode {
 				const text = theme.fg("dim", `Follow-up: ${message}`);
 				this.pendingMessagesContainer.addChild(new TruncatedText(text, 1, 0));
 			}
-			const dequeueHint = this.getAppKeyDisplay("app.message.dequeue");
-			const hintText = theme.fg("dim", `↳ ${dequeueHint} to edit all queued messages`);
+			const hintText = theme.fg("dim", `↳ ↑ to edit queued · ↓ to re-queue`);
 			this.pendingMessagesContainer.addChild(new TruncatedText(hintText, 1, 0));
 		}
 	}
@@ -4631,6 +4710,66 @@ export class InteractiveMode {
 		return allQueued.length;
 	}
 
+	/**
+	 * Esc-while-streaming with pending messages: interrupt the current agent loop
+	 * and immediately feed all queued (steering + follow-up + compaction) messages
+	 * back in as a single fresh prompt. Codex/Claude-code style interaction.
+	 *
+	 * The queued messages are combined into one prompt (mirroring how
+	 * restoreQueuedMessagesToEditor joins them for the editor), the current turn is
+	 * aborted, and the combined input is pushed onto the activation queue so the
+	 * main loop runs it as a new turn once the aborted prompt settles.
+	 */
+	private interruptAndFeedPendingMessages(): void {
+		const { steering, followUp } = this.clearAllQueues();
+		const allQueued = [...steering, ...followUp];
+		this.updatePendingMessagesDisplay();
+		if (allQueued.length === 0) {
+			this.agent.abort();
+			return;
+		}
+
+		const combined = this.combineSubmittedInputs(allQueued);
+
+		// Abort the in-flight turn. clearAllQueues already dropped the queued messages
+		// from the agent, so the aborted turn will not inject them again.
+		this.agent.abort();
+
+		// Feed the combined input as a fresh activation. The main loop is currently
+		// blocked on the aborted prompt, so this enqueues and is consumed on the next
+		// getNextActivation() once the abort settles.
+		this.pushActivation({ type: "user_input", input: combined });
+		this.ui.requestRender();
+	}
+
+	/**
+	 * Merge multiple queued inputs into one SubmittedInput: texts are joined with
+	 * blank lines (empty texts dropped), and images/markers are concatenated in the
+	 * same per-input order so embedded image markers still line up with their images.
+	 */
+	private combineSubmittedInputs(inputs: SubmittedInput[]): SubmittedInput {
+		const text = inputs
+			.map((input) => input.text)
+			.filter((value) => value.trim())
+			.join("\n\n");
+		const images: ImageContent[] = [];
+		const imageMarkers: string[] = [];
+		for (const input of inputs) {
+			if (input.images?.length) {
+				images.push(...input.images);
+				const markers = input.imageMarkers ?? [];
+				for (let index = 0; index < input.images.length; index++) {
+					imageMarkers.push(markers[index] ?? "");
+				}
+			}
+		}
+		return {
+			text,
+			...(images.length ? { images } : {}),
+			...(images.length ? { imageMarkers } : {}),
+		};
+	}
+
 	private queueCompactionMessage(input: SubmittedInput, mode: "steer" | "followUp"): void {
 		this.compactionQueuedMessages.push({ ...input, mode });
 		this.editor.addToHistory?.(input.text);
@@ -4638,6 +4777,57 @@ export class InteractiveMode {
 		this.editor.clearPasteMarkers?.();
 		this.updatePendingMessagesDisplay();
 		this.showStatus("Queued message for after compaction");
+	}
+
+	/**
+	 * Bare Down inverse of the Up dequeue: take the current editor contents (a
+	 * pulled-back pending draft, possibly edited) and re-queue it as a single
+	 * pending message, then clear the editor. Returns true when it consumed the key.
+	 *
+	 * Mirrors the streaming/compaction queueing paths used by the submit handler so
+	 * the re-queued message behaves identically to one queued by pressing Enter
+	 * while the agent is working. Falls through (returns false) when there is no
+	 * text to re-queue or the agent is no longer accepting queued messages.
+	 */
+	private requeuePendingDraft(): boolean {
+		// Only meaningful while the agent is still working; otherwise a plain Down
+		// (cursor move / history) is the right behavior.
+		if (!this.session.isStreaming && !this.session.isCompacting) {
+			this.pendingDraftInEditor = false;
+			return false;
+		}
+
+		let text = (this.editor.getExpandedText?.() ?? this.editor.getText()).trim();
+		text = this.defaultEditor.transformImageTokenInput(text);
+		const submittedInput = this.pendingImageController.takeForText(text);
+		text = submittedInput.text;
+		if (!text) {
+			return false;
+		}
+		// Extension commands cannot be queued; leave them in the editor for submit.
+		if (this.isExtensionCommand(text)) {
+			return false;
+		}
+
+		this.defaultEditor.clearImageTokens();
+		this.pendingDraftInEditor = false;
+
+		if (this.session.isCompacting) {
+			// queueCompactionMessage handles history + clearing the editor itself.
+			this.queueCompactionMessage(submittedInput, "steer");
+		} else {
+			this.editor.addToHistory?.(text);
+			this.editor.setText("");
+			this.editor.clearPasteMarkers?.();
+			void this.session.prompt(text, {
+				streamingBehavior: "steer",
+				images: submittedInput.images,
+				imageMarkers: submittedInput.imageMarkers,
+			});
+			this.updatePendingMessagesDisplay();
+		}
+		this.ui.requestRender();
+		return true;
 	}
 
 	private isExtensionCommand(text: string): boolean {
@@ -7991,7 +8181,6 @@ export class InteractiveMode {
 		const externalEditor = this.getAppKeyDisplay("app.editor.external");
 		const cycleModelBackward = this.getAppKeyDisplay("app.model.cycleBackward");
 		const followUp = this.getAppKeyDisplay("app.message.followUp");
-		const dequeue = this.getAppKeyDisplay("app.message.dequeue");
 		const pasteImage = this.getAppKeyDisplay("app.clipboard.pasteImage");
 
 		let hotkeys = `
@@ -8034,7 +8223,8 @@ export class InteractiveMode {
 | \`${toggleThinking}\` | Toggle thinking block visibility |
 | \`${externalEditor}\` | Edit message in external editor |
 | \`${followUp}\` | Queue follow-up message |
-| \`${dequeue}\` | Restore queued messages |
+| \`↑\` | Restore queued messages into editor (empty editor) |
+| \`↓\` | Re-queue the pulled-back draft (cursor at end) |
 | \`${pasteImage}\` | Paste image from clipboard |
 | \`/\` | Slash commands |
 | \`!\` | Run bash command |
@@ -8253,7 +8443,6 @@ export class InteractiveMode {
 	stop(): void {
 		this.invalidateClipboardImagePastes();
 		this.stopUltraBorderAnimation();
-		this.isTuiActive = false;
 		if (this.settingsManager.getShowTerminalProgress()) {
 			this.ui.terminal.setProgress(false);
 		}

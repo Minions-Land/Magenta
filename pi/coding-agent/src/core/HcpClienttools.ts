@@ -1,5 +1,5 @@
 import type { HcpClient, SshTarget, SshToolOperations, TodoPlanState } from "@magenta/harness";
-import { cloneTodoPlanState, createSshToolOperations, HcpClientassemble, isTodoPlanState } from "@magenta/harness";
+import { createSshToolOperations, HcpClientassemble, restoreTodoPlanState } from "@magenta/harness";
 import type { SessionManager } from "./session-manager.ts";
 import type { SettingsManager } from "./settings-manager.ts";
 import { createLocalBashOperations } from "./tools/bash.ts";
@@ -69,8 +69,9 @@ export function loadTodoPlanStateFromBranch(
 		const message = entry.message;
 		if (message.role !== "toolResult" || message.toolName !== "todo") continue;
 		const details = message.details as { state?: unknown } | undefined;
-		if (!isTodoPlanState(details?.state)) continue;
-		return cloneTodoPlanState(details.state);
+		const restored = restoreTodoPlanState(details?.state);
+		if (!restored) continue;
+		return restored;
 	}
 	return undefined;
 }

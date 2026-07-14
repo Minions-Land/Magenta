@@ -59,8 +59,8 @@ describe("sub-agent-return renderer", () => {
 		const rendered = component.render(100);
 		const text = rendered.join("\n");
 
-		// Collapsed: should show instruction, compact summary, and line-count hint
-		expect(text).toContain("Findings ready");
+		// Collapsed: compact summary and line-count hint, but never the model instruction
+		expect(text).not.toContain("Findings ready");
 		expect(text).toContain("Sub-agent agent_001");
 		expect(text).toContain("exited");
 		expect(text).toContain("3 output lines hidden");
@@ -99,8 +99,8 @@ describe("sub-agent-return renderer", () => {
 		const rendered = component.render(100);
 		const text = rendered.join("\n");
 
-		// Expanded: should show instruction, full metadata, and actual output
-		expect(text).toContain("Findings ready");
+		// Expanded: full metadata and actual output, but still no model instruction
+		expect(text).not.toContain("Findings ready");
 		expect(text).toContain("Sub-agent: agent_001");
 		expect(text).toContain("Role: general");
 		expect(text).toContain("CWD: /tmp");
@@ -202,16 +202,16 @@ describe("sub-agent-return renderer", () => {
 		expect(text).toContain("ctrl+o to expand");
 	});
 
-	it("falls back to content rendering when eventData absent", () => {
+	it("stays compact for legacy messages without eventData, expanding to raw content", () => {
 		const msg = createReturnMessage(undefined, "No eventData.");
-		const component = subAgentReturnRenderer(msg, { expanded: false }, theme);
 
-		expect(component).toBeDefined();
-		const rendered = component.render(100);
-		const text = rendered.join("\n");
+		// Collapsed: compact per-id line, no raw output dump.
+		const collapsed = subAgentReturnRenderer(msg, { expanded: false }, theme).render(100).join("\n");
+		expect(collapsed).toContain("Sub-agent agent_001: exited (ctrl+o to expand)");
+		expect(collapsed).not.toContain("finding-1");
 
-		// Without eventData, should render the raw content (markdown)
-		expect(text).toContain("No eventData");
-		expect(text).toContain("finding-1"); // raw content has full output
+		// Expanded: falls back to the raw content payload.
+		const expanded = subAgentReturnRenderer(msg, { expanded: true }, theme).render(100).join("\n");
+		expect(expanded).toContain("finding-1");
 	});
 });

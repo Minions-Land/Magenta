@@ -45,12 +45,19 @@ export const bgShellReturnRenderer = ((message: CustomMessage<BgShellReturnDetai
 			.join("\n");
 	}
 
-	// If we have event data and expanded state, regenerate with proper formatting
+	// When we have event data, render only the compact event summary. The
+	// model-facing instruction (details.instruction) is intentionally omitted from
+	// the TUI: it exists to steer the model, not to inform the user. Collapsed mode
+	// stays a single status line plus an output hint; expanded reveals metadata and
+	// the captured output tail.
 	const eventData = message.details?.eventData;
 	if (eventData && options.expanded !== undefined) {
-		const instruction = message.details?.instruction ?? "";
-		const summary = options.expanded ? summarizeEventExpanded(eventData) : summarizeEventCollapsed(eventData);
-		content = instruction ? `${instruction}\n\n${summary}` : summary;
+		content = options.expanded ? summarizeEventExpanded(eventData) : summarizeEventCollapsed(eventData);
+	} else if (!options.expanded && message.details) {
+		// Legacy messages without eventData: stay compact until expanded instead of
+		// dumping the full raw payload into the collapsed chat view.
+		const { id, status } = message.details;
+		if (id && status) content = `Background job ${id}: ${status} (ctrl+o to expand)`;
 	}
 
 	// Render content as markdown

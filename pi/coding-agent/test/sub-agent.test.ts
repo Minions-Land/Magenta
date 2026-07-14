@@ -139,9 +139,13 @@ describe("built-in sub_agent tool", () => {
 		returned = [];
 		spawnRecords = [];
 		controller = new SubAgentController(manager, {
-			sendMessage: (message, options) => {
-				returned.push({ message, options: options ?? {} });
+			registerReturn: (_eventIds, message, delivery) => {
+				returned.push({
+					message,
+					options: { deliverAs: delivery, triggerTurn: delivery !== "nextTurn" },
+				});
 			},
+			cancelReturn: () => {},
 			spawnAgent: createFakeSpawn(spawnRecords, { output: "sub-result" }),
 		});
 	});
@@ -235,9 +239,13 @@ describe("built-in sub_agent tool", () => {
 		controller.shutdown();
 		const largeOutput = `${"x".repeat(20_000)}TAIL-MARKER`;
 		controller = new SubAgentController(manager, {
-			sendMessage: (message, options) => {
-				returned.push({ message, options: options ?? {} });
+			registerReturn: (_eventIds, message, delivery) => {
+				returned.push({
+					message,
+					options: { deliverAs: delivery, triggerTurn: delivery !== "nextTurn" },
+				});
 			},
+			cancelReturn: () => {},
 			spawnAgent: createFakeSpawn(spawnRecords, { output: largeOutput }),
 		});
 		const tool = controller.createToolDefinition();
@@ -264,9 +272,13 @@ describe("built-in sub_agent tool", () => {
 		controller.shutdown();
 		const largeOutput = `${"o".repeat(20_000)}AGGREGATE-TAIL`;
 		controller = new SubAgentController(manager, {
-			sendMessage: (message, options) => {
-				returned.push({ message, options: options ?? {} });
+			registerReturn: (_eventIds, message, delivery) => {
+				returned.push({
+					message,
+					options: { deliverAs: delivery, triggerTurn: delivery !== "nextTurn" },
+				});
 			},
+			cancelReturn: () => {},
 			spawnAgent: createFakeSpawn(spawnRecords, { output: largeOutput }),
 		});
 		const tool = controller.createToolDefinition();
@@ -304,9 +316,13 @@ describe("built-in sub_agent tool", () => {
 	it("inherits the parent model when a task has no explicit model", async () => {
 		controller.shutdown();
 		controller = new SubAgentController(manager, {
-			sendMessage: (message, options) => {
-				returned.push({ message, options: options ?? {} });
+			registerReturn: (_eventIds, message, delivery) => {
+				returned.push({
+					message,
+					options: { deliverAs: delivery, triggerTurn: delivery !== "nextTurn" },
+				});
 			},
+			cancelReturn: () => {},
 			spawnAgent: createFakeSpawn(spawnRecords, { output: "sub-result" }),
 			getDefaultModel: () => ({ provider: "anthropic", model: "claude-opus-4-8" }),
 		});
@@ -324,9 +340,13 @@ describe("built-in sub_agent tool", () => {
 	it("uses an explicit task model instead of inheriting the parent model", async () => {
 		controller.shutdown();
 		controller = new SubAgentController(manager, {
-			sendMessage: (message, options) => {
-				returned.push({ message, options: options ?? {} });
+			registerReturn: (_eventIds, message, delivery) => {
+				returned.push({
+					message,
+					options: { deliverAs: delivery, triggerTurn: delivery !== "nextTurn" },
+				});
 			},
+			cancelReturn: () => {},
 			spawnAgent: createFakeSpawn(spawnRecords, { output: "sub-result" }),
 			getDefaultModel: () => ({ provider: "anthropic", model: "claude-opus-4-8" }),
 		});
@@ -419,9 +439,13 @@ describe("built-in sub_agent tool", () => {
 
 	it("cancels a running sub-agent", async () => {
 		controller = new SubAgentController(manager, {
-			sendMessage: (message, options) => {
-				returned.push({ message, options: options ?? {} });
+			registerReturn: (_eventIds, message, delivery) => {
+				returned.push({
+					message,
+					options: { deliverAs: delivery, triggerTurn: delivery !== "nextTurn" },
+				});
 			},
+			cancelReturn: () => {},
 			spawnAgent: createFakeSpawn(spawnRecords, { autoClose: false }),
 		});
 		const tool = controller.createToolDefinition();
@@ -472,9 +496,13 @@ describe("built-in sub_agent tool", () => {
 	it("removes workflow from the schema and rejects bypassed workflow calls when disabled", async () => {
 		controller.shutdown();
 		controller = new SubAgentController(manager, {
-			sendMessage: (message, options) => {
-				returned.push({ message, options: options ?? {} });
+			registerReturn: (_eventIds, message, delivery) => {
+				returned.push({
+					message,
+					options: { deliverAs: delivery, triggerTurn: delivery !== "nextTurn" },
+				});
 			},
+			cancelReturn: () => {},
 			isWorkflowEnabled: () => false,
 		});
 		const tool = controller.createToolDefinition();
@@ -509,9 +537,13 @@ describe("built-in sub_agent tool", () => {
 				specs.map((s) => ({ workerId: s.workerId, text: `did ${s.workerId}`, durationMs: 1, success: true })),
 		};
 		controller = new SubAgentController(manager, {
-			sendMessage: (message, options) => {
-				returned.push({ message, options: options ?? {} });
+			registerReturn: (_eventIds, message, delivery) => {
+				returned.push({
+					message,
+					options: { deliverAs: delivery, triggerTurn: delivery !== "nextTurn" },
+				});
 			},
+			cancelReturn: () => {},
 			spawnAgent: createFakeSpawn(spawnRecords, { output: "unused" }),
 			getWorkflowProvider: () => new MultiAgentOrchestrator({ cwd: tempDir, runner: fakeRunner as never }),
 		});
@@ -562,9 +594,13 @@ describe("built-in sub_agent tool", () => {
 
 		controller.shutdown();
 		controller = new SubAgentController(manager, {
-			sendMessage: (message, options) => {
-				returned.push({ message, options: options ?? {} });
+			registerReturn: (_eventIds, message, delivery) => {
+				returned.push({
+					message,
+					options: { deliverAs: delivery, triggerTurn: delivery !== "nextTurn" },
+				});
 			},
+			cancelReturn: () => {},
 			getWorkflowProvider: () => selectedProvider,
 		});
 		selectedProvider = packageProvider;
@@ -655,9 +691,13 @@ describe("built-in sub_agent tool", () => {
 				})),
 		};
 		controller = new SubAgentController(manager, {
-			sendMessage: (message, options) => {
-				returned.push({ message, options: options ?? {} });
+			registerReturn: (_eventIds, message, delivery) => {
+				returned.push({
+					message,
+					options: { deliverAs: delivery, triggerTurn: delivery !== "nextTurn" },
+				});
 			},
+			cancelReturn: () => {},
 			spawnAgent: createFakeSpawn(spawnRecords, { output: "unused" }),
 			getWorkflowProvider: () => new MultiAgentOrchestrator({ cwd: tempDir, runner: fakeRunner as never }),
 		});
@@ -689,6 +729,89 @@ describe("built-in sub_agent tool", () => {
 		expect(text).toContain("usage:");
 		expect(text).toMatch(/usage:.*↑/);
 		expect(text).toMatch(/usage:.*\$/);
+	});
+
+	it("bounds the events map by evicting the oldest finished agents", async () => {
+		const records: SpawnRecord[] = [];
+		const bounded = new SubAgentController(manager, {
+			registerReturn: () => {},
+			cancelReturn: () => {},
+			spawnAgent: createFakeSpawn(records, { output: "bounded-result" }),
+			maxRetainedFinishedEvents: 2,
+		});
+		try {
+			const tool = bounded.createToolDefinition();
+			const ctx = createContext(tempDir);
+
+			const ids: string[] = [];
+			for (let i = 0; i < 6; i++) {
+				const start = await tool.execute(
+					`call-start-${i}`,
+					{ action: "start", task: `task ${i}`, returnToMain: false },
+					undefined,
+					undefined,
+					ctx,
+				);
+				const id = start.details?.id as string;
+				ids.push(id);
+				await tool.execute(`call-wait-${i}`, { action: "wait", eventId: id }, undefined, undefined, ctx);
+			}
+
+			// The map stays bounded near the retention cap (prune runs on each start,
+			// so the final finished event may linger until the next start).
+			const status = await tool.execute("call-status-all", { action: "status" }, undefined, undefined, ctx);
+			expect((status.details?.ids as string[]).length).toBeLessThanOrEqual(3);
+
+			// The most recent finished agent is still queryable and evicted ones are gone.
+			const recent = await tool.execute(
+				"call-status-recent",
+				{ action: "status", eventId: ids[ids.length - 1] },
+				undefined,
+				undefined,
+				ctx,
+			);
+			expect(textOf(recent)).not.toContain("Unknown sub-agent");
+
+			const oldest = await tool.execute(
+				"call-status-oldest",
+				{ action: "status", eventId: ids[0] },
+				undefined,
+				undefined,
+				ctx,
+			);
+			expect(textOf(oldest)).toContain(`Unknown sub-agent: ${ids[0]}`);
+		} finally {
+			bounded.shutdown();
+		}
+	});
+
+	it("releases the child process reference once an agent finishes", async () => {
+		const records: SpawnRecord[] = [];
+		const bounded = new SubAgentController(manager, {
+			registerReturn: () => {},
+			cancelReturn: () => {},
+			spawnAgent: createFakeSpawn(records, { output: "done" }),
+		});
+		try {
+			const tool = bounded.createToolDefinition();
+			const ctx = createContext(tempDir);
+			const start = await tool.execute(
+				"call-start",
+				{ action: "start", task: "finish quickly", returnToMain: false },
+				undefined,
+				undefined,
+				ctx,
+			);
+			const eventId = start.details?.id as string;
+			await tool.execute("call-wait", { action: "wait", eventId }, undefined, undefined, ctx);
+
+			// After the agent exits, finishEvent() must have dropped the child handle so
+			// a retained finished event no longer pins the ChildProcess object.
+			const internalEvents = (bounded as unknown as { events: Map<string, { child?: unknown }> }).events;
+			expect(internalEvents.get(eventId)?.child).toBeUndefined();
+		} finally {
+			bounded.shutdown();
+		}
 	});
 });
 
@@ -735,5 +858,55 @@ describe("buildOrchestrationRequest slot remapping", () => {
 		expect("confidenceThreshold" in req).toBe(false);
 		expect("count" in req).toBe(false);
 		expect("keepTop" in req).toBe(false);
+	});
+
+	it("encodes an inline `script` workflow as a data: URL scriptPath", async () => {
+		const source = "export default async (args, ctx) => ({ got: args.x * 2 });";
+		const req = buildOrchestrationRequest({
+			pattern: "script",
+			name: "my custom",
+			script: source,
+			args: { x: 21 },
+			model: "some-model",
+			maxConcurrent: 3,
+		} as never) as unknown as Record<string, unknown>;
+
+		expect(req.pattern).toBe("script");
+		expect(typeof req.scriptPath).toBe("string");
+		expect(req.scriptPath as string).toMatch(/^data:text\/javascript;base64,/);
+		// Tool-only `name` and raw `script` never reach the contract.
+		expect("name" in req).toBe(false);
+		expect("script" in req).toBe(false);
+		// CommonOptions + args pass through untouched.
+		expect(req.args).toEqual({ x: 21 });
+		expect(req.model).toBe("some-model");
+		expect(req.maxConcurrent).toBe(3);
+
+		// The encoded module is the exact source and dynamically importable.
+		const mod = (await import(req.scriptPath as string)) as {
+			default: (args: unknown, ctx: unknown) => Promise<{ got: number }>;
+		};
+		const result = await mod.default({ x: 21 }, {});
+		expect(result).toEqual({ got: 42 });
+	});
+
+	it("rejects a `script` workflow with empty or missing source", () => {
+		expect(() => buildOrchestrationRequest({ pattern: "script" } as never)).toThrow(/requires a non-empty/);
+		expect(() => buildOrchestrationRequest({ pattern: "script", script: "   " } as never)).toThrow(
+			/requires a non-empty/,
+		);
+	});
+
+	it("never leaks script-only fields into a preset request", () => {
+		const req = buildOrchestrationRequest({
+			pattern: "fan_out_synthesize",
+			workers: [{ task: "a" }],
+			// stray fields that only belong to `script` must be dropped
+			script: "export default async () => {};",
+			args: { x: 1 },
+		} as never) as unknown as Record<string, unknown>;
+		expect("script" in req).toBe(false);
+		expect("args" in req).toBe(false);
+		expect(req.workers).toEqual([{ task: "a" }]);
 	});
 });

@@ -24,6 +24,19 @@ export class CustomEditor extends Editor {
 	public onEscape?: () => void;
 	public onCtrlD?: () => void;
 	public onPasteImage?: () => void | Promise<void>;
+	/**
+	 * Handler for bare Up when there are pending (queued) messages and the editor
+	 * is empty. Returns true if it consumed the key (restored the pending messages
+	 * into the editor), false to fall through to normal cursor/history handling.
+	 */
+	public onDequeuePending?: () => boolean;
+	/**
+	 * Handler for bare Down when the cursor is at the very end of the editor and the
+	 * editor currently holds a pulled-back pending draft. Returns true if it consumed
+	 * the key (re-queued the draft as pending), false to fall through to normal
+	 * cursor/history handling. Inverse of onDequeuePending.
+	 */
+	public onRequeuePending?: () => boolean;
 	/** Handler for extension-registered shortcuts. Returns true if handled. */
 	public onExtensionShortcut?: (data: string) => boolean;
 
@@ -69,6 +82,35 @@ export class CustomEditor extends Editor {
 			void this.onPasteImage?.();
 			this.scheduleImageTokenScan();
 			return;
+		}
+
+		// Bare Up with an empty editor: pull pending (queued) messages back into the
+		// editor and cancel the pending, instead of navigating cursor/history. Only
+		// when the dequeue handler reports it consumed the key (i.e. there were
+		// pending messages). Skips when autocomplete is active.
+		if (
+			this.onDequeuePending &&
+			this.keybindings.matches(data, "tui.editor.cursorUp") &&
+			this.getText().length === 0 &&
+			!this.isShowingAutocomplete()
+		) {
+			if (this.onDequeuePending()) {
+				return;
+			}
+		}
+
+		// Bare Down at the end of the document: re-queue a pulled-back pending draft
+		// (inverse of the Up dequeue above). Only fires when the host reports the
+		// editor currently holds a pending draft. Skips when autocomplete is active.
+		if (
+			this.onRequeuePending &&
+			this.keybindings.matches(data, "tui.editor.cursorDown") &&
+			this.isCursorAtDocumentEnd() &&
+			!this.isShowingAutocomplete()
+		) {
+			if (this.onRequeuePending()) {
+				return;
+			}
 		}
 
 		// Autocomplete enhancement (migrated from command-aliases extension):
@@ -132,6 +174,21 @@ export class CustomEditor extends Editor {
 		const theme = this.getImageTokenTheme?.();
 		if (!this.imageTokens || !theme) return lines;
 		return this.imageTokens.render(lines, theme, width);
+	}
+
+	/**
+	 * True when the cursor sits at the very end of the document (last line, last
+	 * column). Used to decide whether bare Down should re-queue a pending draft
+	 * rather than move the cursor.
+	 */
+	private isCursorAtDocumentEnd(): boolean {
+		const internals = this as unknown as Partial<EditorInternals>;
+		const state = internals.state;
+		if (!state) return false;
+		const lastLineIndex = state.lines.length - 1;
+		if (state.cursorLine !== lastLineIndex) return false;
+		const lastLine = state.lines[lastLineIndex] ?? "";
+		return state.cursorCol >= lastLine.length;
 	}
 
 	private deleteImageTokenAtCursor(data: string): boolean {

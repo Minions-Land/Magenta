@@ -28,6 +28,12 @@ import type { ExtensionContext, ToolDefinition } from "../extensions/types.ts";
 
 const LOG_DIR = join(getAgentDir(), "tmp", "background-shell");
 const TERM_GRACE_MS = 3000;
+/**
+ * Cap on how many finished (non-running) background-shell events are retained.
+ * Prevents the events Map from growing without bound over a long interactive
+ * session; running events and events with pending waiters are never evicted.
+ */
+const MAX_RETAINED_FINISHED_EVENTS = 200;
 
 type BackgroundShellStatus = "running" | "exited" | "failed" | "timed_out" | "cancelled";
 type ReturnDelivery = "steer" | "followUp" | "nextTurn";
@@ -45,8 +51,12 @@ type BackgroundShellEvent = {
 	cwd: string;
 	label?: string;
 	logPath: string;
-	child: ChildProcess;
-	log: WriteStream;
+	/** Present for spawned events; absent for an adopted (promoted) bash execution. */
+	child?: ChildProcess;
+	/** Present for spawned events; absent for an adopted execution that streams elsewhere. */
+	log?: WriteStream;
+	/** Cancellation for adopted executions with no owned child process. */
+	cancel?: () => void;
 	startedAt: number;
 	endedAt?: number;
 	status: BackgroundShellStatus;
@@ -60,6 +70,9 @@ type BackgroundShellEvent = {
 	expectedSeconds?: number;
 	timeout?: NodeJS.Timeout;
 	waiters: Array<() => void>;
+	/** True while an automatic return-to-main is pending; cleared when the model
+	 * consumes the result inline via a terminal wait/status. */
+	autoReturnPending?: boolean;
 };
 
 export type BackgroundShellReturnMessage<T = unknown> = {
@@ -72,10 +85,34 @@ export type BackgroundShellReturnMessage<T = unknown> = {
 	options: { triggerTurn?: boolean; deliverAs?: ReturnDelivery };
 };
 
-export type BackgroundShellSendMessage = <T = unknown>(
-	message: BackgroundShellReturnMessage<T>["message"],
-	options?: BackgroundShellReturnMessage<T>["options"],
-) => Promise<void> | void;
+/**
+ * Register a completed event's fully-formed return message with the scheduling
+ * layer (BackgroundReturnCoordinator). The coordinator decides WHEN it is
+ * injected (coalesced with other completions), never reformatting it.
+ */
+export type BackgroundShellRegisterReturn = (
+	eventIds: string[],
+	message: { customType: string; content: string; display: boolean; details: unknown },
+	delivery: ReturnDelivery,
+) => void;
+
+/** Drop a still-pending return from the coordinator (terminal wait/status consumption). */
+export type BackgroundShellCancelReturn = (eventIds: string[]) => void;
+
+/** Handle returned by {@link BackgroundShellController.adoptExecution}. */
+export type AdoptedExecutionHandle = {
+	id: string;
+	/** Stream additional output produced after promotion into the event tail. */
+	pushOutput: (text: string) => void;
+	/** Finalize the adopted execution, triggering the auto-return to the main agent. */
+	finish: (result: {
+		status: "exited" | "failed" | "timed_out" | "cancelled";
+		exitCode?: number | null;
+		signal?: NodeJS.Signals | null;
+		error?: string;
+		tail?: string;
+	}) => void;
+};
 
 const bgShellSchema = Type.Object({
 	action: StringEnum(["start", "status", "wait", "cancel", "config"] as const),
@@ -101,7 +138,7 @@ const bgShellSchema = Type.Object({
 	returnToMain: Type.Optional(
 		Type.Boolean({
 			description:
-				"For action=start, automatically send the completed event result back to the main agent and trigger continuation. Default: false.",
+				"For action=start, automatically send the completed event result back to the main agent and trigger continuation. Default: true.",
 		}),
 	),
 	returnDelivery: Type.Optional(
@@ -193,19 +230,43 @@ function effectiveProgress(event: BackgroundShellEvent | BackgroundShellEventSna
 	return value === undefined ? undefined : { value, source: "time" };
 }
 
-function killProcessGroup(event: BackgroundShellEvent, signal: NodeJS.Signals): void {
-	const pid = event.child.pid;
+/**
+ * Kill a captured child/cancel target, escalating a process group first and
+ * falling back to the child handle. Callers capture the child reference before
+ * finishEvent() releases it, so termination still works after the event object
+ * has dropped its own child pointer.
+ */
+function killTarget(child: ChildProcess | undefined, cancel: (() => void) | undefined, signal: NodeJS.Signals): void {
+	// Adopted executions own no child process; cancel through their callback.
+	if (!child) {
+		cancel?.();
+		return;
+	}
+	const pid = child.pid;
 	if (!pid) return;
 
 	try {
 		process.kill(-pid, signal);
 	} catch {
 		try {
-			event.child.kill(signal);
+			child.kill(signal);
 		} catch {
 			// Process already exited.
 		}
 	}
+}
+
+/**
+ * Terminate an event's process now (SIGTERM) and escalate to SIGKILL after the
+ * grace period. Captures the child/cancel refs up front because finishEvent()
+ * releases event.child, and unref()s the escalation timer so a promptly-exiting
+ * process cannot keep the event object (or the process table entry) pinned.
+ */
+function terminateWithGrace(event: BackgroundShellEvent): void {
+	const child = event.child;
+	const cancel = event.cancel;
+	killTarget(child, cancel, "SIGTERM");
+	setTimeout(() => killTarget(child, cancel, "SIGKILL"), TERM_GRACE_MS).unref();
 }
 
 function finishEvent(
@@ -223,7 +284,10 @@ function finishEvent(
 	event.error = error;
 	event.endedAt = Date.now();
 	if (event.timeout) clearTimeout(event.timeout);
-	if (!event.log.writableEnded && !event.log.destroyed) event.log.end();
+	if (event.log && !event.log.writableEnded && !event.log.destroyed) event.log.end();
+	// Release the ChildProcess reference (and its attached data/error/close
+	// listeners) so a retained finished event no longer pins the process object.
+	event.child = undefined;
 
 	const waiters = event.waiters.splice(0);
 	for (const resolveWaiter of waiters) resolveWaiter();
@@ -382,14 +446,29 @@ export class BackgroundShellController {
 	private shuttingDown = false;
 	private events = new Map<string, BackgroundShellEvent>();
 	private shellConfig: BackgroundShellConfig = {
-		defaultReturnToMain: false,
+		defaultReturnToMain: true,
 		defaultReturnDelivery: "followUp",
+		defaultWaitTimeoutSeconds: 30,
 	};
 	private monitor: { update: (ctx?: ExtensionContext) => void };
-	private sendMessage: BackgroundShellSendMessage;
+	private registerReturn: BackgroundShellRegisterReturn;
+	private cancelReturn: BackgroundShellCancelReturn;
+	private maxRetainedFinishedEvents = MAX_RETAINED_FINISHED_EVENTS;
 
-	constructor(manager: BackgroundEventManager, options: { sendMessage: BackgroundShellSendMessage }) {
-		this.sendMessage = options.sendMessage;
+	constructor(
+		manager: BackgroundEventManager,
+		options: {
+			registerReturn: BackgroundShellRegisterReturn;
+			cancelReturn: BackgroundShellCancelReturn;
+			/** Override the finished-event retention cap (primarily for tests). */
+			maxRetainedFinishedEvents?: number;
+		},
+	) {
+		this.registerReturn = options.registerReturn;
+		this.cancelReturn = options.cancelReturn;
+		if (options.maxRetainedFinishedEvents !== undefined && options.maxRetainedFinishedEvents >= 0) {
+			this.maxRetainedFinishedEvents = options.maxRetainedFinishedEvents;
+		}
 		this.monitor = manager.registerSource({
 			id: "shell",
 			title: "shell",
@@ -422,6 +501,74 @@ export class BackgroundShellController {
 		});
 	}
 
+	/**
+	 * Adopt an already-running execution (e.g. a foreground bash tool call promoted
+	 * to the background after exceeding its inline deadline). No child process is
+	 * owned here: the caller supplies the current output tail, a cancel callback,
+	 * and streams later output through the returned handle. The completion is
+	 * finalized via {@link AdoptedExecutionHandle.finish}. The result is always
+	 * auto-returned to the main agent as a follow-up so promoted work is never
+	 * silently lost.
+	 */
+	adoptExecution(
+		options: {
+			command: string;
+			cwd: string;
+			startedAt: number;
+			tail?: string;
+			logPath?: string;
+			label?: string;
+			expectedSeconds?: number;
+			cancel: () => void;
+			returnDelivery?: ReturnDelivery;
+			returnInstruction?: string;
+		},
+		ctx?: ExtensionContext,
+	): AdoptedExecutionHandle {
+		const id = `bg_${String(this.nextEventNumber++).padStart(3, "0")}`;
+		const event: BackgroundShellEvent = {
+			id,
+			command: options.command,
+			cwd: options.cwd,
+			label: options.label,
+			logPath: options.logPath ?? "",
+			cancel: options.cancel,
+			startedAt: options.startedAt,
+			status: "running",
+			exitCode: null,
+			signal: null,
+			tail: options.tail ?? "",
+			expectedSeconds: options.expectedSeconds,
+			waiters: [],
+		};
+		this.events.set(id, event);
+		this.monitor.update(ctx);
+
+		const delivery = options.returnDelivery ?? this.shellConfig.defaultReturnDelivery;
+		this.scheduleReturnToMain(event, delivery, options.returnInstruction);
+
+		return {
+			id,
+			pushOutput: (text: string) => {
+				if (event.status !== "running") return;
+				appendTail(event, Buffer.from(text, "utf8"));
+				this.monitor.update(ctx);
+			},
+			finish: (result: {
+				status: Exclude<BackgroundShellStatus, "running">;
+				exitCode?: number | null;
+				signal?: NodeJS.Signals | null;
+				error?: string;
+				tail?: string;
+			}) => {
+				if (event.status !== "running") return;
+				if (result.tail !== undefined) event.tail = result.tail;
+				finishEvent(event, result.status, result.exitCode ?? null, result.signal ?? null, result.error);
+				this.monitor.update(ctx);
+			},
+		};
+	}
+
 	createToolDefinition(): ToolDefinition<typeof bgShellSchema, BgShellDetails> {
 		return {
 			name: "bg_shell",
@@ -445,9 +592,8 @@ export class BackgroundShellController {
 		this.shuttingDown = true;
 		for (const event of this.events.values()) {
 			if (event.status !== "running") continue;
+			terminateWithGrace(event);
 			finishEvent(event, "cancelled", null, "SIGTERM", "Cancelled by session shutdown");
-			killProcessGroup(event, "SIGTERM");
-			setTimeout(() => killProcessGroup(event, "SIGKILL"), TERM_GRACE_MS);
 		}
 		this.monitor.update();
 	}
@@ -455,11 +601,27 @@ export class BackgroundShellController {
 	private cancelEvent(id: string, ctx?: ExtensionContext): boolean {
 		const event = this.events.get(id);
 		if (!event || event.status !== "running") return false;
+		terminateWithGrace(event);
 		finishEvent(event, "cancelled", null, "SIGTERM", "Cancelled by background events UI");
 		this.monitor.update(ctx);
-		killProcessGroup(event, "SIGTERM");
-		setTimeout(() => killProcessGroup(event, "SIGKILL"), TERM_GRACE_MS);
 		return true;
+	}
+
+	/**
+	 * Bound the events Map: keep every running event (and anything still awaited),
+	 * plus the most recent finished events up to MAX_RETAINED_FINISHED_EVENTS.
+	 * Finished events are evicted oldest-first by endedAt. Mirrors the retention
+	 * discipline the sub-agent controller applies to its own progress map.
+	 */
+	private pruneFinishedEvents(): void {
+		const finished = [...this.events.values()].filter(
+			(event) => event.status !== "running" && event.waiters.length === 0 && !event.autoReturnPending,
+		);
+		if (finished.length <= this.maxRetainedFinishedEvents) return;
+		finished.sort((a, b) => (a.endedAt ?? a.startedAt) - (b.endedAt ?? b.startedAt));
+		for (const event of finished.slice(0, finished.length - this.maxRetainedFinishedEvents)) {
+			this.events.delete(event.id);
+		}
 	}
 
 	private returnShellResultToMain(event: BackgroundShellEvent, delivery: ReturnDelivery, instruction?: string): void {
@@ -478,7 +640,11 @@ export class BackgroundShellController {
 			`${boundedInstruction}\n\n${summarizeEventForModel(event, summaryBudget)}`,
 			MODEL_RESULT_LIMIT_BYTES,
 		).text;
-		void this.sendMessage(
+		// Hand the fully-formed, byte-bounded message to the scheduling layer. The
+		// coordinator coalesces it with other near-simultaneous returns into one turn;
+		// this controller never decides WHEN it is injected.
+		this.registerReturn(
+			[event.id],
 			{
 				customType: "bg-shell-return",
 				// Keep only a bounded tail in model context. The TUI renderer regenerates
@@ -497,13 +663,24 @@ export class BackgroundShellController {
 					eventData: serializableEventSnapshot(event),
 				},
 			},
-			{ deliverAs: delivery, triggerTurn: delivery !== "nextTurn" },
+			delivery,
 		);
 	}
 
 	private scheduleReturnToMain(event: BackgroundShellEvent, delivery: ReturnDelivery, instruction?: string): void {
+		// Mark the event as awaiting an auto-return. If the model synchronously
+		// consumes the result this turn (terminal wait / id-specific status), that
+		// handler clears the flag so we do not redundantly deliver + trigger a turn.
+		event.autoReturnPending = true;
 		void waitForEvent(event, undefined, undefined)
-			.then(() => this.returnShellResultToMain(event, delivery, instruction))
+			.then(async () => {
+				// Yield once so a wait/status resolving on the same tick as completion
+				// clears the flag before we read it (avoids a duplicate delivery race).
+				await Promise.resolve();
+				if (!event.autoReturnPending) return;
+				event.autoReturnPending = false;
+				this.returnShellResultToMain(event, delivery, instruction);
+			})
 			.catch(() => undefined);
 	}
 
@@ -623,14 +800,15 @@ export class BackgroundShellController {
 		const timeoutSeconds = positiveNumber(params.timeoutSeconds) ?? this.shellConfig.defaultTimeoutSeconds;
 		if (timeoutSeconds) {
 			event.timeout = setTimeout(() => {
+				terminateWithGrace(event);
 				finishEvent(event, "timed_out", null, "SIGTERM", `Timed out after ${timeoutSeconds}s`);
 				this.monitor.update(ctx);
-				killProcessGroup(event, "SIGTERM");
-				setTimeout(() => killProcessGroup(event, "SIGKILL"), TERM_GRACE_MS);
 			}, timeoutSeconds * 1000);
 		}
 
 		if (returnToMain) this.scheduleReturnToMain(event, returnDelivery, returnInstruction);
+		// Evict old finished events so the Map cannot grow without bound over a long session.
+		this.pruneFinishedEvents();
 
 		const content = truncateModelText(
 			`Started background event ${id}${returnToMain ? " with automatic return to main agent" : ""}\nCommand: ${params.command}\nCWD: ${cwd}\nLog: ${logPath}${timeoutSeconds ? `\nTimeout: ${timeoutSeconds}s` : ""}`,
@@ -724,10 +902,20 @@ export class BackgroundShellController {
 			};
 		}
 
+		this.finalizeWaitConsumption(event);
 		return {
 			content: [{ type: "text" as const, text: summarizeEventForModel(event) }],
 			details: { id: event.id, status: event.status, exitCode: event.exitCode, logPath: event.logPath },
 		};
+	}
+
+	private finalizeWaitConsumption(event: BackgroundShellEvent): void {
+		// A completed wait shows the model the full result inline; consume the
+		// pending auto-return so the same result is not also delivered as a follow-up.
+		if (event.status !== "running" && event.autoReturnPending) {
+			event.autoReturnPending = false;
+			this.cancelReturn([event.id]);
+		}
 	}
 
 	private cancel(params: BgShellInput, ctx: ExtensionContext) {

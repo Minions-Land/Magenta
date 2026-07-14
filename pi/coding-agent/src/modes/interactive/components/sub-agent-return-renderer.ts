@@ -44,16 +44,19 @@ export const subAgentReturnRenderer = ((message: CustomMessage<SubAgentReturnDet
 			.join("\n");
 	}
 
-	// When we have event snapshots, regenerate the per-event summaries at the
-	// requested detail level. Collapsed by default (short chat), ctrl+o expands
-	// to the full output. The instruction is carried explicitly in details.
+	// When we have event snapshots, render only the per-event summaries. The
+	// model-facing instruction (details.instruction) is omitted from the TUI: it
+	// steers the model and only adds chat noise for the user. Collapsed by default,
+	// ctrl+o expands to full output.
 	const eventData = message.details?.eventData;
 	if (eventData && eventData.length > 0 && options.expanded !== undefined) {
-		const instruction = message.details?.instruction ?? "";
-		const summaries = eventData
+		content = eventData
 			.map((event) => (options.expanded ? summarizeSubAgentExpanded(event) : summarizeSubAgentCollapsed(event)))
 			.join("\n\n---\n\n");
-		content = instruction ? `${instruction}\n\n${summaries}` : summaries;
+	} else if (!options.expanded && message.details?.ids?.length) {
+		// Legacy messages without eventData: stay compact until expanded.
+		const { ids, statuses } = message.details;
+		content = ids.map((id, index) => `Sub-agent ${id}: ${statuses?.[index] ?? "done"} (ctrl+o to expand)`).join("\n");
 	}
 
 	box.addChild(

@@ -391,7 +391,12 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 				},
 				shutdownHandler: requestExtensionShutdown,
 				onError: (err) => {
-					output({ type: "extension_error", extensionPath: err.extensionPath, event: err.event, error: err.error });
+					output({
+						type: "extension_error",
+						extensionPath: err.extensionPath,
+						event: err.event,
+						error: err.error,
+					});
 				},
 			});
 			bound = true;

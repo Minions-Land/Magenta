@@ -136,19 +136,39 @@ describe("InteractiveMode footer invalidation", () => {
 });
 
 describe("InteractiveMode.setToolsExpanded", () => {
-	test("applies expansion state to the active header and chat entries", () => {
+	const RECENT_LIMIT = 3;
+
+	function expandable() {
+		const state = { expanded: false };
+		return {
+			state,
+			setExpanded: vi.fn((value: boolean) => {
+				state.expanded = value;
+			}),
+		};
+	}
+
+	function createFakeThis(chatChildren: unknown[]) {
 		const header = { setExpanded: vi.fn() };
 		const loadedResourcesChild = { setExpanded: vi.fn() };
-		const chatChild = { setExpanded: vi.fn() };
 		const fakeThis: any = {
 			toolOutputExpanded: false,
+			expandedChatOutputs: [],
 			customHeader: undefined,
 			builtInHeader: header,
 			loadedResourcesContainer: { children: [loadedResourcesChild] },
-			chatContainer: { children: [chatChild] },
+			chatContainer: { children: chatChildren, invalidateChild: vi.fn(), invalidateCache: vi.fn() },
 			showLoadedResources: vi.fn(),
 			ui: { requestRender: vi.fn() },
+			applyRecentChatExpansion: (InteractiveMode as any).prototype.applyRecentChatExpansion,
 		};
+		fakeThis.applyRecentChatExpansion = fakeThis.applyRecentChatExpansion.bind(fakeThis);
+		return { fakeThis, header, loadedResourcesChild };
+	}
+
+	test("expands header and loaded resources fully but only the newest three chat outputs", () => {
+		const chatChildren = [expandable(), expandable(), expandable(), expandable(), expandable()];
+		const { fakeThis, header, loadedResourcesChild } = createFakeThis(chatChildren);
 
 		(InteractiveMode as any).prototype.setToolsExpanded.call(fakeThis, true);
 
@@ -156,8 +176,53 @@ describe("InteractiveMode.setToolsExpanded", () => {
 		expect(header.setExpanded).toHaveBeenCalledWith(true);
 		expect(fakeThis.showLoadedResources).toHaveBeenCalledWith({ showDiagnosticsWhenQuiet: true });
 		expect(loadedResourcesChild.setExpanded).toHaveBeenCalledWith(true);
-		expect(chatChild.setExpanded).toHaveBeenCalledWith(true);
+
+		// Only the last three chat children are expanded; older ones stay collapsed.
+		expect(chatChildren[0].state.expanded).toBe(false);
+		expect(chatChildren[1].state.expanded).toBe(false);
+		expect(chatChildren[2].state.expanded).toBe(true);
+		expect(chatChildren[3].state.expanded).toBe(true);
+		expect(chatChildren[4].state.expanded).toBe(true);
+		expect(fakeThis.expandedChatOutputs).toHaveLength(RECENT_LIMIT);
 		expect(fakeThis.ui.requestRender).toHaveBeenCalledTimes(1);
+	});
+
+	test("collapse only affects the previously tracked outputs", () => {
+		const chatChildren = [expandable(), expandable(), expandable(), expandable()];
+		const { fakeThis } = createFakeThis(chatChildren);
+
+		(InteractiveMode as any).prototype.setToolsExpanded.call(fakeThis, true);
+		const expandedIdentities = [...fakeThis.expandedChatOutputs];
+		expect(expandedIdentities).toHaveLength(RECENT_LIMIT);
+
+		(InteractiveMode as any).prototype.setToolsExpanded.call(fakeThis, false);
+		for (const child of chatChildren) {
+			expect(child.state.expanded).toBe(false);
+		}
+		expect(fakeThis.expandedChatOutputs).toHaveLength(0);
+	});
+
+	test("re-expanding does not grow the expanded set beyond the limit", () => {
+		const chatChildren = [expandable(), expandable(), expandable(), expandable(), expandable()];
+		const { fakeThis } = createFakeThis(chatChildren);
+
+		(InteractiveMode as any).prototype.setToolsExpanded.call(fakeThis, true);
+		// A newer output arrives while expanded; it must not auto-expand.
+		chatChildren.push(expandable());
+		(InteractiveMode as any).prototype.setToolsExpanded.call(fakeThis, true);
+
+		const expandedCount = chatChildren.filter((c) => c.state.expanded).length;
+		expect(expandedCount).toBe(RECENT_LIMIT);
+		expect(fakeThis.expandedChatOutputs).toHaveLength(RECENT_LIMIT);
+	});
+
+	test("handles fewer expandable outputs than the limit", () => {
+		const chatChildren = [expandable(), { notExpandable: true }];
+		const { fakeThis } = createFakeThis(chatChildren);
+
+		(InteractiveMode as any).prototype.setToolsExpanded.call(fakeThis, true);
+		expect((chatChildren[0] as { state?: { expanded: boolean } }).state?.expanded).toBe(true);
+		expect(fakeThis.expandedChatOutputs).toHaveLength(1);
 	});
 });
 

@@ -112,11 +112,7 @@ export interface HeadlessRunEndEvent {
 	};
 }
 
-export type HeadlessProtocolEvent =
-	| AgentSessionEvent
-	| HeadlessRuntimeManifest
-	| HeadlessUiEvent
-	| HeadlessRunEndEvent;
+export type HeadlessProtocolEvent = AgentSessionEvent | HeadlessRuntimeManifest | HeadlessUiEvent | HeadlessRunEndEvent;
 
 export function createHeadlessRuntimeManifest(
 	runtime: AgentSessionRuntime,

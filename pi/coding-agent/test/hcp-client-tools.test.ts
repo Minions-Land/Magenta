@@ -52,13 +52,21 @@ describe("HcpClient host tool assembly", () => {
 
 		const sessionManager = SessionManager.inMemory(root);
 		const todoState: TodoPlanState = {
-			version: 1,
+			version: 2,
 			title: "Branch plan",
 			summary: null,
 			currentId: 7,
 			nodes: [{ id: 7, parentId: null, order: 0, text: "From this branch", status: "in_progress" }],
 			nextId: 8,
 			revision: 2,
+			history: [
+				{
+					title: "Archived branch plan",
+					summary: null,
+					currentId: 1,
+					nodes: [{ id: 1, parentId: null, order: 0, text: "Earlier work", status: "completed" }],
+				},
+			],
 		};
 		sessionManager.appendMessage({
 			role: "toolResult",
@@ -140,13 +148,14 @@ describe("HcpClient host tool assembly", () => {
 
 		const sessionManager = SessionManager.inMemory(root);
 		const todoState: TodoPlanState = {
-			version: 1,
+			version: 2,
 			title: "Reloaded plan",
 			summary: "restored",
 			currentId: null,
 			nodes: [{ id: 9, parentId: null, order: 0, text: "Restored after loader reload", status: "pending" }],
 			nextId: 10,
 			revision: 4,
+			history: [],
 		};
 		sessionManager.appendMessage({
 			role: "toolResult",
@@ -193,11 +202,11 @@ describe("HcpClient host tool assembly", () => {
 		await loader.dispose();
 	});
 
-	it("loads the latest valid selected-branch snapshot across malformed and compaction entries", () => {
+	it("migrates the latest valid version-1 snapshot across malformed and compaction entries", () => {
 		const root = join(tmpdir(), `hcp-client-tools-state-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 		roots.push(root);
 		const sessionManager = SessionManager.inMemory(root);
-		const state: TodoPlanState = {
+		const legacyState = {
 			version: 1,
 			title: "Compaction-safe",
 			summary: null,
@@ -211,24 +220,105 @@ describe("HcpClient host tool assembly", () => {
 			toolCallId: "todo-valid",
 			toolName: "todo",
 			content: [{ type: "text", text: "valid" }],
-			details: { action: "apply", state, applied: 1, changes: {}, refs: {} },
+			details: { action: "apply", state: legacyState, applied: 1, changes: {}, refs: {} },
 			isError: false,
 			timestamp: Date.now(),
 		});
 		sessionManager.appendMessage({
 			role: "toolResult",
-			toolCallId: "todo-legacy",
+			toolCallId: "todo-malformed",
 			toolName: "todo",
-			content: [{ type: "text", text: "legacy" }],
+			content: [{ type: "text", text: "malformed" }],
 			details: { action: "add", todos: [{ id: 99, text: "ignored", done: false }], nextId: 100 },
+			isError: false,
+			timestamp: Date.now(),
+		});
+		sessionManager.appendMessage({
+			role: "toolResult",
+			toolCallId: "todo-invalid-history",
+			toolName: "todo",
+			content: [{ type: "text", text: "invalid history" }],
+			details: {
+				state: {
+					...legacyState,
+					version: 2,
+					history: [
+						{
+							title: "Not completed",
+							summary: null,
+							currentId: 1,
+							nodes: legacyState.nodes,
+						},
+					],
+				},
+			},
 			isError: false,
 			timestamp: Date.now(),
 		});
 		sessionManager.appendCompaction("summary", todoEntryId, 1000);
 
-		expect(loadTodoPlanStateFromBranch(sessionManager)).toEqual(state);
+		const migrated = { ...legacyState, version: 2 as const, history: [] };
+		expect(loadTodoPlanStateFromBranch(sessionManager)).toEqual(migrated);
 		const cloned = loadTodoPlanStateFromBranch(sessionManager)!;
 		cloned.nodes[0]!.text = "mutated clone";
 		expect(loadTodoPlanStateFromBranch(sessionManager)?.nodes[0]?.text).toBe("Keep state");
+	});
+
+	it("restores independent Todo histories from divergent session branches", () => {
+		const root = join(tmpdir(), `hcp-client-tools-branches-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+		roots.push(root);
+		const sessionManager = SessionManager.inMemory(root);
+		const appendState = (toolCallId: string, state: TodoPlanState) =>
+			sessionManager.appendMessage({
+				role: "toolResult",
+				toolCallId,
+				toolName: "todo",
+				content: [{ type: "text", text: state.title }],
+				details: { action: "apply", state, applied: 1, changes: {}, refs: {} },
+				isError: false,
+				timestamp: Date.now(),
+			});
+		const common: TodoPlanState = {
+			version: 2,
+			title: "Common",
+			summary: null,
+			currentId: 1,
+			nodes: [{ id: 1, parentId: null, order: 0, text: "Shared", status: "in_progress" }],
+			nextId: 2,
+			revision: 1,
+			history: [],
+		};
+		const commonId = appendState("todo-common", common);
+		const branchState = (title: string): TodoPlanState => ({
+			version: 2,
+			title: "Todo",
+			summary: null,
+			currentId: null,
+			nodes: [],
+			nextId: 2,
+			revision: 2,
+			history: [
+				{
+					title,
+					summary: null,
+					currentId: 1,
+					nodes: [{ id: 1, parentId: null, order: 0, text: title, status: "completed" }],
+				},
+			],
+		});
+
+		const branchA = branchState("Branch A archive");
+		const branchAId = appendState("todo-branch-a", branchA);
+		sessionManager.branch(commonId);
+		const branchB = branchState("Branch B archive");
+		const branchBId = appendState("todo-branch-b", branchB);
+
+		expect(loadTodoPlanStateFromBranch(sessionManager)).toEqual(branchB);
+		sessionManager.branch(branchAId);
+		expect(loadTodoPlanStateFromBranch(sessionManager)).toEqual(branchA);
+		sessionManager.branch(branchBId);
+		const cloned = loadTodoPlanStateFromBranch(sessionManager)!;
+		cloned.history[0]!.nodes[0]!.text = "mutated clone";
+		expect(loadTodoPlanStateFromBranch(sessionManager)?.history[0]?.nodes[0]?.text).toBe("Branch B archive");
 	});
 });

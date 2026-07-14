@@ -27,7 +27,7 @@ function details(state: TodoPlanState): TodoDetails {
 		action: "get",
 		state,
 		applied: 0,
-		changes: { added: 0, updated: 0, moved: 0, statusChanged: 0, removed: 0, metadataChanged: 0, cleared: 0 },
+		changes: { added: 0, updated: 0, moved: 0, statusChanged: 0, removed: 0, metadataChanged: 0, reset: 0 },
 		refs: {},
 	};
 }
@@ -47,12 +47,13 @@ describe("todo-plan renderer", () => {
 
 	it("renders a compact structured Updated Plan with hierarchy and current path", () => {
 		const state: TodoPlanState = {
-			version: 1,
+			version: 2,
 			title: "Release",
 			summary: "Only real update validation remains",
 			currentId: 3,
 			nextId: 4,
 			revision: 1,
+			history: [],
 			nodes: [
 				{ id: 1, parentId: null, order: 0, text: "Release validation", status: "in_progress" },
 				{ id: 2, parentId: 1, order: 0, text: "Windows", status: "completed" },
@@ -75,13 +76,14 @@ describe("todo-plan renderer", () => {
 			status: "pending" as const,
 		}));
 		const state: TodoPlanState = {
-			version: 1,
+			version: 2,
 			title: "Large plan",
 			summary: null,
 			currentId: null,
 			nodes,
 			nextId: 61,
 			revision: 1,
+			history: [],
 		};
 
 		const collapsed = render(details(state));
@@ -92,15 +94,42 @@ describe("todo-plan renderer", () => {
 		expect(expanded.join("\n")).toContain("more · /todo");
 	});
 
+	it("shows archived plan count after a successful reset", () => {
+		const state: TodoPlanState = {
+			version: 2,
+			title: "Todo",
+			summary: null,
+			currentId: null,
+			nodes: [],
+			nextId: 2,
+			revision: 2,
+			history: [
+				{
+					title: "Finished plan",
+					summary: null,
+					currentId: 1,
+					nodes: [{ id: 1, parentId: null, order: 0, text: "Done", status: "completed" }],
+				},
+			],
+		};
+		const reset = details(state);
+		reset.action = "apply";
+		reset.changes.reset = 1;
+		const output = render(reset).join("\n");
+		expect(output).toContain("Updated Plan · 0/0 · 1 archived");
+		expect(output).toContain("No Todo items");
+	});
+
 	it("renders empty and failed states without pretending success", () => {
 		const empty: TodoPlanState = {
-			version: 1,
+			version: 2,
 			title: "Todo",
 			summary: null,
 			currentId: null,
 			nodes: [],
 			nextId: 1,
 			revision: 0,
+			history: [],
 		};
 		expect(render(details(empty)).join("\n")).toContain("No Todo items");
 

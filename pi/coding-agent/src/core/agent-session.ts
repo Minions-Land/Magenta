@@ -49,7 +49,8 @@ import { getThemeByName, theme } from "../modes/interactive/theme/theme.ts";
 import { resolvePath } from "../utils/paths.ts";
 import { sleep } from "../utils/sleep.ts";
 import { formatNoApiKeyFoundMessage, formatNoModelSelectedMessage } from "./auth-guidance.ts";
-import { type BackgroundEventSnapshot, BackgroundEventManager } from "./background-events.ts";
+import { BackgroundEventManager, type BackgroundEventSnapshot } from "./background-events.ts";
+import { BackgroundReturnCoordinator, type BackgroundReturnMessage } from "./background-return-coordinator.ts";
 import { type BashResult, executeBashWithOperations } from "./bash-executor.ts";
 import {
 	CompactionError,
@@ -115,7 +116,7 @@ import type { SlashCommandInfo } from "./slash-commands.ts";
 import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.ts";
 import { type BuildSystemPromptOptions, buildSystemPrompt } from "./system-prompt.ts";
 import { ToolProgressTracker } from "./tool-progress.ts";
-import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts";
+import { type BashOperations, createLocalBashOperations, withBashAutoPromotion } from "./tools/bash.ts";
 import { BackgroundShellController } from "./tools/bg-shell.ts";
 import { createAllToolDefinitions } from "./tools/index.ts";
 import { formatPeerMessages, PEER_MESSAGE_CUSTOM_TYPE, SendMessageController } from "./tools/send-message.ts";
@@ -195,7 +196,7 @@ export type AgentSessionEvent =
 			 * session runs the turn itself (headless / sub-agent fallback).
 			 */
 			type: "external_activation";
-			source: "peer_wake";
+			source: "peer_wake" | "background_return";
 			messages: AgentMessage[];
 	  };
 
@@ -430,6 +431,7 @@ export class AgentSession {
 	private _extensionErrorListener?: ExtensionErrorListener;
 	private _extensionErrorUnsubscriber?: () => void;
 	private _backgroundEvents: BackgroundEventManager;
+	private _backgroundReturns: BackgroundReturnCoordinator;
 	private _backgroundShell: BackgroundShellController;
 	private _HcpClientpackageloadcontroller: HcpClientpackageloadcontroller;
 	private _subAgents: SubAgentController;
@@ -478,11 +480,27 @@ export class AgentSession {
 		this._backgroundEvents = new BackgroundEventManager();
 		this._HcpClientpackageloadcontroller = new HcpClientpackageloadcontroller(this._backgroundEvents);
 		this._toolProgressTracker = new ToolProgressTracker();
+		// Scheduling layer that coalesces near-simultaneous background returns into one
+		// injected turn. Transports stay separate: each controller still formats and
+		// byte-bounds its own message and owns its TUI renderer.
+		this._backgroundReturns = new BackgroundReturnCoordinator({
+			isStreaming: () => this.isStreaming,
+			injectSingle: (message, delivery) =>
+				this.sendCustomMessage(message, {
+					deliverAs: delivery,
+					triggerTurn: delivery !== "nextTurn",
+				}),
+			injectBatch: (entries) => this._injectBackgroundReturnBatch(entries),
+		});
 		this._backgroundShell = new BackgroundShellController(this._backgroundEvents, {
-			sendMessage: (message, options) => this.sendCustomMessage(message, options),
+			registerReturn: (eventIds, message, delivery) =>
+				this._backgroundReturns.register({ key: eventIds[0]!, eventIds, message, delivery }),
+			cancelReturn: (eventIds) => this._backgroundReturns.cancel(eventIds),
 		});
 		this._subAgents = new SubAgentController(this._backgroundEvents, {
-			sendMessage: (message, options) => this.sendCustomMessage(message, options),
+			registerReturn: (eventIds, message, delivery) =>
+				this._backgroundReturns.register({ key: eventIds[0]!, eventIds, message, delivery }),
+			cancelReturn: (eventIds) => this._backgroundReturns.cancel(eventIds),
 			getWorkflowProvider: () => this._resolveMultiAgentProvider(),
 			isWorkflowEnabled: () => this.harnessCapabilities.workflows,
 			getDefaultModel: () =>
@@ -930,6 +948,7 @@ export class AgentSession {
 				message: event.message,
 				toolResults: event.toolResults,
 			};
+			this._backgroundReturns.flushReady();
 			await this._extensionRunner.emit(extensionEvent);
 			this._turnIndex++;
 		} else if (event.type === "message_start") {
@@ -1071,6 +1090,7 @@ export class AgentSession {
 			this.abortCompaction();
 			this.abortBranchSummary();
 			this.abortBash();
+			this._backgroundReturns.shutdown();
 			this._backgroundShell.shutdown();
 			this._subAgents.shutdown();
 			await this._teammates.shutdown();
@@ -1883,6 +1903,78 @@ export class AgentSession {
 				}
 			}
 		}
+	}
+
+	/**
+	 * Magenta feature: inject a coalesced batch of completed background returns
+	 * (bg_shell + sub_agent) as ONE continuation turn instead of N separate turns.
+	 * Called by BackgroundReturnCoordinator when the session is idle and its debounce
+	 * fires. Mirrors the idle-wake dual path in `_wakeForPeerMessages`:
+	 *  - Host-claimed (interactive TUI): append every payload to state, then emit a
+	 *    single `external_activation` so the host runs exactly one turn over all of
+	 *    them.
+	 *  - Unclaimed (headless / sub-agent): append all but the last to state, then
+	 *    self-run one turn on the last payload so the continuation covers them all.
+	 *
+	 * Each message keeps its own customType/renderer; this method never reformats.
+	 */
+	private async _injectBackgroundReturnBatch(
+		entries: Array<{ message: BackgroundReturnMessage; delivery: "steer" | "followUp" | "nextTurn" }>,
+	): Promise<void> {
+		if (entries.length === 0) return;
+		// If a turn started between the coordinator's arm and this call, queue as
+		// followUp so the running loop drains them together at turn end.
+		if (this.isStreaming) {
+			for (const { message } of entries) {
+				this.agent.followUp({
+					role: "custom",
+					customType: message.customType,
+					content: message.content,
+					display: message.display,
+					details: message.details,
+					timestamp: Date.now(),
+				} satisfies CustomMessage);
+			}
+			return;
+		}
+
+		const payloads: CustomMessage[] = entries.map(({ message }) => ({
+			role: "custom" as const,
+			customType: message.customType,
+			content: message.content,
+			display: message.display,
+			details: message.details,
+			timestamp: Date.now(),
+		}));
+
+		const appendToState = (payload: CustomMessage): void => {
+			this.agent.state.messages.push(payload);
+			this.sessionManager.appendCustomMessageEntry(
+				payload.customType,
+				payload.content,
+				payload.display,
+				payload.details,
+			);
+			this._emit({ type: "message_start", message: payload });
+			this._emit({ type: "message_end", message: payload });
+		};
+
+		if (this._externalTurnRunnerClaimed) {
+			// Host owns the turn-runner: all payloads go into state, then one activation
+			// event hands off a single turn that consumes the whole batch.
+			for (const payload of payloads) appendToState(payload);
+			if (!this._externalActivationPending) {
+				this._externalActivationPending = true;
+				this._emit({ type: "external_activation", source: "background_return", messages: payloads });
+			}
+			return;
+		}
+
+		// Unclaimed self-run: append all but the last to state, then run one turn on
+		// the last payload so the continuation covers the entire batch.
+		const last = payloads[payloads.length - 1];
+		for (const payload of payloads.slice(0, -1)) appendToState(payload);
+		await this._runAgentPrompt(last);
 	}
 
 	/**
@@ -3240,6 +3332,22 @@ export class AgentSession {
 			this._baseToolDefinitions.set(name, {
 				definition,
 				sourceInfo: createSyntheticSourceInfo(`<pi:${name}>`, { source: "pi" }),
+			});
+		}
+
+		// Wrap the resolved bash tool so long-running commands promote to a
+		// background event (auto-returning their result) instead of blocking the
+		// agent loop. The wrapper preserves the underlying execute (SSH ops, shell
+		// path, safety routing) and only augments its lifecycle.
+		const bashEntry = this._baseToolDefinitions.get("bash");
+		if (bashEntry) {
+			this._baseToolDefinitions.set("bash", {
+				...bashEntry,
+				definition: withBashAutoPromotion(
+					bashEntry.definition as Parameters<typeof withBashAutoPromotion>[0],
+					this._cwd,
+					{ backgroundShell: this._backgroundShell },
+				) as ToolDefinition,
 			});
 		}
 	}

@@ -117,4 +117,38 @@ describe("script workflow pattern", () => {
 		expect(result.outcome?.success).toBe(false);
 		expect(result.terminatedBy).toBe("budget");
 	});
+
+	it("runs an inline script supplied as a data: URL (the sub_agent inline path)", async () => {
+		const { runner, calls } = makeRunner((opts) => ({ text: `did ${opts.workerId}` }));
+		const orch = new MultiAgentOrchestrator({ cwd: tmpCwd, runner });
+
+		// Mirrors how the sub_agent tool encodes an inline `script` string: plain
+		// JavaScript ES module, base64 in a data: URL used as scriptPath.
+		const source = [
+			"export default async (args, ctx) => {",
+			"  const lead = await ctx.agent('lead task', { label: 'lead' });",
+			"  const subs = await ctx.parallelAgents([",
+			"    () => ctx.agent('a', { label: 'sub-0' }),",
+			"    () => ctx.agent('b', { label: 'sub-1' }),",
+			"  ]);",
+			"  return { lead: lead.text, subCount: subs.length, topic: args.topic };",
+			"};",
+		].join("\n");
+		const scriptPath = `data:text/javascript;base64,${Buffer.from(source, "utf8").toString("base64")}`;
+
+		const result = await orch.orchestrate({
+			pattern: "script",
+			scriptPath,
+			args: { topic: "inline" },
+		});
+
+		expect(result.pattern).toBe("script");
+		expect(result.terminatedBy).toBe("completed");
+		expect(result.outcome?.success).toBe(true);
+		const payload = result.outcome?.structured as { subCount: number; topic: string };
+		expect(payload.subCount).toBe(2);
+		expect(payload.topic).toBe("inline");
+		// Every spawn still flowed through the injected runner (safety boundary held).
+		expect(calls.map((c) => c.workerId)).toEqual(["lead", "sub-0", "sub-1"]);
+	});
 });

@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import ts from "typescript";
+import ts from "@typescript/typescript6";
 import { afterEach, describe, expect, it } from "vitest";
 import { HcpClientloadpackageoverlay } from "../_magenta/packages/package-overlay-v2.ts";
 import { HcpClientbuildpackagesessionfortest } from "./package-test-utils.ts";

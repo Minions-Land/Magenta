@@ -1,6 +1,6 @@
 # Magenta Todo Tool
 
-Magenta-owned hierarchical Todo planning with atomic batch mutations and session-branch snapshots.
+Magenta-owned hierarchical Todo planning with atomic batch mutations, completed-plan history, and session-branch snapshots.
 
 ## Contract
 
@@ -27,18 +27,24 @@ type TodoNode = {
   status: TodoStatus;
 };
 
-type TodoPlanState = {
-  version: 1;
+type TodoPlanSnapshot = {
   title: string;
   summary: string | null;
   currentId: number | null;
   nodes: TodoNode[];
+};
+
+type TodoPlanState = TodoPlanSnapshot & {
+  version: 2;
   nextId: number;
   revision: number;
+  history: TodoPlanSnapshot[];
 };
 ```
 
-The persisted representation is normalized rather than recursively nested. `parentId` defines hierarchy and `order` defines sibling order. IDs remain stable when nodes move.
+The persisted representation is normalized rather than recursively nested. `parentId` defines hierarchy and `order` defines sibling order. IDs remain stable when nodes move and are not reused after reset. `history` stores completed snapshots from oldest to newest. Each archived snapshot is non-empty and every archived node is `completed`.
+
+The host accepts valid version-1 snapshots and migrates them to version 2 with an empty history. Migration preserves the version-1 plan as the active plan; it never infers that an old plan should already be archived.
 
 ## Atomic plan creation
 
@@ -66,9 +72,29 @@ Temporary refs exist only inside one batch. Operations are evaluated sequentiall
 - `set_current` — select or clear the current node.
 - `set_summary` / `set_title` — update plan metadata.
 - `remove` — remove a leaf; `cascade: true` is required for a subtree.
-- `clear` — clear the current plan without reusing previously allocated IDs.
+- `reset` — archive the current plan and create an empty active plan. It is rejected when the plan is empty or any node is not `completed`.
 
 Placement values are `first`, `last`, `before`, and `after`. `before`/`after` require `relativeToId` or `relativeToRef`.
+
+## Reset lifecycle
+
+`reset` is evaluated at its exact position in the draft batch. This allows an agent to complete the last items, archive the finished plan, and seed the next plan atomically:
+
+```ts
+await todoTool.execute("2", {
+  action: "apply",
+  operations: [
+    { op: "set_status", id: 3, status: "completed" },
+    { op: "reset" },
+    { op: "set_title", text: "Next task" },
+    { op: "add", text: "Inspect the new request", status: "in_progress" },
+  ],
+});
+```
+
+An empty plan returns `RESET_EMPTY_PLAN`. A plan containing `pending`, `in_progress`, or `blocked` nodes returns `RESET_INCOMPLETE_PLAN`. If any later operation fails, the archive and reset roll back with the rest of the batch. Temporary refs are cleared at the reset boundary, while the global numeric ID allocator continues forward.
+
+Because history is part of every complete state snapshot, session forks and tree navigation restore independent active plans and histories. `/todo` opens on Current; Tab opens the newest-first History list, Enter opens an archived plan, and Escape returns from detail to the list.
 
 ## Ownership
 

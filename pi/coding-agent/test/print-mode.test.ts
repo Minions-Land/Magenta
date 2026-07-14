@@ -284,7 +284,7 @@ describe("runPrintMode", () => {
 		const { session } = runtimeHost;
 		session.bindExtensions.mockImplementation(async (bindings) => {
 			expect(bindings.hasUI).toBe(false);
-			expect(await bindings.uiContext.confirm("Approve?", "Continue")) .toBe(false);
+			expect(await bindings.uiContext.confirm("Approve?", "Continue")).toBe(false);
 		});
 
 		const exitCode = await runPrintMode(runtimeHost as unknown as Parameters<typeof runPrintMode>[0], {

@@ -168,6 +168,26 @@ describe("harness compaction", () => {
 		expect(shouldCompact(95000, 100000, { ...settings, enabled: false })).toBe(false);
 	});
 
+	it("optionally caps the threshold by a context-window fraction", () => {
+		const settings: CompactionSettings = {
+			enabled: true,
+			reserveTokens: 16384,
+			maxContextFraction: 0.9,
+			keepRecentTokens: 20000,
+		};
+		expect(shouldCompact(900000, 1000000, settings)).toBe(false);
+		expect(shouldCompact(900001, 1000000, settings)).toBe(true);
+
+		// On smaller windows, the fixed reserve can remain the earlier threshold.
+		expect(shouldCompact(111616, 128000, { ...settings, maxContextFraction: 0.95 })).toBe(false);
+		expect(shouldCompact(111617, 128000, { ...settings, maxContextFraction: 0.95 })).toBe(true);
+
+		// Invalid opt-in values preserve the existing fixed-reserve behavior.
+		for (const maxContextFraction of [0, -0.5, 1.1, Number.NaN, Number.POSITIVE_INFINITY]) {
+			expect(shouldCompact(900001, 1000000, { ...settings, maxContextFraction })).toBe(false);
+		}
+	});
+
 	it("finds a cut point based on token differences", () => {
 		const entries: SessionTreeEntry[] = [];
 		let parentId: string | null = null;

@@ -56,8 +56,10 @@ function currentPath(state: TodoPlanState): Array<{ node: TodoNode; outline: str
 function renderPlan(details: TodoDetails, expanded: boolean, theme: Theme): string {
 	const state = details.state;
 	const completed = state.nodes.filter((node) => node.status === "completed").length;
+	const archived = state.history.length > 0 ? ` · ${state.history.length} archived` : "";
 	const lines: string[] = [
-		theme.fg("accent", theme.bold("Updated Plan")) + theme.fg("dim", ` · ${completed}/${state.nodes.length}`),
+		theme.fg("accent", theme.bold("Updated Plan")) +
+			theme.fg("dim", ` · ${completed}/${state.nodes.length}${archived}`),
 	];
 	if (state.summary) lines.push(theme.fg("muted", `└ ${state.summary}`));
 	const path = currentPath(state);

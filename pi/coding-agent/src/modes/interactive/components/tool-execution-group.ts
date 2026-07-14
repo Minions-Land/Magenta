@@ -68,6 +68,9 @@ export class ToolExecutionGroupComponent extends Container {
 			return;
 		}
 		component.setRenderInvalidationListener(this.handleChildInvalidation);
+		// A newly added tool inherits the group's current expansion so an expanded
+		// gallery never contains a stray collapsed detail.
+		component.setExpanded(this.expanded);
 		this.entries.set(id, {
 			id,
 			name,
@@ -102,6 +105,7 @@ export class ToolExecutionGroupComponent extends Container {
 	}
 
 	setExpanded(expanded: boolean): void {
+		if (this.expanded === expanded) return;
 		this.expanded = expanded;
 		for (const entry of this.entries.values()) {
 			entry.component.setExpanded(expanded);

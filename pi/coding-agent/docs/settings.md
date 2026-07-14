@@ -80,6 +80,21 @@ Both capabilities default to `true` in Ultra and `false` in other profiles. Expl
 
 Set `PI_SKIP_VERSION_CHECK=1` to disable the Magenta version update check. Use `--offline` or `PI_OFFLINE=1` to disable all startup network operations described here, including update checks, package update checks, and install/update telemetry.
 
+#### Local cache telemetry and provider experiments
+
+All cache instrumentation is disabled by default:
+
+| Environment variable | Effect |
+|---|---|
+| `PI_CACHE_TELEMETRY=1` | Write privacy-preserving local cache request/result records under `~/.magenta/agent/telemetry/cache/` |
+| `PI_CACHE_DIAGNOSTICS=1` | Request Anthropic cache-miss diagnostics on first-party HTTPS API-key requests |
+| `PI_ANTHROPIC_CACHE_CONTROL=automatic` | Experiment with Anthropic top-level automatic cache control on first-party HTTPS API-key requests |
+| `PI_OPENAI_PROMPT_CACHE_MODE=implicit` or `explicit` | Experiment with GPT-5.6 prompt-cache options and explicit boundaries on first-party OpenAI HTTPS API-key requests |
+
+Local cache telemetry does not persist prompt, system, tool-definition, tool-output, or provider-output text. It stores HMAC fingerprints, structural byte/item counts, normalized breakpoint metadata, timing, usage, and cost. The local HMAC key and JSONL event log are created with owner-only permissions. Records identify whether a payload was observed at the actual Codex wire boundary, at a provider payload boundary, or only as a custom-provider logical fallback; fallback records are not treated as evidence that cache reuse was expected.
+
+The provider experiments remain opt-in because SDK payload compatibility is not a substitute for paid, real-wire validation. OAuth, Copilot, proxy, custom-client, unsupported-model, and non-HTTPS requests do not receive these experimental fields.
+
 ### Network
 
 | Setting | Type | Default | Description |
@@ -112,6 +127,7 @@ Set `PI_SKIP_VERSION_CHECK=1` to disable the Magenta version update check. Use `
 |---------|------|---------|-------------|
 | `compaction.enabled` | boolean | `true` | Enable auto-compaction |
 | `compaction.reserveTokens` | number | `16384` | Tokens reserved for LLM response |
+| `compaction.maxContextFraction` | number | unset | Optional context-window fraction `(0, 1]` that triggers compaction earlier; e.g. `0.9` caps usage at 90% |
 | `compaction.keepRecentTokens` | number | `20000` | Recent tokens to keep (not summarized) |
 
 ```json
@@ -123,6 +139,8 @@ Set `PI_SKIP_VERSION_CHECK=1` to disable the Magenta version update check. Use `
   }
 }
 ```
+
+`maxContextFraction` is opt-in. Leaving it unset preserves the fixed-reserve threshold. Enabling it can trigger more summarization calls, increase latency/cost, and discard useful detail earlier; do not enable it solely to raise cache-hit metrics. Validate long-task completion quality before adopting it.
 
 ### Branch Summary
 

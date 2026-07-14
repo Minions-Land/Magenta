@@ -1,10 +1,11 @@
 import { constants } from "node:fs";
 import { access as fsAccess } from "node:fs/promises";
-import type { AgentTool } from "@earendil-works/pi-agent-core";
+import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import { type Component, Container, Text, truncateToWidth } from "@earendil-works/pi-tui";
 import {
 	BASH_TOOL_DESCRIPTION,
 	type BashToolDetails,
+	type BashToolInput,
 	type BashToolOptions,
 	bashSchema,
 	createBashExecute,
@@ -21,7 +22,8 @@ import {
 	trackDetachedChildPid,
 	untrackDetachedChildPid,
 } from "../../utils/shell.ts";
-import type { ToolDefinition, ToolRenderResultOptions } from "../extensions/types.ts";
+import type { ExtensionContext, ToolDefinition, ToolRenderResultOptions } from "../extensions/types.ts";
+import type { AdoptedExecutionHandle, BackgroundShellController } from "./bg-shell.ts";
 import { getTextOutput, invalidArgText, str } from "./render-utils.ts";
 import type { ToolRenderer } from "./renderer-registry.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
@@ -330,4 +332,179 @@ export function createBashToolDefinition(
 
 export function createBashTool(cwd: string, options?: BashToolOptions): AgentTool<typeof bashSchema> {
 	return wrapToolDefinition(createBashToolDefinition(cwd, options));
+}
+
+/** Default inline deadline before a foreground bash call is promoted to background. */
+export const DEFAULT_BASH_PROMOTE_AFTER_MS = 3000;
+
+export type AutoPromotingBashOptions = BashToolOptions & {
+	/** Controller used to adopt a still-running execution once the deadline passes. */
+	backgroundShell: BackgroundShellController;
+	/** Inline deadline in ms. Defaults to {@link DEFAULT_BASH_PROMOTE_AFTER_MS}. */
+	promoteAfterMs?: number;
+};
+
+/**
+ * Wrap the bash tool so a command that has not finished within a short inline
+ * deadline is promoted into a background-shell event instead of blocking the
+ * agent loop. The promoted event auto-returns its completed result to the main
+ * agent, so long commands never stall the turn and their output is never lost.
+ *
+ * The underlying execution keeps running across promotion: the same child
+ * process continues, its streamed output is forwarded into the adopted event's
+ * tail, and the final result finalizes the event. Commands that finish within
+ * the deadline behave exactly like the plain bash tool.
+ */
+export function createAutoPromotingBashToolDefinition(
+	cwd: string,
+	options: AutoPromotingBashOptions,
+): ToolDefinition<typeof bashSchema, BashToolDetails | undefined, BashRenderState> {
+	return withBashAutoPromotion(createBashToolDefinition(cwd, options), cwd, {
+		backgroundShell: options.backgroundShell,
+		promoteAfterMs: options.promoteAfterMs,
+	});
+}
+
+/**
+ * Wrap an existing bash tool definition (e.g. one resolved through HCP with SSH
+ * operations already bound) so it promotes to the background after the inline
+ * deadline. The wrapped definition keeps the original renderer, schema, and
+ * metadata; only its execute is augmented.
+ */
+export function withBashAutoPromotion<TState>(
+	base: ToolDefinition<typeof bashSchema, BashToolDetails | undefined, TState>,
+	cwd: string,
+	options: { backgroundShell: BackgroundShellController; promoteAfterMs?: number },
+): ToolDefinition<typeof bashSchema, BashToolDetails | undefined, TState> {
+	const promoteAfterMs = options.promoteAfterMs ?? DEFAULT_BASH_PROMOTE_AFTER_MS;
+	const { backgroundShell } = options;
+
+	return {
+		...base,
+		execute(toolCallId, params, signal, onUpdate, ctx) {
+			const startedAt = Date.now();
+			// Forward streamed output both to the live tool UI and, once promoted, into
+			// the adopted event tail so the background view keeps updating.
+			let handle: AdoptedExecutionHandle | undefined;
+			let latestOutput = "";
+			const wrappedUpdate: typeof onUpdate = (update) => {
+				const text = extractResultText(update);
+				if (text !== undefined) {
+					if (handle && text.length >= latestOutput.length) handle.pushOutput(text.slice(latestOutput.length));
+					latestOutput = text;
+				}
+				onUpdate?.(update as never);
+			};
+
+			const execPromise = Promise.resolve(
+				base.execute(toolCallId, params, signal, wrappedUpdate as typeof onUpdate, ctx),
+			);
+
+			return promoteIfSlow({
+				execPromise,
+				promoteAfterMs,
+				signal,
+				onPromote: () => {
+					handle = backgroundShell.adoptExecution(
+						{
+							command: params.command ?? "",
+							cwd: resolveBashCwd(cwd, params, ctx),
+							startedAt,
+							tail: latestOutput,
+							cancel: () => {
+								// The child is owned by the underlying execute; cancellation flows
+								// through the shared abort signal when the caller aborts the turn.
+							},
+						},
+						ctx,
+					);
+					return handle.id;
+				},
+				onSettled: (result, error) => {
+					if (!handle) return;
+					if (error) {
+						handle.finish({ status: "failed", error: error instanceof Error ? error.message : String(error) });
+						return;
+					}
+					const text = extractResultText(result);
+					const isError = Boolean((result as { isError?: boolean })?.isError);
+					handle.finish({
+						status: isError ? "failed" : "exited",
+						exitCode: isError ? 1 : 0,
+						tail: text ?? latestOutput,
+					});
+				},
+			});
+		},
+	};
+}
+
+function resolveBashCwd(cwd: string, params: BashToolInput, ctx?: ExtensionContext): string {
+	const base = ctx?.cwd ?? cwd;
+	const requested = (params as { cwd?: string }).cwd;
+	if (!requested) return base;
+	return requested;
+}
+
+/** Extract concatenated text from a tool update/result, tolerating string or block forms. */
+function extractResultText(value: unknown): string | undefined {
+	if (typeof value === "string") return value;
+	const content = (value as { content?: Array<{ type: string; text?: string }> } | undefined)?.content;
+	if (!Array.isArray(content)) return undefined;
+	return content
+		.filter((c) => c.type === "text" && typeof c.text === "string")
+		.map((c) => c.text)
+		.join("\n");
+}
+
+/**
+ * Race an execution against an inline deadline. If the deadline fires first,
+ * {@link onPromote} adopts the still-running execution and this resolves with a
+ * short "promoted to background" result while the original promise continues in
+ * the background and calls {@link onSettled} on completion.
+ */
+async function promoteIfSlow(config: {
+	execPromise: Promise<unknown>;
+	promoteAfterMs: number;
+	signal: AbortSignal | undefined;
+	onPromote: () => string;
+	onSettled: (result: unknown, error: unknown) => void;
+}): Promise<AgentToolResult<BashToolDetails | undefined>> {
+	const { execPromise, promoteAfterMs, signal, onPromote, onSettled } = config;
+
+	let timer: NodeJS.Timeout | undefined;
+	const timeoutPromise = new Promise<"promote">((resolve) => {
+		timer = setTimeout(() => resolve("promote"), promoteAfterMs);
+	});
+
+	const raced = await Promise.race([
+		execPromise.then(
+			(result) => ({ kind: "done" as const, result }),
+			(error) => ({ kind: "error" as const, error }),
+		),
+		timeoutPromise.then((kind) => ({ kind })),
+	]);
+	if (timer) clearTimeout(timer);
+
+	if (raced.kind === "done") return raced.result as AgentToolResult<BashToolDetails | undefined>;
+	if (raced.kind === "error") throw raced.error;
+
+	// Deadline won: promote and let the execution finish in the background.
+	if (signal?.aborted) {
+		return (await execPromise) as AgentToolResult<BashToolDetails | undefined>;
+	}
+	const eventId = onPromote();
+	void execPromise.then(
+		(result) => onSettled(result, undefined),
+		(error) => onSettled(undefined, error),
+	);
+	return {
+		content: [
+			{
+				type: "text" as const,
+				text: `Command still running after ${Math.round(promoteAfterMs / 1000)}s; promoted to background event ${eventId}. Its completed result will be returned automatically — continue with other work.`,
+			},
+		],
+		details: { promotedTo: eventId } as unknown as BashToolDetails,
+	};
 }

@@ -86,9 +86,13 @@ describe("built-in bg_shell tool", () => {
 		manager = new BackgroundEventManager();
 		returned = [];
 		controller = new BackgroundShellController(manager, {
-			sendMessage: (message, options) => {
-				returned.push({ message, options: options ?? {} });
+			registerReturn: (_eventIds, message, delivery) => {
+				returned.push({
+					message,
+					options: { deliverAs: delivery, triggerTurn: delivery !== "nextTurn" },
+				});
 			},
+			cancelReturn: () => {},
 		});
 	});
 
@@ -266,7 +270,8 @@ describe("built-in bg_shell tool", () => {
 		);
 		const eventId = start.details?.id as string;
 
-		await tool.execute("call-wait", { action: "wait", eventId, waitTimeoutSeconds: 5 }, undefined, undefined, ctx);
+		// With auto-return, completion alone delivers the result. A terminal wait
+		// would consume it, so here we rely on the scheduled return.
 		await waitUntil(() => returned.length === 1);
 
 		expect(returned[0]?.message.customType).toBe("bg-shell-return");
@@ -303,14 +308,8 @@ describe("built-in bg_shell tool", () => {
 			ctx,
 		);
 		const eventId = start.details?.id as string;
-		await tool.execute(
-			"call-wait-large",
-			{ action: "wait", eventId, waitTimeoutSeconds: 5 },
-			undefined,
-			undefined,
-			ctx,
-		);
 		await waitUntil(() => returned.length === 1);
+		void eventId;
 
 		const returnedMessage = returned[0]?.message;
 		expect(Buffer.byteLength(returnedMessage?.content ?? "", "utf8")).toBeLessThan(12 * 1024);
@@ -341,13 +340,6 @@ describe("built-in bg_shell tool", () => {
 			ctx,
 		);
 		const eventId = start.details?.id as string;
-		await tool.execute(
-			"call-wait-huge-metadata",
-			{ action: "wait", eventId, waitTimeoutSeconds: 5 },
-			undefined,
-			undefined,
-			ctx,
-		);
 		await waitUntil(() => returned.length === 1);
 
 		const returnedMessage = returned[0]?.message;
@@ -362,6 +354,34 @@ describe("built-in bg_shell tool", () => {
 
 		const status = await tool.execute("call-status-huge", { action: "status" }, undefined, undefined, ctx);
 		expect(Buffer.byteLength(textOf(status), "utf8")).toBeLessThanOrEqual(8 * 1024);
+		void eventId;
+	});
+
+	it("suppresses the auto-return when a terminal wait consumes the result inline", async () => {
+		const tool = controller.createToolDefinition();
+		const ctx = createContext(tempDir);
+
+		const start = await tool.execute(
+			"call-start-consume",
+			{ action: "start", command: "printf consumed", returnToMain: true },
+			undefined,
+			undefined,
+			ctx,
+		);
+		const eventId = start.details?.id as string;
+
+		const waitResult = await tool.execute(
+			"call-wait-consume",
+			{ action: "wait", eventId, waitTimeoutSeconds: 5 },
+			undefined,
+			undefined,
+			ctx,
+		);
+		expect(textOf(waitResult)).toContain("consumed");
+
+		// Give the scheduled auto-return a chance to fire; it must have been consumed.
+		await new Promise((r) => setTimeout(r, 50));
+		expect(returned.length).toBe(0);
 	});
 
 	it("updates session defaults with config action", async () => {
@@ -386,5 +406,136 @@ describe("built-in bg_shell tool", () => {
 		expect(textOf(result)).toContain("defaultWaitTimeoutSeconds: 2");
 		expect(textOf(result)).toContain("defaultReturnToMain: true");
 		expect(textOf(result)).toContain("defaultReturnDelivery: nextTurn");
+	});
+
+	it("bounds the events map by evicting the oldest finished events", async () => {
+		// Dedicated controller with a tiny retention cap so we do not have to spawn
+		// hundreds of jobs to exercise the pruning path.
+		const boundedReturned: BackgroundShellReturnMessage[] = [];
+		const bounded = new BackgroundShellController(manager, {
+			registerReturn: (_ids, message, delivery) => {
+				boundedReturned.push({ message, options: { deliverAs: delivery, triggerTurn: delivery !== "nextTurn" } });
+			},
+			cancelReturn: () => {},
+			maxRetainedFinishedEvents: 2,
+		});
+		try {
+			const tool = bounded.createToolDefinition();
+			const ctx = createContext(tempDir);
+
+			const ids: string[] = [];
+			for (let i = 0; i < 5; i++) {
+				const start = await tool.execute(
+					`call-start-${i}`,
+					{ action: "start", command: `printf job-${i}`, returnToMain: false },
+					undefined,
+					undefined,
+					ctx,
+				);
+				const id = start.details?.id as string;
+				ids.push(id);
+				// Wait for each to finish so it becomes prune-eligible before the next start.
+				await tool.execute(
+					`call-wait-${i}`,
+					{ action: "wait", eventId: id, waitTimeoutSeconds: 5 },
+					undefined,
+					undefined,
+					ctx,
+				);
+			}
+
+			// Pruning is triggered when a new event starts (mirrors the sub-agent
+			// progress-prune pattern), so kick off one more finished job to force the
+			// map down to the retention cap.
+			const finalStart = await tool.execute(
+				"call-start-final",
+				{ action: "start", command: "printf job-final", returnToMain: false },
+				undefined,
+				undefined,
+				ctx,
+			);
+			ids.push(finalStart.details?.id as string);
+			await tool.execute(
+				"call-wait-final",
+				{ action: "wait", eventId: finalStart.details?.id as string, waitTimeoutSeconds: 5 },
+				undefined,
+				undefined,
+				ctx,
+			);
+
+			// The map is bounded: at prune time only maxRetainedFinishedEvents finished
+			// entries survive, plus at most the one that finished after the last prune.
+			const status = await tool.execute("call-status", { action: "status" }, undefined, undefined, ctx);
+			expect(status.details?.events as number).toBeLessThanOrEqual(3);
+
+			// The most recent finished event is still queryable.
+			const recent = await tool.execute(
+				"call-status-recent",
+				{ action: "status", eventId: ids[ids.length - 1] },
+				undefined,
+				undefined,
+				ctx,
+			);
+			expect(recent.details?.id).toBe(ids[ids.length - 1]);
+
+			// The oldest event was evicted.
+			await expect(
+				tool.execute("call-status-old", { action: "status", eventId: ids[0] }, undefined, undefined, ctx),
+			).rejects.toThrow(/Unknown background event/);
+		} finally {
+			bounded.shutdown();
+		}
+	});
+
+	it("never evicts a still-running event when pruning", async () => {
+		const bounded = new BackgroundShellController(manager, {
+			registerReturn: () => {},
+			cancelReturn: () => {},
+			maxRetainedFinishedEvents: 1,
+		});
+		try {
+			const tool = bounded.createToolDefinition();
+			const ctx = createContext(tempDir);
+
+			// A long-running job that stays alive across subsequent starts.
+			const longStart = await tool.execute(
+				"call-long",
+				{ action: "start", command: "sleep 5", returnToMain: false },
+				undefined,
+				undefined,
+				ctx,
+			);
+			const longId = longStart.details?.id as string;
+
+			// Several quick finished jobs to trigger pruning past the cap of 1.
+			for (let i = 0; i < 4; i++) {
+				const start = await tool.execute(
+					`call-quick-${i}`,
+					{ action: "start", command: `printf quick-${i}`, returnToMain: false },
+					undefined,
+					undefined,
+					ctx,
+				);
+				await tool.execute(
+					`call-quick-wait-${i}`,
+					{ action: "wait", eventId: start.details?.id as string, waitTimeoutSeconds: 5 },
+					undefined,
+					undefined,
+					ctx,
+				);
+			}
+
+			// The running job must survive despite the tiny retention cap.
+			const running = await tool.execute(
+				"call-status-running",
+				{ action: "status", eventId: longId },
+				undefined,
+				undefined,
+				ctx,
+			);
+			expect(running.details?.status).toBe("running");
+		} finally {
+			bounded.shutdown();
+		}
 	});
 });

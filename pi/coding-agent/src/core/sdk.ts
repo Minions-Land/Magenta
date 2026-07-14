@@ -7,6 +7,7 @@ import { resolvePath } from "../utils/paths.ts";
 import { AgentSession } from "./agent-session.ts";
 import { formatNoModelsAvailableMessage } from "./auth-guidance.ts";
 import { AuthStorage } from "./auth-storage.ts";
+import { CacheTelemetryRecorder } from "./cache-telemetry.ts";
 import { DEFAULT_NATIVE_ACTIVE_TOOLS, DEFAULT_THINKING_LEVEL } from "./defaults.ts";
 import {
 	type ExecutionProfile,
@@ -354,6 +355,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	};
 
 	const extensionRunnerRef: { current?: ExtensionRunner } = {};
+	const cacheTelemetry = CacheTelemetryRecorder.fromEnvironment(agentDir);
 
 	agent = new Agent({
 		initialState: {
@@ -364,6 +366,8 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		},
 		convertToLlm: convertToLlmWithBlockImages,
 		streamFn: async (model, context, options) => {
+			const effectiveSessionId = options?.sessionId ?? sessionManager.getSessionId();
+			const cacheRequest = cacheTelemetry?.start(model, effectiveSessionId);
 			const auth = await modelRegistry.getApiKeyAndHeaders(model);
 			if (!auth.ok) {
 				throw new Error(auth.error);
@@ -383,10 +387,12 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			const timeoutMs = options?.timeoutMs ?? providerRetrySettings.timeoutMs ?? defaultProviderTimeoutMs;
 			const websocketConnectTimeoutMs =
 				options?.websocketConnectTimeoutMs ?? settingsManager.getWebSocketConnectTimeoutMs();
-			return streamSimple(model, context, {
+			const providerReportsWirePayload = model.api === "openai-codex-responses";
+			const providerStream = streamSimple(model, context, {
 				...options,
 				apiKey: auth.apiKey,
 				env,
+				sessionId: effectiveSessionId,
 				timeoutMs,
 				websocketConnectTimeoutMs,
 				maxRetries: options?.maxRetries ?? providerRetrySettings.maxRetries,
@@ -394,11 +400,33 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 				headers: mergeProviderAttributionHeaders(
 					model,
 					settingsManager,
-					options?.sessionId,
+					effectiveSessionId,
 					auth.headers,
 					options?.headers,
 				),
+				onPayload: cacheRequest
+					? async (payload, requestModel) => {
+							const replacement = await options?.onPayload?.(payload, requestModel);
+							const finalPayload = replacement === undefined ? payload : replacement;
+							if (providerReportsWirePayload) cacheRequest.setFallbackPayload(finalPayload);
+							else cacheRequest.observeFinalPayload(finalPayload);
+							return finalPayload;
+						}
+					: options?.onPayload,
+				onWirePayload: cacheRequest
+					? async (payload, requestModel) => {
+							await options?.onWirePayload?.(payload, requestModel);
+							cacheRequest.observeFinalPayload(payload, "wire");
+						}
+					: options?.onWirePayload,
+				onResponse: cacheRequest
+					? async (response, responseModel) => {
+							cacheRequest.observeResponse();
+							await options?.onResponse?.(response, responseModel);
+						}
+					: options?.onResponse,
 			});
+			return cacheRequest ? cacheTelemetry!.observeStream(providerStream, cacheRequest) : providerStream;
 		},
 		onPayload: async (payload, _model) => {
 			const runner = extensionRunnerRef.current;

@@ -637,12 +637,16 @@ export async function main(args: string[], options?: MainOptions) {
 		process.exit(1);
 	}
 	if (appMode === "rpc" && parsed.messages.length > 0) {
-		console.error(chalk.red("Error: positional prompts are not supported in RPC mode; send a prompt command over stdin"));
+		console.error(
+			chalk.red("Error: positional prompts are not supported in RPC mode; send a prompt command over stdin"),
+		);
 		process.exit(1);
 	}
 	if (appMode !== "interactive" && parsed.resume) {
 		console.error(
-			chalk.red("Error: --resume requires the interactive session selector; use --session, --continue, or RPC session commands"),
+			chalk.red(
+				"Error: --resume requires the interactive session selector; use --session, --continue, or RPC session commands",
+			),
 		);
 		process.exit(1);
 	}
@@ -662,7 +666,9 @@ export async function main(args: string[], options?: MainOptions) {
 			parsed.nonInteractiveUiPolicy !== undefined)
 	) {
 		console.error(
-			chalk.red("Error: --background-policy, --background-wait-timeout, and --non-interactive-ui require print or JSON mode"),
+			chalk.red(
+				"Error: --background-policy, --background-wait-timeout, and --non-interactive-ui require print or JSON mode",
+			),
 		);
 		process.exit(1);
 	}

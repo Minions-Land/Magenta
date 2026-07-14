@@ -9,6 +9,7 @@ import {
 	createEmptyTodoPlanState,
 	createTodoTool,
 	flattenTodoPlan,
+	restoreTodoPlanState,
 	type TodoOperation,
 	type TodoPlanState,
 	todoSchema,
@@ -65,7 +66,7 @@ describe("todo HCP component", () => {
 		expect(todoSchema.properties.operations).toMatchObject({ minItems: 1 });
 		expect(todoSchema.properties.operations.items.properties.op).toMatchObject({
 			type: "string",
-			enum: ["add", "update", "move", "set_status", "set_current", "set_summary", "set_title", "remove", "clear"],
+			enum: ["add", "update", "move", "set_status", "set_current", "set_summary", "set_title", "remove", "reset"],
 			description: expect.stringContaining('never in the top-level "action" field'),
 		});
 		expect((todoSchema.properties.operations as { description?: string }).description).toContain(
@@ -100,12 +101,13 @@ describe("todo atomic batch execution", () => {
 		expect(result.details.error).toBeUndefined();
 		expect(result.details.refs).toEqual({ root: 1, windows: 2, smoke: 3 });
 		expect(result.details.state).toEqual({
-			version: 1,
+			version: 2,
 			title: "Release Plan",
 			summary: "Finish the real update validation",
 			currentId: 2,
 			nextId: 4,
 			revision: 1,
+			history: [],
 			nodes: [
 				{ id: 1, parentId: null, order: 0, text: "Release validation", status: "in_progress" },
 				{ id: 2, parentId: 1, order: 0, text: "Windows validation", status: "pending" },
@@ -113,6 +115,37 @@ describe("todo atomic batch execution", () => {
 			],
 		});
 		expect(flattenTodoPlan(result.details.state).map((row) => row.outline)).toEqual(["1", "1.1", "1.1.1"]);
+	});
+
+	it("targets todos by the display outline path shown in the plan", async () => {
+		const tool = createTool();
+		await apply(tool, [
+			{ op: "add", ref: "root", text: "Root" },
+			{ op: "add", ref: "childA", text: "Child A", parentRef: "root" },
+			{ op: "add", ref: "childB", text: "Child B", parentRef: "root" },
+		]);
+
+		// "1.2" is the second child of the first root item, i.e. internal id 3.
+		const statusResult = await apply(tool, [{ op: "set_status", id: "1.2", status: "completed" }]);
+		expect(statusResult.details.error).toBeUndefined();
+		expect(statusResult.details.state.nodes.find((node) => node.id === 3)?.status).toBe("completed");
+
+		// Outline paths also work for set_current and as a numeric id string.
+		const currentResult = await apply(tool, [{ op: "set_current", id: "1.1" }]);
+		expect(currentResult.details.error).toBeUndefined();
+		expect(currentResult.details.state.currentId).toBe(2);
+
+		const numericStringResult = await apply(tool, [{ op: "set_status", id: "1", status: "in_progress" }]);
+		expect(numericStringResult.details.error).toBeUndefined();
+		expect(numericStringResult.details.state.nodes.find((node) => node.id === 1)?.status).toBe("in_progress");
+	});
+
+	it("reports NOT_FOUND for an outline path past the tree", async () => {
+		const tool = createTool();
+		await apply(tool, [{ op: "add", text: "Only item" }]);
+		const rejected = await apply(tool, [{ op: "set_status", id: "1.5", status: "completed" }]);
+		expect(rejected.details.error?.code).toBe("NOT_FOUND");
+		expect(rejected.details.error?.message).toContain("#1.5");
 	});
 
 	it("treats a single mutation as a one-operation batch", async () => {
@@ -123,21 +156,146 @@ describe("todo atomic batch execution", () => {
 		]);
 	});
 
-	it("updates text and clears the plan without reusing IDs", async () => {
+	it("updates text and migrates valid version-1 session snapshots", async () => {
 		const tool = createTool();
 		await apply(tool, [{ op: "add", text: "Draft" }]);
 
 		const updated = await apply(tool, [{ op: "update", id: 1, text: "Reviewed" }]);
 		expect(updated.details.state.nodes[0]?.text).toBe("Reviewed");
 
-		const cleared = await apply(tool, [{ op: "clear" }]);
-		expect(cleared.details.state).toMatchObject({
+		const legacy = {
+			version: 1,
+			title: "Legacy",
+			summary: "Preserve this plan",
+			currentId: 3,
+			nodes: [{ id: 3, parentId: null, order: 0, text: "Old work", status: "in_progress" }],
+			nextId: 4,
+			revision: 7,
+		};
+		expect(restoreTodoPlanState(legacy)).toEqual({ ...legacy, version: 2, history: [] });
+		expect(restoreTodoPlanState({ ...legacy, nextId: 3 })).toBeUndefined();
+		expect(
+			restoreTodoPlanState({
+				...legacy,
+				version: 2,
+				history: [
+					{
+						title: "Duplicate IDs",
+						summary: null,
+						currentId: 3,
+						nodes: [{ id: 3, parentId: null, order: 0, text: "Archived", status: "completed" }],
+					},
+				],
+			}),
+		).toBeUndefined();
+	});
+
+	it("rejects reset for empty and incomplete plans without changing state", async () => {
+		const emptyTool = createTool();
+		const empty = await apply(emptyTool, [{ op: "reset" }]);
+		expect(empty.details).toMatchObject({
+			applied: 0,
+			error: { code: "RESET_EMPTY_PLAN", operationIndex: 0 },
+			state: createEmptyTodoPlanState(),
+		});
+
+		for (const status of ["pending", "in_progress", "blocked"] as const) {
+			const tool = createTool();
+			const seeded = await apply(tool, [{ op: "add", text: status, status }]);
+			const rejected = await apply(tool, [{ op: "reset" }]);
+			expect(rejected.details.error).toMatchObject({ code: "RESET_INCOMPLETE_PLAN", operationIndex: 0 });
+			expect(rejected.details.state).toEqual(seeded.details.state);
+		}
+
+		const hierarchy = createTool();
+		await apply(hierarchy, [
+			{ op: "add", ref: "parent", text: "Parent", status: "pending" },
+			{ op: "add", text: "Finished child", parentRef: "parent", status: "completed" },
+		]);
+		const rejected = await apply(hierarchy, [{ op: "reset" }]);
+		expect(rejected.details.error?.code).toBe("RESET_INCOMPLETE_PLAN");
+	});
+
+	it("archives a completed hierarchy, resets metadata, and deep-clones history", async () => {
+		const tool = createTool();
+		await apply(tool, [
+			{ op: "set_title", text: "Completed release" },
+			{ op: "set_summary", text: "All checks passed" },
+			{ op: "add", ref: "root", text: "Release", status: "completed" },
+			{ op: "add", ref: "child", text: "Smoke test", parentRef: "root", status: "completed" },
+			{ op: "set_current", targetRef: "child" },
+		]);
+
+		const reset = await apply(tool, [{ op: "reset" }]);
+		expect(getText(reset)).toContain("archived 1");
+		expect(reset.details.changes.reset).toBe(1);
+		expect(reset.details.state).toEqual({
+			version: 2,
 			title: "Todo",
 			summary: null,
 			currentId: null,
-			nextId: 2,
 			nodes: [],
+			nextId: 3,
+			revision: 2,
+			history: [
+				{
+					title: "Completed release",
+					summary: "All checks passed",
+					currentId: 2,
+					nodes: [
+						{ id: 1, parentId: null, order: 0, text: "Release", status: "completed" },
+						{ id: 2, parentId: 1, order: 0, text: "Smoke test", status: "completed" },
+					],
+				},
+			],
 		});
+
+		reset.details.state.history[0]!.nodes[0]!.text = "mutated result";
+		const current = await tool.execute("get-after-reset", { action: "get" });
+		expect(current.details.state.history[0]?.nodes[0]?.text).toBe("Release");
+		expect(getText(current)).toBe("Todo: no items · 1 archived");
+	});
+
+	it("supports completing, resetting, and starting fresh work in one atomic batch", async () => {
+		const tool = createTool();
+		const result = await apply(tool, [
+			{ op: "add", ref: "task", text: "First task" },
+			{ op: "set_status", targetRef: "task", status: "completed" },
+			{ op: "reset" },
+			{ op: "set_title", text: "Next plan" },
+			{ op: "add", ref: "task", text: "Second task" },
+			{ op: "set_current", targetRef: "task" },
+		]);
+
+		expect(result.details.error).toBeUndefined();
+		expect(result.details.refs).toEqual({ task: 2 });
+		expect(result.details.state).toMatchObject({
+			title: "Next plan",
+			currentId: 2,
+			nextId: 3,
+			history: [{ title: "Todo", nodes: [{ id: 1, status: "completed" }] }],
+			nodes: [{ id: 2, text: "Second task", status: "pending" }],
+		});
+
+		const secondReset = await apply(tool, [{ op: "set_status", id: 2, status: "completed" }, { op: "reset" }]);
+		expect(secondReset.details.state).toMatchObject({
+			title: "Todo",
+			currentId: null,
+			nextId: 3,
+			nodes: [],
+			history: [
+				{ title: "Todo", nodes: [{ id: 1, text: "First task" }] },
+				{ title: "Next plan", nodes: [{ id: 2, text: "Second task" }] },
+			],
+		});
+	});
+
+	it("rolls back reset and its archive when a later operation fails", async () => {
+		const tool = createTool();
+		const seeded = await apply(tool, [{ op: "add", text: "Finished", status: "completed" }]);
+		const failed = await apply(tool, [{ op: "reset" }, { op: "add", text: "  " }]);
+		expect(failed.details.error).toMatchObject({ code: "INVALID_TEXT", operationIndex: 1 });
+		expect(failed.details.state).toEqual(seeded.details.state);
 	});
 
 	it("rolls back the entire batch when a middle operation fails", async () => {
@@ -227,13 +385,14 @@ describe("todo atomic batch execution", () => {
 
 	it("restores the host-selected branch snapshot before every action", async () => {
 		let branchState: TodoPlanState = {
-			version: 1,
+			version: 2,
 			title: "Current branch",
 			summary: null,
 			currentId: null,
 			nodes: [{ id: 4, parentId: null, order: 0, text: "Current", status: "pending" }],
 			nextId: 5,
 			revision: 3,
+			history: [],
 		};
 		const tool = createTodoTool("/tmp", { loadState: () => branchState });
 
@@ -241,13 +400,14 @@ describe("todo atomic batch execution", () => {
 		expect(current.details.state.title).toBe("Current branch");
 
 		branchState = {
-			version: 1,
+			version: 2,
 			title: "Earlier branch",
 			summary: "restored",
 			currentId: 1,
 			nodes: [{ id: 1, parentId: null, order: 0, text: "Earlier", status: "completed" }],
 			nextId: 2,
 			revision: 1,
+			history: [],
 		};
 		const restored = await tool.execute("get-restored", { action: "get" });
 		expect(restored.details.state).toEqual(branchState);

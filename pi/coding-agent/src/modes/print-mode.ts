@@ -61,10 +61,7 @@ function remainingMs(deadline: number): number {
 	return Math.max(0, deadline - Date.now());
 }
 
-async function waitForAgentIdleWithDeadline(
-	waitForIdle: () => Promise<void>,
-	deadline: number,
-): Promise<boolean> {
+async function waitForAgentIdleWithDeadline(waitForIdle: () => Promise<void>, deadline: number): Promise<boolean> {
 	const timeoutMs = remainingMs(deadline);
 	if (timeoutMs === 0) return false;
 	let timeout: NodeJS.Timeout | undefined;

@@ -299,8 +299,12 @@ export class StaticPrefixContainer extends Container {
 	private cachedPrefixLines: string[] | undefined;
 	private cachedPrefixWidth: number | undefined;
 	private cachedPrefixChildCount = -1;
+	/** Cached line count per immutable-prefix child, aligned with cachedPrefixLines. */
+	private cachedChildLineCounts: number[] = [];
 	private prefixRevision = 0;
 	private lastDirtyFrom: number | null = 0;
+	/** Earliest immutable-prefix child index whose content changed since the last render. */
+	private firstDirtyChildIndex: number | null = null;
 
 	override addChild(component: Component): void {
 		super.addChild(component);
@@ -348,15 +352,28 @@ export class StaticPrefixContainer extends Container {
 		this.cachedPrefixLines = undefined;
 		this.cachedPrefixWidth = undefined;
 		this.cachedPrefixChildCount = -1;
+		this.cachedChildLineCounts = [];
+		this.firstDirtyChildIndex = null;
 		this.prefixRevision += 1;
 		this.lastDirtyFrom = 0;
 	}
 
+	/**
+	 * Mark a single direct child as dirty. When the child lives in the immutable
+	 * prefix, record the earliest dirty index so the next render rebuilds only the
+	 * suffix from that child onward instead of re-rendering the entire history.
+	 * Mutable-tail children already re-render every frame, and an unknown component
+	 * falls back to a full cache invalidation.
+	 */
 	invalidateChild(component: Component): void {
 		const index = this.children.indexOf(component);
-		if (index === -1 || this.mutableTailStart === undefined || index < this.mutableTailStart) {
+		if (index === -1) {
 			this.invalidateCache();
+			return;
 		}
+		if (this.mutableTailStart !== undefined && index >= this.mutableTailStart) return;
+		this.firstDirtyChildIndex =
+			this.firstDirtyChildIndex === null ? index : Math.min(this.firstDirtyChildIndex, index);
 	}
 
 	getPrefixRevision(): number {
@@ -375,17 +392,55 @@ export class StaticPrefixContainer extends Container {
 			this.cachedPrefixWidth === width &&
 			this.cachedPrefixChildCount === prefixChildCount;
 
+		// Fast path: a bounded set of immutable-prefix children changed (e.g. Ctrl+O
+		// toggling the newest outputs). Retain cached lines before the earliest dirty
+		// child and re-render only from there, using cached per-child line counts so
+		// untouched history is never re-rendered.
+		if (
+			prefixCacheValid &&
+			this.firstDirtyChildIndex !== null &&
+			this.firstDirtyChildIndex < prefixChildCount &&
+			this.cachedChildLineCounts.length === prefixChildCount
+		) {
+			const firstDirty = this.firstDirtyChildIndex;
+			let retainedLineCount = 0;
+			for (let i = 0; i < firstDirty; i++) retainedLineCount += this.cachedChildLineCounts[i]!;
+			const rebuiltPrefix = (this.cachedPrefixLines as string[]).slice(0, retainedLineCount);
+			for (let i = firstDirty; i < prefixChildCount; i++) {
+				const childLines = this.children[i].render(width);
+				this.cachedChildLineCounts[i] = childLines.length;
+				rebuiltPrefix.push(...childLines);
+			}
+			this.cachedPrefixLines = rebuiltPrefix;
+			this.firstDirtyChildIndex = null;
+			if (prefixChildCount === this.children.length) {
+				this.lastDirtyFrom = retainedLineCount;
+				return rebuiltPrefix;
+			}
+			const tailLines = [...rebuiltPrefix];
+			for (let i = prefixChildCount; i < this.children.length; i++) {
+				tailLines.push(...this.children[i].render(width));
+			}
+			this.lastDirtyFrom = retainedLineCount;
+			return tailLines;
+		}
+
 		let prefixLines: string[];
 		if (prefixCacheValid) {
 			prefixLines = this.cachedPrefixLines as string[];
 		} else {
 			prefixLines = [];
+			const counts: number[] = [];
 			for (let i = 0; i < prefixChildCount; i++) {
-				prefixLines.push(...this.children[i].render(width));
+				const childLines = this.children[i].render(width);
+				counts.push(childLines.length);
+				prefixLines.push(...childLines);
 			}
 			this.cachedPrefixLines = prefixLines;
 			this.cachedPrefixWidth = width;
 			this.cachedPrefixChildCount = prefixChildCount;
+			this.cachedChildLineCounts = counts;
+			this.firstDirtyChildIndex = null;
 		}
 
 		if (prefixChildCount === this.children.length) {

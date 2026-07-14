@@ -11,6 +11,7 @@ import { DEFAULT_HTTP_IDLE_TIMEOUT_MS, parseHttpIdleTimeoutMs } from "./http-dis
 export interface CompactionSettings {
 	enabled?: boolean; // default: true
 	reserveTokens?: number; // default: 16384
+	maxContextFraction?: number; // optional, valid range: (0, 1]
 	keepRecentTokens?: number; // default: 20000
 }
 
@@ -785,10 +786,21 @@ export class SettingsManager {
 		return this.settings.compaction?.keepRecentTokens ?? 20000;
 	}
 
-	getCompactionSettings(): { enabled: boolean; reserveTokens: number; keepRecentTokens: number } {
+	getCompactionMaxContextFraction(): number | undefined {
+		return this.settings.compaction?.maxContextFraction;
+	}
+
+	getCompactionSettings(): {
+		enabled: boolean;
+		reserveTokens: number;
+		maxContextFraction?: number;
+		keepRecentTokens: number;
+	} {
+		const maxContextFraction = this.getCompactionMaxContextFraction();
 		return {
 			enabled: this.getCompactionEnabled(),
 			reserveTokens: this.getCompactionReserveTokens(),
+			...(maxContextFraction !== undefined ? { maxContextFraction } : {}),
 			keepRecentTokens: this.getCompactionKeepRecentTokens(),
 		};
 	}

@@ -407,6 +407,23 @@ describe("SettingsManager", () => {
 		});
 	});
 
+	describe("compaction settings", () => {
+		it("forwards an opt-in max context fraction without changing defaults", () => {
+			const defaults = SettingsManager.inMemory().getCompactionSettings();
+			expect(defaults).toEqual({ enabled: true, reserveTokens: 16384, keepRecentTokens: 20000 });
+
+			const configured = SettingsManager.inMemory({
+				compaction: { maxContextFraction: 0.9 },
+			}).getCompactionSettings();
+			expect(configured).toEqual({
+				enabled: true,
+				reserveTokens: 16384,
+				maxContextFraction: 0.9,
+				keepRecentTokens: 20000,
+			});
+		});
+	});
+
 	describe("getSessionDir", () => {
 		it("should return undefined when not set", () => {
 			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ theme: "dark" }));

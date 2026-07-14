@@ -2,10 +2,12 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 
-export const TODO_PLAN_VERSION = 1 as const;
+export const TODO_PLAN_VERSION = 2 as const;
 export const TODO_RENDER_KIND = "todo-plan";
 
 export type TodoStatus = "pending" | "in_progress" | "completed" | "blocked";
+
+const TODO_STATUSES: readonly TodoStatus[] = ["pending", "in_progress", "completed", "blocked"];
 
 export type TodoNode = {
 	id: number;
@@ -15,14 +17,19 @@ export type TodoNode = {
 	status: TodoStatus;
 };
 
-export type TodoPlanState = {
-	version: typeof TODO_PLAN_VERSION;
+export type TodoPlanSnapshot = {
 	title: string;
 	summary: string | null;
 	currentId: number | null;
 	nodes: TodoNode[];
+};
+
+export type TodoPlanState = TodoPlanSnapshot & {
+	version: typeof TODO_PLAN_VERSION;
 	nextId: number;
 	revision: number;
+	/** Completed plans in reset order, oldest first. */
+	history: TodoPlanSnapshot[];
 };
 
 export type TodoOperationName =
@@ -34,20 +41,20 @@ export type TodoOperationName =
 	| "set_summary"
 	| "set_title"
 	| "remove"
-	| "clear";
+	| "reset";
 
 export type TodoPlacement = "first" | "last" | "before" | "after";
 
 export type TodoOperation = {
 	op: TodoOperationName;
-	id?: number;
+	id?: number | string;
 	targetRef?: string;
 	ref?: string;
 	text?: string | null;
-	parentId?: number | null;
+	parentId?: number | string | null;
 	parentRef?: string;
 	placement?: TodoPlacement;
-	relativeToId?: number;
+	relativeToId?: number | string;
 	relativeToRef?: string;
 	status?: TodoStatus;
 	cascade?: boolean;
@@ -60,7 +67,7 @@ export type TodoChangeSummary = {
 	statusChanged: number;
 	removed: number;
 	metadataChanged: number;
-	cleared: number;
+	reset: number;
 };
 
 export type TodoError = {
@@ -79,26 +86,31 @@ export type TodoDetails = {
 };
 
 export type TodoToolOptions = {
-	/** Load the latest state for the host's currently selected session branch. */
-	loadState?: () => TodoPlanState | undefined;
+	/** Load the latest persisted value for the host's currently selected session branch. */
+	loadState?: () => unknown;
 };
 
 const todoOperationSchema = Type.Object({
 	op: StringEnum(
-		["add", "update", "move", "set_status", "set_current", "set_summary", "set_title", "remove", "clear"] as const,
+		["add", "update", "move", "set_status", "set_current", "set_summary", "set_title", "remove", "reset"] as const,
 		{
 			description:
 				'Mutation verb for this operation. Put add/update/move/etc. here, never in the top-level "action" field.',
 		},
 	),
-	id: Type.Optional(Type.Number({ description: "Existing Todo ID targeted by this operation" })),
+	id: Type.Optional(
+		Type.Union([Type.Number(), Type.String()], {
+			description:
+				'Existing Todo targeted by this operation. Accepts the internal numeric id or the display outline path shown in the plan, e.g. "1.2" for the second child of the first item.',
+		}),
+	),
 	targetRef: Type.Optional(Type.String({ description: "Temporary ref created by an earlier add in this batch" })),
 	ref: Type.Optional(Type.String({ description: "Unique temporary ref assigned by an add operation" })),
 	text: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-	parentId: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
+	parentId: Type.Optional(Type.Union([Type.Number(), Type.String(), Type.Null()])),
 	parentRef: Type.Optional(Type.String()),
 	placement: Type.Optional(StringEnum(["first", "last", "before", "after"] as const)),
-	relativeToId: Type.Optional(Type.Number()),
+	relativeToId: Type.Optional(Type.Union([Type.Number(), Type.String()])),
 	relativeToRef: Type.Optional(Type.String()),
 	status: Type.Optional(StringEnum(["pending", "in_progress", "completed", "blocked"] as const)),
 	cascade: Type.Optional(Type.Boolean()),
@@ -125,7 +137,7 @@ type DraftResult =
 type Destination = { parentId: number | null; index: number };
 
 function emptyChanges(): TodoChangeSummary {
-	return { added: 0, updated: 0, moved: 0, statusChanged: 0, removed: 0, metadataChanged: 0, cleared: 0 };
+	return { added: 0, updated: 0, moved: 0, statusChanged: 0, removed: 0, metadataChanged: 0, reset: 0 };
 }
 
 export function createEmptyTodoPlanState(): TodoPlanState {
@@ -137,31 +149,44 @@ export function createEmptyTodoPlanState(): TodoPlanState {
 		nodes: [],
 		nextId: 1,
 		revision: 0,
+		history: [],
+	};
+}
+
+export function cloneTodoPlanSnapshot(snapshot: TodoPlanSnapshot): TodoPlanSnapshot {
+	return {
+		title: snapshot.title,
+		summary: snapshot.summary,
+		currentId: snapshot.currentId,
+		nodes: snapshot.nodes.map((node) => ({ ...node })),
 	};
 }
 
 export function cloneTodoPlanState(state: TodoPlanState): TodoPlanState {
-	return { ...state, nodes: state.nodes.map((node) => ({ ...node })) };
+	return {
+		...state,
+		nodes: state.nodes.map((node) => ({ ...node })),
+		history: state.history.map(cloneTodoPlanSnapshot),
+	};
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return value !== null && typeof value === "object";
 }
 
-export function isTodoPlanState(value: unknown): value is TodoPlanState {
+function isTodoPlanSnapshot(
+	value: unknown,
+	requireCompleted: boolean,
+): value is TodoPlanSnapshot & Record<string, unknown> {
 	if (!isRecord(value)) return false;
-	if (value.version !== TODO_PLAN_VERSION) return false;
 	if (typeof value.title !== "string" || value.title.trim().length === 0) return false;
 	if (value.summary !== null && typeof value.summary !== "string") return false;
 	if (value.currentId !== null && (!Number.isInteger(value.currentId) || (value.currentId as number) <= 0))
 		return false;
-	if (!Number.isInteger(value.nextId) || (value.nextId as number) < 1) return false;
-	if (!Number.isInteger(value.revision) || (value.revision as number) < 0) return false;
 	if (!Array.isArray(value.nodes)) return false;
 
-	const nodes = value.nodes as unknown[];
 	const byId = new Map<number, TodoNode>();
-	for (const candidate of nodes) {
+	for (const candidate of value.nodes) {
 		if (!isRecord(candidate)) return false;
 		if (!Number.isInteger(candidate.id) || (candidate.id as number) <= 0) return false;
 		if (
@@ -172,16 +197,15 @@ export function isTodoPlanState(value: unknown): value is TodoPlanState {
 		}
 		if (!Number.isInteger(candidate.order) || (candidate.order as number) < 0) return false;
 		if (typeof candidate.text !== "string" || candidate.text.trim().length === 0) return false;
-		if (!(["pending", "in_progress", "completed", "blocked"] as unknown[]).includes(candidate.status)) return false;
+		if (!TODO_STATUSES.includes(candidate.status as TodoStatus)) return false;
+		if (requireCompleted && candidate.status !== "completed") return false;
 		const node = candidate as TodoNode;
 		if (byId.has(node.id)) return false;
 		byId.set(node.id, node);
 	}
 
-	let maxId = 0;
 	const siblingOrders = new Map<string, number[]>();
 	for (const node of byId.values()) {
-		maxId = Math.max(maxId, node.id);
 		if (node.parentId !== null && (!byId.has(node.parentId) || node.parentId === node.id)) return false;
 		const key = String(node.parentId ?? "root");
 		const orders = siblingOrders.get(key) ?? [];
@@ -200,13 +224,99 @@ export function isTodoPlanState(value: unknown): value is TodoPlanState {
 		orders.sort((left, right) => left - right);
 		if (orders.some((order, index) => order !== index)) return false;
 	}
-	if ((value.nextId as number) <= maxId) return false;
 	if (value.currentId !== null && !byId.has(value.currentId as number)) return false;
 	return true;
 }
 
+function maxTodoId(snapshot: TodoPlanSnapshot): number {
+	return snapshot.nodes.reduce((maximum, node) => Math.max(maximum, node.id), 0);
+}
+
+export function isTodoPlanState(value: unknown): value is TodoPlanState {
+	if (!isRecord(value) || value.version !== TODO_PLAN_VERSION) return false;
+	if (!isTodoPlanSnapshot(value, false)) return false;
+	if (!Number.isInteger(value.nextId) || (value.nextId as number) < 1) return false;
+	if (!Number.isInteger(value.revision) || (value.revision as number) < 0) return false;
+	if (!Array.isArray(value.history)) return false;
+	if (value.history.some((snapshot) => !isTodoPlanSnapshot(snapshot, true) || snapshot.nodes.length === 0))
+		return false;
+	const allocatedIds = new Set<number>();
+	let maxId = 0;
+	for (const snapshot of [value, ...value.history] as TodoPlanSnapshot[]) {
+		for (const node of snapshot.nodes) {
+			if (allocatedIds.has(node.id)) return false;
+			allocatedIds.add(node.id);
+			maxId = Math.max(maxId, node.id);
+		}
+	}
+	return (value.nextId as number) > maxId;
+}
+
+function isLegacyTodoPlanState(value: unknown): value is TodoPlanSnapshot & {
+	version: 1;
+	nextId: number;
+	revision: number;
+} {
+	if (!isRecord(value) || value.version !== 1) return false;
+	if (!isTodoPlanSnapshot(value, false)) return false;
+	if (!Number.isInteger(value.nextId) || (value.nextId as number) <= maxTodoId(value)) return false;
+	return Number.isInteger(value.revision) && (value.revision as number) >= 0;
+}
+
+/** Restore current snapshots and losslessly migrate valid version-1 session state. */
+export function restoreTodoPlanState(value: unknown): TodoPlanState | undefined {
+	if (isTodoPlanState(value)) return cloneTodoPlanState(value);
+	if (!isLegacyTodoPlanState(value)) return undefined;
+	return {
+		...cloneTodoPlanSnapshot(value),
+		version: TODO_PLAN_VERSION,
+		nextId: value.nextId,
+		revision: value.revision,
+		history: [],
+	};
+}
+
 function nodeById(state: TodoPlanState, id: number): TodoNode | undefined {
 	return state.nodes.find((node) => node.id === id);
+}
+
+/**
+ * Resolve a display outline path (e.g. "1", "1.2", "1.1.3") to an internal numeric Todo id.
+ * The path mirrors the 1-based hierarchy rendered by flattenTodoPlan; each segment selects a
+ * sibling in the same order/id sort used for display. Returns undefined when the path is
+ * malformed or points past the existing tree.
+ */
+function resolveOutlineToId(state: TodoPlanState, outline: string): number | undefined {
+	const segments = outline.trim().split(".");
+	if (segments.length === 0) return undefined;
+	let parentId: number | null = null;
+	let resolved: number | undefined;
+	for (const segment of segments) {
+		if (!/^\d+$/.test(segment.trim())) return undefined;
+		const index = Number.parseInt(segment, 10) - 1;
+		if (index < 0) return undefined;
+		const siblings = sortedSiblings(state, parentId);
+		const node = siblings[index];
+		if (!node) return undefined;
+		resolved = node.id;
+		parentId = node.id;
+	}
+	return resolved;
+}
+
+/**
+ * Coerce an operation id input into an internal numeric id. Numbers are treated as internal ids;
+ * strings are treated as display outline paths (e.g. "1.2"), falling back to a bare-integer
+ * internal id when no matching outline exists. Returns undefined when the input cannot be mapped.
+ */
+function coerceIdInput(state: TodoPlanState, input: number | string): number | undefined {
+	if (typeof input === "number") return input;
+	const trimmed = input.trim();
+	if (!/^\d+(\.\d+)*$/.test(trimmed)) return undefined;
+	const outlineId = resolveOutlineToId(state, trimmed);
+	if (outlineId !== undefined) return outlineId;
+	if (/^\d+$/.test(trimmed)) return Number.parseInt(trimmed, 10);
+	return undefined;
 }
 
 function sortedSiblings(state: TodoPlanState, parentId: number | null, excludeId?: number): TodoNode[] {
@@ -253,49 +363,53 @@ function normalizeRef(value: string | undefined): string | undefined {
 function resolveExistingId(
 	state: TodoPlanState,
 	refs: Map<string, number>,
-	id: number | undefined,
+	id: number | string | undefined,
 	refValue: string | undefined,
 	label: string,
 ): number | TodoError {
 	const ref = normalizeRef(refValue);
 	if (id !== undefined && ref !== undefined)
 		return operationError("AMBIGUOUS_TARGET", `${label} cannot use both id and ref`);
-	let resolved = id;
+	let resolved: number | string | undefined = id;
 	if (ref !== undefined) {
 		resolved = refs.get(ref);
 		if (resolved === undefined) return operationError("UNKNOWN_REF", `Unknown ${label} ref: ${ref}`);
 	}
 	if (resolved === undefined) return operationError("MISSING_TARGET", `${label} is required`);
-	if (!Number.isInteger(resolved) || resolved <= 0 || !nodeById(state, resolved)) {
+	const numericId = coerceIdInput(state, resolved);
+	if (numericId === undefined || !Number.isInteger(numericId) || numericId <= 0 || !nodeById(state, numericId)) {
 		return operationError("NOT_FOUND", `${label} #${resolved} not found`);
 	}
-	return resolved;
+	return numericId;
 }
 
 function resolveOptionalParent(
 	state: TodoPlanState,
 	refs: Map<string, number>,
-	parentId: number | null | undefined,
+	parentId: number | string | null | undefined,
 	parentRefValue: string | undefined,
 ): number | null | TodoError {
 	const parentRef = normalizeRef(parentRefValue);
 	if (parentId !== undefined && parentRef !== undefined) {
 		return operationError("AMBIGUOUS_PARENT", "parentId and parentRef cannot both be set");
 	}
-	let resolved = parentId ?? null;
+	let resolved: number | string | null = parentId ?? null;
 	if (parentRef !== undefined) {
-		resolved = refs.get(parentRef) ?? Number.NaN;
-		if (!Number.isInteger(resolved)) return operationError("UNKNOWN_REF", `Unknown parent ref: ${parentRef}`);
+		const fromRef = refs.get(parentRef);
+		if (fromRef === undefined) return operationError("UNKNOWN_REF", `Unknown parent ref: ${parentRef}`);
+		resolved = fromRef;
 	}
-	if (resolved !== null && !nodeById(state, resolved))
+	if (resolved === null) return null;
+	const numericId = coerceIdInput(state, resolved);
+	if (numericId === undefined || !nodeById(state, numericId))
 		return operationError("NOT_FOUND", `Parent #${resolved} not found`);
-	return resolved;
+	return numericId;
 }
 
 function resolveOptionalRelative(
 	state: TodoPlanState,
 	refs: Map<string, number>,
-	id: number | undefined,
+	id: number | string | undefined,
 	refValue: string | undefined,
 ): number | null | TodoError {
 	const ref = normalizeRef(refValue);
@@ -303,10 +417,12 @@ function resolveOptionalRelative(
 		return operationError("AMBIGUOUS_RELATIVE", "relativeToId and relativeToRef cannot both be set");
 	}
 	if (id === undefined && ref === undefined) return null;
-	const resolved = ref === undefined ? id : refs.get(ref);
+	const resolved: number | string | undefined = ref === undefined ? id : refs.get(ref);
 	if (resolved === undefined) return operationError("UNKNOWN_REF", `Unknown relative ref: ${ref}`);
-	if (!nodeById(state, resolved)) return operationError("NOT_FOUND", `Relative Todo #${resolved} not found`);
-	return resolved;
+	const numericId = coerceIdInput(state, resolved);
+	if (numericId === undefined || !nodeById(state, numericId))
+		return operationError("NOT_FOUND", `Relative Todo #${resolved} not found`);
+	return numericId;
 }
 
 function resolveDestination(
@@ -521,13 +637,26 @@ export function applyTodoOperations(state: TodoPlanState, operations: TodoOperat
 				changes.removed += removedIds.size;
 				break;
 			}
-			case "clear": {
-				changes.removed += draft.nodes.length;
+			case "reset": {
+				if (draft.nodes.length === 0) {
+					error = operationError("RESET_EMPTY_PLAN", "Cannot reset an empty Todo plan");
+					break;
+				}
+				const incomplete = draft.nodes.filter((node) => node.status !== "completed").length;
+				if (incomplete > 0) {
+					error = operationError(
+						"RESET_INCOMPLETE_PLAN",
+						`Cannot reset Todo: ${incomplete} item${incomplete === 1 ? " is" : "s are"} not completed`,
+					);
+					break;
+				}
+				draft.history.push(cloneTodoPlanSnapshot(draft));
 				draft.nodes = [];
 				draft.title = "Todo";
 				draft.summary = null;
 				draft.currentId = null;
-				changes.cleared++;
+				refs.clear();
+				changes.reset++;
 				break;
 			}
 			default:
@@ -557,7 +686,7 @@ function statusMarker(status: TodoStatus): string {
 
 export type FlattenedTodoNode = { node: TodoNode; depth: number; outline: string };
 
-export function flattenTodoPlan(state: TodoPlanState): FlattenedTodoNode[] {
+export function flattenTodoPlan(state: TodoPlanSnapshot): FlattenedTodoNode[] {
 	const children = new Map<number | null, TodoNode[]>();
 	for (const node of state.nodes) {
 		const values = children.get(node.parentId) ?? [];
@@ -585,9 +714,10 @@ export function flattenTodoPlan(state: TodoPlanState): FlattenedTodoNode[] {
 }
 
 function formatPlan(state: TodoPlanState): string {
-	if (state.nodes.length === 0) return `${state.title}: no items`;
+	const history = state.history.length > 0 ? ` · ${state.history.length} archived` : "";
+	if (state.nodes.length === 0) return `${state.title}: no items${history}`;
 	const completed = state.nodes.filter((node) => node.status === "completed").length;
-	const lines = [`${state.title} · ${completed}/${state.nodes.length} completed`];
+	const lines = [`${state.title} · ${completed}/${state.nodes.length} completed${history}`];
 	if (state.summary) lines.push(state.summary);
 	for (const { node, depth, outline } of flattenTodoPlan(state)) {
 		const current = node.id === state.currentId ? " <current>" : "";
@@ -604,6 +734,7 @@ function compactApplyResult(details: TodoDetails): string {
 	if (changes.moved) parts.push(`moved ${changes.moved}`);
 	if (changes.statusChanged) parts.push(`status ${changes.statusChanged}`);
 	if (changes.removed) parts.push(`removed ${changes.removed}`);
+	if (changes.reset) parts.push(`archived ${changes.reset}`);
 	if (state.currentId !== null) parts.push(`current #${state.currentId}`);
 	return parts.join(" · ");
 }
@@ -613,15 +744,14 @@ export function createTodoTool(_cwd: string, options: TodoToolOptions = {}): Age
 
 	const loadCurrentState = (): void => {
 		if (!options.loadState) return;
-		const loaded = options.loadState();
-		state = loaded && isTodoPlanState(loaded) ? cloneTodoPlanState(loaded) : createEmptyTodoPlanState();
+		state = restoreTodoPlanState(options.loadState()) ?? createEmptyTodoPlanState();
 	};
 
 	return {
 		name: "todo",
 		label: "Todo",
 		description:
-			'The single source of truth for multi-step planning and progress; do not mirror it in plan/progress files or a second checklist. Top-level action is only "get" or "apply". Read with {"action":"get"}. Mutate with {"action":"apply","operations":[{"op":"add","text":"..."}]}; add/update/move/etc. belong in operations[].op, never action. A single change is a one-operation batch.',
+			'The single source of truth for multi-step planning and progress; do not mirror it in plan/progress files or a second checklist. Top-level action is only "get" or "apply". Read with {"action":"get"}. Mutate with {"action":"apply","operations":[{"op":"add","text":"..."}]}; add/update/move/etc. belong in operations[].op, never action. A single change is a one-operation batch. Use reset to archive and start a new plan only after the current plan is non-empty and every item is completed.',
 		parameters: todoSchema,
 		executionMode: "sequential",
 		renderKind: TODO_RENDER_KIND,

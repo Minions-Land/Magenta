@@ -28,6 +28,12 @@ import type { ExtensionContext, ToolDefinition } from "../extensions/types.ts";
 const WORK_DIR = join(getAgentDir(), "tmp", "sub-agents");
 const MAIN_PROGRESS_PATH = join(WORK_DIR, "main-tool-progress.md");
 const TERM_GRACE_MS = 3000;
+/**
+ * Cap on how many finished (non-running) sub-agent events are retained.
+ * Prevents unbounded growth of the events Map over a long interactive session;
+ * running events and events with pending waiters are never evicted.
+ */
+const MAX_RETAINED_FINISHED_EVENTS = 200;
 const MAX_START_MANY = 8;
 const DEFAULT_TOOLS = ["read", "grep", "find", "ls"];
 const FORBIDDEN_SUB_AGENT_TOOLS = new Set(["sub_agent", "bg_shell", "teammate_agent"]);
@@ -139,10 +145,19 @@ export type SubAgentReturnMessage<T = unknown> = {
 	options: { triggerTurn?: boolean; deliverAs?: ReturnDelivery };
 };
 
-export type SubAgentSendMessage = <T = unknown>(
-	message: SubAgentReturnMessage<T>["message"],
-	options?: SubAgentReturnMessage<T>["options"],
-) => Promise<void> | void;
+/**
+ * Register a completed batch's fully-formed return message with the scheduling
+ * layer (BackgroundReturnCoordinator). The coordinator coalesces it with other
+ * near-simultaneous returns into one injected turn, never reformatting it.
+ */
+export type SubAgentRegisterReturn = (
+	eventIds: string[],
+	message: { customType: string; content: string; display: boolean; details: unknown },
+	delivery: ReturnDelivery,
+) => void;
+
+/** Drop still-pending returns from the coordinator (terminal wait/status consumption). */
+export type SubAgentCancelReturn = (eventIds: string[]) => void;
 
 const TaskSchema = Type.Object({
 	task: Type.String({ description: "Independent task for the sub-agent." }),
@@ -210,8 +225,24 @@ const WorkflowSchema = Type.Object({
 			"generate_and_filter",
 			"tournament",
 			"loop_until_done",
+			"script",
 		] as const,
-		{ description: "Which orchestration preset to run." },
+		{
+			description:
+				'Which orchestration to run. Six named presets are ready-made templates for common shapes; use "script" to author your own workflow inline via the `script` field when none of the presets fit.',
+		},
+	),
+	script: Type.Optional(
+		Type.String({
+			description:
+				'For pattern="script": the workflow source as a JavaScript ES module. Must `export default async (args, ctx) => { ... }`. Compose the run with the injected `ctx` primitives: ctx.agent(prompt, opts) spawns one agent (returns { text, structured, success, ... }); ctx.parallelAgents(tasks[], maxConcurrent) runs task thunks in parallel (input order); ctx.pipeline(items[], fn, maxConcurrent) stream-processes items (completion order); ctx.phase(name) and ctx.log(msg) are observability; ctx.guards holds reusable system-prompt guard atoms (e.g. ctx.guards.verifier, ctx.guards.synthesizer); ctx.signal is the abort signal. Own termination in code (a cap or a no-new-findings round), never let a worker declare itself done. Return either a plain value (wrapped as the outcome) or an envelope with any of { outcome, confidence, finalists, iterations, terminatedBy }.',
+		}),
+	),
+	args: Type.Optional(
+		Type.Unknown({
+			description:
+				'For pattern="script": arguments passed as the first parameter to the workflow\'s default function.',
+		}),
 	),
 	name: Type.Optional(
 		Type.String({ description: "Human-readable name shown in /events. Defaults to the pattern name." }),
@@ -270,7 +301,7 @@ const subAgentSchema = Type.Object({
 	returnToMain: Type.Optional(
 		Type.Boolean({
 			description:
-				"For action=start, automatically send completed sub-agent results back to the main agent and trigger continuation. Default: false.",
+				"For action=start, automatically send completed sub-agent results back to the main agent and trigger continuation. Default: true.",
 		}),
 	),
 	returnDelivery: Type.Optional(
@@ -368,24 +399,47 @@ function appendTail(event: SubAgentEvent, data: Buffer): void {
 	event.tail = appendTailText(event.tail, data);
 }
 
-function killProcessGroup(event: SubAgentEvent, signal: NodeJS.Signals): void {
+/**
+ * Kill a captured target, escalating a process group and falling back to the
+ * child handle. Workflow events cancel via their AbortController. Callers
+ * capture child/abort before finishEvent() releases event.child so termination
+ * still works after the event drops its own pointer.
+ */
+function killTarget(
+	kind: "agent" | "workflow",
+	child: ChildProcess | undefined,
+	abort: AbortController | undefined,
+	signal: NodeJS.Signals,
+): void {
 	// Workflow events have no single child; cancellation is driven by the AbortController.
-	if (event.kind === "workflow") {
-		event.abort?.abort();
+	if (kind === "workflow") {
+		abort?.abort();
 		return;
 	}
-	const pid = event.child?.pid;
+	const pid = child?.pid;
 	if (!pid) return;
 
 	try {
 		process.kill(-pid, signal);
 	} catch {
 		try {
-			event.child?.kill(signal);
+			child?.kill(signal);
 		} catch {
 			// Process already exited.
 		}
 	}
+}
+
+/**
+ * Terminate an event now (SIGTERM / abort) and escalate to SIGKILL after the
+ * grace period. Captures child/abort up front because finishEvent() releases
+ * event.child, and unref()s the escalation timer so a promptly-exiting process
+ * cannot keep the event (or process entry) pinned.
+ */
+function terminateWithGrace(event: SubAgentEvent): void {
+	const { kind, child, abort } = event;
+	killTarget(kind, child, abort, "SIGTERM");
+	setTimeout(() => killTarget(kind, child, abort, "SIGKILL"), TERM_GRACE_MS).unref();
 }
 
 function finishEvent(
@@ -404,6 +458,9 @@ function finishEvent(
 	event.endedAt = Date.now();
 	if (event.timeout) clearTimeout(event.timeout);
 	if (!event.log.writableEnded && !event.log.destroyed) event.log.end();
+	// Release the ChildProcess reference (and its attached listeners) so a retained
+	// finished event no longer pins the process object.
+	event.child = undefined;
 
 	const waiters = event.waiters.splice(0);
 	for (const resolveWaiter of waiters) resolveWaiter();
@@ -603,9 +660,33 @@ function summarizeWorkflowEvent(
  * validates required slots per pattern and rejects malformed requests.
  */
 export function buildOrchestrationRequest(input: WorkflowInput): MultiAgentOrchestrationRequest {
+	// Inline "script" workflow: the model supplies JS ES-module source directly.
+	// Encode it as a data: URL so the orchestrator's dynamic import(scriptPath)
+	// loads it with zero disk I/O and no runtime transpiler — the runtime only
+	// consumes JavaScript, so the inline source must be plain JS.
+	if (input.pattern === "script") {
+		const { name: _name, script, args, ...rest } = input as WorkflowInput & { script?: string; args?: unknown };
+		if (typeof script !== "string" || script.trim().length === 0) {
+			throw new Error('workflow pattern "script" requires a non-empty `script` (JavaScript ES module source)');
+		}
+		const scriptPath = `data:text/javascript;base64,${Buffer.from(script, "utf8").toString("base64")}`;
+		return { ...rest, pattern: "script", scriptPath, args } as unknown as MultiAgentOrchestrationRequest;
+	}
 	// Tool-only keys that either map to a differently-named contract field
-	// (below) or are not part of the contract at all (`name`).
-	const { name: _name, threshold, candidateCount, topK, ...rest } = input;
+	// (below) or are not part of the contract at all (`name`, and the
+	// script-only `script`/`args` which never apply to a preset).
+	const {
+		name: _name,
+		script: _script,
+		args: _args,
+		threshold,
+		candidateCount,
+		topK,
+		...rest
+	} = input as WorkflowInput & {
+		script?: string;
+		args?: unknown;
+	};
 	const request = { ...rest } as Record<string, unknown>;
 	// adversarial_verify: tool `threshold` -> contract `confidenceThreshold`.
 	if (threshold !== undefined) request.confidenceThreshold = threshold;
@@ -684,14 +765,17 @@ export class SubAgentController {
 	private nextAgentNumber = 1;
 	private shuttingDown = false;
 	private events = new Map<string, SubAgentEvent>();
+	private maxRetainedFinishedEvents = MAX_RETAINED_FINISHED_EVENTS;
 	private mainToolProgress = new Map<string, MainToolProgress>();
 	private config: SubAgentConfig = {
-		defaultReturnToMain: false,
+		defaultReturnToMain: true,
 		defaultReturnDelivery: "followUp",
+		defaultWaitTimeoutSeconds: 30,
 		defaultThinking: DEFAULT_THINKING,
 	};
 	private monitor: { update: (ctx?: ExtensionContext) => void };
-	private sendMessage: SubAgentSendMessage;
+	private registerReturn: SubAgentRegisterReturn;
+	private cancelReturn: SubAgentCancelReturn;
 	private spawnAgent: SubAgentSpawn;
 	private agentCommand: string;
 	private getDefaultModel?: () => SubAgentModelSelection | undefined;
@@ -701,20 +785,27 @@ export class SubAgentController {
 	constructor(
 		manager: BackgroundEventManager,
 		options: {
-			sendMessage: SubAgentSendMessage;
+			registerReturn: SubAgentRegisterReturn;
+			cancelReturn: SubAgentCancelReturn;
 			spawnAgent?: SubAgentSpawn;
 			agentCommand?: string;
 			getDefaultModel?: () => SubAgentModelSelection | undefined;
 			getWorkflowProvider?: () => SubAgentWorkflowProvider | undefined;
 			isWorkflowEnabled?: () => boolean;
+			/** Override the finished-event retention cap (primarily for tests). */
+			maxRetainedFinishedEvents?: number;
 		},
 	) {
-		this.sendMessage = options.sendMessage;
+		this.registerReturn = options.registerReturn;
+		this.cancelReturn = options.cancelReturn;
 		this.spawnAgent = options.spawnAgent ?? spawn;
 		this.agentCommand = options.agentCommand ?? APP_BINARY_NAME;
 		this.getDefaultModel = options.getDefaultModel;
 		this.getWorkflowProvider = options.getWorkflowProvider;
 		this.isWorkflowEnabled = options.isWorkflowEnabled ?? (() => true);
+		if (options.maxRetainedFinishedEvents !== undefined && options.maxRetainedFinishedEvents >= 0) {
+			this.maxRetainedFinishedEvents = options.maxRetainedFinishedEvents;
+		}
 		this.monitor = manager.registerSource({
 			id: "agents",
 			title: "agents",
@@ -770,8 +861,8 @@ export class SubAgentController {
 			name: "sub_agent",
 			label: "Sub Agent",
 			description: workflowsEnabled
-				? `Start, inspect, wait for, or cancel headless ${APP_NAME} sub-agents. action=start accepts either one task or a tasks array for parallel work, or a workflow object to run a multi-agent orchestration preset (classify_and_act, fan_out_synthesize, adversarial_verify, generate_and_filter, tournament, loop_until_done). Set returnToMain=true to automatically send completed results back to the main agent. Sub-agents are read-only by default, inherit the parent model unless a task specifies model/provider, run with --no-session --no-extensions, and receive parent progress.`
-				: `Start, inspect, wait for, or cancel headless ${APP_NAME} sub-agents. action=start accepts either one task or a tasks array for parallel work. Set returnToMain=true to automatically send completed results back to the main agent. Sub-agents are read-only by default, inherit the parent model unless a task specifies model/provider, run with --no-session --no-extensions, and receive parent progress.`,
+				? `Start, inspect, wait for, or cancel headless ${APP_NAME} sub-agents — a built-in, one-shot delegation capability whose results return to you (use teammate_agent instead for a persistent collaborator). action=start accepts either one task or a tasks array for parallel work, or a workflow object. A workflow runs a deterministic multi-agent orchestration: six named presets (classify_and_act, fan_out_synthesize, adversarial_verify, generate_and_filter, tournament, loop_until_done) are ready-made templates for common shapes, and pattern="script" lets you author your own workflow inline (a JS ES module in the \`script\` field) using the same template contract when no preset fits. Set returnToMain=true to automatically send completed results back to the main agent. Sub-agents are read-only by default, inherit the parent model unless a task specifies model/provider, run with --no-session --no-extensions, and receive parent progress.`
+				: `Start, inspect, wait for, or cancel headless ${APP_NAME} sub-agents — a built-in, one-shot delegation capability whose results return to you. action=start accepts either one task or a tasks array for parallel work. Set returnToMain=true to automatically send completed results back to the main agent. Sub-agents are read-only by default, inherit the parent model unless a task specifies model/provider, run with --no-session --no-extensions, and receive parent progress.`,
 			promptSnippet: `Run one or more headless ${APP_NAME} sub-agents for delegated analysis`,
 			promptGuidelines: [
 				"Use sub_agent action=start with tasks:[...] when a task can be decomposed into independent research, code review, test analysis, or planning subtasks that benefit from concurrent agents.",
@@ -783,6 +874,7 @@ export class SubAgentController {
 				...(workflowsEnabled
 					? [
 							"Use action=start with a workflow object when the task needs a structured multi-agent pattern (route-and-handle, fan-out-and-synthesize, generate-and-verify, candidate tournament, or iterate-until-done) rather than independent parallel tasks. The orchestration control flow is deterministic and owned by the harness; you only supply each slot's task content. A workflow shows up as a single background event whose expansion reveals its internal workers.",
+							'Reach for a named preset first. When none of the six fit, use pattern="script" and author the workflow yourself: `script` is a JS ES module that does `export default async (args, ctx) => { ... }`. Spawn work only through the injected primitives (ctx.agent, ctx.parallelAgents, ctx.pipeline) so the runtime keeps control of routing, depth guard, tool denial, and timeouts; separate producer and grader roles, compute verdicts in code, and own termination yourself. The script must be plain JavaScript (the runtime consumes JS, not TypeScript). Pass runtime inputs via `args`.',
 						]
 					: []),
 			],
@@ -859,9 +951,8 @@ export class SubAgentController {
 		this.shuttingDown = true;
 		for (const event of this.events.values()) {
 			if (event.status !== "running") continue;
+			terminateWithGrace(event);
 			finishEvent(event, "cancelled", null, "SIGTERM", "Cancelled by session shutdown");
-			killProcessGroup(event, "SIGTERM");
-			setTimeout(() => killProcessGroup(event, "SIGKILL"), TERM_GRACE_MS);
 		}
 		this.monitor.update();
 	}
@@ -1030,7 +1121,10 @@ export class SubAgentController {
 			// If the model is shown a finished event's full result inline here, a
 			// pending returnToMain auto-delivery for it would be redundant — cancel
 			// it. Polling a still-running agent must not cancel.
-			if (includeOutput && event.status !== "running") event.autoReturnPending = false;
+			if (includeOutput && event.status !== "running" && event.autoReturnPending) {
+				event.autoReturnPending = false;
+				this.cancelReturn([event.id]);
+			}
 			return includeOutput ? summarizeSubAgentForModel(event) : summarizeEvent(event, false);
 		});
 		const content = truncateModelText(summaries.join("\n\n---\n\n"), MODEL_RESULT_TOTAL_LIMIT_BYTES).text;
@@ -1064,7 +1158,10 @@ export class SubAgentController {
 		// turn. Events still running (e.g. we hit the wait timeout) keep their
 		// pending auto-return so they are delivered when they eventually complete.
 		for (const event of knownEvents) {
-			if (event.status !== "running") event.autoReturnPending = false;
+			if (event.status !== "running" && event.autoReturnPending) {
+				event.autoReturnPending = false;
+				this.cancelReturn([event.id]);
+			}
 		}
 
 		const perEventLimit = Math.min(
@@ -1164,6 +1261,7 @@ export class SubAgentController {
 		};
 		this.events.set(id, event);
 		this.monitor.update();
+		this.pruneFinishedEvents();
 
 		log.write(`$ ${this.agentCommand} ${args.map((arg) => JSON.stringify(arg)).join(" ")}\n\n`);
 		child.stdout?.on("data", (data: Buffer) => {
@@ -1186,10 +1284,9 @@ export class SubAgentController {
 
 		if (input.timeoutSeconds && input.timeoutSeconds > 0) {
 			event.timeout = setTimeout(() => {
+				terminateWithGrace(event);
 				finishEvent(event, "timed_out", null, "SIGTERM", `Timed out after ${input.timeoutSeconds}s`);
 				this.monitor.update();
-				killProcessGroup(event, "SIGTERM");
-				setTimeout(() => killProcessGroup(event, "SIGKILL"), TERM_GRACE_MS);
 			}, input.timeoutSeconds * 1000);
 		}
 
@@ -1206,7 +1303,7 @@ export class SubAgentController {
 		const cwd = resolve(parentCwd, ".");
 		const stamp = timestampForFile();
 		const logPath = join(WORK_DIR, `${id}-${stamp}.workflow.log`);
-		const label = input.name?.trim() || input.pattern;
+		const label = input.name?.trim() || (input.pattern === "script" ? "custom workflow" : input.pattern);
 		const abort = new AbortController();
 		void mkdir(WORK_DIR, { recursive: true }).catch(() => undefined);
 		const log = createWriteStream(logPath, { flags: "a" });
@@ -1235,6 +1332,7 @@ export class SubAgentController {
 		};
 		this.events.set(id, event);
 		this.monitor.update();
+		this.pruneFinishedEvents();
 
 		const request = { ...buildOrchestrationRequest(input), cwd } as MultiAgentOrchestrationRequest;
 		log.write(`# workflow ${input.pattern}${input.name ? ` (${input.name})` : ""}\n\n`);
@@ -1278,11 +1376,27 @@ export class SubAgentController {
 	private cancelEvent(id: string, ctx?: ExtensionContext): boolean {
 		const event = this.events.get(id);
 		if (!event || event.status !== "running") return false;
+		terminateWithGrace(event);
 		finishEvent(event, "cancelled", null, "SIGTERM", "Cancelled by background events UI");
 		this.monitor.update(ctx);
-		killProcessGroup(event, "SIGTERM");
-		setTimeout(() => killProcessGroup(event, "SIGKILL"), TERM_GRACE_MS);
 		return true;
+	}
+
+	/**
+	 * Bound the events Map: keep every running event (and anything still awaited),
+	 * plus the most recent finished events up to MAX_RETAINED_FINISHED_EVENTS.
+	 * Finished events are evicted oldest-first by endedAt so a long session that
+	 * spawns many sub-agents/workflows cannot grow the Map without bound.
+	 */
+	private pruneFinishedEvents(): void {
+		const finished = [...this.events.values()].filter(
+			(event) => event.status !== "running" && event.waiters.length === 0 && !event.autoReturnPending,
+		);
+		if (finished.length <= this.maxRetainedFinishedEvents) return;
+		finished.sort((a, b) => (a.endedAt ?? a.startedAt) - (b.endedAt ?? b.startedAt));
+		for (const event of finished.slice(0, finished.length - this.maxRetainedFinishedEvents)) {
+			this.events.delete(event.id);
+		}
 	}
 
 	private returnSubAgentResultsToMain(
@@ -1312,7 +1426,11 @@ export class SubAgentController {
 			.map((event) => summarizeSubAgentForModel(event, perEventLimit))
 			.join("\n\n---\n\n");
 		const content = truncateModelText(`${boundedInstruction}\n\n${summaries}`, MODEL_RESULT_TOTAL_LIMIT_BYTES).text;
-		void this.sendMessage(
+		// Hand the fully-formed batch message to the scheduling layer keyed by the
+		// first event id. The coordinator coalesces it with other near-simultaneous
+		// returns (including bg_shell and other sub_agent batches) into one turn.
+		this.registerReturn(
+			completedEvents.map((event) => event.id),
 			{
 				customType: "sub-agent-return",
 				content,
@@ -1328,7 +1446,7 @@ export class SubAgentController {
 					eventData: completedEvents.map((event) => serializableSubAgentSnapshot(event)),
 				},
 			},
-			{ deliverAs: delivery, triggerTurn: delivery !== "nextTurn" },
+			delivery,
 		);
 	}
 

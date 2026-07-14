@@ -10,9 +10,10 @@ export {
 	createLocalBashOperations,
 } from "./bash.ts";
 export {
+	type BackgroundShellCancelReturn,
 	BackgroundShellController,
+	type BackgroundShellRegisterReturn,
 	type BackgroundShellReturnMessage,
-	type BackgroundShellSendMessage,
 	type BgShellDetails,
 	type BgShellInput,
 } from "./bg-shell.ts";
@@ -67,11 +68,12 @@ export {
 	type ShowToolOptions,
 } from "./show.ts";
 export {
+	type SubAgentCancelReturn,
 	SubAgentController,
 	type SubAgentDetails,
 	type SubAgentInput,
+	type SubAgentRegisterReturn,
 	type SubAgentReturnMessage,
-	type SubAgentSendMessage,
 	type SubAgentSpawn,
 } from "./sub-agent.ts";
 export {

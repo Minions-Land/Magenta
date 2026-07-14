@@ -29,10 +29,13 @@ Both use the same structured summary format and track file operations cumulative
 Auto-compaction triggers when:
 
 ```
-contextTokens > contextWindow - reserveTokens
+threshold = contextWindow - reserveTokens
+// When maxContextFraction is explicitly configured:
+threshold = min(threshold, floor(contextWindow * maxContextFraction))
+contextTokens > threshold
 ```
 
-By default, `reserveTokens` is 16384 tokens (configurable in `~/.magenta/agent/settings.json` or `<project-dir>/.magenta/settings.json`). This leaves room for the LLM's response.
+By default, `reserveTokens` is 16384 tokens (configurable in `~/.magenta/agent/settings.json` or `<project-dir>/.magenta/settings.json`). This leaves room for the LLM's response. `maxContextFraction` is unset by default, so existing behavior is unchanged. Setting it to a value in `(0, 1]` (for example `0.9`) compacts earlier on large context windows, but may add summarization latency/cost and discard useful detail sooner. Treat it as a workload-specific safeguard, not a cache-hit optimization, and validate long-task quality before enabling it.
 
 You can also trigger manually with `/compact [instructions]`, where optional instructions focus the summary.
 
@@ -391,6 +394,7 @@ Configure compaction in `~/.magenta/agent/settings.json` or `<project-dir>/.mage
 |---------|---------|-------------|
 | `enabled` | `true` | Enable auto-compaction |
 | `reserveTokens` | `16384` | Tokens to reserve for LLM response |
+| `maxContextFraction` | unset | Optional context-window usage cap in `(0, 1]`; `0.9` triggers after 90% |
 | `keepRecentTokens` | `20000` | Recent tokens to keep (not summarized) |
 
 Disable auto-compaction with `"enabled": false`. You can still compact manually with `/compact`.

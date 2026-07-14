@@ -47,6 +47,8 @@ describe("bg-shell-return renderer", () => {
 		expect(text).toContain("2 output lines hidden");
 		expect(text).not.toContain("Command: npm test");
 		expect(text).not.toContain("suite one passed");
+		// The model-facing instruction must not appear in the TUI.
+		expect(text).not.toContain("Tests finished.");
 	});
 
 	it("shows full metadata and output when expanded", () => {
@@ -55,5 +57,20 @@ describe("bg-shell-return renderer", () => {
 		expect(text).toContain("CWD: /tmp/project");
 		expect(text).toContain("suite one passed");
 		expect(text).not.toContain("hidden");
+		expect(text).not.toContain("Tests finished.");
+	});
+
+	it("stays compact for legacy messages without event data", () => {
+		const legacy: CustomMessage<BgShellReturnDetails> = {
+			role: "custom",
+			customType: "bg-shell-return",
+			content: "a very long legacy payload\n".repeat(20),
+			display: true,
+			timestamp: Date.now(),
+			details: { id: "bg_009", status: "exited", exitCode: 0, logPath: "/tmp/bg_009.log" },
+		};
+		const text = bgShellReturnRenderer(legacy, { expanded: false }, theme).render(100).join("\n");
+		expect(text).toContain("Background job bg_009: exited (ctrl+o to expand)");
+		expect(text).not.toContain("a very long legacy payload");
 	});
 });

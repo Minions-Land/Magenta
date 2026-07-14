@@ -119,13 +119,10 @@ describe("AssistantMessageComponent", () => {
 
 			const reference = ["", ...new Markdown(target.slice(0, displayedLength), 1, 0, getMarkdownTheme()).render(52)];
 			reference[0] = OSC133_ZONE_START + reference[0];
-			reference[reference.length - 1] =
-				OSC133_ZONE_END + OSC133_ZONE_FINAL + reference[reference.length - 1];
+			reference[reference.length - 1] = OSC133_ZONE_END + OSC133_ZONE_FINAL + reference[reference.length - 1];
 			expect(component.render(52)).toEqual(reference);
 
-			const currentBlock = (
-				component as unknown as { displayedBlocks: Array<unknown> }
-			).displayedBlocks[0];
+			const currentBlock = (component as unknown as { displayedBlocks: Array<unknown> }).displayedBlocks[0];
 			if (activeBlock) expect(currentBlock).toBe(activeBlock);
 			activeBlock = currentBlock;
 		}

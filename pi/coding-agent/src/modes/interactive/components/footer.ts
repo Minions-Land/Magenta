@@ -94,9 +94,7 @@ export class FooterComponent implements Component {
 	private autoCompactEnabled = true;
 	private session: AgentSession;
 	private footerData: ReadonlyFooterDataProvider;
-	private usageCache:
-		| { sessionId: string; leafId: string | null; totals: FooterUsageTotals }
-		| undefined;
+	private usageCache: { sessionId: string; leafId: string | null; totals: FooterUsageTotals } | undefined;
 
 	constructor(session: AgentSession, footerData: ReadonlyFooterDataProvider) {
 		this.session = session;

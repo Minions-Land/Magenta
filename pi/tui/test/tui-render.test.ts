@@ -860,6 +860,71 @@ describe("TUI static-prefix rendering", () => {
 		tui.stop();
 	});
 
+	it("rerenders only the suffix from the earliest dirty child on invalidateChild", () => {
+		const renders: number[] = [];
+		const make = (index: number, initial: string): Component & { text: string } => {
+			const component = {
+				text: initial,
+				render: () => {
+					renders[index] = (renders[index] ?? 0) + 1;
+					return [component.text];
+				},
+				invalidate: () => {},
+			};
+			return component;
+		};
+		const children = [make(0, "a"), make(1, "b"), make(2, "c"), make(3, "d"), make(4, "e")];
+		const container = new StaticPrefixContainer();
+		for (const child of children) container.addChild(child);
+
+		// First render populates the per-child line cache.
+		assert.deepStrictEqual(container.render(80), ["a", "b", "c", "d", "e"]);
+		assert.deepStrictEqual(renders, [1, 1, 1, 1, 1]);
+
+		// Toggle the last two children and mark only those dirty.
+		children[3].text = "D";
+		children[4].text = "E";
+		container.invalidateChild(children[3]);
+		container.invalidateChild(children[4]);
+
+		assert.deepStrictEqual(container.render(80), ["a", "b", "c", "D", "E"]);
+		// Untouched children 0-2 are not re-rendered; only the dirty suffix is.
+		assert.deepStrictEqual(renders, [1, 1, 1, 2, 2]);
+		assert.strictEqual(container.getLastDirtyFrom(), 3);
+	});
+
+	it("handles suffix line-count changes and coalesces multiple dirty children", () => {
+		const make = (initial: string[]): Component & { lines: string[] } => {
+			const component = { lines: initial, render: () => component.lines, invalidate: () => {} };
+			return component;
+		};
+		const children = [make(["h0"]), make(["h1"]), make(["m2"])];
+		const container = new StaticPrefixContainer();
+		for (const child of children) container.addChild(child);
+		assert.deepStrictEqual(container.render(80), ["h0", "h1", "m2"]);
+
+		// The middle child grows to two lines; the last child changes too.
+		children[1].lines = ["h1a", "h1b"];
+		children[2].lines = ["m2!"];
+		container.invalidateChild(children[2]);
+		container.invalidateChild(children[1]);
+		assert.deepStrictEqual(container.render(80), ["h0", "h1a", "h1b", "m2!"]);
+		assert.strictEqual(container.getLastDirtyFrom(), 1);
+	});
+
+	it("falls back to a full rebuild when an unknown child is invalidated", () => {
+		const make = (text: string): Component => ({ render: () => [text], invalidate: () => {} });
+		const a = make("a");
+		const container = new StaticPrefixContainer();
+		container.addChild(a);
+		assert.deepStrictEqual(container.render(80), ["a"]);
+		container.invalidateChild(make("detached"));
+		// Unknown child forces a full invalidation, bumping the prefix revision.
+		const revisionBefore = container.getPrefixRevision();
+		container.invalidateChild(make("detached-2"));
+		assert.ok(container.getPrefixRevision() > revisionBefore);
+	});
+
 	it("profiles and normalizes only the proven dirty suffix", async () => {
 		const profilePath = `/tmp/pi-tui-profile-test-${process.pid}-${Math.random().toString(36).slice(2)}.json`;
 		await withEnv({ PI_TUI_PROFILE: profilePath }, async () => {

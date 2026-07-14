@@ -134,6 +134,8 @@ export type CompactionSettings = {
 	enabled: boolean;
 	/** Tokens reserved for summary prompt and output. */
 	reserveTokens: number;
+	/** Optional upper bound on the used fraction of the model context window. */
+	maxContextFraction?: number;
 	/** Approximate recent-context tokens to keep after compaction. */
 	keepRecentTokens: number;
 };
@@ -230,7 +232,12 @@ export function estimateContextTokens(messages: AgentMessage[]): ContextUsageEst
 /** Return whether context usage exceeds the configured compaction threshold. */
 export function shouldCompact(contextTokens: number, contextWindow: number, settings: CompactionSettings): boolean {
 	if (!settings.enabled) return false;
-	return contextTokens > contextWindow - settings.reserveTokens;
+	let threshold = contextWindow - settings.reserveTokens;
+	const fraction = settings.maxContextFraction;
+	if (typeof fraction === "number" && Number.isFinite(fraction) && fraction > 0 && fraction <= 1) {
+		threshold = Math.min(threshold, Math.floor(contextWindow * fraction));
+	}
+	return contextTokens > threshold;
 }
 
 const ESTIMATED_IMAGE_CHARS = 4800;
