@@ -9,7 +9,26 @@ const packages = [
 	{ directory: "pi/ai", name: "@earendil-works/pi-ai" },
 	{ directory: "pi/tui", name: "@earendil-works/pi-tui" },
 	{ directory: "pi/agent", name: "@earendil-works/pi-agent-core" },
+	{ directory: "HarnessComponentProtocol", name: "@magenta/harness" },
 	{ directory: "pi/coding-agent", name: "@earendil-works/pi-coding-agent" },
+];
+
+const binaryResourceEntries = [
+	"sandbox",
+	"tools",
+	"policy",
+	"runtime",
+	"skills",
+	"theme",
+	"assets",
+	"export-html",
+	"docs",
+	"examples",
+	"package.json",
+	"README.md",
+	"CHANGELOG.md",
+	"magenta-release.json",
+	"photon_rs_bg.wasm",
 ];
 
 function printUsage() {
@@ -131,7 +150,7 @@ function currentBinaryPlatform() {
 	throw new Error(`Unsupported binary platform: ${process.platform} ${process.arch}`);
 }
 
-function buildBunBinaryRelease(targetDirectory, archiveDirectory, binaryName) {
+function buildBunBinaryRelease(targetDirectory, archiveDirectory, binaryName, resourceDirectory) {
 	if (!commandExists("bun")) {
 		throw new Error("Bun is required for the local binary release build.");
 	}
@@ -148,6 +167,10 @@ function buildBunBinaryRelease(targetDirectory, archiveDirectory, binaryName) {
 	]);
 	rmSync(targetDirectory, { force: true, recursive: true });
 	cpSync(join(binaryBuildDirectory, platform), targetDirectory, { recursive: true });
+	for (const entry of binaryResourceEntries) {
+		const source = join(resourceDirectory, entry);
+		if (existsSync(source)) cpSync(source, join(targetDirectory, entry), { recursive: true });
+	}
 	const archiveName = platform.startsWith("windows-") ? `${binaryName}-${platform}.zip` : `${binaryName}-${platform}.tar.gz`;
 	cpSync(join(binaryBuildDirectory, archiveName), join(archiveDirectory, archiveName));
 	return platform;
@@ -220,6 +243,7 @@ for (const pkg of packages) {
 	run("npm", ["run", "clean"], { cwd: pkg.directory });
 	run("npm", ["run", "build"], { cwd: pkg.directory });
 }
+run("npm", ["run", "copy-binary-assets"], { cwd: "pi/coding-agent" });
 
 const tarballs = new Map();
 for (const pkg of packages) {
@@ -229,7 +253,7 @@ for (const pkg of packages) {
 
 let binaryPlatform;
 if (!options.skipInstall) {
-	binaryPlatform = buildBunBinaryRelease(binaryDirectory, outDir, binaryName);
+	binaryPlatform = buildBunBinaryRelease(binaryDirectory, outDir, binaryName, resolve("pi/coding-agent/dist"));
 
 	mkdirSync(nodeInstallDirectory, { recursive: true });
 	const dependencies = Object.fromEntries(
