@@ -4,7 +4,29 @@ All notable changes to Magenta CLI are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## [Unreleased]
+## [0.0.20] - 2026-07-15
+
+### Added
+- One `ExternalActivationCoordinator` now coalesces background completions, peer and teammate mail, and stall reminders into atomic priority batches with persistence receipts, cancellation, shutdown rollback, and headless quiescence
+- Manual and automatic compaction hold external activation delivery until summarization finishes, then release one post-compaction batch without injecting background output into the compaction request
+- Managed editing teammates support session-scoped Git worktrees, immutable terminal receipts, clean-parent integration as unstaged changes, confirmed discard, preserved shutdown state, and binary/symlink/mode-aware change capture
+- Side/BTW conversations now persist per main session with a history picker, multiline and bracketed-paste editing, scoped clipboard copy, and a confirmed human-only handoff that invites a managed teammate without creating an assignment or ownership lease
+- Binary-only users can load trusted compiled HCP Tool, Capability, and Resource packages through the existing HcpClient/HcpServer/HcpMagnet assembly path
+- A machine-readable Ultra/headless eval contract validates manifests, workflow and teammate tool evidence, process/background settlement, and bounded execution for future SWE-bench drivers
+
+### Changed
+- Deterministic base system-prompt composition is owned by the HCP `system-prompt` capability while Pi retains resource discovery and extension lifecycle mutation; missing required HCP slots now fail explicitly
+- Sub-agent workflows and managed teammates use the current CLI entrypoint instead of a possibly stale `magenta` on `PATH`, and RPC state exposes effective capabilities and active tools after execution-profile changes
+- Collaboration guidance now distinguishes one-shot workers, workflows, persistent teammates, urgent peer mail, active soft leases, structured terminal receipts, and non-overlapping edit ownership
+- Todo supports multiple simultaneous `in_progress` branches with an optional focused current item, and the TUI renders parallel work without a redundant Current row
+- Background activity, collaborator telemetry, reminders, and direct `bg_shell` rendering are separated into user-visible side channels without adding telemetry to model context
+- Refreshed generated OpenRouter model pricing and context metadata
+
+### Fixed
+- Pressing Escape within three seconds of an interactive submission restores its text and attachments only for an eligible user abort, without restoring after output, timeout, retry, shutdown, or compaction
+- External activation races no longer lose or duplicate work across queued delivery, compaction, inline consumption, shutdown, nested delivery barriers, or a claimed host racing an already-starting run
+- Managed teammate startup cleans up an unspawned session, log, and provisioned worktree after a synchronous process failure; `model = "default"` now inherits the parent model when no provider is specified
+- Magenta self-update, version reporting, release discovery, and failure diagnostics use Magenta branding and release channels rather than Pi package resources
 
 ## [0.0.19] - 2026-07-14
 
