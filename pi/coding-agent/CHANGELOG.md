@@ -4,7 +4,11 @@ All notable changes to Magenta CLI are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## [Unreleased]
+## [0.0.22] - 2026-07-15
+
+### Fixed
+- Closed the `bg_shell` input schema so removed wait actions and wait-timeout settings are rejected instead of silently ignored
+- Windows PowerShell installation now captures startup stdout and stderr independently with a bounded process lifetime, allowing expected first-run bootstrap diagnostics without failing or hanging the installer
 
 ## [0.0.21] - 2026-07-15
 
