@@ -4,10 +4,13 @@ All notable changes to Magenta CLI are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## [Unreleased]
+## [0.0.21] - 2026-07-15
 
 ### Changed
 - Removed the model-facing blocking `bg_shell wait` action and its wait-timeout settings; background completions now return through the external-activation coordinator, while `status` remains an immediate snapshot and headless settlement keeps its separate bounded runtime wait
+
+### Fixed
+- Process-tools bootstrap diagnostics now use stderr so first-run standalone JSON/RPC stdout remains strict machine-readable JSONL
 
 ## [0.0.20] - 2026-07-15
 
