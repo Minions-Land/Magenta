@@ -31,6 +31,52 @@ function Test-MagentaPathEqual([string]$Left, [string]$Right) {
     }
 }
 
+function Invoke-MagentaCapture([string]$FilePath, [string]$Arguments, [int]$TimeoutMilliseconds = 60000) {
+    $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $startInfo.FileName = $FilePath
+    $startInfo.Arguments = $Arguments
+    $startInfo.WorkingDirectory = Split-Path -Parent $FilePath
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+
+    $process = New-Object System.Diagnostics.Process
+    $process.StartInfo = $startInfo
+    $started = $false
+    try {
+        $started = $process.Start()
+        if (-not $started) {
+            throw "Failed to start Magenta process: $FilePath $Arguments"
+        }
+        $standardOutputTask = $process.StandardOutput.ReadToEndAsync()
+        $standardErrorTask = $process.StandardError.ReadToEndAsync()
+        if (-not $process.WaitForExit($TimeoutMilliseconds)) {
+            try {
+                $process.Kill()
+                [void]$process.WaitForExit(5000)
+            } catch {}
+            throw "Magenta process timed out after $TimeoutMilliseconds ms: $FilePath $Arguments"
+        }
+        $process.WaitForExit()
+        return [PSCustomObject]@{
+            ExitCode = $process.ExitCode
+            StandardOutput = $standardOutputTask.GetAwaiter().GetResult()
+            StandardError = $standardErrorTask.GetAwaiter().GetResult()
+        }
+    } finally {
+        if ($started) {
+            try {
+                if (-not $process.HasExited) {
+                    $process.Kill()
+                    [void]$process.WaitForExit(5000)
+                }
+            } catch {}
+        }
+        $process.Dispose()
+    }
+}
+
 function Remove-MagentaFromUserPath([string]$Directory) {
     $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
     if ([string]::IsNullOrEmpty($userPath)) {
@@ -336,16 +382,18 @@ try {
     if (-not $releaseMarker.version) {
         throw "Magenta runtime resource marker has no version."
     }
-    $versionOutput = @(& $binaryPath --version 2>&1)
-    $binaryVersion = (($versionOutput | ForEach-Object { "$_" }) -join [Environment]::NewLine).Trim()
-    if ($LASTEXITCODE -ne 0 -or $binaryVersion -ne [string]$releaseMarker.version) {
-        throw "Magenta binary/resource version mismatch. Binary: $binaryVersion Resources: $($releaseMarker.version)"
+    $versionProbe = Invoke-MagentaCapture $binaryPath "--version"
+    $binaryVersion = $versionProbe.StandardOutput.Trim()
+    if ($versionProbe.ExitCode -ne 0 -or $binaryVersion -ne [string]$releaseMarker.version) {
+        $versionDiagnostics = ($versionProbe.StandardOutput + $versionProbe.StandardError).Trim()
+        throw "Magenta binary/resource version mismatch. Binary: $binaryVersion Resources: $($releaseMarker.version) Diagnostics: $versionDiagnostics"
     }
 
     Write-Host "Verifying Magenta startup and embedded process-tools..."
-    $helpOutput = & $binaryPath --help 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        throw "Magenta startup verification failed:`n$($helpOutput -join [Environment]::NewLine)"
+    $helpProbe = Invoke-MagentaCapture $binaryPath "--help"
+    if ($helpProbe.ExitCode -ne 0) {
+        $helpDiagnostics = ($helpProbe.StandardOutput + $helpProbe.StandardError).Trim()
+        throw "Magenta startup verification failed:`n$helpDiagnostics"
     }
 
     $processTools = Join-Path $stagingDir "_magenta\process-tools\target\release\magenta-process-tools.exe"
