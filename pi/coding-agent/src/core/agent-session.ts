@@ -1090,7 +1090,9 @@ export class AgentSession {
 	 * are already appended to session state by the shared coordinator.
 	 * The host's activation loop calls this so the wake turn runs through the same
 	 * single turn-runner as user prompts. No new message is appended — the
-	 * continuation runs on the already-present payload. No-op while streaming.
+	 * continuation runs on the already-present payload. If another run wins the
+	 * start race, wait for its real idle boundary before deciding whether it
+	 * consumed the pending payload or this host still needs to continue it.
 	 */
 	async runExternalActivation(): Promise<void> {
 		// An activation may have been handed to a claimed host immediately before
@@ -1098,7 +1100,13 @@ export class AgentSession {
 		// run its safe-boundary continuation until the barrier has released every
 		// coalesced source against the post-compaction context.
 		await this._externalActivations.waitForDeliveryReady();
-		if (this.isStreaming || !this._externalActivationPending) return;
+		while (this.isStreaming && this._externalActivationPending) {
+			await this.agent.waitForIdle();
+			// The competing run may have crossed another compaction barrier. Recheck it
+			// before retrying a payload that its agent_start did not consume.
+			await this._externalActivations.waitForDeliveryReady();
+		}
+		if (!this._externalActivationPending) return;
 		this._externalActivationPending = false;
 		try {
 			// The wake payload is already the last message in state, so a continuation
@@ -1140,6 +1148,9 @@ export class AgentSession {
 	async dispose(): Promise<void> {
 		let resourceDisposal = Promise.resolve();
 		try {
+			// A host wake that has not started must not resume after disposal waits for
+			// an active run to abort and become idle.
+			this._externalActivationPending = false;
 			this.abortRetry();
 			this.abortCompaction();
 			this.abortBranchSummary();

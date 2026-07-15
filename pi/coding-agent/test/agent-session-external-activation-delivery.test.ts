@@ -165,6 +165,37 @@ describe("AgentSession external activation delivery", () => {
 		}
 	});
 
+	it("retries a retained claimed-host activation once after the competing run becomes idle", async () => {
+		const harness = await createHarness({ initialActiveToolNames: [] });
+		harnesses.push(harness);
+		const releaseRunner = harness.session.claimExternalTurnRunner();
+		let settleIdle!: () => void;
+		const idle = new Promise<void>((resolve) => {
+			settleIdle = resolve;
+		});
+
+		try {
+			await injectBatch(harness, [backgroundEntry("idle-race", "followUp")]);
+			harness.setResponses([fauxAssistantMessage("handled once")]);
+			const waitForIdle = vi.spyOn(harness.session.agent, "waitForIdle").mockReturnValueOnce(idle);
+			vi.spyOn(harness.session, "isStreaming", "get").mockReturnValueOnce(true).mockReturnValue(false);
+			const continuation = vi.spyOn(harness.session.agent, "continue");
+
+			const running = harness.session.runExternalActivation();
+			await vi.waitFor(() => expect(waitForIdle).toHaveBeenCalledOnce());
+			expect(continuation).not.toHaveBeenCalled();
+
+			settleIdle();
+			await running;
+			expect(continuation).toHaveBeenCalledOnce();
+
+			await harness.session.runExternalActivation();
+			expect(continuation).toHaveBeenCalledOnce();
+		} finally {
+			releaseRunner();
+		}
+	});
+
 	it("submits one atomic Agent batch per lane while streaming", async () => {
 		const harness = await createHarness({ initialActiveToolNames: [] });
 		harnesses.push(harness);
