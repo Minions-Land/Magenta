@@ -495,6 +495,8 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 					model: session.model,
 					thinkingLevel: session.thinkingLevel,
 					executionProfile: session.executionProfile,
+					harnessCapabilities: session.harnessCapabilities,
+					activeToolNames: session.getActiveToolNames(),
 					isStreaming: session.isStreaming,
 					isCompacting: session.isCompacting,
 					steeringMode: session.steeringMode,

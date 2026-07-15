@@ -3,7 +3,7 @@
  *
  * Manifest-driven: reads [[components]] declarations from package.toml (the
  * authoritative source per spec §2.1), and for each component resolves
- * <package-root>/<component.path>/HcpMagnet.ts, dynamically imports it,
+ * <package-root>/<component.path>/HcpMagnet.{mjs,js,ts}, dynamically imports it,
  * validates the bare-class shape, and constructs an HcpClientcomponent entry
  * for the unified session assembly.
  *
@@ -21,9 +21,8 @@
 
 import { createHash } from "node:crypto";
 import { readFile, realpath, stat } from "node:fs/promises";
-import { createRequire } from "node:module";
 import { dirname, isAbsolute, join, posix, relative, resolve, win32 } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { pathToFileURL } from "node:url";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import * as TOML from "smol-toml";
 import type { HcpClientcomponent } from "../../.HCP/assembly/session-hcp.ts";
@@ -77,9 +76,10 @@ export type HcpClientpackagemagnetloaderresult = {
 	diagnostics: HcpClientpackagemagnetloaderdiagnostic[];
 };
 
-/** Kinds that are package-local infrastructure with no HcpMagnet.ts. */
+/** Kinds that are package-local infrastructure with no HcpMagnet role. */
 const HcpClientpackageinfrakinds = new Set(["python-runtime", "runtime-tests", "env", "env-lock"]);
-const HcpClientpackagerequire = createRequire(import.meta.url);
+const HcpClientpackagerolesuffixes = [".mjs", ".js", ".ts"] as const;
+const HcpClientpackageimportcache = new Map<string, Promise<Record<string, unknown>>>();
 const HcpClientpackageresourcekinds = new Set([
 	"append-system-prompt",
 	"brand",
@@ -450,7 +450,8 @@ function HcpClientlegacyresourcemagnetclass(
 
 /**
  * Load magnets for a package from its manifest component declarations.
- * Each non-infra component resolves <packageRoot>/<component.path>/HcpMagnet.ts.
+ * Each non-infra component resolves one unambiguous
+ * <packageRoot>/<component.path>/HcpMagnet.{mjs,js,ts} role.
  */
 export async function HcpClientloadpackagemagnets(
 	packageRoot: string,
@@ -462,8 +463,6 @@ export async function HcpClientloadpackagemagnets(
 	const infrastructure: HcpClientpackageinfrastructuredeclaration[] = [];
 	const diagnostics: HcpClientpackagemagnetloaderdiagnostic[] = [];
 	const servers = new Map<string, HcpServerclass>();
-	HcpClientclearpackagebunmodulecache(packageRoot);
-
 	for (const declaration of components) {
 		const componentPath = await HcpClientresolvepackagepath(
 			packageRoot,
@@ -474,7 +473,7 @@ export async function HcpClientloadpackagemagnets(
 		);
 		if (!componentPath) continue;
 
-		// Skip infra-only kinds (no HcpMagnet.ts; referenced by tool descriptors)
+		// Skip infra-only kinds (no HcpMagnet role; referenced by tool descriptors)
 		if (HcpClientpackageinfrakinds.has(declaration.kind)) {
 			infrastructure.push({
 				packageId,
@@ -487,27 +486,22 @@ export async function HcpClientloadpackagemagnets(
 			continue;
 		}
 
-		const magnetPath = join(componentPath, "HcpMagnet.ts");
-		try {
-			const magnetExists = await stat(magnetPath).then(
-				(s) => s.isFile(),
-				() => false,
-			);
-			if (!magnetExists) {
-				diagnostics.push({
-					type: "error",
-					code: "magnet_not_found",
-					message: `Component ${declaration.kind}:${declaration.name} declares path "${declaration.path}" but no HcpMagnet.ts found there`,
-					path: magnetPath,
-					packageId,
-				});
-				continue;
-			}
+		const magnetPath = await HcpClientresolvepackagerole({
+			packageRoot,
+			roleDirectory: componentPath,
+			roleName: "HcpMagnet",
+			packageId,
+			owner: `Component ${declaration.kind}:${declaration.name}`,
+			missingCode: "magnet_not_found",
+			diagnostics,
+		});
+		if (!magnetPath) continue;
 
-			// A content hash keeps unchanged Modules cached while allowing TUI reload
-			// to observe edits to a local package's role file in the same process.
+		try {
+			// A content-hash cache key keeps unchanged Modules cached while allowing
+			// local package role edits to reload in the same Node or Bun process.
 			const imported = await HcpClientimportpackagefile(magnetPath);
-			if (!imported.HcpMagnet) {
+			if (typeof imported.HcpMagnet !== "function") {
 				diagnostics.push({
 					type: "error",
 					code: "magnet_missing_export",
@@ -518,7 +512,7 @@ export async function HcpClientloadpackagemagnets(
 				continue;
 			}
 
-			const MagnetClass = imported.HcpMagnet as HcpMagnetclass;
+			const MagnetClass = imported.HcpMagnet as unknown as HcpMagnetclass;
 			const expectedModule = HcpClientpackagemodulefrompath(declaration.path);
 			if (!expectedModule || MagnetClass.module !== expectedModule) {
 				diagnostics.push({
@@ -668,24 +662,18 @@ async function HcpClientloadpackageserver(
 	servers: Map<string, HcpServerclass>,
 	diagnostics: HcpClientpackagemagnetloaderdiagnostic[],
 ): Promise<HcpServerclass | undefined> {
-	const serverPath = join(packageRoot, module, "HcpServer.ts");
-	const serverIdentity = await realpath(serverPath).catch(() => resolve(serverPath));
-	const cached = servers.get(serverIdentity);
+	const serverPath = await HcpClientresolvepackagerole({
+		packageRoot,
+		roleDirectory: join(packageRoot, module),
+		roleName: "HcpServer",
+		packageId,
+		owner: `Package Module ${module}`,
+		missingCode: "server_not_found",
+		diagnostics,
+	});
+	if (!serverPath) return undefined;
+	const cached = servers.get(serverPath);
 	if (cached) return cached;
-	const serverExists = await stat(serverPath).then(
-		(value) => value.isFile(),
-		() => false,
-	);
-	if (!serverExists) {
-		diagnostics.push({
-			type: "error",
-			code: "server_not_found",
-			message: `Package Module ${module} has no owning HcpServer.ts`,
-			path: serverPath,
-			packageId,
-		});
-		return undefined;
-	}
 	try {
 		const imported = await HcpClientimportpackagefile(serverPath);
 		if (typeof imported.HcpServer !== "function") {
@@ -710,7 +698,7 @@ async function HcpClientloadpackageserver(
 			});
 			return undefined;
 		}
-		servers.set(serverIdentity, HcpServer);
+		servers.set(serverPath, HcpServer);
 		return HcpServer;
 	} catch (error) {
 		diagnostics.push({
@@ -724,33 +712,91 @@ async function HcpClientloadpackageserver(
 	}
 }
 
-function HcpClientclearpackagebunmodulecache(packageRoot: string): void {
-	if (typeof (globalThis as { Bun?: unknown }).Bun === "undefined") return;
-	const resolvedPackageRoot = resolve(packageRoot);
-	for (const cacheKey of Object.keys(HcpClientpackagerequire.cache)) {
-		let modulePath: string;
-		try {
-			modulePath = cacheKey.startsWith("file:") ? fileURLToPath(cacheKey) : cacheKey;
-		} catch {
-			continue;
-		}
-		const pathFromRoot = relative(resolvedPackageRoot, resolve(modulePath));
-		if (pathFromRoot === "" || (!pathFromRoot.startsWith("..") && !isAbsolute(pathFromRoot))) {
-			delete HcpClientpackagerequire.cache[cacheKey];
-		}
+type HcpClientpackageroleresolutionoptions = {
+	packageRoot: string;
+	roleDirectory: string;
+	roleName: "HcpMagnet" | "HcpServer";
+	packageId: string;
+	owner: string;
+	missingCode: "magnet_not_found" | "server_not_found";
+	diagnostics: HcpClientpackagemagnetloaderdiagnostic[];
+};
+
+/** Discover one role without giving source or compiled output silent precedence. */
+async function HcpClientresolvepackagerole(
+	options: HcpClientpackageroleresolutionoptions,
+): Promise<string | undefined> {
+	const roleNames = HcpClientpackagerolesuffixes.map((suffix) => `${options.roleName}${suffix}`);
+	const candidates = (
+		await Promise.all(
+			roleNames.map(async (name) => {
+				const candidate = join(options.roleDirectory, name);
+				const exists = await stat(candidate).then(
+					(value) => value.isFile(),
+					() => false,
+				);
+				return exists ? candidate : undefined;
+			}),
+		)
+	).filter((candidate): candidate is string => candidate !== undefined);
+
+	if (candidates.length === 0) {
+		options.diagnostics.push({
+			type: "error",
+			code: options.missingCode,
+			message: `${options.owner} has no ${roleNames.join(", ")} role; exactly one accepted role file is required`,
+			path: options.roleDirectory,
+			packageId: options.packageId,
+		});
+		return undefined;
 	}
+	if (candidates.length > 1) {
+		options.diagnostics.push({
+			type: "error",
+			code: "package_role_ambiguous",
+			message: `${options.owner} has ambiguous ${options.roleName} roles: ${candidates
+				.map((candidate) => candidate.slice(options.roleDirectory.length + 1))
+				.join(", ")}; remove stale source or compiled outputs before loading`,
+			path: options.roleDirectory,
+			packageId: options.packageId,
+		});
+		return undefined;
+	}
+
+	const [actualPackageRoot, actualRole] = await Promise.all([
+		realpath(options.packageRoot).catch(() => resolve(options.packageRoot)),
+		realpath(candidates[0]!),
+	]);
+	if (!HcpClientiswithinpackage(actualPackageRoot, actualRole)) {
+		options.diagnostics.push({
+			type: "error",
+			code: "package_component_path_invalid",
+			message: `${options.owner} ${options.roleName} role resolves outside the package root: ${actualRole}`,
+			path: actualRole,
+			packageId: options.packageId,
+		});
+		return undefined;
+	}
+	return actualRole;
 }
 
 async function HcpClientimportpackagefile(path: string): Promise<Record<string, unknown>> {
-	if (typeof (globalThis as { Bun?: unknown }).Bun !== "undefined") {
-		return HcpClientpackagerequire(HcpClientpackagerequire.resolve(path)) as Record<string, unknown>;
-	}
 	const digest = createHash("sha256")
 		.update(await readFile(path))
 		.digest("hex");
 	const url = pathToFileURL(path);
 	url.searchParams.set("magenta-package-sha256", digest);
-	return import(url.href) as Promise<Record<string, unknown>>;
+	const cacheKey = url.href;
+	const cached = HcpClientpackageimportcache.get(cacheKey);
+	if (cached) return cached;
+	const imported = import(cacheKey) as Promise<Record<string, unknown>>;
+	HcpClientpackageimportcache.set(cacheKey, imported);
+	try {
+		return await imported;
+	} catch (error) {
+		HcpClientpackageimportcache.delete(cacheKey);
+		throw error;
+	}
 }
 
 /**

@@ -52,6 +52,43 @@ Common patterns are documented in [Containerization](containerization.md):
 
 If you bind-mount a host workspace read/write, writes from inside the container or VM can still modify host files. Use read-only mounts or copy files into and out of the sandbox when you need stronger protection from unintended writes.
 
+## Delegated Work Boundaries
+
+`sub_agent` runs sessionless, one-shot workers for bounded delegation. A workflow
+orchestrates the same kind of worker. Named workflow presets have fixed
+runtime-owned control flow; custom scripts own their if/while/await flow but can
+spawn workers only through runtime-controlled primitives. Workflow workers are
+denied `sub_agent`, `bg_shell`, `teammate_agent`, and `send_message`, preventing
+nested delegation and out-of-band peer coordination.
+
+`teammate_agent` is the parent-managed control plane for long-lived child sessions.
+With `workspace="worktree"`, Magenta requires a clean Git parent, creates a linked
+checkout under `.magenta/tmp/collaboration/<parent-session>/`, captures committed,
+unstaged, untracked, deleted, mode, symlink, and binary changes through a separate
+Git index, and applies them only through explicit `integrate`. Integration verifies
+the receipt hash and requires a clean parent; it never stashes, resets, cleans, or
+silently resolves conflicts. `discard` requires confirmation, and shutdown retains
+unintegrated worktrees and receipts.
+
+A worktree is conflict isolation, not a security sandbox. A granted `bash` or file
+tool can still use absolute paths outside it, and repository Git filters/hooks may
+execute under the existing project-trust policy. Patch receipts can contain
+sensitive source data; they are mode `0600` and are never inlined into model
+context. `send_message` remains the urgent mailbox data plane and does not create
+a teammate.
+
+Side/BTW history is stored as versioned custom session entries that are excluded
+from the main model context. Its **Enqueue as teammate** action exists only in the
+human TUI, requires confirmation, and is not exposed in the teammate tool schema
+or main system prompt. The bounded transcript is written only to the child's
+hidden context; parent status/tool details retain metadata but never the
+transcript. The first child message is an invitation to discuss and request
+formal dispatch, so it creates neither an assignment id nor an ownership lease.
+
+Ultra enables workflow and managed-teammate capabilities by default and maps to
+the selected model's highest native reasoning level. It does not dispatch work,
+start workers, or create teammates automatically.
+
 ## Reporting Security Issues
 
 Report security-sensitive issues privately through [GitHub Security Advisories](https://github.com/Minions-Land/Magenta/security/advisories/new). Do not open a public issue for a confidential vulnerability.

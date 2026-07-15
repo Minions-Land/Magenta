@@ -430,9 +430,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		},
 		onPayload: async (payload, _model) => {
 			const runner = extensionRunnerRef.current;
-			if (!runner?.hasHandlers("before_provider_request")) {
-				return payload;
-			}
+			if (!runner) return payload;
 			return runner.emitBeforeProviderRequest(payload);
 		},
 		onResponse: async (response, _model) => {

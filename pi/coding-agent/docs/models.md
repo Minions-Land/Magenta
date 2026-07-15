@@ -214,7 +214,7 @@ Current behavior:
 
 ### Thinking Level Map
 
-Use `thinkingLevelMap` on a model to describe model-specific thinking controls. Keys are the library reasoning levels: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. `ultra` is not a valid key.
+Use `thinkingLevelMap` on a model to describe model-specific native thinking controls. Keys are `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`. `ultra` is not a valid map key because it is a Magenta execution profile layered over the highest supported native level.
 
 Values are tristate:
 
@@ -271,7 +271,7 @@ Built-in GPT-5.6 entries for OpenAI, Azure OpenAI Responses, and OpenRouter map 
 }
 ```
 
-The selector therefore offers `off`, `low`, `medium`, `high`, `xhigh`, and `max`. `max` is the highest supported GPT-5.6 level; `minimal` and `ultra` are not offered. Custom `openai-completions` and `openai-responses` GPT-5.6 entries receive the same inferred map unless they define `thinkingLevelMap` explicitly.
+GPT-5.6 therefore offers native levels `off`, `low`, `medium`, `high`, `xhigh`, and `max`; `minimal` is unsupported. The selector also offers Ultra as a Magenta execution profile. For GPT-5.6, Ultra maps provider reasoning to native `max` and enables workflow and managed-teammate capabilities by default without dispatching work automatically. Providers never receive `ultra`. Custom `openai-completions` and `openai-responses` GPT-5.6 entries receive the same inferred native map unless they define `thinkingLevelMap` explicitly.
 
 ## Overriding Built-in Providers
 

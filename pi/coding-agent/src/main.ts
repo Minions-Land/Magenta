@@ -50,12 +50,11 @@ import { initTheme, stopThemeWatcher } from "./modes/interactive/theme/theme.ts"
 import { handleConfigCommand, handlePackageCommand } from "./package-manager-cli.ts";
 import {
 	backgroundUpdateNotification,
-	checkForUpdate,
 	consumePreviousWindowsUpdateError,
 	ensureCurrentReleaseResources,
-	installUpdate,
 } from "./utils/github-release-update.ts";
 import { isLocalPath, normalizePath, resolvePath } from "./utils/paths.ts";
+import { runMagentaSelfUpdate } from "./utils/unified-update-check.ts";
 import { cleanupWindowsSelfUpdateQuarantine } from "./utils/windows-self-update.ts";
 
 const EXTENSION_LOAD_FAILURE_HINT = 'Hint: Start without extensions using "pi -ne".';
@@ -554,67 +553,22 @@ export async function main(args: string[], options?: MainOptions) {
 	time("parseArgs");
 
 	if (parsed.update) {
-		// Handle --update flag
-		console.log("🔍 Checking for updates...");
-		const result = await checkForUpdate({ force: true });
-
-		if (result.error) {
-			console.error(chalk.red(`Update check failed: ${result.error}`));
-			if (result.error.includes("Rate limit")) {
-				console.log(chalk.dim("\nTip: Set MAGENTA_GITHUB_TOKEN to increase API rate limits."));
-			} else if (result.error.includes("fetch") || result.error.includes("network")) {
-				console.log(
-					chalk.dim(
-						"\nTip: Check direct connectivity to api.github.com. Payload mirrors are used only after release metadata is authenticated.",
-					),
-				);
-				console.log(chalk.dim("See: https://github.com/Minions-Land/Magenta-CLI/blob/main/docs/CHINA_NETWORK.md"));
-			}
+		console.warn(chalk.yellow("Warning: --update is deprecated; use `magenta update self`."));
+		console.log(chalk.dim("Checking for Magenta updates..."));
+		const result = await runMagentaSelfUpdate();
+		if (!result.ok) {
+			console.error(chalk.red(`Update failed: ${result.reason ?? "unknown error"}`));
 			process.exit(1);
 		}
-
-		if (!result.updateAvailable) {
-			console.log(chalk.green(`✓ Already on latest version (${result.currentVersion})`));
-			process.exit(0);
-		}
-
-		console.log(chalk.cyan(`\n📦 New version available: ${result.latestVersion}`));
-		if (result.releaseNotes) {
-			console.log(chalk.dim("\nRelease notes:"));
-			console.log(result.releaseNotes.split("\n").slice(0, 10).join("\n"));
-		}
-
-		console.log(chalk.cyan("\nDownloading and installing..."));
-		const installResult = await installUpdate();
-
-		if (!installResult.success) {
-			console.error(chalk.red(`\n✗ Update failed: ${installResult.error}`));
-			if (installResult.error?.includes("verification") || installResult.error?.includes("checksum")) {
-				console.log(
-					chalk.yellow("\nIf you are upgrading from an old version, the built-in updater may be incompatible."),
-				);
-				console.log(chalk.dim("Please reinstall using the installation script:"));
-				if (process.platform === "win32") {
-					console.log(
-						chalk.cyan("  https://github.com/Minions-Land/Magenta-CLI/blob/main/docs/USER_INSTALL.md#windows"),
-					);
-				} else {
-					console.log(
-						chalk.cyan(
-							"  https://github.com/Minions-Land/Magenta-CLI/blob/main/docs/USER_INSTALL.md#macos-and-linux",
-						),
-					);
-				}
-			}
-			process.exit(1);
-		}
-
-		if (installResult.pending) {
-			console.log(chalk.green(`\n✓ Magenta v${installResult.newVersion} is scheduled for installation`));
-			console.log(chalk.dim("The verified update will be installed after this process exits"));
+		if (result.upToDate) {
+			console.log(chalk.green("Magenta is already up to date."));
+		} else if (result.pending) {
+			console.log(chalk.green(`Magenta v${result.newVersion ?? "new"} is scheduled for installation.`));
+			console.log(chalk.dim("The verified update will be installed after this process exits."));
+		} else if (result.method === "git") {
+			console.log(chalk.green(`Updated Magenta checkout to ${result.newSha ?? "latest commit"}.`));
 		} else {
-			console.log(chalk.green(`\n✓ Updated to v${installResult.newVersion}`));
-			console.log(chalk.dim("Please restart magenta to use the new version"));
+			console.log(chalk.green(`Updated Magenta to v${result.newVersion ?? "latest"}. Restart magenta.`));
 		}
 		process.exit(0);
 	}
@@ -904,6 +858,7 @@ export async function main(args: string[], options?: MainOptions) {
 			thinkingLevel: sessionOptions.thinkingLevel,
 			executionProfile: sessionOptions.executionProfile,
 			scopedModels: sessionOptions.scopedModels,
+			harnessCapabilities: sessionOptions.harnessCapabilities,
 			tools: sessionOptions.tools,
 			excludeTools: sessionOptions.excludeTools,
 			noTools: sessionOptions.noTools,

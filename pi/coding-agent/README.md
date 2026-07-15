@@ -113,7 +113,7 @@ The shared reasoning vocabulary is:
 off, minimal, low, medium, high, xhigh, max, ultra
 ```
 
-The native levels are a vocabulary, not a claim that every model supports every value. Model metadata supplies the actual mapping. `ultra` is different: it is a Magenta execution profile that maps to the selected model's highest native level and enables Harness workflows and persistent teammates by default. Providers never receive `ultra` as a thinking value.
+The native levels are a vocabulary, not a claim that every model supports every value. Model metadata supplies the actual mapping. `ultra` is different: it is a Magenta execution profile that maps to the selected model's highest native level and enables workflow and managed-teammate capabilities by default. It does not dispatch work automatically. Providers never receive `ultra` as a thinking value.
 
 Examples:
 
@@ -134,15 +134,26 @@ cd /path/to/project
 magenta
 ```
 
-The standard coding surface includes `read`, `bash`, `edit`, `write`, `bg_shell`,
-`sub_agent`, `send_message`, `web-search`, and `web-fetch`. Standard profiles expose
-one-shot `sub_agent` tasks but not workflow templates or `teammate_agent`. Ultra enables both by default;
-`harness.workflows` and `harness.teammates` can override either behavior. Use `sub_agent` for disposable
-work and `teammate_agent` for a persistent hidden collaborator whose assignments and results travel through
-`send_message`. The two web tools are autoloaded
-through HCP. Read-only `grep`, `find`, and `ls` tools are available but disabled
-by default. Use `--tools`, `--exclude-tools`, `--no-tools`, or
-`--no-builtin-tools` to control the active set.
+The native tools active by default are `read`, `bash`, `edit`, `write`,
+`bg_shell`, `sub_agent`, `send_message`, `show`, `grep`, `find`, and `ls`.
+HCP also activates `lsp`, `todo`, `web-search`, and `web-fetch` by default.
+Standard profiles expose sessionless, one-shot `sub_agent` workers but omit
+workflow templates and `teammate_agent`. Ultra enables both capabilities by
+default without dispatching work automatically. It also makes the low-frequency,
+real-activity-based background stall reminder proactive through the shared
+external activation coordinator. `harness.workflows` and `harness.teammates` can
+override either delegation capability.
+
+A workflow orchestrates sessionless, one-shot workers. Named presets have fixed
+runtime-owned control flow, while a script author owns the flow of a custom
+workflow through runtime-controlled primitives. Use `teammate_agent` for a
+parent-managed, long-lived child when retained context or iterative assignments
+matter. Editing teammates can use `workspace="worktree"`; Magenta creates a
+parent-session-scoped checkout under `.magenta/tmp/collaboration/`, waits for a
+structured assignment receipt, and integrates or discards the captured patch
+explicitly. Parent shutdown stops child processes but preserves unintegrated
+worktrees and receipts. `send_message` remains the urgent mailbox data plane. Use `--tools`, `--exclude-tools`,
+`--no-tools`, or `--no-builtin-tools` to control the active set.
 
 Common commands:
 
@@ -156,6 +167,7 @@ Common commands:
 | `/session` | Inspect current session identity and usage |
 | `/tree`, `/fork`, `/clone` | Navigate or branch session history |
 | `/compact [prompt]` | Compact the current context |
+| `/side`, `/btw`, `/s` | Browse this main session's Side/BTW history or start a no-tools conversation |
 | `/refresh` | Refresh settings, keybindings, extensions, skills, prompts, and themes in process |
 | `/reload` | Recompile Magenta and restart the TUI with the current session |
 | `/hotkeys` | Show all active keybindings |
@@ -174,6 +186,8 @@ Common keys:
 | Ctrl+C twice | Exit |
 
 Type `@` to search project files. Prefix a shell command with `!` to run it and send its output to the model, or `!!` to run it without adding output to model context.
+
+Side/BTW conversations are persisted as non-context session entries and reopen through a history menu. Their editor supports multiline input and bracketed paste; inside the window, Ctrl+C copies the current draft or latest message and Ctrl+T requests a human-confirmed teammate handoff. A handoff creates an invitation-only managed child from a bounded transcript. The child must message the main session to discuss and request dispatch; no assignment or ownership lease exists until the main agent formally assigns one.
 
 ## Sessions
 

@@ -1,0 +1,30 @@
+name = "ultra-orchestration-smoke"
+description = "Machine-readable smoke contract for an Ultra headless run with workflow and managed-teammate orchestration enabled."
+targets_component = "multiagent"
+prompt_ref = "fixtures/ultra-orchestration-smoke.md"
+
+thinking = "ultra"
+harness_workflows = true
+harness_teammates = true
+background_policy = "wait"
+background_wait_timeout_seconds = 120
+cwd = "."
+wall_timeout_seconds = 900
+
+[expect]
+capabilities = { workflows = true, teammates = true }
+active_tools_include = ["sub_agent", "teammate_agent", "bg_shell", "send_message"]
+successful_tools_include = ["sub_agent", "teammate_agent"]
+require_workflow_sub_agent = true
+teammate_actions_include = ["start", "wait", "stop"]
+
+[[variants]]
+name = "ultra"
+components = { multiagent = true }
+
+[scoring]
+method = "headless-contract"
+signal = "successful-ultra-orchestration-run"
+
+[scoring.mechanical]
+record = ["status", "duration_ms", "turns", "total_tokens", "background_events"]

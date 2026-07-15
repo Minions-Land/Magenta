@@ -277,6 +277,32 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 
 	const settleBackgroundWork = async (): Promise<void> => {
 		const running = () => session.getBackgroundEvents().filter((event) => event.status === "running");
+		const deadline = Date.now() + Math.max(0, backgroundWaitTimeoutMs);
+		const failTimeout = (message: string): false => {
+			backgroundSettled = false;
+			status = "error";
+			exitCode = 1;
+			runError = message;
+			return false;
+		};
+		const settleExternalActivations = async (): Promise<boolean> => {
+			const quiet = await session.waitForExternalActivationQuiescence({ timeoutMs: remainingMs(deadline) });
+			if (!quiet) {
+				return failTimeout(`Timed out after ${backgroundWaitTimeoutMs}ms settling external activations`);
+			}
+			if (
+				session.isStreaming &&
+				!(await waitForAgentIdleWithDeadline(() => session.agent.waitForIdle(), deadline))
+			) {
+				return failTimeout(`Timed out after ${backgroundWaitTimeoutMs}ms waiting for a background continuation`);
+			}
+			return true;
+		};
+
+		// A completed event may still be inside the coordinator's debounce even when
+		// no source reports running work. Commit that return before deciding the
+		// one-shot run is settled.
+		if (!(await settleExternalActivations())) return;
 		if (running().length === 0) return;
 
 		if (backgroundPolicy === "cancel") {
@@ -291,28 +317,13 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 			return;
 		}
 
-		const deadline = Date.now() + Math.max(0, backgroundWaitTimeoutMs);
 		while (running().length > 0) {
 			const idle = await session.waitForBackgroundIdle({ timeoutMs: remainingMs(deadline) });
 			if (!idle) {
-				backgroundSettled = false;
-				status = "error";
-				exitCode = 1;
-				runError = `Timed out after ${backgroundWaitTimeoutMs}ms waiting for background work`;
+				failTimeout(`Timed out after ${backgroundWaitTimeoutMs}ms waiting for background work`);
 				return;
 			}
-
-			// Completion auto-return is scheduled in a microtask. Yield before checking
-			// agent idle so sub-agent/bg-shell results can trigger their continuation.
-			await new Promise<void>((resolve) => setImmediate(resolve));
-			if (!(await waitForAgentIdleWithDeadline(() => session.agent.waitForIdle(), deadline))) {
-				backgroundSettled = false;
-				status = "error";
-				exitCode = 1;
-				runError = `Timed out after ${backgroundWaitTimeoutMs}ms waiting for a background continuation`;
-				return;
-			}
-			await new Promise<void>((resolve) => setImmediate(resolve));
+			if (!(await settleExternalActivations())) return;
 		}
 	};
 

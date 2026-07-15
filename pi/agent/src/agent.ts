@@ -118,7 +118,8 @@ export interface AgentOptions {
 }
 
 class PendingMessageQueue {
-	private messages: AgentMessage[] = [];
+	/** A batch is the atomic delivery unit at an AgentLoop boundary. */
+	private batches: AgentMessage[][] = [];
 	public mode: QueueMode;
 
 	constructor(mode: QueueMode) {
@@ -126,31 +127,46 @@ class PendingMessageQueue {
 	}
 
 	enqueue(message: AgentMessage): void {
-		this.messages.push(message);
+		this.enqueueBatch([message]);
+	}
+
+	enqueueBatch(messages: readonly AgentMessage[]): void {
+		if (messages.length === 0) return;
+		this.batches.push([...messages]);
 	}
 
 	hasItems(): boolean {
-		return this.messages.length > 0;
+		return this.batches.length > 0;
 	}
 
 	drain(): AgentMessage[] {
 		if (this.mode === "all") {
-			const drained = this.messages.slice();
-			this.messages = [];
+			const drained = this.batches.flat();
+			this.batches = [];
 			return drained;
 		}
 
-		const first = this.messages[0];
-		if (!first) {
-			return [];
+		return this.batches.shift() ?? [];
+	}
+
+	remove(predicate: (message: AgentMessage) => boolean): AgentMessage[] {
+		const removed: AgentMessage[] = [];
+		const retained: AgentMessage[][] = [];
+		for (const batch of this.batches) {
+			const remaining = batch.filter((message) => {
+				if (!predicate(message)) return true;
+				removed.push(message);
+				return false;
+			});
+			if (remaining.length > 0) retained.push(remaining);
 		}
-		this.messages = this.messages.slice(1);
-		return [first];
+		this.batches = retained;
+		return removed;
 	}
 
 	clear(): AgentMessage[] {
-		const cleared = this.messages.slice();
-		this.messages = [];
+		const cleared = this.batches.flat();
+		this.batches = [];
 		return cleared;
 	}
 }
@@ -269,14 +285,29 @@ export class Agent {
 		return this.followUpQueue.mode;
 	}
 
-	/** Queue a message to be injected after the current assistant turn finishes. */
+	/** Queue one message as an atomic steering batch. */
 	steer(message: AgentMessage): void {
 		this.steeringQueue.enqueue(message);
 	}
 
-	/** Queue a message to run only after the agent would otherwise stop. */
+	/** Queue messages to enter together at the next steering boundary. */
+	steerBatch(messages: readonly AgentMessage[]): void {
+		this.steeringQueue.enqueueBatch(messages);
+	}
+
+	/** Queue one message as an atomic follow-up batch. */
 	followUp(message: AgentMessage): void {
 		this.followUpQueue.enqueue(message);
+	}
+
+	/** Queue messages to enter together when the loop would otherwise stop. */
+	followUpBatch(messages: readonly AgentMessage[]): void {
+		this.followUpQueue.enqueueBatch(messages);
+	}
+
+	/** Remove matching undrained messages while preserving each batch's remainder. */
+	removeQueuedMessages(predicate: (message: AgentMessage) => boolean): AgentMessage[] {
+		return [...this.steeringQueue.remove(predicate), ...this.followUpQueue.remove(predicate)];
 	}
 
 	/** Remove all queued steering messages. */

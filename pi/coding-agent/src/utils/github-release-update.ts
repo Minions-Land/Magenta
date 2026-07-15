@@ -494,7 +494,9 @@ export async function backgroundUpdateNotification(): Promise<void> {
 	try {
 		const result = await checkForUpdate();
 		if (result.updateAvailable && result.latestVersion && !result.error) {
-			console.log(`\n💡 New version v${result.latestVersion} available. Run 'magenta --update' to upgrade.\n`);
+			console.log(
+				`\n💡 New Magenta version v${result.latestVersion} available. Run 'magenta update self' to upgrade.\n`,
+			);
 		}
 	} catch {
 		return;

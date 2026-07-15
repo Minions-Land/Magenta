@@ -9,7 +9,7 @@ import { ENV_AGENT_DIR } from "../src/config.ts";
 import { DefaultResourceLoader } from "../src/core/resource-loader.ts";
 import { createAgentSession } from "../src/core/sdk.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
-import { SettingsManager } from "../src/core/settings-manager.ts";
+import { InMemorySettingsStorage, SettingsManager } from "../src/core/settings-manager.ts";
 
 /**
  * Magenta feature: peer messaging wired into AgentSession. Verifies the tool
@@ -49,12 +49,17 @@ describe("AgentSession peer messaging", () => {
 		return session;
 	}
 
+	async function flushExternalActivations(session: Awaited<ReturnType<typeof makeSession>>): Promise<void> {
+		await (session as any)._externalActivations.flushReady();
+	}
+
 	it("exposes send_message as a base tool with peer-messaging guidelines", async () => {
 		const session = await makeSession();
 		try {
 			const tool = session.getAllTools().find((t) => t.name === "send_message");
 			expect(tool).toBeDefined();
-			expect(tool?.description).toContain("another agent session");
+			expect(tool?.description).toContain("any known peer agent session");
+			expect(tool?.description).toContain("does not create, register, or manage a teammate");
 			expect(tool?.promptGuidelines?.some((g) => g.includes("send_message"))).toBe(true);
 		} finally {
 			await session.dispose();
@@ -73,8 +78,8 @@ describe("AgentSession peer messaging", () => {
 		try {
 			const tool = ultra.getAllTools().find((candidate) => candidate.name === "teammate_agent");
 			expect(tool).toBeDefined();
-			expect(tool?.description).toContain("persistent hidden");
-			expect(tool?.description).toContain("Unlike sub_agent");
+			expect(tool?.description).toContain("parent-managed, long-lived hidden");
+			expect(tool?.description).toContain("current parent runtime");
 			expect(tool?.promptGuidelines?.some((guideline) => guideline.includes("send_message"))).toBe(true);
 			expect(ultra.executionProfile).toBe("ultra");
 			expect(ultra.thinkingLevel).not.toBe("ultra");
@@ -143,7 +148,9 @@ describe("AgentSession peer messaging", () => {
 	});
 
 	it("lets explicit Harness overrides enable capabilities outside Ultra", async () => {
-		const settingsManager = SettingsManager.create(tempDir, agentDir);
+		const settingsStorage = new InMemorySettingsStorage();
+		settingsStorage.withLock("global", () => JSON.stringify({ harness: { workflows: false, teammates: false } }));
+		const settingsManager = SettingsManager.fromStorage(settingsStorage);
 		const sessionManager = SessionManager.inMemory();
 		const resourceLoader = new DefaultResourceLoader({ cwd: tempDir, agentDir, settingsManager });
 		await resourceLoader.reload();
@@ -158,6 +165,7 @@ describe("AgentSession peer messaging", () => {
 			resourceLoader,
 		});
 		try {
+			expect(session.harnessCapabilities).toEqual({ workflows: true, teammates: true });
 			expect(session.getAllTools().some((tool) => tool.name === "teammate_agent")).toBe(true);
 			const subAgent = session.getAllTools().find((tool) => tool.name === "sub_agent");
 			expect((subAgent?.parameters as any).properties.workflow).toBeDefined();
@@ -167,7 +175,9 @@ describe("AgentSession peer messaging", () => {
 	});
 
 	it("lets explicit Harness overrides disable Ultra capabilities", async () => {
-		const settingsManager = SettingsManager.create(tempDir, agentDir);
+		const settingsStorage = new InMemorySettingsStorage();
+		settingsStorage.withLock("global", () => JSON.stringify({ harness: { workflows: true, teammates: true } }));
+		const settingsManager = SettingsManager.fromStorage(settingsStorage);
 		const sessionManager = SessionManager.inMemory();
 		const resourceLoader = new DefaultResourceLoader({ cwd: tempDir, agentDir, settingsManager });
 		await resourceLoader.reload();
@@ -183,6 +193,7 @@ describe("AgentSession peer messaging", () => {
 		});
 		try {
 			expect(session.executionProfile).toBe("ultra");
+			expect(session.harnessCapabilities).toEqual({ workflows: false, teammates: false });
 			expect(session.getAllTools().some((tool) => tool.name === "teammate_agent")).toBe(false);
 			const subAgent = session.getAllTools().find((tool) => tool.name === "sub_agent");
 			expect((subAgent?.parameters as any).properties.workflow).toBeUndefined();
@@ -267,10 +278,10 @@ describe("AgentSession peer messaging", () => {
 		const session = await makeSession();
 		try {
 			const release = session.claimExternalTurnRunner();
-			const activations: Array<{ type: string; source?: string }> = [];
+			const activations: Array<{ type: string; sources: string[] }> = [];
 			const unsub = session.subscribe((event) => {
 				if (event.type === "external_activation") {
-					activations.push({ type: event.type, source: event.source });
+					activations.push({ type: event.type, sources: event.sources });
 				}
 			});
 
@@ -287,9 +298,10 @@ describe("AgentSession peer messaging", () => {
 
 			// Invoke the wake path the signal handler would call.
 			(session as any)._wakeForPeerMessages();
+			await flushExternalActivations(session);
 
 			expect(activations).toHaveLength(1);
-			expect(activations[0]).toEqual({ type: "external_activation", source: "peer_wake" });
+			expect(activations[0]).toEqual({ type: "external_activation", sources: ["peer"] });
 
 			// The payload must be appended to session state so a subsequent turn can
 			// consume it without a fresh prompt.
@@ -309,9 +321,9 @@ describe("AgentSession peer messaging", () => {
 		const session = await makeSession();
 		try {
 			const release = session.claimExternalTurnRunner();
-			const activations: string[] = [];
+			const activations: string[][] = [];
 			const unsub = session.subscribe((event) => {
-				if (event.type === "external_activation") activations.push(event.source);
+				if (event.type === "external_activation") activations.push(event.sources);
 			});
 			const peerStore = new MessageStore(join(agentDir, "messages.db"));
 			try {
@@ -322,8 +334,9 @@ describe("AgentSession peer messaging", () => {
 			} finally {
 				peerStore.close();
 			}
+			await flushExternalActivations(session);
 
-			expect(activations).toEqual(["peer_wake"]);
+			expect(activations).toEqual([["peer"]]);
 			const peerPayloads = session.messages.filter(
 				(message) => message.role === "custom" && message.customType === "magenta-peer-message",
 			);
@@ -341,9 +354,10 @@ describe("AgentSession peer messaging", () => {
 		}
 	});
 
-	it("routes urgent peer messages as steer and normal messages as follow-up", async () => {
+	it("routes urgent and normal groups as atomic steer and follow-up batches", async () => {
 		const session = await makeSession();
 		try {
+			vi.spyOn(session, "isStreaming", "get").mockReturnValue(true);
 			const peerStore = new MessageStore(join(agentDir, "messages.db"));
 			try {
 				peerStore.send("urgent-peer", session.sessionId, "interrupt soon", "urgent");
@@ -352,21 +366,25 @@ describe("AgentSession peer messaging", () => {
 				peerStore.close();
 			}
 
-			const sendSpy = vi.spyOn(session, "sendCustomMessage").mockResolvedValue(undefined);
-			await (session as any)._injectPeerMessages();
+			const steerSpy = vi.spyOn(session.agent, "steerBatch");
+			const followUpSpy = vi.spyOn(session.agent, "followUpBatch");
+			(session as any)._submitPeerMessages();
+			await flushExternalActivations(session);
 
-			expect(sendSpy).toHaveBeenCalledTimes(2);
-			expect(sendSpy.mock.calls[0]?.[1]).toEqual({ deliverAs: "steer" });
-			expect(sendSpy.mock.calls[1]?.[1]).toEqual({ deliverAs: "followUp" });
+			expect(steerSpy).toHaveBeenCalledTimes(1);
+			expect(followUpSpy).toHaveBeenCalledTimes(1);
+			expect((steerSpy.mock.calls[0]?.[0]?.[0] as any).content).toContain("interrupt soon");
+			expect((followUpSpy.mock.calls[0]?.[0]?.[0] as any).content).toContain("after the loop");
 			expect((session as any)._peerMessages.drainForInjection()).toHaveLength(0);
 		} finally {
 			await session.dispose();
 		}
 	});
 
-	it("requeues only the priority group whose injection fails", async () => {
+	it("requeues only the delivery lane whose batch enqueue fails", async () => {
 		const session = await makeSession();
 		try {
+			vi.spyOn(session, "isStreaming", "get").mockReturnValue(true);
 			const peerStore = new MessageStore(join(agentDir, "messages.db"));
 			try {
 				peerStore.send("urgent-peer", session.sessionId, "retry urgent", "urgent");
@@ -375,13 +393,14 @@ describe("AgentSession peer messaging", () => {
 				peerStore.close();
 			}
 
-			const sendSpy = vi
-				.spyOn(session, "sendCustomMessage")
-				.mockRejectedValueOnce(new Error("steer failed"))
-				.mockResolvedValueOnce(undefined);
-			await (session as any)._injectPeerMessages();
+			vi.spyOn(session.agent, "steerBatch").mockImplementationOnce(() => {
+				throw new Error("steer failed");
+			});
+			const followUpSpy = vi.spyOn(session.agent, "followUpBatch");
+			(session as any)._submitPeerMessages();
+			await flushExternalActivations(session);
 
-			expect(sendSpy).toHaveBeenCalledTimes(2);
+			expect(followUpSpy).toHaveBeenCalledTimes(1);
 			const retried = (session as any)._peerMessages.drainForInjection();
 			expect(retried.map((message: { content: string }) => message.content)).toEqual(["retry urgent"]);
 		} finally {
@@ -400,7 +419,8 @@ describe("AgentSession peer messaging", () => {
 				peerStore.close();
 			}
 
-			await (session as any)._injectPeerMessages();
+			(session as any)._submitPeerMessages();
+			await flushExternalActivations(session);
 			expect((session as any)._peerMessages.drainForInjection()).toHaveLength(0);
 
 			session.clearQueue();
@@ -432,11 +452,8 @@ describe("AgentSession peer messaging", () => {
 			// No claimExternalTurnRunner(): the wake self-runs a turn. We only assert
 			// that it does NOT route through the host event; the self-run itself needs
 			// a model and is covered by integration paths.
-			try {
-				(session as any)._wakeForPeerMessages();
-			} catch {
-				// self-run may throw without a real model; irrelevant to this assertion.
-			}
+			(session as any)._wakeForPeerMessages();
+			await flushExternalActivations(session);
 
 			expect(activations).toHaveLength(0);
 
@@ -446,11 +463,11 @@ describe("AgentSession peer messaging", () => {
 		}
 	});
 
-	it("keeps urgent and normal on separate tracks for a headless idle wake", async () => {
+	it("keeps urgent activation and normal follow-up in separate headless batches", async () => {
 		const session = await makeSession();
 		try {
-			const followUpSpy = vi.spyOn(session.agent, "followUp");
-			const triggerSpy = vi.spyOn(session, "sendCustomMessage").mockResolvedValue(undefined);
+			const followUpSpy = vi.spyOn(session.agent, "followUpBatch");
+			const triggerSpy = vi.spyOn(session as any, "_runAgentPrompt").mockResolvedValue(undefined);
 			const peerStore = new MessageStore(join(agentDir, "messages.db"));
 			try {
 				peerStore.send("urgent-peer", session.sessionId, "headless urgent", "urgent");
@@ -460,9 +477,9 @@ describe("AgentSession peer messaging", () => {
 			}
 
 			(session as any)._wakeForPeerMessages();
-			await vi.waitFor(() => expect(triggerSpy).toHaveBeenCalledTimes(1));
+			await flushExternalActivations(session);
 
-			const normalPayload = followUpSpy.mock.calls[0]?.[0] as { content: string };
+			const normalPayload = followUpSpy.mock.calls[0]?.[0]?.[0] as { content: string };
 			expect(normalPayload.content).toContain("headless normal");
 			expect(normalPayload.content).not.toContain("headless urgent");
 			const triggerPayload = triggerSpy.mock.calls[0]?.[0] as { content: string };
@@ -482,7 +499,7 @@ describe("AgentSession peer messaging", () => {
 		const session = await makeSession();
 		try {
 			const release = session.claimExternalTurnRunner();
-			const followUpSpy = vi.spyOn(session.agent, "followUp");
+			const followUpSpy = vi.spyOn(session.agent, "followUpBatch");
 			const peerStore = new MessageStore(join(agentDir, "messages.db"));
 			try {
 				peerStore.send("urgent-peer", session.sessionId, "interrupt now", "urgent");
@@ -492,10 +509,11 @@ describe("AgentSession peer messaging", () => {
 			}
 
 			(session as any)._wakeForPeerMessages();
+			await flushExternalActivations(session);
 
-			// Normal message went to the follow-up queue, not the trigger payload.
+			// Normal message went to one follow-up batch, not the trigger payload.
 			expect(followUpSpy).toHaveBeenCalledTimes(1);
-			const followUpArg = followUpSpy.mock.calls[0]?.[0] as { content: string };
+			const followUpArg = followUpSpy.mock.calls[0]?.[0]?.[0] as { content: string };
 			expect(followUpArg.content).toContain("whenever you finish");
 			expect(followUpArg.content).not.toContain("interrupt now");
 			const normalIds = (followUpArg as { details?: { ids?: string[] } }).details?.ids ?? [];

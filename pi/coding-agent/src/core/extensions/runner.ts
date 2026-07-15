@@ -584,6 +584,19 @@ export class ExtensionRunner {
 		return false;
 	}
 
+	/** Get the event types with handlers registered by the loaded extensions. */
+	getRegisteredEventTypes(): string[] {
+		const eventTypes = new Set<string>();
+		for (const ext of this.extensions) {
+			for (const [eventType, handlers] of ext.handlers) {
+				if (handlers.length > 0) {
+					eventTypes.add(eventType);
+				}
+			}
+		}
+		return [...eventTypes].sort();
+	}
+
 	getMessageRenderer(customType: string): MessageRenderer | undefined {
 		for (const ext of this.extensions) {
 			const renderer = ext.messageRenderers.get(customType);

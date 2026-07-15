@@ -10,6 +10,7 @@
  */
 
 import { bashRenderer } from "./bash.ts";
+import { bgShellRenderer } from "./bg-shell-renderer.ts";
 import { editRenderer } from "./edit.ts";
 import { findRenderer } from "./find.ts";
 import { grepRenderer } from "./grep.ts";
@@ -33,6 +34,7 @@ export function registerBuiltinRenderers(): void {
 
 	registerRenderer("file-content", readRenderer);
 	registerRenderer("shell-output", bashRenderer);
+	registerRenderer("bg-shell", bgShellRenderer);
 	registerRenderer("text-edit", editRenderer);
 	registerRenderer("file-write", writeRenderer);
 	registerRenderer("pattern-search", grepRenderer);

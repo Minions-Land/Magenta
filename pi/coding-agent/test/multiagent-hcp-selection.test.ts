@@ -6,6 +6,8 @@ import { HcpClient, type OrchestrationResult } from "@magenta/harness";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { MultiAgentProvider } from "../../../HarnessComponentProtocol/multiagent/HcpServer.ts";
 import * as multiagentServer from "../../../HarnessComponentProtocol/multiagent/HcpServer.ts";
+import type { SystemPromptProvider } from "../../../HarnessComponentProtocol/system-prompt/HcpServer.ts";
+import * as systemPromptServer from "../../../HarnessComponentProtocol/system-prompt/HcpServer.ts";
 import { createAgentSession } from "../src/core/sdk.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
@@ -16,6 +18,19 @@ function workflowResult(): OrchestrationResult {
 		pattern: "fan_out_synthesize",
 		workers: [],
 		terminatedBy: "completed",
+	};
+}
+
+function systemPromptSource(provider: SystemPromptProvider) {
+	return {
+		kind: "native",
+		source: "test-system-prompt",
+		toCapability: () => ({
+			kind: "system-prompt",
+			name: "system-prompt",
+			source: "test-system-prompt",
+			instance: provider,
+		}),
 	};
 }
 
@@ -65,6 +80,15 @@ describe("AgentSession multiagent HCP selection", () => {
 		};
 
 		const hcp = new HcpClient();
+		const systemPromptProvider: SystemPromptProvider = {
+			buildSystemPrompt: () => "test system prompt",
+			formatSkillsForSystemPrompt: () => "",
+			loadDescriptor: async () => ({ diagnostics: [] }),
+		};
+		hcp.registerModule(
+			new systemPromptServer.HcpServer(),
+			new Map([["system-prompt", systemPromptSource(systemPromptProvider)]]),
+		);
 		hcp.registerModule(
 			new multiagentServer.HcpServer(),
 			new Map([["multiagent", multiAgentSource(defaultProvider, "default")]]),

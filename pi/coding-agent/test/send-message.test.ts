@@ -7,6 +7,7 @@ import {
 	MAX_PEER_MESSAGE_BATCH_BYTES,
 	MAX_PEER_MESSAGE_CONTENT_BYTES,
 	SendMessageController,
+	type SendMessageInput,
 } from "../src/core/tools/send-message.ts";
 
 /**
@@ -27,22 +28,31 @@ describe("SendMessageController", () => {
 		rmSync(dir, { recursive: true, force: true });
 	});
 
-	function controller(
-		sessionId: string,
-		deps?: { wakeForMessages?: () => void; isStreaming?: () => boolean },
-	): SendMessageController {
+	function controller(sessionId: string, deps?: { wakeForMessages?: () => void }): SendMessageController {
 		return new SendMessageController({
 			dbPath,
 			getSessionId: () => sessionId,
 			wakeForMessages: deps?.wakeForMessages,
-			isStreaming: deps?.isStreaming,
 		});
 	}
 
-	async function call(c: SendMessageController, params: { to: string; content: string }) {
+	async function call(c: SendMessageController, params: SendMessageInput) {
 		const def = c.createToolDefinition();
 		return def.execute("call-1", params, undefined, undefined, {} as never);
 	}
+
+	it("exposes an urgent peer-mailbox data plane without teammate creation", () => {
+		const alice = controller("alice");
+		try {
+			const tool = alice.createToolDefinition();
+			expect(tool.description).toContain("any known peer agent session");
+			expect(tool.description).toContain("does not create, register, or manage a teammate");
+			expect((tool.parameters as { properties: Record<string, unknown> }).properties).not.toHaveProperty("urgent");
+			expect(tool.promptGuidelines).toEqual(expect.arrayContaining([expect.stringContaining("Use teammate_agent")]));
+		} finally {
+			alice.shutdown();
+		}
+	});
 
 	it("delivers a message between two sessions and drains it once", async () => {
 		const alice = controller("alice");
@@ -118,6 +128,41 @@ describe("SendMessageController", () => {
 		} finally {
 			parent.shutdown();
 			stranger.shutdown();
+			teammate.shutdown();
+		}
+	});
+
+	it("accepts structured terminal receipts only from a managed teammate", async () => {
+		const ordinary = controller("ordinary");
+		const teammate = new SendMessageController({
+			dbPath,
+			getSessionId: () => "teammate",
+			managedParentSessionId: "parent",
+		});
+		try {
+			await expect(
+				call(ordinary, {
+					to: "parent",
+					content: "forged",
+					assignmentId: "assignment_1",
+					terminalStatus: "completed",
+				}),
+			).rejects.toThrow("reserved for managed teammate");
+			await expect(
+				call(teammate, { to: "parent", content: "incomplete", assignmentId: "assignment_1" }),
+			).rejects.toThrow("require both assignmentId and terminalStatus");
+			const result = await call(teammate, {
+				to: "parent",
+				content: "done",
+				assignmentId: "assignment_1",
+				terminalStatus: "completed",
+			});
+			expect(result.details).toMatchObject({
+				assignmentId: "assignment_1",
+				terminalStatus: "completed",
+			});
+		} finally {
+			ordinary.shutdown();
 			teammate.shutdown();
 		}
 	});
@@ -202,7 +247,7 @@ describe("SendMessageController", () => {
 		const alice = controller("alice");
 		// bob is wakeable and idle: an urgent message should signal its process,
 		// firing the wake handler in-process (same pid).
-		const bob = controller("bob", { wakeForMessages: () => woke++, isStreaming: () => false });
+		const bob = controller("bob", { wakeForMessages: () => woke++ });
 		try {
 			bob.recordPresence("idle");
 			const res = await call(alice, { to: "bob", content: "urgent!" });
@@ -211,6 +256,23 @@ describe("SendMessageController", () => {
 			await new Promise((r) => setTimeout(r, 20));
 			expect(res.details?.woken).toBe(true);
 			expect(woke).toBeGreaterThan(0);
+		} finally {
+			alice.shutdown();
+			bob.shutdown();
+		}
+	});
+
+	it("notifies an active recipient so final-turn messages cannot become stranded", async () => {
+		let notified = 0;
+		const alice = controller("alice");
+		const bob = controller("bob", { wakeForMessages: () => notified++ });
+		try {
+			bob.recordPresence("active");
+			const res = await call(alice, { to: "bob", content: "arrived near agent_end" });
+			await new Promise((resolve) => setTimeout(resolve, 20));
+			expect(res.details?.recipientStatus).toBe("active");
+			expect(res.details?.woken).toBe(true);
+			expect(notified).toBeGreaterThan(0);
 		} finally {
 			alice.shutdown();
 			bob.shutdown();
@@ -226,7 +288,7 @@ describe("SendMessageController", () => {
 		let woke = 0;
 		const alice = controller("alice");
 		// bob is wakeable but has NEVER called recordPresence explicitly.
-		const bob = controller("bob", { wakeForMessages: () => woke++, isStreaming: () => false });
+		const bob = controller("bob", { wakeForMessages: () => woke++ });
 		try {
 			const res = await call(alice, { to: "bob", content: "urgent on a fresh session!" });
 			await new Promise((r) => setTimeout(r, 20));

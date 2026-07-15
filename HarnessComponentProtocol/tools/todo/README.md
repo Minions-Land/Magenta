@@ -44,6 +44,8 @@ type TodoPlanState = TodoPlanSnapshot & {
 
 The persisted representation is normalized rather than recursively nested. `parentId` defines hierarchy and `order` defines sibling order. IDs remain stable when nodes move and are not reused after reset. `history` stores completed snapshots from oldest to newest. Each archived snapshot is non-empty and every archived node is `completed`.
 
+A node's `status` is the authoritative progress signal, and multiple nodes may be `in_progress` at the same time, including nodes on different branches. `currentId` is only an optional focus hint for clients; it does not identify the only active node and is not a scheduler or execution-order mechanism.
+
 The host accepts valid version-1 snapshots and migrates them to version 2 with an empty history. Migration preserves the version-1 plan as the active plan; it never infers that an old plan should already be archived.
 
 ## Atomic plan creation

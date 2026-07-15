@@ -2,6 +2,18 @@ import { describe, expect, test } from "vitest";
 import { buildSystemPrompt } from "../src/core/system-prompt.ts";
 
 describe("buildSystemPrompt", () => {
+	test("uses the caller-provided fixed date", () => {
+		const prompt = buildSystemPrompt({
+			selectedTools: [],
+			contextFiles: [],
+			skills: [],
+			cwd: "/repo",
+			currentDate: "2026-07-15",
+		});
+
+		expect(prompt).toContain("Current date: 2026-07-15");
+	});
+
 	describe("empty tools", () => {
 		test("shows (none) for empty tools list", () => {
 			const prompt = buildSystemPrompt({
@@ -83,6 +95,43 @@ describe("buildSystemPrompt", () => {
 			});
 
 			expect(prompt).not.toContain("dynamic_tool");
+		});
+	});
+
+	describe("custom and operational fragments", () => {
+		test("custom prompt replaces default identity, tools, and docs but keeps active background operations", () => {
+			const prompt = buildSystemPrompt({
+				customPrompt: "CUSTOM",
+				appendSystemPrompt: "APPEND",
+				selectedTools: ["sub_agent"],
+				bundledPromptFeatures: { backgroundWork: true },
+				contextFiles: [],
+				skills: [],
+				cwd: "/repo",
+				currentDate: "2026-07-15",
+			});
+
+			expect(prompt).not.toContain("You are Magenta");
+			expect(prompt).not.toContain("Available tools:");
+			expect(prompt).not.toContain("Magenta documentation");
+			expect(prompt).toContain("Use sub_agent for independent parallel analysis");
+			expect(prompt.indexOf("CUSTOM")).toBeLessThan(prompt.indexOf("APPEND"));
+			expect(prompt.indexOf("APPEND")).toBeLessThan(prompt.indexOf("# Background Work"));
+		});
+
+		test("does not mention background tools that are unavailable", () => {
+			const prompt = buildSystemPrompt({
+				selectedTools: [],
+				bundledPromptFeatures: { backgroundWork: true },
+				contextFiles: [],
+				skills: [],
+				cwd: "/repo",
+				currentDate: "2026-07-15",
+			});
+
+			expect(prompt).not.toContain("# Background Work");
+			expect(prompt).not.toContain("bg_shell");
+			expect(prompt).not.toContain("sub_agent");
 		});
 	});
 

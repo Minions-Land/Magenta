@@ -14,7 +14,8 @@ describe("BackgroundEventManager headless APIs", () => {
 				canCancel: true,
 			},
 		];
-		manager.registerSource({ id: "agents", title: "agents", getEvents: () => events });
+		const getUiTelemetry = vi.fn(() => ({ input: 123, cost: 1.25 }));
+		manager.registerSource({ id: "agents", title: "agents", getEvents: () => events, getUiTelemetry });
 
 		const snapshots = manager.getEvents();
 		expect(snapshots).toEqual([
@@ -26,6 +27,10 @@ describe("BackgroundEventManager headless APIs", () => {
 			}),
 		]);
 		expect(snapshots[0]?.progress).not.toBe(events[0]?.progress);
+		expect(snapshots[0]).not.toHaveProperty("uiTelemetry");
+		expect(snapshots[0]).not.toHaveProperty("input");
+		expect(snapshots[0]).not.toHaveProperty("cost");
+		expect(getUiTelemetry).not.toHaveBeenCalled();
 	});
 
 	it("waits for running work to settle", async () => {
@@ -50,6 +55,42 @@ describe("BackgroundEventManager headless APIs", () => {
 		const disposedWait = manager.waitForIdle();
 		manager.dispose();
 		await expect(disposedWait).resolves.toBe(false);
+	});
+
+	it("publishes telemetry snapshots and supports safe subscription/source removal", () => {
+		const manager = new BackgroundEventManager();
+		const listener = vi.fn();
+		const unsubscribe = manager.subscribeChanges(listener);
+		const event: MonitoredEvent = {
+			id: "bg_telemetry",
+			status: "running",
+			startedAt: 10,
+			label: "build",
+			expectedSeconds: 60,
+			lastActivityAt: 20,
+			lastOutputAt: 20,
+			lastProgressAt: 19,
+			activityPhase: "compiling",
+			reminderEligible: true,
+		};
+		const source = manager.registerSource({ id: "shell", title: "shell", getEvents: () => [event] });
+		source.update();
+		expect(manager.getEvents()[0]).toMatchObject({
+			expectedSeconds: 60,
+			lastActivityAt: 20,
+			lastOutputAt: 20,
+			lastProgressAt: 19,
+			activityPhase: "compiling",
+			reminderEligible: true,
+		});
+		expect(listener).toHaveBeenCalled();
+
+		source.dispose();
+		expect(manager.getEvents()).toEqual([]);
+		const calls = listener.mock.calls.length;
+		unsubscribe();
+		manager.update();
+		expect(listener).toHaveBeenCalledTimes(calls);
 	});
 
 	it("delegates cancellation to the owning source", () => {

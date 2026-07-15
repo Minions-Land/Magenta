@@ -25,6 +25,7 @@ import {
 	truncateTail,
 } from "../background-shell-utils.ts";
 import type { ExtensionContext, ToolDefinition } from "../extensions/types.ts";
+import type { ExternalActivationReceipt } from "../external-activation-coordinator.ts";
 
 const LOG_DIR = join(getAgentDir(), "tmp", "background-shell");
 const TERM_GRACE_MS = 3000;
@@ -68,6 +69,10 @@ type BackgroundShellEvent = {
 	progress?: ShellProgress;
 	/** Optional expected runtime in seconds, enabling time-based progress fallback. */
 	expectedSeconds?: number;
+	lastActivityAt: number;
+	lastOutputAt?: number;
+	lastProgressAt?: number;
+	activityPhase: string;
 	timeout?: NodeJS.Timeout;
 	waiters: Array<() => void>;
 	/** True while an automatic return-to-main is pending; cleared when the model
@@ -87,13 +92,14 @@ export type BackgroundShellReturnMessage<T = unknown> = {
 
 /**
  * Register a completed event's fully-formed return message with the scheduling
- * layer (BackgroundReturnCoordinator). The coordinator decides WHEN it is
- * injected (coalesced with other completions), never reformatting it.
+ * external-activation coordinator. It decides when the typed payload is
+ * committed and reports persistence or rollback through one receipt.
  */
 export type BackgroundShellRegisterReturn = (
 	eventIds: string[],
 	message: { customType: string; content: string; display: boolean; details: unknown },
 	delivery: ReturnDelivery,
+	receipt: ExternalActivationReceipt,
 ) => void;
 
 /** Drop a still-pending return from the coordinator (terminal wait/status consumption). */
@@ -202,19 +208,34 @@ function formatConfig(config: BackgroundShellConfig): string {
 
 function appendTail(event: BackgroundShellEvent, data: Buffer): void {
 	const text = data.toString("utf8");
-	// Explicit `@@progress` markers are authoritative and must not leak into the
-	// visible tail, so strip them before buffering the output.
+	const now = Date.now();
+	// A marker-only chunk is progress activity, not user-visible output. Strip
+	// markers before deciding whether the output timestamp should advance.
 	const marker = detectProgressMarker(text);
 	const visible = marker !== undefined ? stripProgressMarkers(text) : text;
+	if (visible.trim().length > 0) {
+		event.lastOutputAt = now;
+		event.lastActivityAt = now;
+	}
 	event.tail = appendTailText(event.tail, Buffer.from(visible, "utf8"));
 
 	if (marker !== undefined) {
+		const previous = event.progress?.value;
 		event.progress = mergeProgress(event.progress, { value: marker, source: "marker" });
+		if (event.progress.value !== previous) {
+			event.lastProgressAt = now;
+			event.lastActivityAt = now;
+		}
 		return;
 	}
 	const detected = detectProgressFromChunk(text);
 	if (detected !== undefined) {
+		const previous = event.progress?.value;
 		event.progress = mergeProgress(event.progress, { value: detected, source: "output" });
+		if (event.progress.value !== previous) {
+			event.lastProgressAt = now;
+			event.lastActivityAt = now;
+		}
 	}
 }
 
@@ -386,7 +407,8 @@ export type BackgroundShellEventSnapshot = Pick<
 	| "tail"
 	| "progress"
 	| "expectedSeconds"
->;
+> &
+	Partial<Pick<BackgroundShellEvent, "lastActivityAt" | "lastOutputAt" | "lastProgressAt" | "activityPhase">>;
 
 export function serializableEventSnapshot(event: BackgroundShellEvent): BackgroundShellEventSnapshot {
 	return {
@@ -404,6 +426,10 @@ export function serializableEventSnapshot(event: BackgroundShellEvent): Backgrou
 		tail: event.tail,
 		progress: event.progress,
 		expectedSeconds: event.expectedSeconds,
+		lastActivityAt: event.lastActivityAt,
+		lastOutputAt: event.lastOutputAt,
+		lastProgressAt: event.lastProgressAt,
+		activityPhase: event.activityPhase,
 	};
 }
 
@@ -483,6 +509,12 @@ export class BackgroundShellController {
 					logPath: event.logPath,
 					tail: event.tail,
 					progress: effectiveProgress(event),
+					expectedSeconds: event.expectedSeconds,
+					lastActivityAt: event.lastActivityAt,
+					lastOutputAt: event.lastOutputAt,
+					lastProgressAt: event.lastProgressAt,
+					activityPhase: event.activityPhase,
+					reminderEligible: event.status === "running",
 					canCancel: event.status === "running",
 				})),
 			getEventDetails: (id) => {
@@ -526,6 +558,7 @@ export class BackgroundShellController {
 		ctx?: ExtensionContext,
 	): AdoptedExecutionHandle {
 		const id = `bg_${String(this.nextEventNumber++).padStart(3, "0")}`;
+		const now = Date.now();
 		const event: BackgroundShellEvent = {
 			id,
 			command: options.command,
@@ -539,6 +572,9 @@ export class BackgroundShellController {
 			signal: null,
 			tail: options.tail ?? "",
 			expectedSeconds: options.expectedSeconds,
+			lastActivityAt: now,
+			lastOutputAt: options.tail?.trim() ? now : undefined,
+			activityPhase: "running",
 			waiters: [],
 		};
 		this.events.set(id, event);
@@ -573,13 +609,14 @@ export class BackgroundShellController {
 		return {
 			name: "bg_shell",
 			label: "Background Shell",
+			renderKind: "bg-shell",
 			description:
 				"Manage non-interactive shell commands as background events. Use action=start for long-running commands; set returnToMain=true to automatically send the completed result back to the main agent. Use action=status to inspect events, action=wait to wait, action=cancel to terminate a running event, and action=config to inspect or update session defaults.",
 			promptSnippet: "Start, inspect, wait for, or cancel long-running shell commands as background events",
 			promptGuidelines: [
 				"Use bg_shell action=start for long-running commands such as builds, tests, dev servers, migrations, downloads, or commands expected to take more than about 10 seconds.",
 				"Use the regular bash tool for short one-off shell commands.",
-				"After bg_shell action=start, either call bg_shell action=status/action=wait before relying on the command result, or set returnToMain=true so the result is automatically returned as a follow-up to the main agent.",
+				"After bg_shell action=start, continue only non-overlapping independent work. Do not rerun the same command or duplicate its purpose; use action=wait only at an explicit dependency barrier, otherwise rely on returnToMain=true for automatic completion delivery.",
 				"Do not use bg_shell action=start for commands that require interactive stdin.",
 				"Progress bars are shown automatically when a command prints percentages or `[n/total]` counters. For exact progress from your own scripts, print lines like `@@progress 0.42` (these are hidden from the output tail). For opaque long tasks, pass expectedSeconds to show a time-based estimate.",
 			],
@@ -664,6 +701,16 @@ export class BackgroundShellController {
 				},
 			},
 			delivery,
+			{
+				onPersisted: () => {
+					event.autoReturnPending = false;
+					this.pruneFinishedEvents();
+				},
+				onDropped: () => {
+					event.autoReturnPending = false;
+					this.pruneFinishedEvents();
+				},
+			},
 		);
 	}
 
@@ -678,7 +725,6 @@ export class BackgroundShellController {
 				// clears the flag before we read it (avoids a duplicate delivery race).
 				await Promise.resolve();
 				if (!event.autoReturnPending) return;
-				event.autoReturnPending = false;
 				this.returnShellResultToMain(event, delivery, instruction);
 			})
 			.catch(() => undefined);
@@ -701,7 +747,7 @@ export class BackgroundShellController {
 			const content = truncateModelText(formatConfig(this.shellConfig), MODEL_RESULT_LIMIT_BYTES).text;
 			return {
 				content: [{ type: "text" as const, text: content }],
-				details: { ...this.shellConfig },
+				details: { action, ...this.shellConfig },
 			};
 		}
 
@@ -733,7 +779,11 @@ export class BackgroundShellController {
 		returnInstruction: string | undefined,
 	) {
 		if (!params.command) throw new Error("bg_shell action=start requires command");
-		if (signal?.aborted) return { content: [{ type: "text" as const, text: "Cancelled before start" }], details: {} };
+		if (signal?.aborted)
+			return {
+				content: [{ type: "text" as const, text: "Cancelled before start" }],
+				details: { action: "start", status: "cancelled" },
+			};
 
 		await mkdir(LOG_DIR, { recursive: true });
 
@@ -749,6 +799,7 @@ export class BackgroundShellController {
 			env: process.env,
 		});
 
+		const startedAt = Date.now();
 		const event: BackgroundShellEvent = {
 			id,
 			command: params.command,
@@ -757,12 +808,14 @@ export class BackgroundShellController {
 			logPath,
 			child,
 			log,
-			startedAt: Date.now(),
+			startedAt,
 			status: "running",
 			exitCode: null,
 			signal: null,
 			tail: "",
 			expectedSeconds: positiveNumber(params.expectedSeconds),
+			lastActivityAt: startedAt,
+			activityPhase: "running",
 			waiters: [],
 		};
 		this.events.set(id, event);
@@ -772,10 +825,12 @@ export class BackgroundShellController {
 		child.stdout?.on("data", (data: Buffer) => {
 			if (!log.writableEnded && !log.destroyed) log.write(data);
 			appendTail(event, data);
+			this.monitor.update(ctx);
 		});
 		child.stderr?.on("data", (data: Buffer) => {
 			if (!log.writableEnded && !log.destroyed) log.write(data);
 			appendTail(event, data);
+			this.monitor.update(ctx);
 		});
 		child.on("error", (error) => {
 			finishEvent(event, "failed", null, null, error.message);
@@ -822,6 +877,7 @@ export class BackgroundShellController {
 				},
 			],
 			details: {
+				action: "start",
 				id,
 				command: params.command,
 				cwd,
@@ -829,6 +885,7 @@ export class BackgroundShellController {
 				status: "running",
 				returnsToMain: returnToMain,
 				timeoutSeconds,
+				eventData: serializableEventSnapshot(event),
 			},
 		};
 	}
@@ -845,7 +902,11 @@ export class BackgroundShellController {
 			).text;
 			return {
 				content: [{ type: "text" as const, text: content }],
-				details: { events: lines.length },
+				details: {
+					action: "status",
+					events: lines.length,
+					eventsData: [...this.events.values()].map(serializableEventSnapshot),
+				},
 			};
 		}
 
@@ -854,9 +915,17 @@ export class BackgroundShellController {
 			throw new Error(
 				truncateModelText(`Unknown background event: ${params.eventId}`, MODEL_RESULT_LIMIT_BYTES).text,
 			);
+		this.finalizeWaitConsumption(event);
 		return {
 			content: [{ type: "text" as const, text: summarizeEventForModel(event) }],
-			details: { id: event.id, status: event.status, exitCode: event.exitCode, logPath: event.logPath },
+			details: {
+				action: "status",
+				id: event.id,
+				status: event.status,
+				exitCode: event.exitCode,
+				logPath: event.logPath,
+				eventData: serializableEventSnapshot(event),
+			},
 		};
 	}
 
@@ -883,7 +952,12 @@ export class BackgroundShellController {
 						text: content,
 					},
 				],
-				details: { id: event.id, status: event.status },
+				details: {
+					action: "wait",
+					id: event.id,
+					status: event.status,
+					eventData: serializableEventSnapshot(event),
+				},
 			};
 		}
 		if (result === "timeout") {
@@ -898,14 +972,27 @@ export class BackgroundShellController {
 						text: content,
 					},
 				],
-				details: { id: event.id, status: event.status, logPath: event.logPath },
+				details: {
+					action: "wait",
+					id: event.id,
+					status: event.status,
+					logPath: event.logPath,
+					eventData: serializableEventSnapshot(event),
+				},
 			};
 		}
 
 		this.finalizeWaitConsumption(event);
 		return {
 			content: [{ type: "text" as const, text: summarizeEventForModel(event) }],
-			details: { id: event.id, status: event.status, exitCode: event.exitCode, logPath: event.logPath },
+			details: {
+				action: "wait",
+				id: event.id,
+				status: event.status,
+				exitCode: event.exitCode,
+				logPath: event.logPath,
+				eventData: serializableEventSnapshot(event),
+			},
 		};
 	}
 
@@ -932,7 +1019,12 @@ export class BackgroundShellController {
 			).text;
 			return {
 				content: [{ type: "text" as const, text: content }],
-				details: { id: event.id, status: event.status },
+				details: {
+					action: "cancel",
+					id: event.id,
+					status: event.status,
+					eventData: serializableEventSnapshot(event),
+				},
 			};
 		}
 
@@ -943,7 +1035,13 @@ export class BackgroundShellController {
 		).text;
 		return {
 			content: [{ type: "text" as const, text: content }],
-			details: { id: event.id, status: event.status, logPath: event.logPath },
+			details: {
+				action: "cancel",
+				id: event.id,
+				status: event.status,
+				logPath: event.logPath,
+				eventData: serializableEventSnapshot(event),
+			},
 		};
 	}
 }

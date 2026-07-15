@@ -2,38 +2,6 @@ import { HCP_MAGNETS, HCP_SERVERS, type HcpClient } from "@magenta/harness";
 import type { ExecutionProfile, HarnessCapabilities } from "./execution-profile.ts";
 import type { ToolInfo } from "./extensions/index.ts";
 
-export const HARNESS_HOOK_EVENTS = [
-	"resources_discover",
-	"session_start",
-	"session_before_switch",
-	"session_before_fork",
-	"session_before_compact",
-	"session_compact",
-	"session_shutdown",
-	"session_before_tree",
-	"session_tree",
-	"context",
-	"before_provider_request",
-	"after_provider_response",
-	"before_agent_start",
-	"agent_start",
-	"agent_end",
-	"turn_start",
-	"turn_end",
-	"message_start",
-	"message_update",
-	"message_end",
-	"tool_execution_start",
-	"tool_execution_update",
-	"tool_execution_end",
-	"model_select",
-	"thinking_level_select",
-	"tool_call",
-	"tool_result",
-	"user_bash",
-	"input",
-] as const;
-
 export type HarnessSourceView = {
 	source: string;
 	status: "active" | "selected" | "available";
@@ -76,7 +44,7 @@ export interface HarnessRuntimeSnapshot {
 	harnessPackages: string[];
 	packageToolCount: number;
 	packageDiagnosticCount: number;
-	activeHookEvents: string[];
+	activeExtensionEvents: string[];
 	components: HarnessComponentsView;
 }
 
@@ -170,7 +138,8 @@ export function formatHarnessRuntimeSummary(snapshot: HarnessRuntimeSnapshot): s
 	const activeTools = snapshot.tools.filter((tool) => tool.active).map((tool) => tool.name);
 	const memoryAvailable = hasHarnessComponent(snapshot.components, "memory");
 	const activeComponents = snapshot.components.components.filter((component) => component.status === "active").length;
-	const hookStatus = snapshot.activeHookEvents.length > 0 ? snapshot.activeHookEvents.join(", ") : "none";
+	const extensionEventStatus =
+		snapshot.activeExtensionEvents.length > 0 ? snapshot.activeExtensionEvents.join(", ") : "none";
 	const packageStatus =
 		snapshot.harnessPackages.length > 0
 			? `${snapshot.harnessPackages.join(", ")}; tools:${snapshot.packageToolCount}; diagnostics:${snapshot.packageDiagnosticCount}`
@@ -187,7 +156,7 @@ export function formatHarnessRuntimeSummary(snapshot: HarnessRuntimeSnapshot): s
 			activeTools.length > 0 ? ` (${activeTools.join(", ")})` : ""
 		}`,
 		`Packages: ${packageStatus}`,
-		`Hooks: ${snapshot.loadedExtensions} extensions loaded; active events: ${hookStatus}`,
+		`Extension events: ${snapshot.loadedExtensions} extensions loaded; registered events: ${extensionEventStatus}`,
 		`Memory: ${memoryAvailable ? "available" : "not declared"}`,
 		`Components: ${activeComponents}/${snapshot.components.components.length} active`,
 	].join("\n");

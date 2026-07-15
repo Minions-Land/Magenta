@@ -1,5 +1,12 @@
 import { type Component, type Focusable, matchesKey } from "@earendil-works/pi-tui";
-import type { EventEntry, EventFilter, NotifyLevel, TuiLike } from "../../../core/background-events.ts";
+import {
+	backgroundEventStallKinds,
+	type EventEntry,
+	type EventFilter,
+	type EventUiTelemetry,
+	type NotifyLevel,
+	type TuiLike,
+} from "../../../core/background-events.ts";
 import { formatDuration, renderProgressBar } from "../../../core/background-shell-utils.ts";
 import type { Theme } from "../theme/theme.ts";
 import { FLOATING_WINDOW_BODY_LINES, renderFloatingWindow } from "./floating-window.ts";
@@ -20,6 +27,58 @@ function lastNonEmptyLines(text: string | undefined, maxLines: number): string[]
 		.split(/\r?\n/)
 		.filter((line) => line.trim().length > 0);
 	return lines.slice(-maxLines);
+}
+
+function formatTokens(count: number): string {
+	if (count < 1000) return count.toString();
+	if (count < 10_000) return `${(count / 1000).toFixed(1)}k`;
+	if (count < 1_000_000) return `${Math.round(count / 1000)}k`;
+	if (count < 10_000_000) return `${(count / 1_000_000).toFixed(1)}M`;
+	return `${Math.round(count / 1_000_000)}M`;
+}
+
+function knownNonNegative(value: number | undefined): value is number {
+	return value !== undefined && Number.isFinite(value) && value >= 0;
+}
+
+export function formatEventUiTelemetry(telemetry: EventUiTelemetry | undefined): string {
+	if (!telemetry) return "";
+	const parts: string[] = [];
+	if (knownNonNegative(telemetry.input) && telemetry.input > 0) parts.push(`↑${formatTokens(telemetry.input)}`);
+	if (knownNonNegative(telemetry.output) && telemetry.output > 0) parts.push(`↓${formatTokens(telemetry.output)}`);
+	if (knownNonNegative(telemetry.cacheRead) && telemetry.cacheRead > 0) {
+		parts.push(`R${formatTokens(telemetry.cacheRead)}`);
+	}
+	if (knownNonNegative(telemetry.cacheWrite) && telemetry.cacheWrite > 0) {
+		parts.push(`W${formatTokens(telemetry.cacheWrite)}`);
+	}
+	if (
+		knownNonNegative(telemetry.input) &&
+		knownNonNegative(telemetry.cacheRead) &&
+		knownNonNegative(telemetry.cacheWrite)
+	) {
+		const promptTokens = telemetry.input + telemetry.cacheRead + telemetry.cacheWrite;
+		if ((telemetry.cacheRead > 0 || telemetry.cacheWrite > 0) && promptTokens > 0) {
+			parts.push(`CH${((telemetry.cacheRead / promptTokens) * 100).toFixed(1)}%`);
+		}
+	}
+	if (telemetry.costUnknown) parts.push("cost?");
+	else if (knownNonNegative(telemetry.cost) && telemetry.cost > 0) parts.push(`$${telemetry.cost.toFixed(3)}`);
+
+	const contextUsage = telemetry.contextUsage;
+	if (contextUsage && knownNonNegative(contextUsage.contextWindow)) {
+		const percent =
+			contextUsage.percent === null || !knownNonNegative(contextUsage.percent)
+				? "?"
+				: `${contextUsage.percent.toFixed(1)}%`;
+		parts.push(
+			`${percent}/${formatTokens(contextUsage.contextWindow)}${telemetry.autoCompactEnabled ? " (auto)" : ""}`,
+		);
+	}
+	if (knownNonNegative(telemetry.assistantMessages)) {
+		parts.push(`${telemetry.assistantMessages} msg${telemetry.assistantMessages === 1 ? "" : "s"}`);
+	}
+	return parts.join(" ");
 }
 
 type ThemeColor = Parameters<Theme["fg"]>[0];
@@ -211,7 +270,9 @@ export class EventsOverlay implements Component, Focusable {
 		const elapsedUntil = event.endedAt ?? Date.now();
 		const elapsed = formatDuration(elapsedUntil - event.startedAt).padStart(6);
 		const marker = selected ? this.theme.fg("accent", "›") : " ";
-		const state = this.theme.fg(statusColor(event.status), event.status.padEnd(9));
+		const stallKinds = backgroundEventStallKinds(event);
+		const statusLabel = stallKinds.length > 0 ? stallKinds.join("/") : event.status;
+		const state = this.theme.fg(stallKinds.length > 0 ? "warning" : statusColor(event.status), statusLabel.padEnd(9));
 		const cancelHint = event.canCancel ? this.theme.fg("dim", " x") : "";
 		const title = `${marker} ${state} ${source.id.padEnd(6)} ${event.id.padEnd(9)} ${this.theme.fg("dim", elapsed)} ${compactText(event.label, Math.max(24, width - 38))}${cancelHint}`;
 		const lines = [title];
@@ -223,7 +284,11 @@ export class EventsOverlay implements Component, Focusable {
 			lines.push(this.theme.fg("accent", `  ${renderProgressBar(event.progress)}`));
 		}
 
+		const telemetry = formatEventUiTelemetry(source.getUiTelemetry?.(event.id, () => this.tui.requestRender()));
+		if (telemetry) lines.push(this.theme.fg("dim", `  ${telemetry}`));
+
 		if (expanded) {
+			if (event.activityPhase) lines.push(this.theme.fg("dim", `  phase: ${event.activityPhase}`));
 			for (const detail of source.getEventDetails?.(event.id) ?? this.defaultEventDetails(entry)) {
 				lines.push(this.theme.fg("dim", `  ${detail}`));
 			}

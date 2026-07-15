@@ -40,6 +40,7 @@ function parseValue(raw) {
 	const v = raw.trim();
 	if (v === "true") return true;
 	if (v === "false") return false;
+	if (/^[+-]?(?:\d+\.?\d*|\.\d+)$/.test(v)) return Number(v);
 	if (v.startsWith("{")) {
 		// inline table: key = val, key = val
 		const out = {};
@@ -133,36 +134,133 @@ export async function loadScenario(nameOrPath) {
 	return scenario;
 }
 
-// Build the argv (minus prompt) for one variant.
-export function variantArgv(variant, { model } = {}) {
+const BACKGROUND_POLICIES = new Set(["cancel", "wait", "error"]);
+const THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]);
+
+function finiteNonNegative(value, label, fallback) {
+	const resolved = value ?? fallback;
+	if (typeof resolved !== "number" || !Number.isFinite(resolved) || resolved < 0) {
+		throw new Error(`${label} must be a non-negative number`);
+	}
+	return resolved;
+}
+
+function resolveCwd(value) {
+	if (value === undefined) return repoRoot;
+	if (typeof value !== "string" || value.length === 0) throw new Error("cwd must be a non-empty path");
+	return isAbsolute(value) ? value : resolve(repoRoot, value);
+}
+
+function mergeExpectations(base = {}, override = {}) {
+	const merged = {
+		capabilities: { ...(base.capabilities ?? {}), ...(override.capabilities ?? {}) },
+		activeTools: override.active_tools ?? base.active_tools,
+		activeToolsInclude: override.active_tools_include ?? base.active_tools_include ?? [],
+		activeToolsExclude: override.active_tools_exclude ?? base.active_tools_exclude ?? [],
+		successfulToolsInclude: override.successful_tools_include ?? base.successful_tools_include ?? [],
+		requireWorkflowSubAgent: override.require_workflow_sub_agent ?? base.require_workflow_sub_agent ?? false,
+		teammateActionsInclude: override.teammate_actions_include ?? base.teammate_actions_include ?? [],
+	};
+	for (const [name, value] of Object.entries(merged.capabilities)) {
+		if (typeof value !== "boolean") throw new Error(`expected capability '${name}' must be boolean`);
+	}
+	if (typeof merged.requireWorkflowSubAgent !== "boolean") {
+		throw new Error("expect.require_workflow_sub_agent must be boolean");
+	}
+	for (const [label, value] of [
+		["active_tools", merged.activeTools],
+		["active_tools_include", merged.activeToolsInclude],
+		["active_tools_exclude", merged.activeToolsExclude],
+		["successful_tools_include", merged.successfulToolsInclude],
+		["teammate_actions_include", merged.teammateActionsInclude],
+	]) {
+		if (value !== undefined && (!Array.isArray(value) || value.some((item) => typeof item !== "string"))) {
+			throw new Error(`expect.${label} must be an array of tool names`);
+		}
+	}
+	return merged;
+}
+
+// Build the argv (minus prompt) for one variant. Every element is passed to
+// spawn() directly; no quoting or shell command construction is involved.
+export function variantArgv(variant, { model, defaults = {} } = {}) {
 	const argv = ["--print", "--mode", "json", "--no-session"];
 	if (model) argv.push("--model", model);
 	const warnings = [];
 	const components = variant.components ?? {};
 	for (const [name, on] of Object.entries(components)) {
-		if (on) continue; // on = default, no flag
+		if (on) continue;
 		if (OFF_FLAG[name]) argv.push(...OFF_FLAG[name]);
 		else if (NO_CLI_OFF_SWITCH.has(name)) {
 			warnings.push(
 				`component '${name}' has no CLI off-switch; manual setup required` +
-					(variant.manual_note ? ` — ${variant.manual_note}` : " (scenario provided no manual_note)"),
+					(variant.manual_note ? ` - ${variant.manual_note}` : " (scenario provided no manual_note)"),
 			);
 		} else {
 			warnings.push(`unknown component '${name}': cannot map to a CLI flag`);
 		}
 	}
-	return { argv, warnings };
+
+	const thinking = variant.thinking ?? defaults.thinking;
+	if (thinking !== undefined) {
+		if (!THINKING_LEVELS.has(thinking)) throw new Error(`invalid thinking level '${thinking}'`);
+		argv.push("--thinking", thinking);
+	}
+
+	const workflows = variant.harness_workflows ?? defaults.harness_workflows;
+	if (workflows !== undefined) {
+		if (typeof workflows !== "boolean") throw new Error("harness_workflows must be boolean");
+		argv.push(workflows ? "--harness-workflows" : "--no-harness-workflows");
+	}
+	const teammates = variant.harness_teammates ?? defaults.harness_teammates;
+	if (teammates !== undefined) {
+		if (typeof teammates !== "boolean") throw new Error("harness_teammates must be boolean");
+		argv.push(teammates ? "--harness-teammates" : "--no-harness-teammates");
+	}
+
+	const backgroundPolicy = variant.background_policy ?? defaults.background_policy ?? "error";
+	if (!BACKGROUND_POLICIES.has(backgroundPolicy)) throw new Error(`invalid background policy '${backgroundPolicy}'`);
+	const backgroundWaitTimeoutSeconds = finiteNonNegative(
+		variant.background_wait_timeout_seconds,
+		"background_wait_timeout_seconds",
+		defaults.background_wait_timeout_seconds ?? 60,
+	);
+	argv.push("--background-policy", backgroundPolicy, "--background-wait-timeout", String(backgroundWaitTimeoutSeconds));
+
+	return {
+		argv,
+		warnings,
+		configuration: { thinking, workflows, teammates, backgroundPolicy, backgroundWaitTimeoutSeconds },
+	};
 }
 
 export async function buildPlan(scenario, { model } = {}) {
-	const promptRef = scenario.prompt_ref
-		? resolve(harnessRoot, "eval", scenario.prompt_ref)
-		: null;
-	const variants = (scenario.variant ?? scenario.variants ?? []).map((v) => {
-		const { argv, warnings } = variantArgv(v, { model });
-		return { name: v.name, argv, warnings, components: v.components ?? {} };
+	if (typeof scenario.name !== "string" || !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(scenario.name)) {
+		throw new Error("scenario name must be filesystem-safe");
+	}
+	const promptRef = scenario.prompt_ref ? resolve(harnessRoot, "eval", scenario.prompt_ref) : null;
+	const scenarioExpect = scenario.expect ?? {};
+	const sourceVariants = scenario.variant ?? scenario.variants ?? [];
+	if (!Array.isArray(sourceVariants) || sourceVariants.length === 0) throw new Error("scenario must define at least one variant");
+	const variants = sourceVariants.map((v) => {
+		if (typeof v.name !== "string" || !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(v.name)) {
+			throw new Error("variant name must be filesystem-safe");
+		}
+		const { argv, warnings, configuration } = variantArgv(v, { model, defaults: scenario });
+		return {
+			name: v.name,
+			argv,
+			warnings,
+			components: v.components ?? {},
+			configuration,
+			cwd: resolveCwd(v.cwd ?? scenario.cwd),
+			wallTimeoutMs:
+				finiteNonNegative(v.wall_timeout_seconds, "wall_timeout_seconds", scenario.wall_timeout_seconds ?? 900) * 1000,
+			expect: mergeExpectations(scenarioExpect, v.expect),
+		};
 	});
 	return {
+		schemaVersion: 1,
 		name: scenario.name,
 		description: scenario.description,
 		targetsComponent: scenario.targets_component,

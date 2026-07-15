@@ -1,54 +1,18 @@
-import { Markdown, type MarkdownTheme } from "@earendil-works/pi-tui";
 import chalk from "chalk";
 import { selectConfig } from "./cli/config-selector.ts";
 import { createProjectTrustContext } from "./cli/project-trust.ts";
-import {
-	APP_BINARY_NAME,
-	APP_NAME,
-	CONFIG_DIR_NAME,
-	detectInstallMethod,
-	getAgentDir,
-	getPackageDir,
-	getSelfUpdateCommand,
-	getSelfUpdateUnavailableInstruction,
-	PACKAGE_NAME,
-	type SelfUpdateCommand,
-	type SelfUpdatePackageTarget,
-	VERSION,
-} from "./config.ts";
+import { APP_BINARY_NAME, APP_NAME, CONFIG_DIR_NAME, getAgentDir } from "./config.ts";
 import type { ExtensionFactory } from "./core/extensions/types.ts";
 import { DefaultPackageManager } from "./core/package-manager.ts";
 import { type AppMode, resolveProjectTrusted } from "./core/project-trust.ts";
 import { DefaultResourceLoader } from "./core/resource-loader.ts";
 import { SettingsManager } from "./core/settings-manager.ts";
 import { hasTrustRequiringProjectResources, ProjectTrustStore } from "./core/trust-manager.ts";
-import { spawnProcess } from "./utils/child-process.ts";
-import { getLatestPiRelease, isNewerPackageVersion } from "./utils/version-check.ts";
-import {
-	cleanupWindowsSelfUpdateQuarantine,
-	quarantineWindowsNativeDependencies,
-} from "./utils/windows-self-update.ts";
+import { runMagentaSelfUpdate } from "./utils/unified-update-check.ts";
 
 export type PackageCommand = "install" | "remove" | "update" | "list";
 
 type UpdateTarget = { type: "all" } | { type: "self" } | { type: "extensions"; source?: string };
-
-const SELF_UPDATE_NOTE_MARKDOWN_THEME: MarkdownTheme = {
-	heading: (text) => chalk.bold(chalk.yellow(text)),
-	link: (text) => chalk.cyan(text),
-	linkUrl: (text) => chalk.dim(text),
-	code: (text) => chalk.yellow(text),
-	codeBlock: (text) => chalk.dim(text),
-	codeBlockBorder: (text) => chalk.dim(text),
-	quote: (text) => chalk.dim(text),
-	quoteBorder: (text) => chalk.dim(text),
-	hr: (text) => chalk.dim(text),
-	listBullet: (text) => chalk.yellow(text),
-	bold: (text) => chalk.bold(text),
-	italic: (text) => chalk.italic(text),
-	strikethrough: (text) => chalk.strikethrough(text),
-	underline: (text) => chalk.underline(text),
-};
 
 interface PackageCommandOptions {
 	command: PackageCommand;
@@ -309,7 +273,6 @@ function parsePackageCommand(args: string[]): PackageCommandOptions | undefined 
 			const normalizedSource = source.toLowerCase();
 			const sourceIsSelf =
 				normalizedSource === "self" ||
-				normalizedSource === "pi" ||
 				normalizedSource === APP_BINARY_NAME.toLowerCase() ||
 				normalizedSource === APP_NAME.toLowerCase();
 			if (sourceIsSelf) {
@@ -360,111 +323,8 @@ function updateTargetIncludesExtensions(target: UpdateTarget): boolean {
 	return target.type === "all" || target.type === "extensions";
 }
 
-function printSelfUpdateUnavailable(
-	npmCommand?: string[],
-	updatePackageTarget: SelfUpdatePackageTarget = PACKAGE_NAME,
-): void {
-	console.error(`error: ${APP_NAME} cannot self-update this installation.`);
-	console.error(getSelfUpdateUnavailableInstruction(PACKAGE_NAME, npmCommand, updatePackageTarget));
-
-	const entrypoint = process.argv[1];
-	if (entrypoint) {
-		console.error("");
-		console.error(`Location of ${APP_NAME} executable: ${entrypoint}`);
-	}
-}
-
-function printSelfUpdateFallback(command: SelfUpdateCommand): void {
-	console.error(chalk.dim(`If this keeps failing, run this command yourself: ${command.display}`));
-}
-
-function printSelfUpdateNote(note: string): void {
-	const trimmedNote = note.trim();
-	if (!trimmedNote) {
-		return;
-	}
-
-	console.log();
-	console.log(chalk.bold(chalk.yellow("Update note")));
-	try {
-		const width = Math.max(20, process.stdout.columns ?? 80);
-		const renderedLines = new Markdown(trimmedNote, 0, 0, SELF_UPDATE_NOTE_MARKDOWN_THEME)
-			.render(width)
-			.map((line) => line.trimEnd());
-		console.log(renderedLines.join("\n"));
-	} catch {
-		console.log(trimmedNote);
-	}
-	console.log();
-}
-
-interface SelfUpdatePlan {
-	packageName: string;
-	installSpec: string;
-	version: string;
-	shouldRun: boolean;
-	note?: string;
-}
-
-async function getSelfUpdatePlan(force: boolean): Promise<SelfUpdatePlan> {
-	let latestRelease: Awaited<ReturnType<typeof getLatestPiRelease>>;
-	try {
-		latestRelease = await getLatestPiRelease(VERSION);
-	} catch (error: unknown) {
-		const message = error instanceof Error ? error.message : String(error);
-		throw new Error(`Could not determine latest ${APP_NAME} version: ${message}`);
-	}
-	if (!latestRelease) {
-		throw new Error(`Could not determine latest ${APP_NAME} version.`);
-	}
-
-	const packageName = latestRelease.packageName ?? PACKAGE_NAME;
-	const installSpec = `${packageName}@${latestRelease.version}`;
-	if (force || packageName !== PACKAGE_NAME || isNewerPackageVersion(latestRelease.version, VERSION)) {
-		return {
-			packageName,
-			installSpec,
-			version: latestRelease.version,
-			...(latestRelease.note ? { note: latestRelease.note } : {}),
-			shouldRun: true,
-		};
-	}
-
-	console.log(chalk.green(`${APP_NAME} is already up to date (v${VERSION})`));
-	return { packageName, installSpec, version: latestRelease.version, shouldRun: false };
-}
-
-async function runSelfUpdate(command: SelfUpdateCommand): Promise<void> {
-	console.log(chalk.dim(`Updating ${APP_NAME} with ${command.display}...`));
-	for (const step of command.steps ?? [command]) {
-		await new Promise<void>((resolve, reject) => {
-			const child = spawnProcess(step.command, step.args, {
-				stdio: "inherit",
-			});
-			child.on("error", (error) => {
-				reject(error);
-			});
-			child.on("close", (code, signal) => {
-				if (code === 0) {
-					resolve();
-				} else if (signal) {
-					reject(new Error(`${step.display} terminated by signal ${signal}`));
-				} else {
-					reject(new Error(`${step.display} exited with code ${code ?? "unknown"}`));
-				}
-			});
-		});
-	}
-}
-
-function prepareWindowsNpmSelfUpdate(): void {
-	if (process.platform !== "win32") {
-		return;
-	}
-
-	const packageDir = getPackageDir();
-	cleanupWindowsSelfUpdateQuarantine(packageDir);
-	quarantineWindowsNativeDependencies(packageDir);
+function printMagentaSelfUpdateFailure(reason: string): void {
+	console.error(chalk.red(`Error: ${reason}`));
 }
 
 function parseProjectTrustOverride(args: readonly string[]): boolean | undefined {
@@ -644,8 +504,6 @@ export async function handlePackageCommand(
 		return true;
 	}
 	reportSettingsErrors(settingsManager, "package command");
-	const selfUpdateNpmCommand = settingsManager.getGlobalSettings().npmCommand;
-
 	const packageManager = new DefaultPackageManager({ cwd, agentDir, settingsManager });
 
 	packageManager.setProgressCallback((event) => {
@@ -725,45 +583,25 @@ export async function handlePackageCommand(
 					}
 				}
 				if (updateTargetIncludesSelf(target)) {
-					const selfUpdatePlan = await getSelfUpdatePlan(options.force);
-					if (!selfUpdatePlan.shouldRun) {
-						return true;
-					}
-					const installMethod = detectInstallMethod();
-					if (process.platform === "win32" && installMethod !== "npm" && installMethod !== "pnpm") {
-						console.error(
-							chalk.red(`${APP_NAME} self-update on Windows is only supported for npm and pnpm installs.`),
+					const selfUpdate = await runMagentaSelfUpdate({ force: options.force });
+					if (selfUpdate.upToDate) {
+						console.log(chalk.green(`${APP_NAME} is already up to date.`));
+					} else if (!selfUpdate.ok) {
+						printMagentaSelfUpdateFailure(selfUpdate.reason ?? `${APP_NAME} self-update failed`);
+						process.exitCode = 1;
+					} else if (selfUpdate.method === "git") {
+						console.log(chalk.green(`Updated ${APP_NAME} checkout to ${selfUpdate.newSha ?? "latest commit"}.`));
+					} else if (selfUpdate.pending) {
+						console.log(
+							chalk.green(
+								`Updated ${APP_NAME} to v${selfUpdate.newVersion}; installation is pending process exit.`,
+							),
 						);
-						console.error(chalk.dim(`Detected install method: ${installMethod}. Update ${APP_NAME} manually.`));
-						process.exitCode = 1;
-						return true;
+					} else if (selfUpdate.newVersion) {
+						console.log(
+							chalk.green(`Updated ${APP_NAME} to v${selfUpdate.newVersion}. Restart ${APP_BINARY_NAME}.`),
+						);
 					}
-					const selfUpdateTarget = {
-						packageName: selfUpdatePlan.packageName,
-						installSpec: selfUpdatePlan.installSpec,
-					};
-					const selfUpdateCommand = getSelfUpdateCommand(PACKAGE_NAME, selfUpdateNpmCommand, selfUpdateTarget);
-					if (!selfUpdateCommand) {
-						printSelfUpdateUnavailable(selfUpdateNpmCommand, selfUpdateTarget);
-						process.exitCode = 1;
-						return true;
-					}
-					if (selfUpdatePlan.note) {
-						printSelfUpdateNote(selfUpdatePlan.note);
-					}
-					try {
-						if (installMethod === "npm") {
-							prepareWindowsNpmSelfUpdate();
-						}
-						await runSelfUpdate(selfUpdateCommand);
-					} catch (error: unknown) {
-						const message = error instanceof Error ? error.message : "Unknown package command error";
-						console.error(chalk.red(`Error: ${message}`));
-						printSelfUpdateFallback(selfUpdateCommand);
-						process.exitCode = 1;
-						return true;
-					}
-					console.log(chalk.green(`Updated ${APP_NAME} from ${VERSION} to ${selfUpdatePlan.version}`));
 				}
 				return true;
 			}

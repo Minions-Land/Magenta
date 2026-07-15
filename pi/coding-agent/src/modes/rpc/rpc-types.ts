@@ -11,7 +11,7 @@ import type { AgentSessionEvent, SessionStats } from "../../core/agent-session.t
 import type { BackgroundEventSnapshot } from "../../core/background-events.ts";
 import type { BashResult } from "../../core/bash-executor.ts";
 import type { CompactionResult } from "../../core/compaction/index.ts";
-import type { ExecutionProfile } from "../../core/execution-profile.ts";
+import type { ExecutionProfile, HarnessCapabilities } from "../../core/execution-profile.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
 import type { HeadlessRuntimeManifest } from "../headless-protocol.ts";
 
@@ -101,6 +101,8 @@ export interface RpcSessionState {
 	model?: Model<any>;
 	thinkingLevel: ThinkingLevel;
 	executionProfile: ExecutionProfile;
+	harnessCapabilities: HarnessCapabilities;
+	activeToolNames: string[];
 	isStreaming: boolean;
 	isCompacting: boolean;
 	steeringMode: "all" | "one-at-a-time";

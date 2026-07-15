@@ -390,7 +390,7 @@ const available = modelRegistry.getAvailable();
 
 const { session } = await createAgentSession({
   model: opus,
-  executionProfile: "ultra", // maps to the model's highest native level
+  executionProfile: "ultra", // highest native reasoning; capabilities on, no auto-dispatch
   harnessCapabilities: {
     workflows: true, // explicit overrides beat profile defaults
     teammates: false,
@@ -477,14 +477,22 @@ const { session } = await createAgentSession({ resourceLoader: loader });
 
 Specify which tools to enable:
 
-- Standard profiles activate `read`, `bash`, `edit`, `write`, `bg_shell`,
-  `sub_agent`, `send_message`, `show`, `grep`, `find`, `ls`, `web-search`, and `web-fetch`
-- Ultra also enables `sub_agent` workflow templates and `teammate_agent` by default
+- Native tools active by default: `read`, `bash`, `edit`, `write`, `bg_shell`, `sub_agent`, `send_message`, `show`, `grep`, `find`, and `ls`
+- HCP tools active by default: `lsp`, `todo`, `web-search`, and `web-fetch`
+- Standard profiles expose sessionless, one-shot `sub_agent` workers but omit workflows and `teammate_agent`
+- Ultra enables workflow and managed-teammate capabilities by default; it never dispatches work automatically
 - `harnessCapabilities.workflows` and `harnessCapabilities.teammates` override those defaults
-- Optional read-only tools: `grep`, `find`, and `ls`
 - `noTools: "all"` disables all tools
 - `noTools: "builtin"` disables default application and HCP tools while keeping extension and custom tools enabled
 - `excludeTools` disables specific built-in, extension, or custom tool names after any `tools` allowlist is applied
+
+A workflow orchestrates the same sessionless, one-shot workers. Named presets
+have fixed runtime-owned control flow; a custom script author owns if/while/await
+flow and termination through runtime-controlled primitives. Use `teammate_agent`
+for a parent-managed, long-lived child when retained context, iterative
+assignments, or explicit file ownership matters. Managed children stop when the
+parent runtime shuts down. `send_message` is a separate urgent mailbox data
+plane for any known peer session id; it does not create or manage teammates.
 
 The `edit` tool returns `details.diff` for Magenta's TUI display and `details.patch` as a standard unified patch for SDK consumers.
 

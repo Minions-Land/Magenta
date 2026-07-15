@@ -322,6 +322,7 @@ export function createBashToolDefinition(
 		label: "bash",
 		description: BASH_TOOL_DESCRIPTION,
 		promptSnippet: "Execute bash commands (ls, grep, find, etc.)",
+		promptGuidelines: ["Use bash for short commands when you need their result immediately."],
 		parameters: bashSchema,
 		renderKind: "shell-output",
 		execute(_toolCallId, params, signal, onUpdate, _ctx) {
@@ -381,8 +382,27 @@ export function withBashAutoPromotion<TState>(
 
 	return {
 		...base,
+		promptGuidelines: [
+			...(base.promptGuidelines ?? []),
+			`A bash command still running after about ${Math.round(promoteAfterMs / 1000)} seconds is automatically promoted to a background event and its result is returned automatically. Continue independent work in the main turn; wait only when the next step depends on that result.`,
+		],
 		execute(toolCallId, params, signal, onUpdate, ctx) {
 			const startedAt = Date.now();
+			const executionController = new AbortController();
+			let parentAbortAttached = false;
+			const relayParentAbort = () => executionController.abort(signal?.reason);
+			const detachParentAbort = () => {
+				if (!parentAbortAttached) return;
+				signal?.removeEventListener("abort", relayParentAbort);
+				parentAbortAttached = false;
+			};
+			if (signal?.aborted) {
+				relayParentAbort();
+			} else if (signal) {
+				signal.addEventListener("abort", relayParentAbort, { once: true });
+				parentAbortAttached = true;
+			}
+
 			// Forward streamed output both to the live tool UI and, once promoted, into
 			// the adopted event tail so the background view keeps updating.
 			let handle: AdoptedExecutionHandle | undefined;
@@ -396,8 +416,23 @@ export function withBashAutoPromotion<TState>(
 				onUpdate?.(update as never);
 			};
 
-			const execPromise = Promise.resolve(
-				base.execute(toolCallId, params, signal, wrappedUpdate as typeof onUpdate, ctx),
+			let execution: Promise<AgentToolResult<BashToolDetails | undefined>>;
+			try {
+				execution = Promise.resolve(
+					base.execute(toolCallId, params, executionController.signal, wrappedUpdate as typeof onUpdate, ctx),
+				);
+			} catch (error) {
+				execution = Promise.reject(error);
+			}
+			const execPromise = execution.then(
+				(result) => {
+					detachParentAbort();
+					return result;
+				},
+				(error) => {
+					detachParentAbort();
+					throw error;
+				},
 			);
 
 			return promoteIfSlow({
@@ -405,19 +440,24 @@ export function withBashAutoPromotion<TState>(
 				promoteAfterMs,
 				signal,
 				onPromote: () => {
-					handle = backgroundShell.adoptExecution(
-						{
-							command: params.command ?? "",
-							cwd: resolveBashCwd(cwd, params, ctx),
-							startedAt,
-							tail: latestOutput,
-							cancel: () => {
-								// The child is owned by the underlying execute; cancellation flows
-								// through the shared abort signal when the caller aborts the turn.
+					// Once adopted, the execution belongs to the background controller and
+					// must survive cancellation of the turn that originally started it.
+					detachParentAbort();
+					try {
+						handle = backgroundShell.adoptExecution(
+							{
+								command: params.command ?? "",
+								cwd: resolveBashCwd(cwd, params, ctx),
+								startedAt,
+								tail: latestOutput,
+								cancel: () => executionController.abort(),
 							},
-						},
-						ctx,
-					);
+							ctx,
+						);
+					} catch (error) {
+						executionController.abort();
+						throw error;
+					}
 					return handle.id;
 				},
 				onSettled: (result, error) => {
@@ -494,10 +534,12 @@ async function promoteIfSlow(config: {
 		return (await execPromise) as AgentToolResult<BashToolDetails | undefined>;
 	}
 	const eventId = onPromote();
-	void execPromise.then(
-		(result) => onSettled(result, undefined),
-		(error) => onSettled(undefined, error),
-	);
+	void execPromise
+		.then(
+			(result) => onSettled(result, undefined),
+			(error) => onSettled(undefined, error),
+		)
+		.catch(() => undefined);
 	return {
 		content: [
 			{

@@ -16,7 +16,7 @@ const LEVEL_DESCRIPTIONS: Record<ExecutionProfile, string> = {
 	high: "Deep reasoning (~16k tokens)",
 	xhigh: "Maximum reasoning (~32k tokens)",
 	max: "Deepest native reasoning, no constraints",
-	ultra: "Maximum native reasoning with proactive workflows and teammates",
+	ultra: "Highest reasoning; delegation tools + active stall reminders, no auto-dispatch",
 };
 
 /**

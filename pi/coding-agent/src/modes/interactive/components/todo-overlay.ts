@@ -269,7 +269,7 @@ export class TodoOverlay implements Component, Focusable {
 		body.push(
 			...rows
 				.slice(this.scrollTop, this.scrollTop + available)
-				.map((row, offset) => this.renderRow(plan, row, this.scrollTop + offset === this.selectedIndex, width)),
+				.map((row, offset) => this.renderRow(row, this.scrollTop + offset === this.selectedIndex, width)),
 		);
 		return body;
 	}
@@ -322,7 +322,7 @@ export class TodoOverlay implements Component, Focusable {
 		return result;
 	}
 
-	private renderRow(plan: TodoPlanSnapshot, row: Row, selected: boolean, width: number): string {
+	private renderRow(row: Row, selected: boolean, width: number): string {
 		const cursor = selected ? this.theme.fg("accent", "›") : " ";
 		const fold = row.hasChildren ? (this.folded.has(row.node.id) ? "▸" : "▾") : " ";
 		const statusColor =
@@ -336,9 +336,8 @@ export class TodoOverlay implements Component, Focusable {
 		const status = this.theme.fg(statusColor, statusSymbol(row.node.status));
 		const text =
 			row.node.status === "completed" ? this.theme.fg("dim", row.node.text) : this.theme.fg("text", row.node.text);
-		const current = row.node.id === plan.currentId ? this.theme.fg("accent", "  current") : "";
 		return truncateToWidth(
-			`${cursor} ${"  ".repeat(row.depth)}${fold} ${status} ${this.theme.fg("accent", row.outline)} ${text}${current}`,
+			`${cursor} ${"  ".repeat(row.depth)}${fold} ${status} ${this.theme.fg("accent", row.outline)} ${text}`,
 			width,
 			"",
 		);

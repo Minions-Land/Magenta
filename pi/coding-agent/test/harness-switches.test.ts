@@ -111,7 +111,7 @@ describe("harness switches", () => {
 			harnessPackages: ["AutOmicScience"],
 			packageToolCount: 1,
 			packageDiagnosticCount: 0,
-			activeHookEvents: ["session_before_compact"],
+			activeExtensionEvents: ["session_before_compact"],
 			components,
 		});
 
@@ -121,6 +121,9 @@ describe("harness switches", () => {
 		expect(summary).toContain("Auto-compact: enabled");
 		expect(summary).toContain("Skill commands: disabled (2 skills loaded)");
 		expect(summary).toContain("Packages: AutOmicScience; tools:1; diagnostics:0");
+		expect(summary).toContain("Extension events: 1 extensions loaded; registered events: session_before_compact");
+		expect(summary).not.toContain("Hooks:");
+		expect(summary).not.toContain("HCP hooks");
 		expect(summary).toContain("Memory: available");
 		expect(summary).toContain("Components: 1/2 active");
 	});

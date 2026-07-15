@@ -52,6 +52,7 @@ type FakeSession = {
 	sessionFile: undefined;
 	sessionName: undefined;
 	autoCompactionEnabled: boolean;
+	isStreaming: boolean;
 	steeringMode: "one-at-a-time";
 	followUpMode: "one-at-a-time";
 	bindExtensions: ReturnType<typeof vi.fn>;
@@ -63,6 +64,7 @@ type FakeSession = {
 	getAllTools: () => never[];
 	getBackgroundEvents: ReturnType<typeof vi.fn>;
 	waitForBackgroundIdle: ReturnType<typeof vi.fn>;
+	waitForExternalActivationQuiescence: ReturnType<typeof vi.fn>;
 	getSessionStats: ReturnType<typeof vi.fn>;
 };
 
@@ -143,6 +145,7 @@ function createRuntimeHost(assistantMessage: AssistantMessage): FakeRuntimeHost 
 		sessionFile: undefined,
 		sessionName: undefined,
 		autoCompactionEnabled: true,
+		isStreaming: false,
 		steeringMode: "one-at-a-time",
 		followUpMode: "one-at-a-time",
 		bindExtensions: vi.fn(async () => {}),
@@ -154,6 +157,7 @@ function createRuntimeHost(assistantMessage: AssistantMessage): FakeRuntimeHost 
 		getAllTools: () => [],
 		getBackgroundEvents: vi.fn(() => []),
 		waitForBackgroundIdle: vi.fn(async () => true),
+		waitForExternalActivationQuiescence: vi.fn(async () => true),
 		getSessionStats: vi.fn(() => ({ sessionId: "print-mode-test" })),
 	};
 
@@ -195,6 +199,7 @@ describe("runPrintMode", () => {
 
 		expect(exitCode).toBe(0);
 		expect(session.prompt).toHaveBeenCalledWith("Say done", { images, source: "print" });
+		expect(session.waitForExternalActivationQuiescence).toHaveBeenCalledOnce();
 		expect(session.extensionRunner.emit).toHaveBeenCalledTimes(1);
 		expect(session.extensionRunner.emit).toHaveBeenCalledWith({ type: "session_shutdown", reason: "quit" });
 	});
@@ -360,6 +365,26 @@ describe("runPrintMode", () => {
 		});
 	});
 
+	it("fails if completed background returns cannot reach quiescence before finalization", async () => {
+		const runtimeHost = createRuntimeHost(createAssistantMessage({ text: "done" }));
+		const { session } = runtimeHost;
+		session.waitForExternalActivationQuiescence.mockResolvedValue(false);
+
+		const exitCode = await runPrintMode(runtimeHost as unknown as Parameters<typeof runPrintMode>[0], {
+			mode: "json",
+			backgroundPolicy: "wait",
+			backgroundWaitTimeoutMs: 10,
+		});
+
+		expect(exitCode).toBe(1);
+		expect(outputRecords().at(-1)).toMatchObject({
+			type: "run_end",
+			status: "error",
+			error: "Timed out after 10ms settling external activations",
+			background: { settled: false },
+		});
+	});
+
 	it("waits for finite background work only under the explicit wait policy", async () => {
 		const runtimeHost = createRuntimeHost(createAssistantMessage({ text: "done" }));
 		const { session } = runtimeHost;
@@ -385,6 +410,7 @@ describe("runPrintMode", () => {
 
 		expect(exitCode).toBe(0);
 		expect(session.waitForBackgroundIdle).toHaveBeenCalled();
+		expect(session.waitForExternalActivationQuiescence).toHaveBeenCalledTimes(2);
 		expect(outputRecords().at(-1)).toMatchObject({
 			type: "run_end",
 			status: "success",

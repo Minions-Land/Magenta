@@ -1,10 +1,11 @@
 /**
- * Orchestrator: the deterministic control-flow skeletons for each pattern.
+ * Workflow orchestrator over sessionless, one-shot workers.
  *
- * Every pattern here is plain JavaScript control flow — `for`, `await`, `if`.
- * That is the guarantee: the shape, the termination, and each pattern's soul
- * step are code, not prompts. The LLM fills `WorkerSlot` content; it never
- * decides the order, the concurrency, or when to stop.
+ * Every pattern is executable JavaScript control flow. The six named presets
+ * ship fixed runtime-owned order, concurrency, termination, and soul steps; the
+ * caller fills only their WorkerSlot content. A script workflow instead gives
+ * its author control of if/while/await flow and termination while all worker
+ * creation still passes through runtime-owned primitives and safety guards.
  */
 
 import * as fs from "node:fs";

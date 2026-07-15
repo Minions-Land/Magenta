@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MultiAgentOrchestrator } from "@magenta/harness";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { APP_BINARY_NAME } from "../src/config.ts";
+import { getAgentInvocation } from "../src/config.ts";
 import type { AgentSessionEvent } from "../src/core/agent-session.ts";
 import { BackgroundEventManager } from "../src/core/background-events.ts";
 import type { ExtensionContext } from "../src/core/extensions/types.ts";
@@ -158,6 +158,25 @@ describe("built-in sub_agent tool", () => {
 		}
 	});
 
+	it("describes sessionless one-shot workers and the two workflow ownership modes", () => {
+		const tool = controller.createToolDefinition();
+		expect(tool.description).toContain("sessionless, one-shot");
+		expect(tool.description).toContain("fixed runtime-owned control flow");
+		expect(tool.description).toContain("script author own if/while/await flow");
+		expect(tool.promptGuidelines).toEqual(
+			expect.arrayContaining([
+				expect.stringContaining("bounded one-shot work"),
+				expect.stringContaining("retained context"),
+				expect.stringContaining("soft lease"),
+				expect.stringContaining("non-overlapping Todo work"),
+				expect.stringContaining("analysis scope, not files"),
+				expect.stringContaining("not a runtime lock"),
+				expect.stringContaining("confirm the event is terminal"),
+				expect.stringContaining("under runtime control"),
+			]),
+		);
+	});
+
 	it("action=wait consumes results inline and cancels the pending auto-return", async () => {
 		const tool = controller.createToolDefinition();
 		const ctx = createContext(tempDir);
@@ -184,8 +203,11 @@ describe("built-in sub_agent tool", () => {
 		const eventId = start.details?.id as string;
 		const promptPath = start.details?.promptPath as string;
 
+		expect(textOf(start)).toContain("Delegation soft lease active for each running event");
+		expect(textOf(start)).toContain("do not duplicate its scope");
+		expect(textOf(start)).toContain("independently verify it");
 		expect(eventId).toMatch(/^agent_/);
-		expect(spawnRecords[0]?.command).toBe(APP_BINARY_NAME);
+		expect(spawnRecords[0]?.command).toBe(getAgentInvocation([]).command);
 		expect(spawnRecords[0]?.args).toEqual(
 			expect.arrayContaining(["--print", "--no-session", "--no-extensions", "--tools", "read,grep,find,ls"]),
 		);
@@ -203,6 +225,12 @@ describe("built-in sub_agent tool", () => {
 		);
 		expect(textOf(waited)).toContain("Status: exited");
 		expect(textOf(waited)).toContain("sub-result");
+		expect(manager.getEvents().find((event) => event.id === eventId)).toMatchObject({
+			lastActivityAt: expect.any(Number),
+			lastOutputAt: expect.any(Number),
+			activityPhase: "agent",
+			reminderEligible: false,
+		});
 
 		// Because the model synchronously waited for (and was shown) the result,
 		// the pending returnToMain auto-delivery must be cancelled: no duplicate
@@ -226,6 +254,8 @@ describe("built-in sub_agent tool", () => {
 		// No wait/status this turn, so the auto-return is the only delivery path.
 		await waitUntil(() => returned.length === 1);
 		expect(returned[0]?.message.customType).toBe("sub-agent-return");
+		expect(returned[0]?.message.content).toContain("soft lease is released");
+		expect(returned[0]?.message.content).toContain("independently verify them");
 		expect(returned[0]?.message.content).toContain("sub-result");
 		// Default delivery is followUp, which triggers a continuation turn.
 		expect(returned[0]?.options).toMatchObject({ deliverAs: "followUp", triggerTurn: true });
@@ -313,7 +343,35 @@ describe("built-in sub_agent tool", () => {
 		expect(details?.eventData?.every((event) => event.tail.includes("AGGREGATE-TAIL"))).toBe(true);
 	});
 
-	it("inherits the parent model when a task has no explicit model", async () => {
+	it("preserves a direct Node/dist invocation prefix", async () => {
+		controller.shutdown();
+		controller = new SubAgentController(manager, {
+			registerReturn: () => {},
+			cancelReturn: () => {},
+			spawnAgent: createFakeSpawn(spawnRecords, { output: "sub-result" }),
+			resolveAgentInvocation: (args) => ({
+				command: "/opt/node/bin/node",
+				args: ["/repo/pi/coding-agent/dist/cli.js", ...args],
+			}),
+		});
+		const tool = controller.createToolDefinition();
+
+		await tool.execute(
+			"call-node-dist",
+			{ action: "start", task: "Inspect current changes", returnToMain: false },
+			undefined,
+			undefined,
+			createContext(tempDir),
+		);
+
+		expect(spawnRecords[0]?.command).toBe("/opt/node/bin/node");
+		expect(spawnRecords[0]?.args[0]).toBe("/repo/pi/coding-agent/dist/cli.js");
+		expect(spawnRecords[0]?.args.slice(1)).toEqual(
+			expect.arrayContaining(["--print", "--no-session", "--no-extensions"]),
+		);
+	});
+
+	it('inherits the parent model when a task omits model or uses "default"', async () => {
 		controller.shutdown();
 		controller = new SubAgentController(manager, {
 			registerReturn: (_eventIds, message, delivery) => {
@@ -330,11 +388,19 @@ describe("built-in sub_agent tool", () => {
 		const ctx = createContext(tempDir);
 
 		await tool.execute("call-start", { action: "start", task: "Review current changes" }, undefined, undefined, ctx);
-
-		expect(spawnRecords[0]?.command).toBe(APP_BINARY_NAME);
-		expect(spawnRecords[0]?.args).toEqual(
-			expect.arrayContaining(["--provider", "anthropic", "--model", "claude-opus-4-8"]),
+		await tool.execute(
+			"call-start-default",
+			{ action: "start", task: "Review current changes again", model: "default" },
+			undefined,
+			undefined,
+			ctx,
 		);
+
+		for (const record of spawnRecords) {
+			expect(record.command).toBe(getAgentInvocation([]).command);
+			expect(record.args).toEqual(expect.arrayContaining(["--provider", "anthropic", "--model", "claude-opus-4-8"]));
+			expect(record.args).not.toContain("default");
+		}
 	});
 
 	it("uses an explicit task model instead of inheriting the parent model", async () => {
@@ -433,6 +499,8 @@ describe("built-in sub_agent tool", () => {
 		);
 
 		expect(textOf(start)).toContain("Started 2 sub-agents concurrently");
+		expect(textOf(start)).toContain("Delegation soft lease active for each running event");
+		expect(textOf(start)).toContain("Continue only non-overlapping work");
 		expect(start.details?.ids).toHaveLength(2);
 		expect(spawnRecords).toHaveLength(2);
 	});
@@ -567,6 +635,8 @@ describe("built-in sub_agent tool", () => {
 		);
 		expect(textOf(start)).toContain("Started workflow");
 		expect(textOf(start)).toContain("Pattern: fan_out_synthesize");
+		expect(textOf(start)).toContain("Delegation soft lease active for each running event");
+		expect(textOf(start)).toContain("synthesize and independently verify it");
 		const eventId = start.details?.id as string;
 
 		// The orchestration runs in-process (fake runner), so no real child agent is spawned.

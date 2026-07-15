@@ -4,7 +4,8 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { NodeExecutionEnv } from "../_magenta/env/pi/nodejs.ts";
 import { loadSystemPromptDescriptor } from "../system-prompt/pi/descriptor.ts";
-import { formatSkillsForSystemPrompt } from "../system-prompt/pi/system-prompt.ts";
+import { SystemPromptProvider } from "../system-prompt/pi/provider.ts";
+import { buildSystemPrompt, formatSkillsForSystemPrompt } from "../system-prompt/pi/system-prompt.ts";
 
 const visibleSkill = {
 	name: "visible",
@@ -68,6 +69,90 @@ When a skill file references a relative path, resolve it against the skill direc
 		).toContain(
 			"<name>a&amp;b</name>\n    <description>Quote &quot;double&quot; and &apos;single&apos;</description>\n    <location>/skills/&lt;bad&gt;&amp;&quot;quote&quot;/SKILL.md</location>",
 		);
+	});
+});
+
+describe("buildSystemPrompt", () => {
+	const documentationPaths = {
+		readmePath: "/magenta/README.md",
+		docsPath: "/magenta/docs",
+		examplesPath: "/magenta/examples",
+	};
+
+	it("builds the default coding and research prompt deterministically with a fixed date", () => {
+		const options = {
+			cwd: "C:\\work\\repo",
+			currentDate: "2026-07-15",
+			selectedTools: ["read"],
+			toolSnippets: { read: "Read files" },
+			documentationPaths,
+		};
+
+		const first = buildSystemPrompt(options);
+		const second = new SystemPromptProvider().buildSystemPrompt(options);
+
+		expect(second).toBe(first);
+		expect(first).toContain("expert coding and research agent");
+		expect(first).toContain("Agent collaboration principles:");
+		expect(first).toContain("verify interfaces instead of guessing them");
+		expect(first).toContain("Resolve major ambiguities before implementation");
+		expect(first).toContain("Reuse existing components and patterns");
+		expect(first).toContain("Respect the repository architecture, the requested scope");
+		expect(first).toContain("Validate in proportion to risk");
+		expect(first).toContain("State uncertainty and blockers honestly");
+		expect(first).toContain("small, reviewable steps that still produce an end-to-end functional slice");
+		expect(first).toContain("Main documentation: /magenta/README.md");
+		expect(first).toContain("Current date: 2026-07-15");
+		expect(first).toContain("Current working directory: C:/work/repo");
+		expect(first).not.toContain("Kiro, Claude, GPT, Gemini");
+	});
+
+	it("uses a custom prompt as the base while retaining ordered conditional operations and context", () => {
+		const prompt = buildSystemPrompt({
+			cwd: "/repo",
+			currentDate: "2026-07-15",
+			customPrompt: "CUSTOM IDENTITY",
+			appendSystemPrompt: "HOST APPEND",
+			selectedTools: ["bg_shell"],
+			bundledPromptFeatures: { backgroundWork: true },
+			documentationPaths,
+			contextFiles: [{ path: "/repo/AGENTS.md", content: "PROJECT RULE" }],
+		});
+
+		expect(prompt).not.toContain("You are Magenta");
+		expect(prompt).not.toContain("Available tools:");
+		expect(prompt).not.toContain("Magenta documentation");
+		expect(prompt).not.toContain("Agent collaboration principles:");
+		expect(prompt).toContain("# Background Work");
+		expect(prompt.indexOf("CUSTOM IDENTITY")).toBeLessThan(prompt.indexOf("HOST APPEND"));
+		expect(prompt.indexOf("HOST APPEND")).toBeLessThan(prompt.indexOf("# Background Work"));
+		expect(prompt.indexOf("# Background Work")).toBeLessThan(prompt.indexOf("<project_context>"));
+		expect(prompt.indexOf("<project_context>")).toBeLessThan(prompt.indexOf("Current date: 2026-07-15"));
+	});
+
+	it("emits bundled background instructions only for active supported tools", () => {
+		const base = { cwd: "/repo", currentDate: "2026-07-15", bundledPromptFeatures: { backgroundWork: true } };
+		expect(buildSystemPrompt({ ...base, selectedTools: [] })).not.toContain("# Background Work");
+		expect(
+			buildSystemPrompt({ ...base, selectedTools: ["bg_shell"], bundledPromptFeatures: { backgroundWork: false } }),
+		).not.toContain("# Background Work");
+
+		const shellOnly = buildSystemPrompt({ ...base, selectedTools: ["bg_shell"] });
+		expect(shellOnly).toContain("bg_shell action=start");
+		expect(shellOnly).toContain("continue only non-overlapping independent work");
+		expect(shellOnly).toContain("Do not rerun the same command or duplicate its purpose");
+		expect(shellOnly).toContain("action=wait only at an explicit dependency barrier");
+		expect(shellOnly).not.toContain("regular bash tool");
+		expect(shellOnly).not.toContain("sub_agent");
+		expect(shellOnly).not.toContain("soft lease");
+
+		const agentOnly = buildSystemPrompt({ ...base, selectedTools: ["sub_agent"] });
+		expect(agentOnly).toContain("Use sub_agent for independent parallel analysis");
+		expect(agentOnly).toContain("running event a soft lease");
+		expect(agentOnly).toContain("do not duplicate the task");
+		expect(agentOnly).toContain("synthesize it and independently verify it");
+		expect(agentOnly).not.toContain("bg_shell");
+		expect(agentOnly).not.toContain("regular bash tool");
 	});
 });
 

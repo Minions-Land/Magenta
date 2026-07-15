@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { APP_BINARY_NAME, APP_NAME, CONFIG_DIR_NAME, ENV_AGENT_DIR, PACKAGE_NAME, VERSION } from "../src/config.ts";
+import { APP_BINARY_NAME, CONFIG_DIR_NAME, ENV_AGENT_DIR, PACKAGE_NAME, VERSION } from "../src/config.ts";
 import { ProjectTrustStore } from "../src/core/trust-manager.ts";
 import { main } from "../src/main.ts";
 import { handlePackageCommand } from "../src/package-manager-cli.ts";
@@ -397,7 +397,7 @@ describe("package commands", () => {
 		}
 	});
 
-	it("uses the update check version for forced self updates even when current", async () => {
+	it("does not route a forced npm self-update through Pi package metadata", async () => {
 		const globalPrefix = join(tempDir, "global-prefix");
 		const projectPrefix = join(tempDir, "project-prefix");
 		const selfPackageDir = join(globalPrefix, "lib", "node_modules", "@earendil-works", "pi-coding-agent");
@@ -434,23 +434,21 @@ else fs.writeFileSync(${JSON.stringify(recordPath)},JSON.stringify(args));
 		try {
 			await expect(runPackageCommandDirectly(["update", "--self", "--force"])).resolves.toBeUndefined();
 
-			expect(process.exitCode).toBeUndefined();
-			expect(errorSpy).not.toHaveBeenCalled();
-			expect(fetchMock).toHaveBeenCalledOnce();
-			const stdout = logSpy.mock.calls.map(([message]) => String(message)).join("\n");
-			const recordedArgs = JSON.parse(readFileSync(recordPath, "utf-8")) as string[];
-			expect(recordedArgs).toContain(globalPrefix);
-			expect(recordedArgs).toContain(`${PACKAGE_NAME}@${VERSION}`);
-			expect(recordedArgs).not.toContain(PACKAGE_NAME);
-			expect(recordedArgs).not.toContain(projectPrefix);
-			expect(stdout).toContain(`Updated ${APP_NAME} from ${VERSION} to ${VERSION}`);
+			expect(process.exitCode).toBe(1);
+			expect(fetchMock).not.toHaveBeenCalled();
+			expect(existsSync(recordPath)).toBe(false);
+			const stderr = errorSpy.mock.calls.map(([message]) => String(message)).join("\n");
+			expect(stderr).toContain("Self-update is unavailable for the detected npm installation");
+			expect(stderr).toContain("Minions-Land/Magenta-CLI/releases/latest");
+			expect(stderr).not.toContain("pi-mono");
+			expect(logSpy).not.toHaveBeenCalled();
 		} finally {
 			logSpy.mockRestore();
 			errorSpy.mockRestore();
 		}
 	});
 
-	it("uses the current package name when the update check omits packageName", async () => {
+	it("does not consult the Pi update API for an npm-installed Magenta", async () => {
 		const globalPrefix = join(tempDir, "global-prefix");
 		const selfPackageDir = join(globalPrefix, "lib", "node_modules", "@mariozechner", "pi-coding-agent");
 		const fakeNpmPath = join(tempDir, "fake-npm.cjs");
@@ -482,21 +480,20 @@ else fs.writeFileSync(${JSON.stringify(recordPath)},JSON.stringify(args));
 		try {
 			await expect(runPackageCommandDirectly(["update", "--self"])).resolves.toBeUndefined();
 
-			expect(process.exitCode).toBeUndefined();
-			expect(errorSpy).not.toHaveBeenCalled();
-			expect(fetchMock).toHaveBeenCalledOnce();
-			const stdout = logSpy.mock.calls.map(([message]) => String(message)).join("\n");
-			const recordedArgs = JSON.parse(readFileSync(recordPath, "utf-8")) as string[];
-			expect(recordedArgs).toContain(`${PACKAGE_NAME}@${targetVersion}`);
-			expect(recordedArgs).not.toContain(PACKAGE_NAME);
-			expect(stdout).toContain(`Updated ${APP_NAME} from ${VERSION} to ${targetVersion}`);
+			expect(process.exitCode).toBe(1);
+			expect(fetchMock).not.toHaveBeenCalled();
+			expect(existsSync(recordPath)).toBe(false);
+			const stderr = errorSpy.mock.calls.map(([message]) => String(message)).join("\n");
+			expect(stderr).toContain("Minions-Land/Magenta-CLI/releases/latest");
+			expect(stderr).not.toContain(PACKAGE_NAME);
+			expect(logSpy).not.toHaveBeenCalled();
 		} finally {
 			logSpy.mockRestore();
 			errorSpy.mockRestore();
 		}
 	});
 
-	it("installs the active package name from the update check during self-update", async () => {
+	it("never replaces the installed package with a Pi release package name", async () => {
 		const globalPrefix = join(tempDir, "global-prefix");
 		const selfPackageDir = join(globalPrefix, "lib", "node_modules", "@mariozechner", "pi-coding-agent");
 		const fakeNpmPath = join(tempDir, "fake-npm.cjs");
@@ -534,20 +531,19 @@ else {
 		try {
 			await expect(runPackageCommandDirectly(["update", "--self"])).resolves.toBeUndefined();
 
-			expect(process.exitCode).toBeUndefined();
-			expect(errorSpy).not.toHaveBeenCalled();
-			const recordedCalls = JSON.parse(readFileSync(recordPath, "utf-8")) as string[][];
-			expect(recordedCalls).toEqual([
-				expect.arrayContaining(["uninstall", "-g", PACKAGE_NAME]),
-				expect.arrayContaining(["install", "-g", `${activePackageName}@0.73.0`]),
-			]);
+			expect(process.exitCode).toBe(1);
+			expect(existsSync(recordPath)).toBe(false);
+			const stderr = errorSpy.mock.calls.map(([message]) => String(message)).join("\n");
+			expect(stderr).toContain("Minions-Land/Magenta-CLI/releases/latest");
+			expect(stderr).not.toContain(activePackageName);
+			expect(logSpy).not.toHaveBeenCalled();
 		} finally {
 			logSpy.mockRestore();
 			errorSpy.mockRestore();
 		}
 	});
 
-	it("fails self-update when renamed npm package installation fails", async () => {
+	it("does not invoke an npm installer during Magenta self-update", async () => {
 		const globalPrefix = join(tempDir, "global-prefix");
 		const selfPackageDir = join(globalPrefix, "lib", "node_modules", "@mariozechner", "pi-coding-agent");
 		const fakeNpmPath = join(tempDir, "fake-npm-fail.cjs");
@@ -588,15 +584,12 @@ if(args.includes("install")) process.exit(23);
 			await expect(runPackageCommandDirectly(["update", "--self"])).resolves.toBeUndefined();
 
 			expect(process.exitCode).toBe(1);
-			const stdout = logSpy.mock.calls.map(([message]) => String(message)).join("\n");
 			const stderr = errorSpy.mock.calls.map(([message]) => String(message)).join("\n");
-			expect(stdout).not.toContain(`Updated pi`);
-			expect(stderr).toContain("exited with code 23");
-			const recordedCalls = JSON.parse(readFileSync(recordPath, "utf-8")) as string[][];
-			expect(recordedCalls).toEqual([
-				expect.arrayContaining(["uninstall", "-g", PACKAGE_NAME]),
-				expect.arrayContaining(["install", "-g", `${activePackageName}@0.73.0`]),
-			]);
+			expect(stderr).toContain("Self-update is unavailable for the detected npm installation");
+			expect(stderr).not.toContain("exited with code 23");
+			expect(stderr).not.toContain(activePackageName);
+			expect(existsSync(recordPath)).toBe(false);
+			expect(logSpy).not.toHaveBeenCalled();
 		} finally {
 			logSpy.mockRestore();
 			errorSpy.mockRestore();

@@ -23,6 +23,7 @@ import {
 	type HcpClientpackageprofileselection,
 	type HcpMagnetResource,
 	initProcessToolsBinary,
+	type SystemPromptBundledFeatures,
 } from "@magenta/harness";
 import { closeWatcher, watchWithErrorHandler } from "../utils/fs-watch.ts";
 import { HcpClientacquiregithubpackage, HcpClientparsegithubpackageselector } from "../utils/package-acquisition.ts";
@@ -98,6 +99,8 @@ export interface ResourceLoader {
 	getAgentsFiles(): { agentsFiles: Array<{ path: string; content: string }> };
 	getSystemPrompt(): string | undefined;
 	getAppendSystemPrompt(): string[];
+	/** Bundled operational fragments enabled by this loader's resource policy. */
+	getBundledPromptFeatures?(): SystemPromptBundledFeatures;
 	extendResources(paths: ResourceExtensionPaths): Promise<void>;
 	reload(options?: ResourceLoaderReloadOptions): Promise<void>;
 	/** Release held resources (e.g. skill watchers and HCP Magnets). Optional and idempotent. */
@@ -192,16 +195,6 @@ export function loadProjectContextFiles(options: {
 
 	return contextFiles;
 }
-
-const BUILTIN_BACKGROUND_WORK_PROMPT = `# Background Work
-
-Treat background shell events and sub-agents as built-in Magenta agent-loop infrastructure.
-
-- Use bg_shell action=start for long-running non-interactive commands such as builds, tests, dev servers, migrations, downloads, or commands expected to take more than about 10 seconds.
-- Use the regular bash tool for short one-off shell commands.
-- After starting background shell work, either wait/check status before relying on the result, or set returnToMain=true so completed results return to the main agent automatically.
-- Use sub_agent for independent parallel analysis, review, research, or planning subtasks; synthesize the results yourself before reporting to the user.
-- User-visible event controls live under /events. Do not ask the user to manually manage event ids unless direct intervention is actually required.`;
 
 function parseHarnessPackageEnv(env: NodeJS.ProcessEnv = process.env): string[] {
 	const value = env.MAGENTA_HARNESS_PACKAGES ?? env.PI_HARNESS_PACKAGES;
@@ -573,6 +566,10 @@ export class DefaultResourceLoader implements ResourceLoader {
 		return this.appendSystemPrompt;
 	}
 
+	getBundledPromptFeatures(): SystemPromptBundledFeatures {
+		return { backgroundWork: this.includeBundledResources };
+	}
+
 	async extendResources(paths: ResourceExtensionPaths): Promise<void> {
 		const skillPaths = this.normalizeExtensionPaths(paths.skillPaths ?? []);
 		const promptPaths = this.normalizeExtensionPaths(paths.promptPaths ?? []);
@@ -844,9 +841,6 @@ export class DefaultResourceLoader implements ResourceLoader {
 							: []),
 						...packageSystemPrompts.appendSystemPrompts,
 					].filter((source): source is string => source !== undefined);
-			if (this.includeBundledResources) {
-				baseAppend.unshift(BUILTIN_BACKGROUND_WORK_PROMPT);
-			}
 			this.appendSystemPrompt = this.appendSystemPromptOverride
 				? this.appendSystemPromptOverride(baseAppend)
 				: baseAppend;

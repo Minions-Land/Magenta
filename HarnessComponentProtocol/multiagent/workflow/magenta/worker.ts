@@ -1,9 +1,10 @@
 /**
  * Worker base: the single primitive every orchestration pattern builds on.
  *
- * A "worker" is one headless `pi` process. It is one-shot and process-isolated:
- * it runs, returns a structured result, and exits. Workers do not talk to each
- * other — the orchestrator is the only channel between them. This mirrors pi's
+ * A "worker" is one headless, sessionless `pi` process. It is one-shot and
+ * process-isolated: it runs, returns a structured result, and exits. Workers do
+ * not talk to peers — the orchestrator is the only channel between them. This
+ * mirrors pi's
  * proven sub_agent spawn mechanism (structured `--mode json` output, process
  * groups, `--no-extensions` to prevent recursive spawning) without depending on
  * pi's internal SubAgentController.
@@ -23,16 +24,15 @@ const DEFAULT_TOOLS = ["read", "grep", "find", "ls"];
  * Tools a worker may NEVER receive, enforced by stripping them from the `--tools`
  * whitelist regardless of what the caller requests.
  *
- * Orchestration and background delegation are privileges of the MAIN agent only.
- * A worker (a sub-agent or a workflow agent) must not be able to spawn further
- * sub-agents, background shells, or nested orchestrations. This is capability
- * denial at the grant layer: because pi resolves `--tools` into a hard allow-list
- * (`isAllowedTool`), a tool absent from the whitelist is simply not present in
- * the worker's registry — even pi's built-in `sub_agent`/`bg_shell`. This is the
- * primary, structural fork-bomb prevention; the depth guard below is a
- * defense-in-depth backstop.
+ * Orchestration, background delegation, and peer mailbox traffic are privileges
+ * of the MAIN agent only. A workflow worker must not spawn sub-agents, background
+ * shells, or managed teammates, and must not contact peer sessions outside the
+ * orchestrator. This is capability denial at the grant layer: because pi resolves
+ * `--tools` into a hard allow-list (`isAllowedTool`), an absent tool is not present
+ * in the worker registry. This is the primary structural safety boundary; the
+ * depth guard below is a defense-in-depth backstop.
  */
-const FORBIDDEN_WORKER_TOOLS = new Set(["sub_agent", "bg_shell", "teammate_agent"]);
+const FORBIDDEN_WORKER_TOOLS = new Set(["sub_agent", "bg_shell", "teammate_agent", "send_message"]);
 
 /**
  * Sanitize a tool whitelist for a worker: drop any forbidden tool. If the result

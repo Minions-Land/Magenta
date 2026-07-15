@@ -49,6 +49,16 @@ These directories are not Modules or Sources. They own no `HcpServer`, never ent
 
 `pi/coding-agent` owns CLI and TUI composition, settings, authentication, resource loading, session policy, and UI renderers. It consumes the public `@magenta/harness` API and must not select an implementation through a deep Source import.
 
+### System Prompt Boundary
+
+The selected `capability:system-prompt` owns deterministic composition of the already-resolved base prompt sections. Its input may include the active tools and snippets, host-selected default or custom prompt content, append content, project context, skills, documentation paths, bundled-feature flags, working directory, and date. Supplying an explicit date makes identical inputs produce identical output.
+
+The application host still owns discovery and precedence: CLI/file/Package prompt selection, extension contributions, active-tool selection, context and skill loading, installed documentation locations, and whether bundled resources are enabled. The Capability must not scan the filesystem, inspect Package manifests, resolve extensions, or introduce another precedence service.
+
+A custom prompt replaces the provider's default identity, tools, guidelines, and documentation sections. Host-enabled operational fragments remain conditional on the corresponding active tools, so prompt text never advertises an unavailable background tool. Background-shell instructions must direct the agent to continue independent work after `start` and reserve `wait` for an explicit dependency barrier.
+
+A session with an assembled `HcpClient` resolves the `system-prompt` slot and treats a missing slot as an assembly error. Static compatibility fallback is allowed only for a legacy loader or test double that exposes no HCP. System-prompt Capability behavior and descriptor-backed system-prompt Resource content remain separate one-product Magnets; content discovery does not create another live Capability.
+
 ## Declarations And Generation
 
 `harness.toml` and referenced component TOML files are authoritative for repository components. Code generation produces one static projection:

@@ -16,6 +16,7 @@ import type {
 import { registerFauxProvider } from "@earendil-works/pi-ai/compat";
 import { AgentSession, type AgentSessionEvent } from "../../src/core/agent-session.ts";
 import { AuthStorage } from "../../src/core/auth-storage.ts";
+import type { ExecutionProfile } from "../../src/core/execution-profile.ts";
 import type { ExtensionRunner } from "../../src/core/extensions/index.ts";
 import { convertToLlm } from "../../src/core/messages.ts";
 import { ModelRegistry } from "../../src/core/model-registry.ts";
@@ -63,6 +64,7 @@ export function getAssistantTexts(harness: Harness): string[] {
 export interface HarnessOptions {
 	models?: FauxModelDefinition[];
 	settings?: Partial<Settings>;
+	executionProfile?: ExecutionProfile;
 	systemPrompt?: string;
 	tools?: AgentTool[];
 	initialActiveToolNames?: string[];
@@ -145,9 +147,7 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 		convertToLlm,
 		onPayload: async (payload) => {
 			const runner = extensionRunnerRef.current;
-			if (!runner?.hasHandlers("before_provider_request")) {
-				return payload;
-			}
+			if (!runner) return payload;
 			return runner.emitBeforeProviderRequest(payload);
 		},
 		onResponse: async (response) => {
@@ -177,6 +177,7 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 		agent,
 		sessionManager,
 		settingsManager,
+		executionProfile: options.executionProfile,
 		cwd: tempDir,
 		// Isolate the peer-messaging mailbox per harness. Without this the
 		// SendMessageController falls back to the machine-global messages.db and

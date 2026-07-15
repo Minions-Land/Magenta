@@ -83,31 +83,56 @@ path = "tools/domain-environment/pixi.toml"
 ```
 
 Every non-infrastructure component path points at a Source directory containing
-`HcpMagnet.ts`. Its owning Module directory contains `HcpServer.ts`. Profiles
-may narrow large packages without changing this entity tree.
+exactly one `HcpMagnet.mjs`, `HcpMagnet.js`, or `HcpMagnet.ts`. Its owning Module
+directory likewise contains exactly one `HcpServer.mjs`, `HcpServer.js`, or
+`HcpServer.ts`. A directory with more than one accepted file for the same role
+is rejected as ambiguous; the loader never silently prefers compiled output or
+source. Profiles may narrow large packages without changing this entity tree.
 
 ## Components
 
 Schema-v2 packages are HCP-isomorphic:
 
 ```text
-skills/<skill>/HcpServer.ts
-skills/<skill>/<source>/HcpMagnet.ts
-tools/<tool>/HcpServer.ts
-tools/<tool>/<source>/HcpMagnet.ts
-brand/HcpServer.ts
-brand/<source>/HcpMagnet.ts
-system-prompt/HcpServer.ts
-system-prompt/<source>/HcpMagnet.ts
+skills/<skill>/HcpServer.{mjs,js,ts}
+skills/<skill>/<source>/HcpMagnet.{mjs,js,ts}
+tools/<tool>/HcpServer.{mjs,js,ts}
+tools/<tool>/<source>/HcpMagnet.{mjs,js,ts}
+brand/HcpServer.{mjs,js,ts}
+brand/<source>/HcpMagnet.{mjs,js,ts}
+system-prompt/HcpServer.{mjs,js,ts}
+system-prompt/<source>/HcpMagnet.{mjs,js,ts}
 ```
 
-Each role file exports only the bare role class. Resource Magnets expose
+Each role file exports only the named bare role class. Resource Magnets expose
 `toResource()` with `contentPath` or inline content. Tool Magnets expose
 `toTool()` and use the Client-injected host builder during static `build()`.
 This preserves the real package Source while reusing sandbox/runtime/MCP
-construction. Package-local
-infrastructure kinds (`python-runtime`, `runtime-tests`, `env`, `env-lock`) are
-preserved in the tool context but do not own Magnets.
+construction. Package-local infrastructure kinds (`python-runtime`,
+`runtime-tests`, `env`, `env-lock`) are preserved in the tool context but do not
+own Magnets. Capability declarations may replace only a known generated HCP
+slot; this MVP does not create arbitrary Capability addresses.
+
+### Compiled role archives
+
+Binary-oriented release archives should use thin, self-contained ESM role glue,
+preferably `HcpServer.mjs` and `HcpMagnet.mjs`, around process, MCP, or native
+payloads. Self-contained glue avoids dependency-resolution and stale-output
+ambiguity in a relocated archive. `.js` and the existing `.ts` source form are
+also accepted, but each role directory must contain exactly one accepted
+candidate. Node and Bun imports are keyed by the role file's content hash so an
+edited local role can be reloaded without selecting between parallel outputs.
+
+Installing, downloading, or extracting an archive does not execute or activate
+it. A package enters HCP assembly only after explicit package selection. Once
+selected, `HcpServer` and `HcpMagnet` glue executes in-process as trusted local
+code; it is not a sandbox boundary. Sandboxing applies to products constructed
+through the process/MCP/native tool adapters, not to the role glue itself.
+
+This slice intentionally adds no unfinished manifest ABI or signature fields.
+Follow-up protocol work must define `hcp_role_abi`, archive/package signature
+verification, and explicit approval policy for Capability replacement before
+those become manifest contracts.
 
 All manifest and descriptor references must remain inside the package root.
 Absolute component paths, traversal, symlink escapes, unsafe release entries,

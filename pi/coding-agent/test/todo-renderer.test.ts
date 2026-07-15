@@ -45,26 +45,29 @@ function render(result: TodoDetails, expanded = false, width = 120): string[] {
 describe("todo-plan renderer", () => {
 	beforeAll(() => initTheme("dark"));
 
-	it("renders a compact structured Updated Plan with hierarchy and current path", () => {
+	it("renders a compact structured Updated Plan with every in-progress branch", () => {
 		const state: TodoPlanState = {
 			version: 2,
 			title: "Release",
 			summary: "Only real update validation remains",
 			currentId: 3,
-			nextId: 4,
+			nextId: 5,
 			revision: 1,
 			history: [],
 			nodes: [
 				{ id: 1, parentId: null, order: 0, text: "Release validation", status: "in_progress" },
 				{ id: 2, parentId: 1, order: 0, text: "Windows", status: "completed" },
 				{ id: 3, parentId: 1, order: 1, text: "Real update", status: "pending" },
+				{ id: 4, parentId: null, order: 1, text: "Package artifacts", status: "in_progress" },
 			],
 		};
 		const output = render(details(state)).join("\n");
-		expect(output).toContain("Updated Plan · 1/3");
+		expect(output).toContain("Updated Plan · 1/4");
 		expect(output).toContain("Only real update validation remains");
-		expect(output).toContain("Current: 1 Release validation › 1.2 Real update");
+		expect(output).not.toContain("Current:");
+		expect(output).toContain("● 1 Release validation");
 		expect(output).toContain("✔ 1.1 Windows");
+		expect(output).toContain("● 2 Package artifacts");
 	});
 
 	it("bounds long collapsed and expanded plans and points to /todo", () => {

@@ -9,7 +9,7 @@ const state: TodoPlanState = {
 	title: "Current plan",
 	summary: null,
 	currentId: 5,
-	nextId: 7,
+	nextId: 8,
 	revision: 5,
 	history: [
 		{
@@ -32,6 +32,7 @@ const state: TodoPlanState = {
 		{ id: 4, parentId: null, order: 0, text: "Root", status: "in_progress" },
 		{ id: 5, parentId: 4, order: 0, text: "Completed child", status: "completed" },
 		{ id: 6, parentId: 4, order: 1, text: "Pending child", status: "pending" },
+		{ id: 7, parentId: null, order: 1, text: "Parallel branch", status: "in_progress" },
 	],
 };
 
@@ -47,8 +48,13 @@ describe("TodoOverlay", () => {
 
 		expect(output()).toContain("[Current]");
 		expect(output()).toContain("History (2)");
-		expect(output()).toContain("Completed child");
-		expect(output()).not.toContain("Most recent task");
+		const currentPlan = output();
+		expect(currentPlan).toContain("Completed child");
+		expect(currentPlan).not.toContain("Most recent task");
+		expect(currentPlan).toContain("● 1 Root");
+		expect(currentPlan).toContain("● 2 Parallel branch");
+		const focusedNode = currentPlan.split("\n").find((line) => line.includes("Completed child"));
+		expect(focusedNode).not.toContain("current");
 		overlay.handleInput("f");
 		expect(output()).not.toContain("Completed child");
 		overlay.handleInput("/");

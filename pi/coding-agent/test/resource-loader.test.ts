@@ -401,7 +401,8 @@ describe("DefaultResourceLoader", () => {
 				expect(skill.sourceInfo?.source).toBe("harness");
 				expect(skill.sourceInfo?.baseDir).toContain("skills");
 			}
-			expect(loader.getAppendSystemPrompt().join("\n")).toContain("Background Work");
+			expect(loader.getAppendSystemPrompt()).toEqual([]);
+			expect(loader.getBundledPromptFeatures()).toEqual({ backgroundWork: true });
 
 			for (const extension of extensionsResult.extensions) {
 				if (extension.sourceInfo?.source === "bundled") {
@@ -422,7 +423,8 @@ describe("DefaultResourceLoader", () => {
 			expect(commandNames.has("side")).toBe(false);
 			expect(commandNames.has("events")).toBe(false);
 			expect(skillNames.has("paper-analysis")).toBe(false);
-			expect(loader.getAppendSystemPrompt().join("\n")).not.toContain("Background Work");
+			expect(loader.getAppendSystemPrompt()).toEqual([]);
+			expect(loader.getBundledPromptFeatures()).toEqual({ backgroundWork: false });
 		});
 
 		it("loads selected harness package skills and tools from repo-local packages", async () => {

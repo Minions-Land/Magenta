@@ -1,91 +1,126 @@
 import {
 	type Component,
-	CURSOR_MARKER,
+	Editor,
 	type Focusable,
 	Markdown,
 	matchesKey,
-	truncateToWidth,
-	visibleWidth,
+	type TUI,
 	wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
-import { getMarkdownTheme, type Theme } from "../theme/theme.ts";
+import { getEditorTheme, getMarkdownTheme, type Theme } from "../theme/theme.ts";
 import { FLOATING_WINDOW_BODY_LINES, renderFloatingWindow } from "./floating-window.ts";
 
-type ChatRole = "user" | "assistant" | "system";
+export type SideChatRole = "user" | "assistant" | "system";
 
-type ChatItem = {
-	role: ChatRole;
+export type SideChatItem = {
+	role: SideChatRole;
 	text: string;
 };
 
-export type SideChatTuiLike = {
-	requestRender: () => void;
+export type SideChatOverlayResult = { action: "close"; draft: string } | { action: "enqueue"; draft: string };
+
+export type SideChatOverlayOptions = {
+	initialQuestion?: string;
+	initialDraft?: string;
+	initialMessages?: SideChatItem[];
+	modelLabel?: string;
+	enqueuedTeammateId?: string;
+	onCopy?: (text: string) => Promise<void>;
 };
 
-function printableText(data: string): string {
-	if (!data || data.startsWith("\x1b")) return "";
-	return data.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, "");
-}
-
-function deleteLastWord(text: string): string {
-	return text.replace(/\s*\S+\s*$/, "");
-}
-
 export class SideChatOverlay implements Component, Focusable {
-	focused = false;
-	messages: ChatItem[] = [];
-	input = "";
+	messages: SideChatItem[];
 	busy = false;
 	error?: string;
 	scrollTop = 0;
 	followBottom = true;
 	lastBodyLength = 0;
 	modelLabel: string;
+	enqueuedTeammateId?: string;
 
+	private _focused = false;
 	private closed = false;
 	private currentAbortController?: AbortController;
-	private tui: SideChatTuiLike;
-	private theme: Theme;
-	private done: () => void;
-	private onSend: (text: string, signal: AbortSignal) => Promise<string>;
+	private readonly tui: TUI;
+	private readonly theme: Theme;
+	private readonly done: (result: SideChatOverlayResult) => void;
+	private readonly onSend: (text: string, signal: AbortSignal) => Promise<string>;
+	private readonly onCopy?: (text: string) => Promise<void>;
+	private readonly editor: Editor;
+	private lastViewportLines = FLOATING_WINDOW_BODY_LINES;
+
+	get focused(): boolean {
+		return this._focused;
+	}
+
+	set focused(value: boolean) {
+		this._focused = value;
+		this.editor.focused = value;
+	}
+
+	get input(): string {
+		return this.editor.getText();
+	}
+
+	set input(value: string) {
+		this.editor.setText(value);
+	}
 
 	constructor(
-		tui: SideChatTuiLike,
+		tui: TUI,
 		theme: Theme,
-		done: () => void,
+		done: (result: SideChatOverlayResult) => void,
 		onSend: (text: string, signal: AbortSignal) => Promise<string>,
-		initialQuestion?: string,
-		modelLabel = "model unknown",
+		options: SideChatOverlayOptions = {},
 	) {
 		this.tui = tui;
 		this.theme = theme;
 		this.done = done;
 		this.onSend = onSend;
-		this.modelLabel = modelLabel;
-		if (initialQuestion?.trim()) {
-			queueMicrotask(() => void this.send(initialQuestion.trim()));
+		this.onCopy = options.onCopy;
+		this.modelLabel = options.modelLabel ?? "model unknown";
+		this.enqueuedTeammateId = options.enqueuedTeammateId;
+		this.messages = options.initialMessages?.map((message) => ({ ...message })) ?? [];
+		this.editor = new Editor(tui, getEditorTheme(), { slashAutocomplete: false, paddingX: 0 });
+		this.editor.onSubmit = (text) => void this.send(text);
+		if (options.initialDraft) this.editor.setText(options.initialDraft);
+		if (options.initialQuestion?.trim()) {
+			queueMicrotask(() => void this.send(options.initialQuestion!.trim()));
 		}
 	}
 
 	close(): void {
-		if (this.closed) return;
-		this.closed = true;
-		this.currentAbortController?.abort();
-		this.done();
+		this.finish({ action: "close", draft: this.editor.getText() });
+	}
+
+	requestEnqueue(): void {
+		if (this.closed || this.busy) return;
+		if (this.enqueuedTeammateId) {
+			this.pushSystem(`Already enqueued as ${this.enqueuedTeammateId}.`);
+			return;
+		}
+		if (!this.messages.some((message) => message.role === "user")) {
+			this.pushSystem("Ask at least one question before enqueueing this conversation.");
+			return;
+		}
+		this.finish({ action: "enqueue", draft: this.editor.getText() });
 	}
 
 	async send(text: string): Promise<void> {
 		if (this.closed || this.busy || !text.trim()) return;
+		const normalized = text.trim();
 		const abortController = new AbortController();
 		this.currentAbortController = abortController;
-		this.input = "";
+		this.editor.addToHistory(normalized);
+		this.editor.setText("");
 		this.error = undefined;
 		this.busy = true;
-		this.messages.push({ role: "user", text });
+		this.messages.push({ role: "user", text: normalized });
+		this.followBottom = true;
 		this.tui.requestRender();
 
 		try {
-			const answer = await this.onSend(text, abortController.signal);
+			const answer = await this.onSend(normalized, abortController.signal);
 			if (this.closed || abortController.signal.aborted) return;
 			this.messages.push({ role: "assistant", text: answer.trim() || "(empty response)" });
 		} catch (error) {
@@ -96,73 +131,35 @@ export class SideChatOverlay implements Component, Focusable {
 			if (this.currentAbortController === abortController) this.currentAbortController = undefined;
 			if (!this.closed) {
 				this.busy = false;
+				this.followBottom = true;
 				this.tui.requestRender();
 			}
 		}
 	}
 
 	handleInput(data: string): void {
-		if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) {
+		if (matchesKey(data, "escape")) {
 			this.close();
 			return;
 		}
-		if (matchesKey(data, "up")) {
-			this.scrollBy(-1);
+		if (matchesKey(data, "ctrl+c")) {
+			void this.copyCurrentText();
 			return;
 		}
-		if (matchesKey(data, "down")) {
-			this.scrollBy(1);
+		if (matchesKey(data, "ctrl+t")) {
+			this.requestEnqueue();
 			return;
 		}
-		if (matchesKey(data, "pageUp")) {
-			this.scrollBy(-8);
+		if (matchesKey(data, "pageUp") || matchesKey(data, "ctrl+up")) {
+			this.scrollBy(matchesKey(data, "pageUp") ? -8 : -1);
 			return;
 		}
-		if (matchesKey(data, "pageDown")) {
-			this.scrollBy(8);
-			return;
-		}
-		if (matchesKey(data, "home")) {
-			this.scrollTo(0);
-			return;
-		}
-		if (matchesKey(data, "end")) {
-			this.followBottom = true;
-			this.tui.requestRender();
+		if (matchesKey(data, "pageDown") || matchesKey(data, "ctrl+down")) {
+			this.scrollBy(matchesKey(data, "pageDown") ? 8 : 1);
 			return;
 		}
 		if (this.busy) return;
-
-		if (matchesKey(data, "enter")) {
-			const text = this.input.trim();
-			if (["exit", "quit", "/exit", "/quit"].includes(text.toLowerCase())) {
-				this.close();
-				return;
-			}
-			void this.send(text);
-			return;
-		}
-		if (matchesKey(data, "backspace") || matchesKey(data, "ctrl+h")) {
-			this.input = this.input.slice(0, -1);
-			this.tui.requestRender();
-			return;
-		}
-		if (matchesKey(data, "ctrl+u")) {
-			this.input = "";
-			this.tui.requestRender();
-			return;
-		}
-		if (matchesKey(data, "ctrl+w")) {
-			this.input = deleteLastWord(this.input);
-			this.tui.requestRender();
-			return;
-		}
-
-		const text = printableText(data).replace(/[\r\n]+/g, " ");
-		if (text) {
-			this.input += text;
-			this.tui.requestRender();
-		}
+		this.editor.handleInput(data);
 	}
 
 	scrollBy(delta: number): void {
@@ -182,7 +179,7 @@ export class SideChatOverlay implements Component, Focusable {
 	}
 
 	bodyViewportLines(): number {
-		return FLOATING_WINDOW_BODY_LINES;
+		return this.lastViewportLines;
 	}
 
 	buildBody(innerWidth: number): string[] {
@@ -190,8 +187,6 @@ export class SideChatOverlay implements Component, Focusable {
 		const mdTheme = getMarkdownTheme();
 
 		for (const message of this.messages) {
-			if (message.role === "system" && !message.text.startsWith("Error:")) continue;
-
 			if (message.role === "user") {
 				const wrapped = wrapTextWithAnsi(message.text || " ", Math.max(10, innerWidth - 6));
 				const label = this.theme.fg("accent", "you ›");
@@ -202,19 +197,15 @@ export class SideChatOverlay implements Component, Focusable {
 				const markdown = new Markdown(message.text || " ", 0, 0, mdTheme);
 				body.push(...markdown.render(Math.max(10, innerWidth - 2)).map((line) => `  ${line}`));
 			} else {
-				for (const line of wrapTextWithAnsi(message.text, innerWidth)) body.push(this.theme.fg("dim", line));
+				for (const line of wrapTextWithAnsi(message.text, innerWidth)) {
+					body.push(this.theme.fg(message.text.startsWith("Error:") ? "error" : "dim", line));
+				}
 			}
 			body.push("");
 		}
 
 		if (this.messages.length === 0) {
-			body.push(
-				this.theme.fg(
-					"dim",
-					"Ask a quick side/btw question. This chat has no tools and will not touch the main thread.",
-				),
-				"",
-			);
+			body.push(this.theme.fg("dim", "Start a no-tools side/btw conversation."), "");
 		}
 		if (this.busy) body.push(this.theme.fg("dim", "thinking..."), "");
 		return body;
@@ -222,6 +213,17 @@ export class SideChatOverlay implements Component, Focusable {
 
 	render(width: number): string[] {
 		const contentWidth = Math.max(20, width - 4);
+		const editorLines = this.busy
+			? [this.theme.fg("dim", "waiting for response...")]
+			: this.editor.render(contentWidth);
+		const hintLines = [
+			this.theme.fg("dim", "enter send · shift+enter newline · ctrl+c copy · ctrl+t enqueue"),
+			this.theme.fg("dim", "pgup/pgdn transcript · esc close"),
+		];
+		const footer = [...editorLines, ...hintLines];
+		const maxWindowLines = Math.max(12, Math.floor(this.tui.terminal.rows * 0.82));
+		this.lastViewportLines = Math.max(3, Math.min(FLOATING_WINDOW_BODY_LINES, maxWindowLines - footer.length - 3));
+
 		const body = this.buildBody(contentWidth);
 		const viewportLines = this.bodyViewportLines();
 		this.lastBodyLength = body.length;
@@ -233,28 +235,55 @@ export class SideChatOverlay implements Component, Focusable {
 			body.length > viewportLines
 				? `${this.scrollTop + 1}-${Math.min(body.length, this.scrollTop + viewportLines)}/${body.length}`
 				: "";
-		const status = this.busy ? "thinking" : `no tools · ${this.modelLabel}`;
+		const statusParts = [this.busy ? "thinking" : `no tools · ${this.modelLabel}`];
+		if (this.enqueuedTeammateId) statusParts.push(`queued ${this.enqueuedTeammateId}`);
+		if (range) statusParts.push(range);
 		const visibleBody = body.slice(this.scrollTop, this.scrollTop + viewportLines);
 		while (visibleBody.length < viewportLines) visibleBody.push("");
-
-		const hint = this.theme.fg("dim", "enter send · ↑↓ scroll · esc close");
-		const promptWidth = Math.max(1, contentWidth - visibleWidth(hint) - 4);
-		const prompt = this.busy
-			? this.theme.fg("dim", "waiting for response...")
-			: `${this.theme.fg("accent", "›")} ${truncateToWidth(this.input, promptWidth, "...")}${this.focused ? CURSOR_MARKER : ""}`;
-		const footer = `${prompt}  ${hint}`;
 
 		return renderFloatingWindow({
 			theme: this.theme,
 			width,
 			title: "side · btw",
-			subtitle: range ? `${status} · ${range}` : status,
+			subtitle: statusParts.join(" · "),
 			body: visibleBody,
 			footer,
 		});
 	}
 
 	invalidate(): void {
-		// No cached render state.
+		this.editor.invalidate();
+	}
+
+	private finish(result: SideChatOverlayResult): void {
+		if (this.closed) return;
+		this.closed = true;
+		this.currentAbortController?.abort();
+		this.done(result);
+	}
+
+	private async copyCurrentText(): Promise<void> {
+		if (!this.onCopy || this.closed) return;
+		const draft = this.editor.getText().trim();
+		const latest = [...this.messages]
+			.reverse()
+			.find((message) => message.role === "assistant" || message.role === "user")?.text;
+		const text = draft || latest;
+		if (!text) {
+			this.pushSystem("Nothing to copy yet.");
+			return;
+		}
+		try {
+			await this.onCopy(text);
+			if (!this.closed) this.pushSystem(draft ? "Copied the current draft." : "Copied the latest message.");
+		} catch (error) {
+			if (!this.closed) this.pushSystem(`Error: ${error instanceof Error ? error.message : String(error)}`);
+		}
+	}
+
+	private pushSystem(text: string): void {
+		this.messages.push({ role: "system", text });
+		this.followBottom = true;
+		this.tui.requestRender();
 	}
 }

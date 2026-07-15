@@ -4,7 +4,7 @@ import type { HcpServerDescription, HcpServerRequest } from "../.HCP/HcpServerTy
 
 export class HcpServer {
 	readonly moduleName = "multiagent";
-	readonly description = "Deterministic multi-agent workflow orchestration.";
+	readonly description = "Workflow orchestration over sessionless, one-shot workers.";
 
 	private binding(magnet: { toCapability?(): unknown }): HcpMagnetBinding<MultiAgentProvider> {
 		return magnet.toCapability?.() as HcpMagnetBinding<MultiAgentProvider>;
@@ -19,7 +19,7 @@ export class HcpServer {
 			target: "capability:multiagent",
 			kind: binding.kind,
 			ops: ["discover", "orchestrate", "call"],
-			description: "Deterministic multi-agent orchestration workflows.",
+			description: "Workflow orchestration over sessionless, one-shot workers.",
 			metadata: {
 				name: binding.name,
 				implementation: "native-ts",
@@ -58,17 +58,17 @@ export class HcpServer {
  * Multi-agent orchestration capability.
  *
  * This module is NOT a sub-agent and NOT an agent team. It is a WORKFLOW
- * engine with a single execution path: every pattern is a workflow module
- * (`(args, ctx) => {...}`) that composes the injected primitives (agent,
- * parallelAgents, pipeline, guards), routes results, and terminates on explicit
- * conditions. The LLM never controls the flow — it only fills task-specific
- * content into the slots each preset exposes.
+ * engine over sessionless, one-shot workers with a single execution path: every
+ * pattern loads a workflow module (`(args, ctx) => {...}`) that composes the
+ * injected primitives (agent, parallelAgents, pipeline, guards), routes results,
+ * and terminates on explicit conditions.
  *
- * The six named patterns are PRESET workflow scripts shipped in-tree; the
- * `script` pattern loads a user-authored module. Both run through the exact
- * same path (resolve module path → runWorkflowModule → assembleResult), so
- * choosing a preset and writing your own workflow are the same action — load a
- * module and run it — differing only in where the module comes from.
+ * The six named patterns are PRESET workflow scripts shipped in-tree. Their
+ * control flow is fixed by the runtime; the caller fills task-specific slots.
+ * The `script` pattern loads an author-provided module whose author owns
+ * if/while/await flow and termination. Both forms run through the same module
+ * loader and runtime-controlled worker primitives, so depth guards, tool denial,
+ * timeout, guard injection, state persistence, and cancellation apply equally.
  *
  * Design axiom: a pattern's value is not its shape, it is the step it forces the
  * LLM not to skip (classify-first, cover-every, independent re-check,
@@ -97,12 +97,11 @@ export type Isolation = "process" | "worktree";
  * A single fill-in slot the LLM provides. The skeleton owns the surrounding
  * control flow; this is the only surface the LLM writes into.
  *
- * This is a superset of pi's `AgentTask`: a single sub-agent is just a
- * one-node workflow, so a slot describes "how one agent runs" with the exact
- * same fields (`task`/`role`/`model`/`provider`/`tools`/`thinking`/timeout),
- * plus the orchestration-only extras `focus` and `schema`. Keeping the shapes
- * aligned lets the sub_agent facade route a lone task and a workflow slot
- * through one code path.
+ * This aligns with pi's `AgentTask`: a slot describes one sessionless, one-shot
+ * worker with the same fields (`task`/`role`/`model`/`provider`/`tools`/
+ * `thinking`/timeout), plus the orchestration-only extras `focus` and `schema`.
+ * Keeping the shapes aligned lets the sub_agent facade route plain tasks and
+ * workflow slots through the same worker contract.
  */
 export type WorkerSlot = {
 	/** What this worker does (LLM-supplied). Mirrors AgentTask.task. */
@@ -292,7 +291,7 @@ export type ScriptAgentOptions = {
 	provider?: string;
 	/** Thinking level. */
 	thinking?: ThinkingLevel;
-	/** Tool whitelist (still sanitized: sub_agent/bg_shell always stripped). */
+	/** Tool whitelist (sanitized: sub_agent/bg_shell/teammate_agent/send_message are stripped). */
 	tools?: string[];
 	/** Harness package selectors granted to this worker. */
 	packages?: string[];

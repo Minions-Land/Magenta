@@ -25,6 +25,32 @@ describe("research-orchestration state contract", () => {
 		expect(skill).not.toContain("State lives on disk");
 	});
 
+	it("treats statuses as authoritative and currentId as optional foreground focus", () => {
+		const skill = readSkillFile("SKILL.md");
+
+		expect(skill).toContain("node `status` values as the authoritative progress state");
+		expect(skill).toContain("Multiple nodes may be `in_progress` during fan-out");
+		expect(skill).toContain("`currentId` is only an optional foreground focus");
+		expect(skill).toContain("set it to `null` when no single work item owns foreground attention");
+		expect(skill).not.toContain("Set one current item");
+	});
+
+	it("defines delegation ownership as acquire and release soft leases", () => {
+		const skill = readSkillFile("SKILL.md");
+
+		expect(skill).toContain("Delegation uses **soft leases**, not runtime locks");
+		expect(skill).toContain("successful `sub_agent` or workflow dispatch leases its delegated analysis scope");
+		expect(skill).toContain("assignment must name owned files or globs");
+		expect(skill).toContain('workspace="worktree"');
+		expect(skill).toContain("matching structured terminal receipt");
+		expect(skill).toContain("main agent may advance only non-overlapping Todo work");
+		expect(skill).toContain("A teammate becoming idle does not release");
+		expect(skill).toContain("confirm terminal state before reclaiming the scope");
+		expect(skill).toContain("synthesize the result and independently verify it");
+		expect(skill).toContain("Do not add a Todo owner schema or a separate lease registry");
+		expect(skill).toContain("blocks `bash`");
+	});
+
 	it("does not ship file-based planning templates", () => {
 		expect(existsSync(resolve(SKILL_ROOT, "assets", "templates"))).toBe(false);
 	});

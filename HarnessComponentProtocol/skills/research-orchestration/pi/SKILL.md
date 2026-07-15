@@ -1,6 +1,6 @@
 ---
 name: research-orchestration
-description: Make the plan -> implement -> observe -> reflect -> refine loop explicit for a complex task. Uses the session Todo as the single source of truth for planning and progress, and fans independent work out to workflows, sub-agents, or agent teams when useful.
+description: Make the plan -> implement -> observe -> reflect -> refine loop explicit for a complex task. Uses the session Todo as the single source of truth and delegates through workflows, sessionless sub-agents, or managed teammates when useful.
 ---
 
 # Research Orchestration
@@ -32,7 +32,7 @@ The Todo protocol is exact:
 - Mutation verbs such as `add`, `update`, `set_status`, and `set_current` belong only in `operations[].op`.
 - A single mutation is still one `apply` batch containing one operation. Never call the tool with a top-level action such as `{"action":"add"}`.
 
-Seed the Todo in one atomic `apply` batch. Use its title for the task, its summary for the objective or current synthesis, nodes for testable completion criteria and work units, statuses for progress, and `currentId` for the active item. Update it at meaningful milestones, after a changed conclusion, or when the active item changes. Do not update it for every command.
+Seed the Todo in one atomic `apply` batch. Use its title for the task, its summary for the objective or current synthesis, nodes for testable completion criteria and work units, and node `status` values as the authoritative progress state. Multiple nodes may be `in_progress` during fan-out. `currentId` is only an optional foreground focus for the main agent; set it to `null` when no single work item owns foreground attention. Update Todo at meaningful status transitions, after a changed conclusion, or when foreground focus changes. Do not update it for every command.
 
 Do not create or maintain `plan.md`, `progress.md`, `contract.md`, `reflection.md`, a second checklist, or an equivalent planning ledger. Context compaction is not a reason to duplicate state: the Todo is session-branch state and is the recovery point. If Todo is unavailable, keep the plan concise in the conversation and do not silently introduce a file-based substitute.
 
@@ -45,7 +45,7 @@ For a trivial task, skip persistent planning entirely.
 These constraints keep the loop convergent:
 
 1. **Contract before implementation.** Add testable completion criteria to Todo before substantial work. Each criterion must be decidable as pass, fail, or unclear from evidence.
-2. **One progress ledger.** Todo owns the plan, active item, status, and synthesis. Never dual-write progress to files or prose checklists.
+2. **One progress ledger.** Todo owns the plan, authoritative node statuses, optional foreground focus, and synthesis. Never dual-write progress to files or prose checklists.
 3. **Separate production and evaluation.** The worker that produces an artifact must not be its only evaluator. Use an independent sub-agent, workflow verifier, or an explicit evaluator role grounded in the Todo criteria.
 4. **Read the traces.** Diagnose failures from the raw worker or tool output. Find the first divergence instead of guessing from the final symptom.
 5. **Restart beats repeated rescue.** If two iterations fail for the same reason, preserve the objective and completion criteria in Todo, discard the failed approach, and restart from a different hypothesis.
@@ -60,7 +60,8 @@ Run PLAN -> IMPLEMENT -> OBSERVE -> REFLECT -> REFINE until the Todo completion 
 - Clarify the objective and constraints.
 - Draft testable completion criteria and have an independent evaluator challenge omissions or ambiguity when risk warrants it.
 - Seed or revise the Todo with one atomic `apply` batch.
-- Set one current item. Keep independent work units separate enough to dispatch safely.
+- Mark every dispatched work unit `in_progress`; more than one may be in progress concurrently. Use `currentId` only for an optional foreground focus, and leave it `null` during fan-out when no single item is foreground.
+- Keep independent work units separate enough to dispatch safely.
 - Record hypotheses only when they affect an upcoming decision; put the current synthesis in the Todo summary rather than a parallel note.
 
 ### 2. IMPLEMENT
@@ -85,7 +86,7 @@ Run PLAN -> IMPLEMENT -> OBSERVE -> REFLECT -> REFINE until the Todo completion 
 
 ### 5. REFINE
 
-- Revise the Todo in one `apply` batch to reflect the evidence and select the next current item.
+- Revise the Todo in one `apply` batch to reflect the evidence through node statuses; optionally select a foreground `currentId`, or clear it during fan-out.
 - If the completion criteria were wrong, update them explicitly before continuing.
 - If the same approach has failed twice, replace the approach instead of accumulating patches.
 - Finish only when every required Todo criterion is complete, or mark the exact blocker and report what evidence or capability is missing.
@@ -94,17 +95,43 @@ Run PLAN -> IMPLEMENT -> OBSERVE -> REFLECT -> REFINE until the Todo completion 
 
 Use distributed execution when work units are independent or benefit from specialized review. This also enforces producer/evaluator separation.
 
-- Run independent investigations in parallel when their inputs and file ownership do not conflict.
-- Prefer read-only sub-agents for research, review, test analysis, and alternative designs; synthesize their results in the main agent.
-- Use persistent teammates only when retained context across multiple assignments is valuable, and assign non-overlapping ownership if they edit.
-- Use workflow patterns when their deterministic control flow fits the problem:
-  - `adversarial_verify` for high false-positive-cost claims,
-  - `generate_and_filter` for competing candidates,
-  - `tournament` for pairwise subjective selection,
-  - `classify_and_act` for type-specific routing,
-  - `fan_out_synthesize` for the same check over many items,
-  - `loop_until_done` for bounded iteration that excludes prior findings.
-- Keep coordination, conflict resolution, Todo ownership, and final synthesis in the main agent. Workers do not maintain competing progress ledgers.
+### Capability topology
+
+- `sub_agent` starts sessionless, one-shot workers. Use it for bounded research, review, test analysis, planning, or parallel tasks whose results return to the parent. A worker does not retain a session for another assignment.
+- A `workflow` orchestrates those same sessionless, one-shot workers. Named presets provide fixed runtime-owned control flow; `pattern="script"` gives the script author if/while/await flow and termination through runtime-controlled primitives and safety guards.
+- `teammate_agent` is the parent-managed control plane for long-lived child sessions. Use it when retained context or multiple follow-up assignments matter. For editing, request `workspace="worktree"`, wait for the structured assignment receipt, then explicitly integrate or discard the captured Git changes. Parent shutdown stops children but preserves unintegrated work.
+- `send_message` is the urgent mailbox data plane for any known peer session id. It does not create or manage a teammate; use `teammate_agent` for child lifecycle.
+- Ultra selects the model's highest native reasoning level and enables workflow and managed-teammate capabilities by default. Its coalesced, rate-limited background stall reminder may wake the main loop after a real silent or overdue epoch. It never dispatches work automatically; the main agent still decides whether and how to delegate.
+
+Run independent investigations in parallel when their inputs and file ownership do not conflict. Prefer read-only `sub_agent` workers for bounded analysis and synthesize their results in the main agent. Choose a managed teammate for multi-assignment continuity or non-overlapping edit ownership.
+
+### Delegation ownership
+
+Delegation uses **soft leases**, not runtime locks. Do not claim that the harness locks files, blocks `bash`, or prevents another actor from writing. Do not add a Todo owner schema or a separate lease registry; running events, delivered assignments, and Todo work-unit boundaries are the coordination evidence.
+
+Acquire and honor leases as follows:
+
+- A successful `sub_agent` or workflow dispatch leases its delegated analysis scope while its event is running. Read-only workers do not own files.
+- A delivered teammate assignment leases its stated scope. For editing work, the assignment must name owned files or globs and should use `workspace="worktree"`. The linked checkout isolates ordinary Git paths, but it is not a security sandbox and does not intercept absolute-path writes.
+- While a lease is active, do not redo the same task. The main agent may advance only non-overlapping Todo work, coordination, and integration preparation.
+- A teammate becoming idle does not release its assignment lease. Use `teammate_agent action=wait` for the matching structured terminal receipt.
+
+Release and reclaim leases as follows:
+
+- Release a normal worker lease only after its terminal result returns; then synthesize the result and independently verify it before integrating or reporting.
+- On failure, timeout, cancellation, or teammate stop, confirm terminal state before reclaiming the scope. An interrupt followed by a replacement assignment transfers the lease only after the interrupted turn is confirmed aborted.
+- A structured teammate terminal receipt releases that assignment scope. For worktree edits, stop/integrate only after every relevant assignment is terminal, then independently verify the unstaged parent changes. Do not infer release from silence or idle status.
+
+Use named workflow presets when their fixed control flow fits the problem:
+
+- `adversarial_verify` for high false-positive-cost claims,
+- `generate_and_filter` for competing candidates,
+- `tournament` for pairwise subjective selection,
+- `classify_and_act` for type-specific routing,
+- `fan_out_synthesize` for the same check over many items,
+- `loop_until_done` for bounded iteration that excludes prior findings.
+
+Keep coordination, conflict resolution, Todo ownership, and final synthesis in the main agent. Workers and teammates do not maintain competing progress ledgers.
 
 ## Output Discipline
 

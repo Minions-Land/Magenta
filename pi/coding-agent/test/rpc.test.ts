@@ -41,6 +41,11 @@ describe.skipIf(!process.env.ANTHROPIC_API_KEY && !process.env.ANTHROPIC_OAUTH_T
 		expect(state.model?.provider).toBe("anthropic");
 		expect(state.model?.id).toBe("claude-sonnet-4-5");
 		expect(state.isStreaming).toBe(false);
+		expect(state.harnessCapabilities).toEqual({
+			workflows: expect.any(Boolean),
+			teammates: expect.any(Boolean),
+		});
+		expect(state.activeToolNames).toEqual(expect.any(Array));
 		expect(state.messageCount).toBe(0);
 	}, 30000);
 

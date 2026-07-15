@@ -124,6 +124,7 @@ describe("InteractiveMode footer invalidation", () => {
 			isInitialized: true,
 			footer: { invalidate: vi.fn() },
 			streamingComponent: undefined,
+			observeActiveSubmittedInputMessage: vi.fn(),
 		};
 
 		await (InteractiveMode as any).prototype.handleEvent.call(fakeThis, {
@@ -227,6 +228,27 @@ describe("InteractiveMode.setToolsExpanded", () => {
 });
 
 describe("InteractiveMode harness menu", () => {
+	test("describes extension event handlers without presenting them as HCP hooks", () => {
+		const showStatus = vi.fn();
+		const fakeThis: any = {
+			session: {
+				extensionRunner: {
+					getExtensionPaths: () => ["/workspace/extensions/trust.ts"],
+				},
+			},
+			getActiveExtensionEvents: () => ["project_trust", "tool_call"],
+			showStatus,
+		};
+
+		(InteractiveMode as any).prototype.showExtensionEventsSummary.call(fakeThis);
+
+		const summary = showStatus.mock.calls[0]?.[0] as string;
+		expect(summary).toContain("Extension events");
+		expect(summary).toContain("Registered events: project_trust, tool_call");
+		expect(summary).not.toContain("Harness hooks");
+		expect(summary).not.toContain("HCP hooks");
+	});
+
 	test("discovers packages from the resource loader's explicit root", async () => {
 		const root = mkdtempSync(path.join(homedir(), "magenta-harness-packages-root-"));
 		try {
@@ -469,7 +491,7 @@ name = "External Domain"
 				harnessPackages: [],
 				packageToolCount: 0,
 				packageDiagnosticCount: 0,
-				activeHookEvents: [],
+				activeExtensionEvents: ["project_trust"],
 				components: {
 					components: [
 						{
@@ -510,6 +532,7 @@ name = "External Domain"
 
 			const menu = await (InteractiveMode as any).prototype.harnessMenuItems.call(fakeThis);
 			const tools = menu.children.find((item: any) => item.value === "harness:tools");
+			const extensionEvents = menu.children.find((item: any) => item.value === "harness:hooks");
 			const bash = tools.children.find((item: any) => item.value === "harness:tool:bash");
 			const labels = bash.children.map((item: any) => item.label);
 			const magenta = bash.children.find((item: any) => item.label === "Magenta");
@@ -517,6 +540,10 @@ name = "External Domain"
 
 			expect(labels).toContain("Magenta");
 			expect(labels).toContain("Pi");
+			expect(extensionEvents.label).toBe("Extension events");
+			expect(extensionEvents.description).toContain("1 registered event");
+			expect(extensionEvents.children.map((item: any) => item.label)).toContain("Pi lifecycle handlers");
+			expect(extensionEvents.children.map((item: any) => item.label)).not.toContain("Hooks");
 			expect(bash.description).toContain("implementation: Pi");
 			expect(magenta.description).toContain("available");
 			expect(pi.description).toContain("active");

@@ -63,14 +63,20 @@ Type a request and press Enter:
 Summarize this repository and run its documented checks.
 ```
 
-Standard profiles activate `read`, `bash`, `edit`, `write`, `bg_shell`,
-`sub_agent`, `send_message`, `web-search`, and `web-fetch`. Ultra also enables
-workflow templates and `teammate_agent` by default. Use `sub_agent` for disposable
-work and `teammate_agent` for a persistent hidden collaborator that communicates
-through `send_message`. The two web tools are autoloaded
-through HCP. `grep`, `find`, and `ls` are available as optional read-only tools.
-All tools and extensions run with the permissions of the Magenta process;
-project trust is not a sandbox.
+The native tools active by default are `read`, `bash`, `edit`, `write`,
+`bg_shell`, `sub_agent`, `send_message`, `show`, `grep`, `find`, and `ls`.
+HCP also activates `lsp`, `todo`, `web-search`, and `web-fetch`. Standard
+profiles expose sessionless, one-shot `sub_agent` workers but omit workflows
+and `teammate_agent`. Ultra enables both capabilities by default but never
+dispatches work automatically.
+
+Use a workflow to orchestrate bounded one-shot workers: named presets have fixed
+control flow, while a custom script owns its flow through runtime-controlled
+primitives. Use `teammate_agent` when a parent-managed child needs retained
+context, multiple assignments, or explicit file ownership. `send_message` sends
+an urgent mailbox message to any known peer session id; it does not create a
+teammate. All tools and extensions run with the permissions of the Magenta
+process; project trust is not a sandbox.
 
 ## Project Instructions
 
@@ -95,7 +101,7 @@ Run `/refresh` after changing resources in an active session. Use `/reload` only
 
 Use `/model` or Ctrl+L to select a configured model. Shift+Tab cycles only the reasoning levels supported by that model.
 
-Built-in GPT-5.6 entries for OpenAI, Azure OpenAI Responses, and OpenRouter support `off`, `low`, `medium`, `high`, `xhigh`, and `max`. They do not support `minimal` or `ultra`; `max` is their highest GPT-5.6 level.
+Built-in GPT-5.6 entries for OpenAI, Azure OpenAI Responses, and OpenRouter support native levels `off`, `low`, `medium`, `high`, `xhigh`, and `max`; `minimal` is unsupported. Ultra is still offered as a Magenta execution profile and maps GPT-5.6 to native `max` while enabling workflow and managed-teammate capabilities. It is not a provider-native thinking level and does not auto-dispatch work.
 
 ```bash
 magenta --model openai/gpt-5.6-sol:max

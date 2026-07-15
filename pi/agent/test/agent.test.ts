@@ -630,6 +630,72 @@ describe("Agent", () => {
 		expect(responseCount).toBe(2);
 	});
 
+	it("treats a steering batch as one unit in one-at-a-time mode", async () => {
+		let responseCount = 0;
+		const userTextsByCall: string[][] = [];
+		const agent = new Agent({
+			streamFn: (_model, context) => {
+				const stream = new MockAssistantStream();
+				responseCount++;
+				userTextsByCall.push(
+					context.messages
+						.filter((message) => message.role === "user")
+						.map((message) =>
+							typeof message.content === "string"
+								? message.content
+								: message.content
+										.filter((part) => part.type === "text")
+										.map((part) => part.text)
+										.join(""),
+						),
+				);
+				queueMicrotask(() => {
+					stream.push({ type: "done", reason: "stop", message: createAssistantMessage("Processed batch") });
+				});
+				return stream;
+			},
+		});
+		agent.state.messages = [
+			{ role: "user", content: [{ type: "text", text: "Initial" }], timestamp: Date.now() - 10 },
+			createAssistantMessage("Initial response"),
+		];
+		const first = { role: "user" as const, content: "Batch 1", timestamp: Date.now() };
+		const second = { role: "user" as const, content: "Batch 2", timestamp: Date.now() + 1 };
+		const later = { role: "user" as const, content: "Later batch", timestamp: Date.now() + 2 };
+		agent.steerBatch([first, second]);
+		agent.steer(later);
+
+		await agent.continue();
+
+		expect(responseCount).toBe(2);
+		expect(userTextsByCall[0]).toEqual(expect.arrayContaining(["Batch 1", "Batch 2"]));
+		expect(userTextsByCall[0]).not.toContain("Later batch");
+		expect(userTextsByCall[1]).toEqual(expect.arrayContaining(["Batch 1", "Batch 2", "Later batch"]));
+		expect(agent.state.messages).toEqual(expect.arrayContaining([first, second, later]));
+		expect(agent.hasQueuedMessages()).toBe(false);
+	});
+
+	it("treats a follow-up batch as one unit and clears batches as flattened messages", async () => {
+		const agent = new Agent();
+		const first = { role: "user" as const, content: "Follow 1", timestamp: Date.now() };
+		const second = { role: "user" as const, content: "Follow 2", timestamp: Date.now() + 1 };
+		agent.followUpBatch([first, second]);
+
+		expect(agent.clearFollowUpQueue()).toEqual([first, second]);
+		expect(agent.hasQueuedMessages()).toBe(false);
+	});
+
+	it("removes one undrained message without splitting the remaining batch", () => {
+		const agent = new Agent();
+		const keepA = { role: "user" as const, content: "Keep A", timestamp: Date.now() };
+		const remove = { role: "user" as const, content: "Remove", timestamp: Date.now() + 1 };
+		const keepB = { role: "user" as const, content: "Keep B", timestamp: Date.now() + 2 };
+		agent.steerBatch([keepA, remove, keepB]);
+
+		expect(agent.removeQueuedMessages((message) => message === remove)).toEqual([remove]);
+		expect(agent.clearSteeringQueue()).toEqual([keepA, keepB]);
+	});
+
 	it("forwards sessionId to streamFn options", async () => {
 		let receivedSessionId: string | undefined;
 		const agent = new Agent({

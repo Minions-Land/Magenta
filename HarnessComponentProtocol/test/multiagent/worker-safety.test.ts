@@ -2,17 +2,25 @@ import { afterEach, describe, expect, it } from "vitest";
 import { currentDepth, sanitizeWorkerTools, spawnWorker } from "../../multiagent/workflow/magenta/worker.ts";
 
 /**
- * Safety guards for worker spawning. These are the invariants that prevent a
- * non-main agent (a sub-agent or workflow worker) from gaining orchestration or
- * background-delegation powers, and prevent the fork-bomb class of failure.
+ * Safety guards for worker spawning. These invariants keep a workflow worker
+ * from gaining orchestration, background-delegation, teammate-control, or peer
+ * mailbox powers, and prevent the fork-bomb class of failure.
  */
 describe("worker capability denial", () => {
-	it("strips nested agent and background controllers from any requested whitelist", () => {
-		expect(sanitizeWorkerTools(["read", "sub_agent", "bg_shell", "teammate_agent", "ls"])).toEqual(["read", "ls"]);
+	it("strips delegation controllers and peer messaging from any requested whitelist", () => {
+		expect(sanitizeWorkerTools(["read", "sub_agent", "bg_shell", "teammate_agent", "send_message", "ls"])).toEqual([
+			"read",
+			"ls",
+		]);
 	});
 
 	it("falls back to read-only when only forbidden tools are requested", () => {
-		expect(sanitizeWorkerTools(["sub_agent", "bg_shell", "teammate_agent"])).toEqual(["read", "grep", "find", "ls"]);
+		expect(sanitizeWorkerTools(["sub_agent", "bg_shell", "teammate_agent", "send_message"])).toEqual([
+			"read",
+			"grep",
+			"find",
+			"ls",
+		]);
 	});
 
 	it("falls back to read-only when no tools are requested", () => {

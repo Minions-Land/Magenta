@@ -1,12 +1,5 @@
 import { Text } from "@earendil-works/pi-tui";
-import {
-	flattenTodoPlan,
-	isTodoPlanState,
-	type TodoDetails,
-	type TodoNode,
-	type TodoPlanState,
-	type TodoStatus,
-} from "@magenta/harness";
+import { flattenTodoPlan, isTodoPlanState, type TodoDetails, type TodoStatus } from "@magenta/harness";
 import type { Theme } from "../../modes/interactive/theme/theme.ts";
 import { getTextOutput } from "./render-utils.ts";
 import type { ToolRenderer } from "./renderer-registry.ts";
@@ -40,19 +33,6 @@ function statusColor(status: TodoStatus): "success" | "accent" | "warning" | "mu
 	}
 }
 
-function currentPath(state: TodoPlanState): Array<{ node: TodoNode; outline: string }> {
-	if (state.currentId === null) return [];
-	const byId = new Map(state.nodes.map((node) => [node.id, node]));
-	const outlines = new Map(flattenTodoPlan(state).map((row) => [row.node.id, row.outline]));
-	const path: TodoNode[] = [];
-	let node = byId.get(state.currentId);
-	while (node) {
-		path.push(node);
-		node = node.parentId === null ? undefined : byId.get(node.parentId);
-	}
-	return path.reverse().map((pathNode) => ({ node: pathNode, outline: outlines.get(pathNode.id) ?? "?" }));
-}
-
 function renderPlan(details: TodoDetails, expanded: boolean, theme: Theme): string {
 	const state = details.state;
 	const completed = state.nodes.filter((node) => node.status === "completed").length;
@@ -62,11 +42,6 @@ function renderPlan(details: TodoDetails, expanded: boolean, theme: Theme): stri
 			theme.fg("dim", ` · ${completed}/${state.nodes.length}${archived}`),
 	];
 	if (state.summary) lines.push(theme.fg("muted", `└ ${state.summary}`));
-	const path = currentPath(state);
-	if (path.length > 0)
-		lines.push(
-			theme.fg("accent", `Current: ${path.map(({ node, outline }) => `${outline} ${node.text}`).join(" › ")}`),
-		);
 
 	if (state.nodes.length === 0) {
 		lines.push(theme.fg("dim", "No Todo items"));

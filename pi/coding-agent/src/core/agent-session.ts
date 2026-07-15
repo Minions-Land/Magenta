@@ -42,6 +42,7 @@ import {
 	type SandboxProvider,
 	type SshTarget,
 	type SshToolOperations,
+	type SystemPromptProvider,
 } from "@magenta/harness";
 import { ENV_TEAMMATE_PARENT_SESSION_ID, getAgentDir, getPeerMessageDbPath } from "../config.ts";
 import { createBuiltInMessageRenderersExtension } from "../modes/interactive/builtin-message-renderers.ts";
@@ -50,7 +51,7 @@ import { resolvePath } from "../utils/paths.ts";
 import { sleep } from "../utils/sleep.ts";
 import { formatNoApiKeyFoundMessage, formatNoModelSelectedMessage } from "./auth-guidance.ts";
 import { BackgroundEventManager, type BackgroundEventSnapshot } from "./background-events.ts";
-import { BackgroundReturnCoordinator, type BackgroundReturnMessage } from "./background-return-coordinator.ts";
+import { BackgroundReminderCoordinator } from "./background-reminder-coordinator.ts";
 import { type BashResult, executeBashWithOperations } from "./bash-executor.ts";
 import {
 	CompactionError,
@@ -77,6 +78,7 @@ import { exportSessionToHtml, type ToolHtmlRenderer } from "./export-html/index.
 import { createToolHtmlRenderer } from "./export-html/tool-renderer.ts";
 import {
 	type ContextUsage,
+	type ExtensionCommandContext,
 	type ExtensionCommandContextActions,
 	type ExtensionErrorListener,
 	type ExtensionMode,
@@ -102,6 +104,11 @@ import {
 	wrapRegisteredTools,
 } from "./extensions/index.ts";
 import { emitSessionShutdownEvent } from "./extensions/runner.ts";
+import {
+	ExternalActivationCoordinator,
+	type ExternalActivationEntry,
+	type ExternalActivationMessage,
+} from "./external-activation-coordinator.ts";
 import { HcpClientpackageloadcontroller } from "./HcpClientpackageloadcontroller.ts";
 import { HcpClientassembletools } from "./HcpClienttools.ts";
 import type { BashExecutionMessage, CustomMessage } from "./messages.ts";
@@ -111,10 +118,19 @@ import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.t
 import type { BranchSummaryEntry, CompactionEntry, SessionManager } from "./session-manager.ts";
 import { CURRENT_SESSION_VERSION, getLatestCompactionEntry, type SessionHeader } from "./session-manager.ts";
 import type { SettingsManager } from "./settings-manager.ts";
-import { SIDE_CHAT_COMMAND_NAMES, SideChatManager } from "./side-chat.ts";
+import {
+	SIDE_CHAT_COMMAND_NAMES,
+	type SideChatHandoffRequest,
+	type SideChatHandoffResult,
+	SideChatManager,
+} from "./side-chat.ts";
 import type { SlashCommandInfo } from "./slash-commands.ts";
 import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.ts";
-import { type BuildSystemPromptOptions, buildSystemPrompt } from "./system-prompt.ts";
+import {
+	type BuildSystemPromptOptions,
+	buildSystemPrompt,
+	getSystemPromptDocumentationPaths,
+} from "./system-prompt.ts";
 import { ToolProgressTracker } from "./tool-progress.ts";
 import { type BashOperations, createLocalBashOperations, withBashAutoPromotion } from "./tools/bash.ts";
 import { BackgroundShellController } from "./tools/bg-shell.ts";
@@ -187,16 +203,10 @@ export type AgentSessionEvent =
 	| { type: "auto_retry_start"; attempt: number; maxAttempts: number; delayMs: number; errorMessage: string }
 	| { type: "auto_retry_end"; success: boolean; attempt: number; finalError?: string }
 	| {
-			/**
-			 * Magenta feature: an external, non-user source (currently an idle peer
-			 * wake) wants to start a fresh turn while the session sits idle. The
-			 * activation payload messages are already appended to session state; a
-			 * host that owns the turn-runner (e.g. the interactive TUI loop) should
-			 * run one turn to consume them. When no host claims the turn-runner, the
-			 * session runs the turn itself (headless / sub-agent fallback).
-			 */
+			/** One claimed-host wake for a coalesced external activation batch. */
 			type: "external_activation";
-			source: "peer_wake" | "background_return";
+			activationId: number;
+			sources: Array<"peer" | "bg_shell" | "sub_agent" | "reminder">;
 			messages: AgentMessage[];
 	  };
 
@@ -360,18 +370,20 @@ export class AgentSession {
 	/** Tracks pending follow-up messages and attachments. Removed when delivered. */
 	private _followUpMessages: SubmittedInput[] = [];
 	/** Messages queued to be included with the next user prompt as context ("asides"). */
-	private _pendingNextTurnMessages: CustomMessage[] = [];
+	private _pendingNextTurnMessages: Array<{ key?: string; message: CustomMessage }> = [];
 
 	/**
 	 * Magenta feature: when true, a host (e.g. the interactive TUI loop) has
-	 * claimed the turn-runner, so external activations (idle peer wake) are
-	 * delivered as `external_activation` events for the host to run, instead of
+	 * claimed the turn-runner, so coalesced external activations are delivered as
+	 * one `external_activation` event for the host to run, instead of
 	 * the session starting the turn itself. Defaults to false so headless and
 	 * sub-agent sessions keep their self-running fallback.
 	 */
 	private _externalTurnRunnerClaimed = false;
-	/** A host activation has been emitted for peer payload already appended to state. */
+	/** A host activation has been emitted for payload already appended to state. */
 	private _externalActivationPending = false;
+	private _externalActivationSequence = 0;
+	private _externalActivationReceipts = new WeakMap<CustomMessage, ExternalActivationEntry>();
 
 	// Compaction state
 	private _compactionAbortController: AbortController | undefined = undefined;
@@ -431,7 +443,8 @@ export class AgentSession {
 	private _extensionErrorListener?: ExtensionErrorListener;
 	private _extensionErrorUnsubscriber?: () => void;
 	private _backgroundEvents: BackgroundEventManager;
-	private _backgroundReturns: BackgroundReturnCoordinator;
+	private _backgroundReminders: BackgroundReminderCoordinator;
+	private _externalActivations: ExternalActivationCoordinator;
 	private _backgroundShell: BackgroundShellController;
 	private _HcpClientpackageloadcontroller: HcpClientpackageloadcontroller;
 	private _subAgents: SubAgentController;
@@ -478,29 +491,63 @@ export class AgentSession {
 		this._baseToolsOverride = config.baseToolsOverride;
 		this._sessionStartEvent = config.sessionStartEvent ?? { type: "session_start", reason: "startup" };
 		this._backgroundEvents = new BackgroundEventManager();
+		// One scheduling boundary for every model-visible payload produced outside
+		// the AgentLoop. Single messages are one-element batches; sources never own
+		// their own queue, wake, or turn path.
+		this._externalActivations = new ExternalActivationCoordinator({
+			injectBatch: (entries) => this._injectExternalActivationBatch(entries),
+			cancelQueued: (entry) => this._cancelQueuedExternalActivation(entry),
+		});
+		this._backgroundReminders = new BackgroundReminderCoordinator(this._backgroundEvents, {
+			upsertNextTurn: (key, content) => {
+				const proactive = this._executionProfile === "ultra";
+				this._externalActivations.register({
+					key: `reminder:${key}`,
+					source: { kind: "reminder", key },
+					consumeIds: [`reminder:${key}`],
+					message: {
+						customType: "background-reminder",
+						content,
+						display: false,
+						details: { key },
+					},
+					delivery: proactive ? "steer" : "nextTurn",
+					idlePolicy: proactive ? "activate" : "passive",
+				});
+			},
+			removeNextTurn: (key) => {
+				this._externalActivations.cancel([`reminder:${key}`]);
+			},
+		});
 		this._HcpClientpackageloadcontroller = new HcpClientpackageloadcontroller(this._backgroundEvents);
 		this._toolProgressTracker = new ToolProgressTracker();
-		// Scheduling layer that coalesces near-simultaneous background returns into one
-		// injected turn. Transports stay separate: each controller still formats and
-		// byte-bounds its own message and owns its TUI renderer.
-		this._backgroundReturns = new BackgroundReturnCoordinator({
-			isStreaming: () => this.isStreaming,
-			injectSingle: (message, delivery) =>
-				this.sendCustomMessage(message, {
-					deliverAs: delivery,
-					triggerTurn: delivery !== "nextTurn",
-				}),
-			injectBatch: (entries) => this._injectBackgroundReturnBatch(entries),
-		});
 		this._backgroundShell = new BackgroundShellController(this._backgroundEvents, {
-			registerReturn: (eventIds, message, delivery) =>
-				this._backgroundReturns.register({ key: eventIds[0]!, eventIds, message, delivery }),
-			cancelReturn: (eventIds) => this._backgroundReturns.cancel(eventIds),
+			registerReturn: (eventIds, message, delivery, receipt) =>
+				this._externalActivations.register({
+					key: `bg-shell:${eventIds[0]}`,
+					source: { kind: "background", controller: "bg_shell", eventIds },
+					consumeIds: eventIds,
+					message,
+					delivery,
+					idlePolicy: delivery === "nextTurn" ? "passive" : "activate",
+					onPersisted: receipt.onPersisted,
+					onInjectionError: receipt.onDropped,
+				}),
+			cancelReturn: (eventIds) => this._externalActivations.cancel(eventIds),
 		});
 		this._subAgents = new SubAgentController(this._backgroundEvents, {
-			registerReturn: (eventIds, message, delivery) =>
-				this._backgroundReturns.register({ key: eventIds[0]!, eventIds, message, delivery }),
-			cancelReturn: (eventIds) => this._backgroundReturns.cancel(eventIds),
+			registerReturn: (eventIds, message, delivery, receipt) =>
+				this._externalActivations.register({
+					key: `sub-agent:${eventIds[0]}`,
+					source: { kind: "background", controller: "sub_agent", eventIds },
+					consumeIds: eventIds,
+					message,
+					delivery,
+					idlePolicy: delivery === "nextTurn" ? "passive" : "activate",
+					onPersisted: receipt.onPersisted,
+					onInjectionError: receipt.onDropped,
+				}),
+			cancelReturn: (eventIds) => this._externalActivations.cancel(eventIds),
 			getWorkflowProvider: () => this._resolveMultiAgentProvider(),
 			isWorkflowEnabled: () => this.harnessCapabilities.workflows,
 			getDefaultModel: () =>
@@ -525,13 +572,9 @@ export class AgentSession {
 			dbPath: peerMessageDbPath,
 			managedParentSessionId: process.env[ENV_TEAMMATE_PARENT_SESSION_ID],
 			getSessionId: () => this.sessionId,
-			// Idle wake: when a peer sends this session an urgent message while it is
-			// idle, its process is signalled and this fires. Trigger a drain by
-			// prompting the session with an empty message; _injectPeerMessages runs at
-			// turn_start and pulls the queued messages into context. Guarded so a wake
-			// that races with an already-running loop is a no-op.
+			// Urgent peer notification only drains and submits. The shared coordinator
+			// decides whether this joins an active boundary or wakes one idle loop.
 			wakeForMessages: () => this._wakeForPeerMessages(),
-			isStreaming: () => this.isStreaming,
 		});
 		this._teammates = new TeammateAgentController(this._backgroundEvents, {
 			sendPeerMessage: (params) => this._peerMessages.send(params),
@@ -550,7 +593,11 @@ export class AgentSession {
 						}
 					: undefined,
 		});
-		this._sideChat = new SideChatManager({ toolProgress: this._toolProgressTracker });
+		this._sideChat = new SideChatManager({
+			toolProgress: this._toolProgressTracker,
+			appendEntry: (customType, data) => this.sessionManager.appendCustomEntry(customType, data),
+			enqueueHumanHandoff: (request, ctx) => this._enqueueHumanSideHandoff(request, ctx),
+		});
 
 		// Always subscribe to agent events for internal handling
 		// (session persistence, extensions, auto-compaction, retry logic)
@@ -620,6 +667,22 @@ export class AgentSession {
 	private _resolveCompactionProvider(): CompactionProvider | undefined {
 		const hcp: HcpClient | undefined = this._resourceLoader.HcpClientgetsession?.();
 		return hcp?.resolveCapability?.<CompactionProvider>("compaction");
+	}
+
+	/**
+	 * Resolve prompt composition through the session HCP. A loader with no HCP is
+	 * a legacy/test-double boundary and may use the compatibility facade. Once an
+	 * HCP exists, a missing required slot is an assembly error rather than a reason
+	 * to silently bypass Source selection.
+	 */
+	private _resolveSystemPromptProvider(): SystemPromptProvider | undefined {
+		const hcp: HcpClient | undefined = this._resourceLoader.HcpClientgetsession?.();
+		if (!hcp) return undefined;
+		const provider = hcp.resolveCapability<SystemPromptProvider>("system-prompt");
+		if (!provider) {
+			throw new Error('Session HCP is missing required capability slot "system-prompt"');
+		}
+		return provider;
 	}
 
 	private _resolveMultiAgentProvider(): SubAgentWorkflowProvider | undefined {
@@ -700,9 +763,6 @@ export class AgentSession {
 
 		this.agent.beforeToolCall = async ({ toolCall, args }) => {
 			const runner = this._extensionRunner;
-			if (!runner.hasHandlers("tool_call")) {
-				return undefined;
-			}
 
 			try {
 				return await runner.emitToolCall({
@@ -721,9 +781,6 @@ export class AgentSession {
 
 		this.agent.afterToolCall = async ({ toolCall, args, result, isError }) => {
 			const runner = this._extensionRunner;
-			if (!runner.hasHandlers("tool_result")) {
-				return undefined;
-			}
 
 			const hookResult = await runner.emitToolResult({
 				type: "tool_result",
@@ -771,6 +828,10 @@ export class AgentSession {
 
 	/** Internal handler for agent events - shared by subscribe and reconnect */
 	private _handleAgentEvent = async (event: AgentEvent): Promise<void> => {
+		if (event.type === "message_start" && event.message.role === "custom") {
+			const entry = this._externalActivationReceipts.get(event.message);
+			if (entry) this._externalActivations.markCommitted(entry.key);
+		}
 		// When a user message starts, check if it's from either queue and remove it BEFORE emitting
 		// This ensures the UI sees the updated queue state
 		if (event.type === "message_start" && event.message.role === "user") {
@@ -814,17 +875,7 @@ export class AgentSession {
 					event.message.display,
 					event.message.details,
 				);
-				if (event.message.customType === PEER_MESSAGE_CUSTOM_TYPE) {
-					const ids = (event.message.details as { ids?: unknown } | undefined)?.ids;
-					if (Array.isArray(ids) && ids.every((id): id is string => typeof id === "string")) {
-						try {
-							this._peerMessages.confirmDelivered(ids);
-						} catch {
-							// Keep rows pending. Stale-claim recovery will redeliver a
-							// persisted message if confirmation itself could not complete.
-						}
-					}
-				}
+				this._markExternalPayloadPersisted(event.message);
 			} else if (
 				event.message.role === "user" ||
 				event.message.role === "assistant" ||
@@ -927,14 +978,11 @@ export class AgentSession {
 			this._peerMessages.recordPresence("idle");
 			await this._extensionRunner.emit({ type: "agent_end", messages: event.messages });
 		} else if (event.type === "turn_start") {
-			// Magenta feature: mark active and drain peer messages addressed to this
-			// session, injecting them into context. Urgent messages steer (before the
-			// next tool-calling turn); normal messages follow up (at loop end). Presence
-			// is refreshed on every turn so a long loop always advertises a live pid.
-			// Draining atomically claims a bounded batch as pending. Each message is
-			// confirmed only after persistence; overflow remains unread for a later turn.
+			// A turn boundary atomically drains mailbox claims and commits all external
+			// submissions that are ready before the AgentLoop polls its batch queues.
 			this._peerMessages.recordPresence("active");
-			await this._injectPeerMessages();
+			this._submitPeerMessages();
+			await this._externalActivations.flushReady();
 			const extensionEvent: TurnStartEvent = {
 				type: "turn_start",
 				turnIndex: this._turnIndex,
@@ -948,7 +996,8 @@ export class AgentSession {
 				message: event.message,
 				toolResults: event.toolResults,
 			};
-			this._backgroundReturns.flushReady();
+			this._submitPeerMessages();
+			await this._externalActivations.flushReady();
 			await this._extensionRunner.emit(extensionEvent);
 			this._turnIndex++;
 		} else if (event.type === "message_start") {
@@ -1023,8 +1072,8 @@ export class AgentSession {
 	 * Magenta feature: claim ownership of the turn-runner.
 	 *
 	 * A host with its own activation loop (the interactive TUI) calls this so
-	 * that external activations (idle peer wake) are surfaced as
-	 * `external_activation` events for the host to run as one turn, instead of
+	 * coalesced external work is surfaced as one `external_activation` event for
+	 * the host to run as one turn, instead of
 	 * the session self-running the turn. Returns a release function that restores
 	 * the self-running fallback. Headless / sub-agent sessions never claim it and
 	 * keep running wake turns themselves.
@@ -1037,13 +1086,18 @@ export class AgentSession {
 	}
 
 	/**
-	 * Magenta feature: run one turn for an `external_activation` whose payload
-	 * messages are already appended to session state (by `_wakeForPeerMessages`).
+	 * Run one turn for an `external_activation` whose coalesced payload messages
+	 * are already appended to session state by the shared coordinator.
 	 * The host's activation loop calls this so the wake turn runs through the same
 	 * single turn-runner as user prompts. No new message is appended — the
 	 * continuation runs on the already-present payload. No-op while streaming.
 	 */
 	async runExternalActivation(): Promise<void> {
+		// An activation may have been handed to a claimed host immediately before
+		// compaction latched the coordinator. Keep ownership of that wake, but do not
+		// run its safe-boundary continuation until the barrier has released every
+		// coalesced source against the post-compaction context.
+		await this._externalActivations.waitForDeliveryReady();
 		if (this.isStreaming || !this._externalActivationPending) return;
 		this._externalActivationPending = false;
 		try {
@@ -1090,14 +1144,18 @@ export class AgentSession {
 			this.abortCompaction();
 			this.abortBranchSummary();
 			this.abortBash();
-			this._backgroundReturns.shutdown();
+			this._backgroundReminders.dispose();
+			// Stop source admission first, then settle/cancel their shared delivery
+			// tickets before closing the mailbox used by peer rollback callbacks.
 			this._backgroundShell.shutdown();
 			this._subAgents.shutdown();
 			await this._teammates.shutdown();
+			this.agent.abort();
+			await this.agent.waitForIdle();
+			await this._externalActivations.shutdown();
 			this._peerMessages.shutdown();
 			this._backgroundEvents.dispose();
 			resourceDisposal = Promise.resolve(this._resourceLoader.dispose?.());
-			this.agent.abort();
 		} catch {
 			// Dispose must succeed even if an abort hook throws.
 		}
@@ -1178,6 +1236,15 @@ export class AgentSession {
 	/** Wait for every registered background source to stop reporting running work. */
 	waitForBackgroundIdle(options?: { timeoutMs?: number; signal?: AbortSignal }): Promise<boolean> {
 		return this._backgroundEvents.waitForIdle(options);
+	}
+
+	/**
+	 * Commit every external submission already waiting in the batch window or
+	 * injection path. This is an explicit settlement barrier for one-shot hosts;
+	 * normal turns should continue independent work instead of calling it.
+	 */
+	waitForExternalActivationQuiescence(options?: { timeoutMs?: number }): Promise<boolean> {
+		return this._externalActivations.waitForQuiescence(options);
 	}
 
 	/** Cancel one background event through its owning source controller. */
@@ -1339,8 +1406,13 @@ export class AgentSession {
 			selectedTools: validToolNames,
 			toolSnippets,
 			promptGuidelines,
+			documentationPaths: getSystemPromptDocumentationPaths(),
+			bundledPromptFeatures: this._resourceLoader.getBundledPromptFeatures?.(),
 		};
-		return buildSystemPrompt(this._baseSystemPromptOptions);
+		const provider = this._resolveSystemPromptProvider();
+		return provider
+			? provider.buildSystemPrompt(this._baseSystemPromptOptions)
+			: buildSystemPrompt(this._baseSystemPromptOptions);
 	}
 
 	// =========================================================================
@@ -1508,11 +1580,15 @@ export class AgentSession {
 				timestamp: Date.now(),
 			});
 
-			// Inject any pending "nextTurn" messages as context alongside the user message
-			for (const msg of this._pendingNextTurnMessages) {
-				messages.push(msg);
-			}
+			// Inject any pending "nextTurn" messages as context alongside the user message.
+			const pendingNextTurn = this._pendingNextTurnMessages;
 			this._pendingNextTurnMessages = [];
+			for (const { message } of pendingNextTurn) {
+				const entry = this._externalActivationReceipts.get(message);
+				if (entry) this._externalActivations.markCommitted(entry.key);
+				messages.push(message);
+			}
+			this._backgroundReminders.markNextTurnDelivered();
 
 			// Emit before_agent_start extension event
 			const result = await this._extensionRunner.emitBeforeAgentStart(
@@ -1552,6 +1628,51 @@ export class AgentSession {
 
 		preflightResult?.(true);
 		await this._runAgentPrompt(messages);
+	}
+
+	private async _enqueueHumanSideHandoff(
+		request: SideChatHandoffRequest,
+		ctx: ExtensionCommandContext,
+	): Promise<SideChatHandoffResult> {
+		if (this._harnessCapabilityOverrides?.teammates === false) {
+			throw new Error("Managed teammates are explicitly disabled for this session");
+		}
+		if (this.settingsManager.getHarnessCapabilities()?.teammates === false) {
+			throw new Error("Managed teammates are explicitly disabled in settings");
+		}
+
+		const previousOverrides = this._harnessCapabilityOverrides;
+		const previousCapabilities = this.harnessCapabilities;
+		const previousActiveToolNames = this.getActiveToolNames();
+		let enabledForHandoff = false;
+		if (!previousCapabilities.teammates) {
+			this._harnessCapabilityOverrides = { ...previousOverrides, teammates: true };
+			this._refreshNativeCapabilityTools(previousCapabilities);
+			if (this.getToolDefinition("teammate_agent")) {
+				this.setActiveToolsByName([...this.getActiveToolNames(), "teammate_agent"]);
+			}
+			enabledForHandoff = true;
+		}
+		if (!this.getActiveToolNames().includes("teammate_agent")) {
+			this._harnessCapabilityOverrides = previousOverrides;
+			if (enabledForHandoff) {
+				this._refreshNativeCapabilityTools(this.harnessCapabilities);
+				this.setActiveToolsByName(previousActiveToolNames);
+			}
+			throw new Error("teammate_agent is excluded by the current tool allowlist");
+		}
+
+		try {
+			return await this._teammates.startHumanSideHandoff(request, ctx);
+		} catch (error) {
+			if (enabledForHandoff) {
+				const enabledCapabilities = this.harnessCapabilities;
+				this._harnessCapabilityOverrides = previousOverrides;
+				this._refreshNativeCapabilityTools(enabledCapabilities);
+				this.setActiveToolsByName(previousActiveToolNames);
+			}
+			throw error;
+		}
 	}
 
 	/**
@@ -1703,250 +1824,141 @@ export class AgentSession {
 		});
 	}
 
-	/**
-	 * Magenta feature: drain this session's unread peer messages and inject them
-	 * into the model's context. Urgent messages are injected as steering (they
-	 * land before the next tool-calling turn); normal messages are injected as
-	 * follow-up (they land when the loop would otherwise end). Both groups drain
-	 * together, but are delivered via separate custom messages so their timing
-	 * differs. No-op when there are no messages. Injection failures must never
-	 * break the turn, so errors are swallowed and the affected messages are
-	 * requeued for the next drain.
-	 */
-	private async _injectPeerMessages(): Promise<void> {
+	private _markExternalPayloadPersisted(message: CustomMessage): void {
+		const entry = this._externalActivationReceipts.get(message);
+		if (entry) {
+			this._externalActivationReceipts.delete(message);
+			this._externalActivations.markPersisted(entry.key);
+		}
+	}
+
+	/** Drain a bounded mailbox claim into the unified external-activation hub. */
+	private _submitPeerMessages(): void {
 		let drained: ReturnType<typeof this._peerMessages.drainForInjection> = [];
 		try {
 			drained = this._peerMessages.drainForInjection();
 			if (drained.length === 0) return;
-			const urgent = drained.filter((m) => m.priority === "urgent");
-			const normal = drained.filter((m) => m.priority !== "urgent");
-			// Deliver each group with its own timing. Each group confirms/requeues
-			// independently so a failure in one does not strand the other.
-			await this._injectPeerMessageGroup(urgent, "steer");
-			await this._injectPeerMessageGroup(normal, "followUp");
-		} catch {
-			// A drain-level failure (before per-group handling) leaves everything
-			// claimed as `pending`; requeue so the next turn retries rather than losing
-			// them. Mailbox errors must never abort the agent turn.
-			if (drained.length > 0) {
-				try {
-					this._peerMessages.requeue(drained.map((m) => m.id));
-				} catch {
-					// Best-effort; a stuck `pending` row is reclaimed by staleness later.
-				}
-			}
-		}
-	}
-
-	/**
-	 * Inject one priority group of drained peer messages with the given delivery
-	 * mode, then confirm them as delivered. On failure, requeue just this group so
-	 * it is retried on the next drain. No-op for an empty group.
-	 */
-	private async _injectPeerMessageGroup(
-		messages: ReturnType<typeof this._peerMessages.drainForInjection>,
-		deliverAs: "steer" | "followUp",
-	): Promise<void> {
-		if (messages.length === 0) return;
-		const ids = messages.map((m) => m.id);
-		const queuedForLaterDelivery = this.isStreaming;
-		try {
-			await this.sendCustomMessage(
-				{
-					customType: PEER_MESSAGE_CUSTOM_TYPE,
-					content: formatPeerMessages(messages),
-					display: true,
-					details: { count: messages.length, ids, priority: messages[0].priority },
-				},
-				{ deliverAs },
-			);
-			// A queued steer/follow-up is not durable delivery yet. message_end
-			// confirms only after the custom message has entered state and persisted.
-			if (!queuedForLaterDelivery) this._peerMessages.confirmDelivered(ids);
-		} catch {
-			try {
-				this._peerMessages.requeue(ids);
-			} catch {
-				// Best-effort; a stuck `pending` row is reclaimed by staleness later.
-			}
-		}
-	}
-
-	/**
-	 * Magenta feature: wake this session to drain pending peer messages. Fired
-	 * when a peer signals this (idle) process after sending an urgent message.
-	 * If the session is already streaming, the next turn_start drains anyway, so
-	 * this is a no-op. Otherwise it drains the mailbox and starts a turn.
-	 *
-	 * urgent and normal are kept on separate tracks (they are two independent
-	 * pending kinds, never merged into one block): the urgent group triggers the
-	 * turn now, while any normal messages that happened to be queued are handed to
-	 * the follow-up queue so they land when the woken loop would otherwise end —
-	 * the same steer-vs-follow-up split `_injectPeerMessages` applies mid-loop.
-	 * Only an urgent message wakes an idle session, so the urgent group is the
-	 * normal trigger; the normal-only case (an urgent already claimed by a racing
-	 * turn_start) falls back to triggering on whatever normal messages remain.
-	 *
-	 * The trigger group's delivery depends on who owns the turn-runner:
-	 *  - Host-claimed (interactive TUI): emit an `external_activation` event
-	 *    carrying the payload so the host runs it through its own activation loop.
-	 *    This keeps a single turn-runner and avoids racing the host's input loop.
-	 *  - Unclaimed (headless / sub-agent): self-run the turn immediately — the
-	 *    peer content itself is the turn payload, so no empty prompt is sent.
-	 *
-	 * Failures requeue the messages and never crash the process.
-	 */
-	private _wakeForPeerMessages(): void {
-		if (this.isStreaming) return;
-		let drained: ReturnType<typeof this._peerMessages.drainForInjection> = [];
-		try {
-			drained = this._peerMessages.drainForInjection();
-			if (drained.length === 0) return;
-			const urgent = drained.filter((m) => m.priority === "urgent");
-			const normal = drained.filter((m) => m.priority !== "urgent");
-			// Urgent wakes the session, so it is the trigger; normal is deferred to the
-			// follow-up queue. If no urgent survived (a racing turn_start already
-			// claimed it), trigger on the leftover normals instead.
-			const triggerGroup = urgent.length > 0 ? urgent : normal;
-			const deferredGroup = urgent.length > 0 ? normal : [];
-
-			// Deferred normal messages ride the follow-up queue so the woken loop
-			// handles them at its end, after the urgent turn — kept off the urgent
-			// trigger block so the two tracks never merge.
-			if (deferredGroup.length > 0) {
-				const normalIds = deferredGroup.map((m) => m.id);
-				try {
-					this.agent.followUp({
-						role: "custom",
-						customType: PEER_MESSAGE_CUSTOM_TYPE,
-						content: formatPeerMessages(deferredGroup),
-						display: true,
-						details: { count: deferredGroup.length, ids: normalIds, wake: true },
-						timestamp: Date.now(),
-					} satisfies CustomMessage);
-				} catch {
-					try {
-						this._peerMessages.requeue(normalIds);
-					} catch {
-						// Best-effort; a stuck `pending` row is reclaimed by staleness later.
-					}
-				}
-			}
-
-			const ids = triggerGroup.map((m) => m.id);
-			const payload = {
-				role: "custom" as const,
-				customType: PEER_MESSAGE_CUSTOM_TYPE,
-				content: formatPeerMessages(triggerGroup),
-				display: true,
-				details: { count: triggerGroup.length, ids, wake: true },
-				timestamp: Date.now(),
-			} satisfies CustomMessage;
-
-			if (this._externalTurnRunnerClaimed) {
-				// Host owns the turn-runner: append the payload to state and hand the
-				// turn off via an event. The host's activation loop runs exactly one
-				// turn to consume it, so we never race the host's input loop.
-				try {
-					this.agent.state.messages.push(payload);
-					this.sessionManager.appendCustomMessageEntry(
-						payload.customType,
-						payload.content,
-						payload.display,
-						payload.details,
-					);
-					this._emit({ type: "message_start", message: payload });
-					this._emit({ type: "message_end", message: payload });
-					// Several signals can arrive before the host starts the turn. Their
-					// payloads are all already in state, so one continuation consumes them
-					// together; emitting one activation per signal would create empty turns.
-					if (!this._externalActivationPending) {
-						this._externalActivationPending = true;
-						this._emit({ type: "external_activation", source: "peer_wake", messages: [payload] });
-					}
-					this._peerMessages.confirmDelivered(ids);
-				} catch {
+			const groups = [
+				{ messages: drained.filter((message) => message.priority === "urgent"), delivery: "steer" as const },
+				{ messages: drained.filter((message) => message.priority !== "urgent"), delivery: "followUp" as const },
+			];
+			const entries: ExternalActivationEntry[] = [];
+			for (const { messages, delivery } of groups) {
+				if (messages.length === 0) continue;
+				const ids = messages.map((message) => message.id);
+				const requeue = (): void => {
 					try {
 						this._peerMessages.requeue(ids);
 					} catch {
-						// Best-effort; a stuck `pending` row is reclaimed by staleness later.
+						// A stale pending claim is reclaimed by the mailbox on a later drain.
 					}
-				}
-				return;
+				};
+				entries.push({
+					key: `peer:${delivery}:${ids.join(",")}`,
+					source: { kind: "peer", messageIds: ids },
+					consumeIds: ids,
+					message: {
+						customType: PEER_MESSAGE_CUSTOM_TYPE,
+						content: formatPeerMessages(messages),
+						display: true,
+						details: { count: messages.length, ids, priority: messages[0]!.priority },
+					},
+					delivery,
+					idlePolicy: delivery === "steer" ? "activate" : "passive",
+					onPersisted: () => this._peerMessages.confirmDelivered(ids),
+					onInjectionError: requeue,
+				});
 			}
-
-			// Cold wake, self-run: trigger a turn on the urgent group (the wake
-			// trigger). Any normal messages were already handed to the follow-up queue
-			// above, so they are not part of this immediate payload — the two tracks
-			// stay separate. Priority ordering within the group is applied by the drain.
-			void this.sendCustomMessage(
-				{
-					customType: PEER_MESSAGE_CUSTOM_TYPE,
-					content: payload.content,
-					display: true,
-					details: payload.details,
-				},
-				{ triggerTurn: true },
-			).catch(() => {
-				try {
-					this._peerMessages.requeue(ids);
-				} catch {
-					// Best-effort; a stuck `pending` row is reclaimed by staleness later.
-				}
-			});
+			this._externalActivations.registerBatch(entries);
 		} catch {
-			if (drained.length > 0) {
-				try {
-					this._peerMessages.requeue(drained.map((m) => m.id));
-				} catch {
-					// Best-effort.
-				}
+			if (drained.length === 0) return;
+			try {
+				this._peerMessages.requeue(drained.map((message) => message.id));
+			} catch {
+				// Best-effort; stale-claim recovery is the final fallback.
 			}
 		}
 	}
 
-	/**
-	 * Magenta feature: inject a coalesced batch of completed background returns
-	 * (bg_shell + sub_agent) as ONE continuation turn instead of N separate turns.
-	 * Called by BackgroundReturnCoordinator when the session is idle and its debounce
-	 * fires. Mirrors the idle-wake dual path in `_wakeForPeerMessages`:
-	 *  - Host-claimed (interactive TUI): append every payload to state, then emit a
-	 *    single `external_activation` so the host runs exactly one turn over all of
-	 *    them.
-	 *  - Unclaimed (headless / sub-agent): append all but the last to state, then
-	 *    self-run one turn on the last payload so the continuation covers them all.
-	 *
-	 * Each message keeps its own customType/renderer; this method never reformats.
-	 */
-	private async _injectBackgroundReturnBatch(
-		entries: Array<{ message: BackgroundReturnMessage; delivery: "steer" | "followUp" | "nextTurn" }>,
-	): Promise<void> {
-		if (entries.length === 0) return;
-		// If a turn started between the coordinator's arm and this call, queue as
-		// followUp so the running loop drains them together at turn end.
-		if (this.isStreaming) {
-			for (const { message } of entries) {
-				this.agent.followUp({
-					role: "custom",
-					customType: message.customType,
-					content: message.content,
-					display: message.display,
-					details: message.details,
-					timestamp: Date.now(),
-				} satisfies CustomMessage);
-			}
-			return;
-		}
+	/** A signal is only notification; the coordinator owns all delivery and wake policy. */
+	private _wakeForPeerMessages(): void {
+		this._submitPeerMessages();
+	}
 
-		const payloads: CustomMessage[] = entries.map(({ message }) => ({
+	/**
+	 * Commit one coalesced set of payloads produced outside the AgentLoop. Each
+	 * delivery lane is atomic while streaming; when idle, all active lanes start
+	 * one combined turn. nextTurn remains passive until a natural user prompt.
+	 */
+	private async _injectExternalActivationBatch(entries: ExternalActivationEntry[]): Promise<void> {
+		if (entries.length === 0) return;
+		const toPayload = (message: ExternalActivationMessage): CustomMessage => ({
 			role: "custom" as const,
 			customType: message.customType,
 			content: message.content,
 			display: message.display,
 			details: message.details,
 			timestamp: Date.now(),
-		}));
+		});
+		const payloadEntries = entries.map((entry) => {
+			const payload = toPayload(entry.message);
+			this._externalActivationReceipts.set(payload, entry);
+			return { entry, payload };
+		});
 
+		for (const { entry, payload } of payloadEntries.filter(({ entry }) => entry.delivery === "nextTurn")) {
+			try {
+				this._queueNextTurnMessage(payload, `external:${entry.key}`);
+				this._externalActivations.markQueued(entry.key);
+			} catch (error) {
+				this._externalActivations.markFailed(entry.key, error);
+			}
+		}
+		const due = payloadEntries.filter(({ entry }) => entry.delivery !== "nextTurn");
+		if (due.length === 0) return;
+
+		const queueByLane = (queued: typeof due): void => {
+			const queue = (laneEntries: typeof due, submit: (messages: CustomMessage[]) => void): void => {
+				if (laneEntries.length === 0) return;
+				try {
+					submit(laneEntries.map(({ payload }) => payload));
+					for (const { entry } of laneEntries) this._externalActivations.markQueued(entry.key);
+				} catch (error) {
+					for (const { entry } of laneEntries) this._externalActivations.markFailed(entry.key, error);
+				}
+			};
+			queue(
+				queued.filter(({ entry }) => entry.delivery === "steer"),
+				(messages) => this.agent.steerBatch(messages),
+			);
+			queue(
+				queued.filter(({ entry }) => entry.delivery === "followUp"),
+				(messages) => this.agent.followUpBatch(messages),
+			);
+		};
+		if (this.isStreaming) {
+			queueByLane(due);
+			return;
+		}
+
+		// Passive entries retain their lane until a natural or externally activated
+		// loop reaches that boundary. Only entries with explicit idle activation
+		// policy may wake a dormant session.
+		const activating = due.filter(({ entry }) => entry.idlePolicy === "activate");
+		queueByLane(due.filter(({ entry }) => entry.idlePolicy === "passive"));
+		if (activating.length === 0) return;
+
+		activating.sort(
+			(left, right) => (left.entry.delivery === "steer" ? -1 : 1) - (right.entry.delivery === "steer" ? -1 : 1),
+		);
+		const payloads = activating.map(({ payload }) => payload);
+		const sources = [
+			...new Set(
+				activating.map(({ entry }) =>
+					entry.source.kind === "background" ? entry.source.controller : entry.source.kind,
+				),
+			),
+		];
 		const appendToState = (payload: CustomMessage): void => {
 			this.agent.state.messages.push(payload);
 			this.sessionManager.appendCustomMessageEntry(
@@ -1955,26 +1967,64 @@ export class AgentSession {
 				payload.display,
 				payload.details,
 			);
+			this._markExternalPayloadPersisted(payload);
 			this._emit({ type: "message_start", message: payload });
 			this._emit({ type: "message_end", message: payload });
 		};
 
 		if (this._externalTurnRunnerClaimed) {
-			// Host owns the turn-runner: all payloads go into state, then one activation
-			// event hands off a single turn that consumes the whole batch.
 			for (const payload of payloads) appendToState(payload);
 			if (!this._externalActivationPending) {
 				this._externalActivationPending = true;
-				this._emit({ type: "external_activation", source: "background_return", messages: payloads });
+				this._emit({
+					type: "external_activation",
+					activationId: ++this._externalActivationSequence,
+					sources,
+					messages: payloads,
+				});
 			}
 			return;
 		}
 
-		// Unclaimed self-run: append all but the last to state, then run one turn on
-		// the last payload so the continuation covers the entire batch.
-		const last = payloads[payloads.length - 1];
+		const last = payloads[payloads.length - 1]!;
 		for (const payload of payloads.slice(0, -1)) appendToState(payload);
-		await this._runAgentPrompt(last);
+		const lastEntry = this._externalActivationReceipts.get(last);
+		if (lastEntry) this._externalActivations.markCommitted(lastEntry.key);
+		// Starting an unclaimed headless turn is the commit boundary. Do not await
+		// the run from inside the coordinator, because its turn listeners flush the
+		// same coordinator and would otherwise form a re-entrant wait cycle.
+		void this._runAgentPrompt(last).catch((error) => {
+			if (lastEntry) this._externalActivations.markFailed(lastEntry.key, error);
+		});
+	}
+
+	private _cancelQueuedExternalActivation(entry: ExternalActivationEntry): boolean {
+		const removed = this.agent.removeQueuedMessages(
+			(message) => message.role === "custom" && this._externalActivationReceipts.get(message)?.key === entry.key,
+		);
+		for (const message of removed) {
+			if (message.role === "custom") this._externalActivationReceipts.delete(message);
+		}
+		const nextTurnKey = `external:${entry.key}`;
+		const before = this._pendingNextTurnMessages.length;
+		const retained: typeof this._pendingNextTurnMessages = [];
+		for (const pending of this._pendingNextTurnMessages) {
+			if (pending.key === nextTurnKey) this._externalActivationReceipts.delete(pending.message);
+			else retained.push(pending);
+		}
+		this._pendingNextTurnMessages = retained;
+		return removed.length > 0 || retained.length !== before;
+	}
+
+	private _queueNextTurnMessage(message: CustomMessage, key?: string): void {
+		if (key) {
+			const existing = this._pendingNextTurnMessages.findIndex((entry) => entry.key === key);
+			if (existing !== -1) {
+				this._pendingNextTurnMessages[existing] = { key, message };
+				return;
+			}
+		}
+		this._pendingNextTurnMessages.push({ key, message });
 	}
 
 	/**
@@ -2023,7 +2073,7 @@ export class AgentSession {
 			timestamp: Date.now(),
 		} satisfies CustomMessage<T>;
 		if (options?.deliverAs === "nextTurn") {
-			this._pendingNextTurnMessages.push(appMessage);
+			this._queueNextTurnMessage(appMessage);
 		} else if (this.isStreaming) {
 			if (options?.deliverAs === "followUp") {
 				this.agent.followUp(appMessage);
@@ -2100,22 +2150,12 @@ export class AgentSession {
 		this._steeringMessages = [];
 		this._followUpMessages = [];
 		const cleared = this.agent.clearAllQueues();
-		const peerMessageIds = new Set<string>();
 		for (const message of [...cleared.steering, ...cleared.followUp]) {
-			if (message.role !== "custom" || message.customType !== PEER_MESSAGE_CUSTOM_TYPE) continue;
-			const ids = (message.details as { ids?: unknown } | undefined)?.ids;
-			if (!Array.isArray(ids)) continue;
-			for (const id of ids) {
-				if (typeof id === "string") peerMessageIds.add(id);
-			}
-		}
-		if (peerMessageIds.size > 0) {
-			try {
-				this._peerMessages.requeue([...peerMessageIds]);
-			} catch {
-				// Best-effort. A later owner handoff or clean shutdown makes the claim
-				// reclaimable if the mailbox is temporarily unavailable here.
-			}
+			if (message.role !== "custom") continue;
+			const entry = this._externalActivationReceipts.get(message);
+			if (!entry) continue;
+			this._externalActivationReceipts.delete(message);
+			this._externalActivations.markFailed(entry.key, new Error("Queued external activation was cleared"));
 		}
 		this._emitQueueUpdate();
 		return { steering, followUp };
@@ -2419,13 +2459,19 @@ export class AgentSession {
 	 * @param customInstructions Optional instructions for the compaction summary
 	 */
 	async compact(customInstructions?: string): Promise<CompactionResult> {
+		// Latch before aborting the current run. Returns/messages that arrived at the
+		// preceding boundary are reclaimed into the same held coordinator batch, and
+		// sources may continue durably registering while the summary is generated.
+		const barrier = this._externalActivations.acquireDeliveryBarrier();
+		let releaseBarrier: (() => Promise<void>) | undefined;
 		this._disconnectFromAgent();
-		await this.abort();
-		this._compactionAbortController = new AbortController();
-		this._emit({ type: "compaction_start", reason: "manual" });
-		this._emit({ type: "compaction_progress", reason: "manual", phase: "preparing" });
 
 		try {
+			await this.abort();
+			releaseBarrier = await barrier;
+			this._compactionAbortController = new AbortController();
+			this._emit({ type: "compaction_start", reason: "manual" });
+			this._emit({ type: "compaction_progress", reason: "manual", phase: "preparing" });
 			if (!this.model) {
 				throw new Error(formatNoModelSelectedMessage());
 			}
@@ -2568,6 +2614,11 @@ export class AgentSession {
 		} finally {
 			this._compactionAbortController = undefined;
 			this._reconnectToAgent();
+			// Release on success, provider/extension failure, and user cancellation.
+			// Awaiting here makes the handoff atomic: waiters cannot run until every
+			// source accumulated during compaction has entered the normal priority batch.
+			releaseBarrier ??= await barrier;
+			await releaseBarrier();
 		}
 	}
 
@@ -2698,6 +2749,7 @@ export class AgentSession {
 	private async _runAutoCompaction(reason: "overflow" | "threshold", willRetry: boolean): Promise<boolean> {
 		const settings = this.settingsManager.getCompactionSettings();
 		let started = false;
+		let releaseBarrier: (() => Promise<void>) | undefined;
 
 		try {
 			if (!this.model) {
@@ -2727,9 +2779,13 @@ export class AgentSession {
 				return false;
 			}
 
-			this._emit({ type: "compaction_start", reason });
+			// All validation/preparation above is non-compacting work. Latch only once
+			// compaction will actually start, reclaiming any external payload queued at
+			// the just-completed AgentLoop boundary before the summary snapshot is used.
+			releaseBarrier = await this._externalActivations.acquireDeliveryBarrier();
 			this._autoCompactionAbortController = new AbortController();
 			started = true;
+			this._emit({ type: "compaction_start", reason });
 
 			let extensionCompaction: CompactionResult | undefined;
 			let fromExtension = false;
@@ -2876,6 +2932,10 @@ export class AgentSession {
 			return false;
 		} finally {
 			this._autoCompactionAbortController = undefined;
+			// The release is deliberately after clearing compaction state. Its normal
+			// priority batch may queue a safe-boundary continuation into the still-live
+			// Agent run, but can never do so while compaction itself is active.
+			await releaseBarrier?.();
 		}
 	}
 
@@ -3007,7 +3067,7 @@ export class AgentSession {
 				},
 				...SIDE_CHAT_COMMAND_NAMES.map((name) => ({
 					name,
-					description: "Open a temporary no-tools side/btw chat for explanations",
+					description: "Open Side/BTW history or start a no-tools side conversation",
 					source: "builtin" as const,
 					sourceInfo: createSyntheticSourceInfo(`<builtin:${name}>`, { source: "builtin" }),
 				})),

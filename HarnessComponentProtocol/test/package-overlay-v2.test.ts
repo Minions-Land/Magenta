@@ -260,6 +260,174 @@ ${invalidBody}
 		}
 	});
 
+	it("loads and assembles a compiled-only mjs package through ordinary HcpClient inputs", async () => {
+		const packagesRoot = await mkdtemp(join(tmpdir(), "pkg-v2-compiled-mjs-"));
+		let assembly: HcpClientpackagetestbuildresult | undefined;
+		try {
+			const packageDir = join(packagesRoot, "CompiledDomain");
+			const contextDir = join(packageDir, "context", "CompiledDomain");
+			const skillDir = join(packageDir, "skills", "guide", "CompiledDomain");
+			const toolDir = join(packageDir, "tools", "echo", "CompiledDomain");
+			await Promise.all([
+				mkdir(contextDir, { recursive: true }),
+				mkdir(skillDir, { recursive: true }),
+				mkdir(toolDir, { recursive: true }),
+			]);
+			await Promise.all([
+				writeFile(
+					join(packageDir, "context", "HcpServer.mjs"),
+					`export class HcpServer { moduleName = "context"; }\n`,
+				),
+				writeFile(
+					join(contextDir, "HcpMagnet.mjs"),
+					`export class HcpMagnet {
+	static module = "context";
+	static kind = "context";
+	static source = "CompiledDomain";
+	static build(context) { return new HcpMagnet(context); }
+	kind = "capability:context";
+	source = "CompiledDomain";
+	constructor(context) { this.context = context; }
+	toCapability() {
+		return { kind: "context", name: "workspace", source: this.source, instance: { compiled: true, name: this.context.name } };
+	}
+}
+`,
+				),
+				writeFile(
+					join(packageDir, "skills", "guide", "HcpServer.mjs"),
+					`export class HcpServer { moduleName = "skills/guide"; }\n`,
+				),
+				writeFile(
+					join(skillDir, "HcpMagnet.mjs"),
+					`import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+export class HcpMagnet {
+	static module = "skills/guide";
+	static kind = "skill";
+	static source = "CompiledDomain";
+	static build() { return new HcpMagnet(); }
+	kind = "resource:skill";
+	source = "CompiledDomain";
+	toResource() {
+		return { kind: "skill", name: "compiled-guide", source: this.source, mergeMode: "replace", contentPath: join(dirname(fileURLToPath(import.meta.url)), "SKILL.md") };
+	}
+}
+`,
+				),
+				writeFile(join(skillDir, "SKILL.md"), "# Compiled guide\n"),
+				writeFile(
+					join(packageDir, "tools", "echo", "HcpServer.mjs"),
+					`export class HcpServer { moduleName = "tools/echo"; }\n`,
+				),
+				writeFile(
+					join(toolDir, "HcpMagnet.mjs"),
+					`import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+export class HcpMagnet {
+	static module = "tools/echo";
+	static kind = "tool";
+	static source = "CompiledDomain";
+	static async build(context) {
+		const buildTools = context.settings?.HcpClientbuildtools;
+		if (typeof buildTools !== "function") throw new Error("missing package tool builder");
+		const descriptorPath = join(dirname(fileURLToPath(import.meta.url)), "echo.toml");
+		const products = await buildTools({ kind: "tool", name: "compiled_echo", source: "CompiledDomain", descriptorPath }, context);
+		const magnets = products.map((product) => new HcpMagnet(product));
+		return magnets.length === 1 ? magnets[0] : magnets;
+	}
+	constructor(product) { this.product = product; this.kind = product.kind; this.source = "CompiledDomain"; }
+	toTool() { return this.product.toTool(); }
+	async dispose() { await this.product.close?.(); }
+}
+`,
+				),
+				writeFile(join(toolDir, "echo.toml"), PROCESS_ECHO_TOML.replaceAll("echo_tool", "compiled_echo")),
+			]);
+			await writeFile(
+				join(packageDir, "package.toml"),
+				`schema_version = "magenta.package.v2"
+id = "CompiledDomain"
+name = "CompiledDomain"
+version = "1.0.0"
+source = "CompiledDomain"
+
+[[components]]
+kind = "context"
+name = "workspace"
+source = "CompiledDomain"
+slot = "context"
+path = "context/CompiledDomain"
+
+[[components]]
+kind = "skill"
+name = "compiled-guide"
+source = "CompiledDomain"
+path = "skills/guide/CompiledDomain"
+include_in_context = true
+
+[[components]]
+kind = "tool"
+name = "compiled_echo"
+source = "CompiledDomain"
+path = "tools/echo/CompiledDomain"
+`,
+			);
+
+			const overlay = await HcpClientloadsinglepackage(packageDir);
+			expect(overlay.diagnostics.filter((diagnostic) => diagnostic.type === "error")).toEqual([]);
+			expect(overlay.components.map((component) => component.product).sort()).toEqual([
+				"capability",
+				"resource",
+				"tool",
+			]);
+			expect(
+				overlay.components.every(
+					(component) =>
+						(component.HcpMagnet as unknown as { name?: string }).name === "HcpMagnet" &&
+						(component.HcpServer as unknown as { name?: string }).name === "HcpServer",
+				),
+			).toBe(true);
+
+			assembly = await HcpClientbuildpackagesessionfortest({ repoRoot: packagesRoot, overlay });
+			expect(assembly.diagnostics.filter((diagnostic) => diagnostic.type === "error")).toEqual([]);
+			expect(assembly.hcp.resolveCapability<{ compiled: boolean }>("context")).toMatchObject({ compiled: true });
+			expect(assembly.packageResourceAddresses).toContain("skill:compiled-guide");
+			expect(assembly.packageToolAddresses).toContain("tool:compiled_echo");
+			const tool = assembly.hcp.resolveInstance<AgentTool>("tool:compiled_echo");
+			const result = await tool!.execute("compiled-call", {});
+			expect(result.content[0]).toMatchObject({ type: "text", text: "{}" });
+		} finally {
+			await assembly?.hcp.dispose();
+			await rm(packagesRoot, { recursive: true, force: true });
+		}
+	});
+
+	it("rejects mixed compiled and source roles as ambiguous before import", async () => {
+		const packagesRoot = await mkdtemp(join(tmpdir(), "pkg-v2-role-ambiguity-"));
+		try {
+			const packageDir = await writeFixturePackage(packagesRoot, {
+				id: "AmbiguousDomain",
+				source: "AmbiguousDomain",
+				components: [{ kind: "skill", item: "guide", name: "guide", source: "AmbiguousDomain" }],
+			});
+			const roleDir = join(packageDir, "skills", "guide", "AmbiguousDomain");
+			await writeFile(join(roleDir, "HcpMagnet.mjs"), `throw new Error("ambiguous role must not import");\n`);
+
+			const overlay = await HcpClientloadsinglepackage(packageDir);
+			expect(overlay.components).toEqual([]);
+			expect(overlay.diagnostics).toContainEqual(
+				expect.objectContaining({
+					code: "package_role_ambiguous",
+					message: expect.stringMatching(/HcpMagnet\.mjs.*HcpMagnet\.ts/u),
+				}),
+			);
+			expect(overlay.diagnostics.some((diagnostic) => diagnostic.code === "magnet_import_failed")).toBe(false);
+		} finally {
+			await rm(packagesRoot, { recursive: true, force: true });
+		}
+	});
+
 	it("reloads edited local HcpMagnet and HcpServer role files in the same process", async () => {
 		const packagesRoot = await mkdtemp(join(tmpdir(), "pkg-v2-role-reload-"));
 		try {
@@ -584,7 +752,12 @@ path = "skills/guide/DeclarationDomain"
 			await rm(join(missingServerDir, "skills", "guide", "HcpServer.ts"));
 			const missingServer = await HcpClientloadsinglepackage(missingServerDir);
 			expect(missingServer.components).toEqual([]);
-			expect(missingServer.diagnostics.some((diagnostic) => diagnostic.code === "server_not_found")).toBe(true);
+			const missingServerDiagnostic = missingServer.diagnostics.find(
+				(diagnostic) => diagnostic.code === "server_not_found",
+			);
+			expect(missingServerDiagnostic?.message).toContain("HcpServer.mjs");
+			expect(missingServerDiagnostic?.message).toContain("HcpServer.js");
+			expect(missingServerDiagnostic?.message).toContain("HcpServer.ts");
 
 			// Use a fresh package path so the first import observes the intentionally invalid class.
 			const invalidProductDir = await writeFixturePackage(packagesRoot, {
@@ -691,7 +864,10 @@ path = "skills/ghost/BrokenDomain"
 			);
 			const overlay = await HcpClientloadsinglepackage(pkgDir);
 			expect(overlay.components).toEqual([]);
-			expect(overlay.diagnostics.some((d) => d.code === "magnet_not_found")).toBe(true);
+			const missingRole = overlay.diagnostics.find((diagnostic) => diagnostic.code === "magnet_not_found");
+			expect(missingRole?.message).toContain("HcpMagnet.mjs");
+			expect(missingRole?.message).toContain("HcpMagnet.js");
+			expect(missingRole?.message).toContain("HcpMagnet.ts");
 		} finally {
 			await rm(packagesRoot, { recursive: true, force: true });
 		}

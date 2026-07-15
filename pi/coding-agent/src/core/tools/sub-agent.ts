@@ -8,7 +8,7 @@ import type {
 	OrchestrationResult as MultiAgentOrchestrationResult,
 } from "@magenta/harness";
 import { type Static, Type } from "typebox";
-import { APP_BINARY_NAME, APP_NAME, getAgentDir } from "../../config.ts";
+import { APP_NAME, getAgentDir, getAgentInvocation } from "../../config.ts";
 import { formatMessageUsageStats } from "../../modes/interactive/components/footer.ts";
 import type { AgentSessionEvent } from "../agent-session.ts";
 import type { BackgroundEventManager } from "../background-events.ts";
@@ -24,6 +24,7 @@ import {
 	truncateTail,
 } from "../background-shell-utils.ts";
 import type { ExtensionContext, ToolDefinition } from "../extensions/types.ts";
+import type { ExternalActivationReceipt } from "../external-activation-coordinator.ts";
 
 const WORK_DIR = join(getAgentDir(), "tmp", "sub-agents");
 const MAIN_PROGRESS_PATH = join(WORK_DIR, "main-tool-progress.md");
@@ -39,6 +40,8 @@ const DEFAULT_TOOLS = ["read", "grep", "find", "ls"];
 const FORBIDDEN_SUB_AGENT_TOOLS = new Set(["sub_agent", "bg_shell", "teammate_agent"]);
 const DEFAULT_THINKING = "medium";
 const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+const DELEGATION_LEASE_NOTICE =
+	"Delegation soft lease active for each running event: do not duplicate its scope. Continue only non-overlapping work, coordination, or integration preparation; after a terminal result, synthesize and independently verify it.";
 
 type AgentStatus = "running" | "exited" | "failed" | "timed_out" | "cancelled";
 type Action = "start" | "status" | "wait" | "cancel" | "config";
@@ -112,6 +115,10 @@ type SubAgentEvent = {
 	signal: NodeJS.Signals | null;
 	error?: string;
 	tail: string;
+	lastActivityAt: number;
+	lastOutputAt?: number;
+	lastProgressAt?: number;
+	activityPhase: string;
 	timeout?: NodeJS.Timeout;
 	waiters: Array<() => void>;
 	/**
@@ -147,13 +154,14 @@ export type SubAgentReturnMessage<T = unknown> = {
 
 /**
  * Register a completed batch's fully-formed return message with the scheduling
- * layer (BackgroundReturnCoordinator). The coordinator coalesces it with other
- * near-simultaneous returns into one injected turn, never reformatting it.
+ * external-activation coordinator. It coalesces the typed payload and reports
+ * persistence or rollback through one receipt.
  */
 export type SubAgentRegisterReturn = (
 	eventIds: string[],
 	message: { customType: string; content: string; display: boolean; details: unknown },
 	delivery: ReturnDelivery,
+	receipt: ExternalActivationReceipt,
 ) => void;
 
 /** Drop still-pending returns from the coordinator (terminal wait/status consumption). */
@@ -178,7 +186,11 @@ const TaskSchema = Type.Object({
 			description: "Harness package selectors to load for this sub-agent (e.g. a domain package).",
 		}),
 	),
-	model: Type.Optional(Type.String({ description: `Optional ${APP_NAME} model pattern or provider/model id.` })),
+	model: Type.Optional(
+		Type.String({
+			description: `Optional ${APP_NAME} model pattern or provider/model id. Omit or use "default" to inherit the parent model when provider is omitted.`,
+		}),
+	),
 	provider: Type.Optional(Type.String({ description: `Optional ${APP_NAME} provider name.` })),
 	thinking: Type.Optional(StringEnum(THINKING_LEVELS)),
 	timeoutSeconds: Type.Optional(
@@ -187,9 +199,9 @@ const TaskSchema = Type.Object({
 });
 
 /**
- * A workflow slot: one node in an orchestration. This is a superset of a plain
- * task (a single sub-agent is a one-node workflow), so it shares task/role/
- * model/provider/tools/thinking, plus the orchestration-only `focus`. Structured
+ * A workflow slot: one sessionless, one-shot worker in an orchestration. It
+ * shares task/role/model/provider/tools/thinking with a plain sub-agent task,
+ * plus the orchestration-only `focus`. Structured
  * output `schema` for verifier/judge/evaluator slots is enforced by the harness
  * preset and is intentionally NOT exposed here — the LLM fills content, never
  * the control-flow-critical output contract.
@@ -211,10 +223,11 @@ const WorkflowSlotSchema = Type.Object({
 });
 
 /**
- * A multi-agent workflow: a preset orchestration the harness runs (the harness
- * owns the control flow) that the LLM fills with task content. Which slot fields
- * apply depends on `pattern`; unused slots are ignored. Validated at runtime by
- * the harness orchestrator, so slots are all optional here.
+ * A workflow orchestrates sessionless, one-shot workers. Named presets have
+ * fixed runtime-owned control flow and expose task-content slots. The `script`
+ * pattern instead lets the script author own if/while/await flow while the
+ * runtime retains worker spawning, guards, denial, timeout, and cancellation.
+ * Which slot fields apply depends on `pattern`; unused slots are ignored.
  */
 const WorkflowSchema = Type.Object({
 	pattern: StringEnum(
@@ -289,7 +302,11 @@ const subAgentSchema = Type.Object({
 			description: "Harness package selectors to load for the sub-agent(s) started by this call.",
 		}),
 	),
-	model: Type.Optional(Type.String({ description: "Optional model for action=start." })),
+	model: Type.Optional(
+		Type.String({
+			description: 'Optional model for action=start. Omit or use "default" to inherit the parent model.',
+		}),
+	),
 	provider: Type.Optional(Type.String({ description: "Optional provider for action=start." })),
 	thinking: Type.Optional(StringEnum(THINKING_LEVELS)),
 	timeoutSeconds: Type.Optional(Type.Number({ description: "Maximum runtime for action=start." })),
@@ -397,6 +414,11 @@ function formatConfig(config: SubAgentConfig): string {
 
 function appendTail(event: SubAgentEvent, data: Buffer): void {
 	event.tail = appendTailText(event.tail, data);
+	if (data.toString("utf8").trim().length > 0) {
+		const now = Date.now();
+		event.lastOutputAt = now;
+		event.lastActivityAt = now;
+	}
 }
 
 /**
@@ -566,7 +588,8 @@ export type SubAgentEventSnapshot = Pick<
 	| "signal"
 	| "error"
 	| "tail"
->;
+> &
+	Partial<Pick<SubAgentEvent, "lastActivityAt" | "lastOutputAt" | "lastProgressAt" | "activityPhase">>;
 
 export function serializableSubAgentSnapshot(event: SubAgentEvent): SubAgentEventSnapshot {
 	return {
@@ -592,6 +615,10 @@ export function serializableSubAgentSnapshot(event: SubAgentEvent): SubAgentEven
 		signal: event.signal,
 		error: event.error,
 		tail: event.tail,
+		lastActivityAt: event.lastActivityAt,
+		lastOutputAt: event.lastOutputAt,
+		lastProgressAt: event.lastProgressAt,
+		activityPhase: event.activityPhase,
 	};
 }
 
@@ -777,7 +804,7 @@ export class SubAgentController {
 	private registerReturn: SubAgentRegisterReturn;
 	private cancelReturn: SubAgentCancelReturn;
 	private spawnAgent: SubAgentSpawn;
-	private agentCommand: string;
+	private resolveAgentInvocation: typeof getAgentInvocation;
 	private getDefaultModel?: () => SubAgentModelSelection | undefined;
 	private getWorkflowProvider?: () => SubAgentWorkflowProvider | undefined;
 	private isWorkflowEnabled: () => boolean;
@@ -788,7 +815,9 @@ export class SubAgentController {
 			registerReturn: SubAgentRegisterReturn;
 			cancelReturn: SubAgentCancelReturn;
 			spawnAgent?: SubAgentSpawn;
+			/** Explicit command override retained for embedders and tests. */
 			agentCommand?: string;
+			resolveAgentInvocation?: typeof getAgentInvocation;
 			getDefaultModel?: () => SubAgentModelSelection | undefined;
 			getWorkflowProvider?: () => SubAgentWorkflowProvider | undefined;
 			isWorkflowEnabled?: () => boolean;
@@ -799,7 +828,9 @@ export class SubAgentController {
 		this.registerReturn = options.registerReturn;
 		this.cancelReturn = options.cancelReturn;
 		this.spawnAgent = options.spawnAgent ?? spawn;
-		this.agentCommand = options.agentCommand ?? APP_BINARY_NAME;
+		this.resolveAgentInvocation = options.agentCommand
+			? (args) => ({ command: options.agentCommand!, args })
+			: (options.resolveAgentInvocation ?? getAgentInvocation);
 		this.getDefaultModel = options.getDefaultModel;
 		this.getWorkflowProvider = options.getWorkflowProvider;
 		this.isWorkflowEnabled = options.isWorkflowEnabled ?? (() => true);
@@ -819,6 +850,11 @@ export class SubAgentController {
 					cwd: event.cwd,
 					logPath: event.logPath,
 					tail: event.tail,
+					lastActivityAt: event.lastActivityAt,
+					lastOutputAt: event.lastOutputAt,
+					lastProgressAt: event.lastProgressAt,
+					activityPhase: event.activityPhase,
+					reminderEligible: event.status === "running",
 					canCancel: event.status === "running",
 				})),
 			getEventDetails: (id) => {
@@ -861,20 +897,24 @@ export class SubAgentController {
 			name: "sub_agent",
 			label: "Sub Agent",
 			description: workflowsEnabled
-				? `Start, inspect, wait for, or cancel headless ${APP_NAME} sub-agents — a built-in, one-shot delegation capability whose results return to you (use teammate_agent instead for a persistent collaborator). action=start accepts either one task or a tasks array for parallel work, or a workflow object. A workflow runs a deterministic multi-agent orchestration: six named presets (classify_and_act, fan_out_synthesize, adversarial_verify, generate_and_filter, tournament, loop_until_done) are ready-made templates for common shapes, and pattern="script" lets you author your own workflow inline (a JS ES module in the \`script\` field) using the same template contract when no preset fits. Set returnToMain=true to automatically send completed results back to the main agent. Sub-agents are read-only by default, inherit the parent model unless a task specifies model/provider, run with --no-session --no-extensions, and receive parent progress.`
-				: `Start, inspect, wait for, or cancel headless ${APP_NAME} sub-agents — a built-in, one-shot delegation capability whose results return to you. action=start accepts either one task or a tasks array for parallel work. Set returnToMain=true to automatically send completed results back to the main agent. Sub-agents are read-only by default, inherit the parent model unless a task specifies model/provider, run with --no-session --no-extensions, and receive parent progress.`,
-			promptSnippet: `Run one or more headless ${APP_NAME} sub-agents for delegated analysis`,
+				? `Start, inspect, wait for, or cancel sessionless, one-shot ${APP_NAME} workers whose results return to the parent. Use teammate_agent instead when retained context, iterative follow-up, or explicit ownership requires a long-lived managed child session. action=start accepts one task, a parallel tasks array, or a workflow object. A workflow orchestrates the same sessionless workers: six named presets (classify_and_act, fan_out_synthesize, adversarial_verify, generate_and_filter, tournament, loop_until_done) use fixed runtime-owned control flow, while pattern="script" lets the script author own if/while/await flow through runtime-controlled primitives. Set returnToMain=true to return completed results automatically. Workers are read-only by default, inherit the parent model unless overridden, run with --no-session --no-extensions, and receive parent progress.`
+				: `Start, inspect, wait for, or cancel sessionless, one-shot ${APP_NAME} workers whose results return to the parent. Use teammate_agent instead when retained context, iterative follow-up, or explicit ownership requires a long-lived managed child session. action=start accepts one task or a parallel tasks array. Set returnToMain=true to return completed results automatically. Workers are read-only by default, inherit the parent model unless overridden, run with --no-session --no-extensions, and receive parent progress.`,
+			promptSnippet: `Run one or more sessionless, one-shot ${APP_NAME} workers for bounded delegation`,
 			promptGuidelines: [
-				"Use sub_agent action=start with tasks:[...] when a task can be decomposed into independent research, code review, test analysis, or planning subtasks that benefit from concurrent agents.",
-				"Prefer default read-only sub-agents. The parent agent should synthesize results and perform final edits.",
+				"Use sub_agent for bounded one-shot work. Choose teammate_agent when the collaborator needs retained context, iterative assignments, or explicit file ownership.",
+				"A successful action=start gives each running event a soft lease on its delegated scope. Do not redo the same task concurrently; the parent may continue only non-overlapping Todo work, coordination, or integration preparation, then synthesize and independently verify after the terminal result returns.",
+				"A read-only worker leases an analysis scope, not files. This is a coordination rule, not a runtime lock, and it does not intercept bash or other writes.",
+				"After failure, timeout, or cancellation, confirm the event is terminal before reclaiming its scope.",
+				"Use action=start with tasks:[...] when work decomposes into independent research, code review, test analysis, or planning subtasks that benefit from concurrent workers.",
+				"Prefer default read-only workers. The parent agent should synthesize results and perform final edits.",
 				`Do not start more than ${MAX_START_MANY} sub-agents at once unless the user explicitly requests a different approach; this tool enforces a hard limit of ${MAX_START_MANY} running sub-agents.`,
 				"Sub-agents receive parent tool progress as situational awareness; if they need the freshest state and have read access, they can read the provided progress file.",
 				"After sub_agent action=start, either call sub_agent action=wait before relying on results, or set returnToMain=true so results are automatically returned as a follow-up to the main agent — use one or the other, not both. If you wait (or view a finished agent via action=status) the pending automatic return is cancelled, so you will not get a duplicate return.",
-				"Sub-agents run with --no-extensions, so they cannot recursively create more sub-agents.",
+				"Workers run with --no-session and --no-extensions, so they retain no session context and cannot recursively create more sub-agents.",
 				...(workflowsEnabled
 					? [
-							"Use action=start with a workflow object when the task needs a structured multi-agent pattern (route-and-handle, fan-out-and-synthesize, generate-and-verify, candidate tournament, or iterate-until-done) rather than independent parallel tasks. The orchestration control flow is deterministic and owned by the harness; you only supply each slot's task content. A workflow shows up as a single background event whose expansion reveals its internal workers.",
-							'Reach for a named preset first. When none of the six fit, use pattern="script" and author the workflow yourself: `script` is a JS ES module that does `export default async (args, ctx) => { ... }`. Spawn work only through the injected primitives (ctx.agent, ctx.parallelAgents, ctx.pipeline) so the runtime keeps control of routing, depth guard, tool denial, and timeouts; separate producer and grader roles, compute verdicts in code, and own termination yourself. The script must be plain JavaScript (the runtime consumes JS, not TypeScript). Pass runtime inputs via `args`.',
+							"Use a workflow object when a bounded task needs orchestration over sessionless one-shot workers rather than only independent parallel tasks. Named presets provide fixed runtime-owned control flow; you supply their task slots. A workflow appears as one background event whose expansion reveals its workers.",
+							'Reach for a named preset first. When none fits, use pattern="script" and author the workflow yourself: `script` is a JS ES module that does `export default async (args, ctx) => { ... }`. The script author owns if/while/await flow and termination, but must spawn work only through injected primitives (ctx.agent, ctx.parallelAgents, ctx.pipeline), leaving routing, depth guard, tool denial, timeouts, guard injection, and cancellation under runtime control. Separate producer and grader roles, compute verdicts in code, and cap termination explicitly. The runtime consumes JavaScript, not TypeScript; pass runtime inputs via `args`.',
 						]
 					: []),
 			],
@@ -998,9 +1038,10 @@ export class SubAgentController {
 		returnDelivery: ReturnDelivery,
 		returnInstruction: string | undefined,
 	) {
-		// Workflow branch: a multi-agent orchestration. The harness owns the
-		// deterministic control flow; this facade only manages it as one background
-		// event and reuses the same return-to-main auto-continuation.
+		// Workflow branch: one orchestration over sessionless workers. Named presets
+		// own fixed control flow; scripts own their flow through runtime-controlled
+		// primitives. This facade manages either form as one background event and
+		// reuses the same return-to-main auto-continuation.
 		if (params.workflow) {
 			if (!this.isWorkflowEnabled()) {
 				throw new Error("sub_agent workflows are disabled for the current execution profile");
@@ -1016,7 +1057,7 @@ export class SubAgentController {
 			if (returnToMain) this.scheduleReturnToMain([event], returnDelivery, returnInstruction);
 			this.monitor.update(ctx);
 			const content = truncateModelText(
-				`Started workflow ${event.id} (${event.label})${returnToMain ? " with automatic return to main agent" : ""}\nPattern: ${event.pattern}\nCWD: ${event.cwd}\nLog: ${event.logPath}`,
+				`Started workflow ${event.id} (${event.label})${returnToMain ? " with automatic return to main agent" : ""}\nPattern: ${event.pattern}\nCWD: ${event.cwd}\nLog: ${event.logPath}\n${DELEGATION_LEASE_NOTICE}`,
 				MODEL_RESULT_LIMIT_BYTES,
 			).text;
 			return {
@@ -1067,7 +1108,7 @@ export class SubAgentController {
 		if (started.length === 1) {
 			const event = started[0]!;
 			const content = truncateModelText(
-				`Started sub-agent ${event.id}${event.label ? ` (${event.label})` : ""}${returnToMain ? " with automatic return to main agent" : ""}\nRole: ${event.role ?? "general"}\nCWD: ${event.cwd}\nTools: ${event.tools.join(",")}\nPrompt: ${event.promptPath}\nLog: ${event.logPath}\nParent progress: ${MAIN_PROGRESS_PATH}`,
+				`Started sub-agent ${event.id}${event.label ? ` (${event.label})` : ""}${returnToMain ? " with automatic return to main agent" : ""}\nRole: ${event.role ?? "general"}\nCWD: ${event.cwd}\nTools: ${event.tools.join(",")}\nPrompt: ${event.promptPath}\nLog: ${event.logPath}\nParent progress: ${MAIN_PROGRESS_PATH}\n${DELEGATION_LEASE_NOTICE}`,
 				MODEL_RESULT_LIMIT_BYTES,
 			).text;
 			return {
@@ -1092,7 +1133,7 @@ export class SubAgentController {
 			(event) => `${event.id}\t${event.status}\t${event.label ?? event.role ?? "sub-agent"}\t${event.logPath}`,
 		);
 		const content = truncateModelText(
-			`Started ${started.length} sub-agents concurrently${returnToMain ? " with automatic return to main agent" : ""}:\n${lines.join("\n")}\nParent progress: ${MAIN_PROGRESS_PATH}`,
+			`Started ${started.length} sub-agents concurrently${returnToMain ? " with automatic return to main agent" : ""}:\n${lines.join("\n")}\nParent progress: ${MAIN_PROGRESS_PATH}\n${DELEGATION_LEASE_NOTICE}`,
 			MODEL_RESULT_TOTAL_LIMIT_BYTES,
 		).text;
 		return {
@@ -1221,21 +1262,24 @@ export class SubAgentController {
 		// Packages are independent of extensions: --no-extensions above still stands,
 		// but the parent may grant specific harness packages to the sub-agent.
 		for (const selector of packages) args.push("--harness-package", selector);
-		const inheritedModel = !input.provider && !input.model ? this.getDefaultModel?.() : undefined;
+		const inheritDefaultModel = !input.provider && (!input.model || input.model.trim().toLowerCase() === "default");
+		const inheritedModel = inheritDefaultModel ? this.getDefaultModel?.() : undefined;
 		const provider = input.provider ?? inheritedModel?.provider;
-		const model = input.model ?? inheritedModel?.model;
+		const model = inheritDefaultModel ? inheritedModel?.model : input.model;
 		if (provider) args.push("--provider", provider);
 		if (model) args.push("--model", model);
 		args.push(`@${promptPath}`);
 
 		const log = createWriteStream(logPath, { flags: "a" });
-		const child = this.spawnAgent(this.agentCommand, args, {
+		const invocation = this.resolveAgentInvocation(args);
+		const child = this.spawnAgent(invocation.command, invocation.args, {
 			cwd,
 			detached: true,
 			stdio: ["ignore", "pipe", "pipe"],
 			env: { ...process.env, PI_SUB_AGENT: "1" },
 		});
 
+		const startedAt = Date.now();
 		const event: SubAgentEvent = {
 			id,
 			kind: "agent",
@@ -1252,25 +1296,29 @@ export class SubAgentController {
 			logPath,
 			child,
 			log,
-			startedAt: Date.now(),
+			startedAt,
 			status: "running",
 			exitCode: null,
 			signal: null,
 			tail: "",
+			lastActivityAt: startedAt,
+			activityPhase: "agent",
 			waiters: [],
 		};
 		this.events.set(id, event);
 		this.monitor.update();
 		this.pruneFinishedEvents();
 
-		log.write(`$ ${this.agentCommand} ${args.map((arg) => JSON.stringify(arg)).join(" ")}\n\n`);
+		log.write(`$ ${invocation.command} ${invocation.args.map((arg) => JSON.stringify(arg)).join(" ")}\n\n`);
 		child.stdout?.on("data", (data: Buffer) => {
 			if (!log.writableEnded && !log.destroyed) log.write(data);
 			appendTail(event, data);
+			this.monitor.update();
 		});
 		child.stderr?.on("data", (data: Buffer) => {
 			if (!log.writableEnded && !log.destroyed) log.write(data);
 			appendTail(event, data);
+			this.monitor.update();
 		});
 		child.on("error", (error) => {
 			finishEvent(event, "failed", null, null, error.message);
@@ -1308,6 +1356,7 @@ export class SubAgentController {
 		void mkdir(WORK_DIR, { recursive: true }).catch(() => undefined);
 		const log = createWriteStream(logPath, { flags: "a" });
 
+		const startedAt = Date.now();
 		const event: SubAgentEvent = {
 			id,
 			kind: "workflow",
@@ -1323,11 +1372,13 @@ export class SubAgentController {
 			logPath,
 			abort,
 			log,
-			startedAt: Date.now(),
+			startedAt,
 			status: "running",
 			exitCode: null,
 			signal: null,
 			tail: "",
+			lastActivityAt: startedAt,
+			activityPhase: `workflow:${input.pattern}`,
 			waiters: [],
 		};
 		this.events.set(id, event);
@@ -1343,7 +1394,7 @@ export class SubAgentController {
 				if (event.status !== "running") return;
 				event.workflowResult = result;
 				const summary = formatWorkflowResult(result);
-				event.tail = appendTailText(event.tail, Buffer.from(`${summary}\n`));
+				appendTail(event, Buffer.from(`${summary}\n`));
 				if (!log.writableEnded && !log.destroyed) {
 					let completeResult: string;
 					try {
@@ -1407,7 +1458,7 @@ export class SubAgentController {
 		if (this.shuttingDown || completedEvents.length === 0) return;
 
 		const defaultInstruction =
-			"Sub-agent work has completed. Read these returned results, synthesize the findings, and continue the original task. Do not ask the user to manually inspect event ids unless more information is needed.";
+			"Sub-agent work is terminal and its soft lease is released. Synthesize these results, independently verify them, and continue the original task. Do not ask the user to manually inspect event ids unless more information is needed.";
 		const resolvedInstruction = instruction?.trim() || defaultInstruction;
 		const boundedInstruction = truncateModelText(resolvedInstruction, MODEL_RESULT_LIMIT_BYTES).text;
 		const separatorBytes = Buffer.byteLength("\n\n", "utf8");
@@ -1447,6 +1498,16 @@ export class SubAgentController {
 				},
 			},
 			delivery,
+			{
+				onPersisted: () => {
+					for (const event of completedEvents) event.autoReturnPending = false;
+					this.pruneFinishedEvents();
+				},
+				onDropped: () => {
+					for (const event of completedEvents) event.autoReturnPending = false;
+					this.pruneFinishedEvents();
+				},
+			},
 		);
 	}
 
@@ -1467,7 +1528,6 @@ export class SubAgentController {
 			await Promise.resolve();
 			const pending = completedEvents.filter((event) => event.autoReturnPending);
 			if (pending.length === 0) return;
-			for (const event of pending) event.autoReturnPending = false;
 			this.returnSubAgentResultsToMain(pending, delivery, instruction);
 		})().catch(() => undefined);
 	}

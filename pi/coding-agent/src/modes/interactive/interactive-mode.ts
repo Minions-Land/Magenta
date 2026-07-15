@@ -92,7 +92,6 @@ import {
 	buildHarnessToolSwitches,
 	formatHarnessComponentsSummary,
 	formatHarnessRuntimeSummary,
-	HARNESS_HOOK_EVENTS,
 	type HarnessRuntimeSnapshot,
 	hasHarnessComponent,
 } from "../../core/harness-switches.ts";
@@ -243,11 +242,21 @@ type CompactionQueuedMessage = SubmittedInput & {
 
 /**
  * Magenta feature: an activation is anything that drives the main interactive
- * loop to advance. A `user_input` carries text to prompt; a `peer_wake` means
- * an idle peer-message wake already appended its payload to session state and
- * the loop should run one turn to consume it (via runExternalActivation).
+ * loop to advance. A `user_input` carries text to prompt; an
+ * `external_activation` means the shared hub already appended a coalesced batch
+ * to session state and the loop should run one turn to consume it.
  */
-type Activation = { type: "user_input"; input: SubmittedInput } | { type: "peer_wake" };
+type Activation = { type: "user_input"; input: SubmittedInput } | { type: "external_activation" };
+
+export const SUBMITTED_INPUT_ESCAPE_RESTORE_WINDOW_MS = 3_000;
+
+type ActiveSubmittedInputAttempt = {
+	input: SubmittedInput;
+	acceptedAt: number;
+	escapeRestoreRequested: boolean;
+	hasValidOutput: boolean;
+	restored: boolean;
+};
 
 const DEAD_TERMINAL_ERROR_CODES = new Set(["EIO", "EPIPE", "ENOTCONN"]);
 function isDeadTerminalError(error: unknown): boolean {
@@ -403,12 +412,13 @@ export class InteractiveMode {
 	private pendingDraftInEditor = false;
 	// Magenta feature: unified activation queue. The main loop consumes
 	// Activations from a single source; producers are the keyboard (user_input)
-	// and idle peer wake (peer_wake). This keeps one turn-runner and lets future
-	// push-style triggers (timers, file watches, webhooks) add producers without
+	// and the external activation hub. This keeps one turn-runner and lets future
+	// push-style sources add submissions without
 	// touching the loop.
 	private activationQueue: Activation[] = [];
 	private onActivationCallback?: (activation: Activation) => void;
 	private releaseExternalTurnRunner?: () => void;
+	private activeSubmittedInputAttempt?: ActiveSubmittedInputAttempt;
 	private loadingAnimation: Loader | undefined = undefined;
 	private workingMessage: string | undefined = undefined;
 	private workingVisible = true;
@@ -982,13 +992,13 @@ export class InteractiveMode {
 			}
 		}
 
-		// Main interactive loop. Consumes a single activation queue fed by two
-		// producers: keyboard input and idle peer wake. Running every activation
-		// through one loop keeps a single turn-runner, so a wake turn never races
+		// Main interactive loop. Keyboard input and the external-activation hub
+		// share one queue and one turn-runner, so background/peer work cannot race
 		// the input prompt.
 		while (true) {
 			const activation = await this.getNextActivation();
 			let promptAccepted = false;
+			let activeAttempt: ActiveSubmittedInputAttempt | undefined;
 			try {
 				if (activation.type === "user_input") {
 					await this.session.prompt(activation.input.text, {
@@ -996,10 +1006,11 @@ export class InteractiveMode {
 						imageMarkers: activation.input.imageMarkers,
 						preflightResult: (success) => {
 							promptAccepted = success;
+							if (success) activeAttempt = this.beginSubmittedInputAttempt(activation.input);
 						},
 					});
 				} else {
-					// peer_wake: the payload is already in session state; run one turn.
+					// The external batch is already in session state; run one turn.
 					await this.session.runExternalActivation();
 				}
 			} catch (error: unknown) {
@@ -1008,6 +1019,8 @@ export class InteractiveMode {
 				}
 				const errorMessage = error instanceof Error ? error.message : "Unknown error occurred";
 				this.showError(errorMessage);
+			} finally {
+				if (activeAttempt) this.endSubmittedInputAttempt(activeAttempt);
 			}
 		}
 	}
@@ -2754,9 +2767,9 @@ export class InteractiveMode {
 		// so they work correctly regardless of which editor is active
 		this.defaultEditor.onEscape = () => {
 			if (this.session.isStreaming) {
-				// Esc while streaming: interrupt the current loop. If there are pending
-				// (queued) messages, they are fed back in as a fresh prompt; otherwise this
-				// is a plain abort. (Codex/Claude-code style interaction.)
+				// Esc while streaming: mark this exact user-origin abort before aborting;
+				// a fast empty response can then restore its submitted draft safely.
+				this.markActiveSubmittedInputEscapeAbort();
 				this.interruptAndFeedPendingMessages();
 			} else if (this.session.isBashRunning) {
 				this.session.abortBash();
@@ -3170,13 +3183,18 @@ export class InteractiveMode {
 		this.unsubscribe = this.session.subscribe(async (event) => {
 			await this.handleEvent(event);
 		});
-		// Magenta feature: claim the turn-runner so idle peer wakes are delivered as
-		// external_activation events for our main loop to run, instead of the session
-		// self-running the turn and racing the input prompt.
+		// Claim the turn-runner so the shared hub emits one external_activation for
+		// this main loop instead of self-running and racing the input prompt.
 		this.releaseExternalTurnRunner = this.session.claimExternalTurnRunner();
 	}
 
 	private async handleEvent(event: AgentSessionEvent): Promise<void> {
+		// AgentSession listeners are not awaited by the UI event fan-out. Capture
+		// output/abort state synchronously before any initialization await so the
+		// prompt's finally block cannot clear the attempt first.
+		if ((event.type === "message_update" || event.type === "message_end") && event.message.role === "assistant") {
+			this.observeActiveSubmittedInputMessage(event.message, event.type === "message_end");
+		}
 		if (!this.isInitialized) {
 			await this.init();
 		}
@@ -3227,10 +3245,9 @@ export class InteractiveMode {
 				break;
 
 			case "external_activation":
-				// Magenta feature: an idle peer wake appended its payload to session
-				// state and handed the turn to us. Enqueue an activation so the main
-				// loop runs exactly one turn through the single turn-runner.
-				this.pushActivation({ type: "peer_wake" });
+				// The hub appended one coalesced batch and handed the claimed turn to
+				// the interactive loop. Queue exactly one run through this turn-runner.
+				this.pushActivation({ type: "external_activation" });
 				break;
 
 			case "message_start":
@@ -3848,9 +3865,9 @@ export class InteractiveMode {
 
 	/**
 	 * Magenta feature: pull the next activation for the main loop. Drains any
-	 * queued activation first (peer wakes queued while busy, or input queued
+	 * queued activation first (external batches queued while busy, or input queued
 	 * before the loop was ready), otherwise blocks until either producer fires:
-	 * keyboard submit (user_input) or an idle peer wake (peer_wake).
+	 * keyboard submit or the external activation hub.
 	 */
 	async getNextActivation(): Promise<Activation> {
 		// Drain queued activations first (FIFO). Keyboard input queued before the
@@ -3872,7 +3889,7 @@ export class InteractiveMode {
 				this.onActivationCallback = undefined;
 				resolve({ type: "user_input", input });
 			};
-			// Peer-wake producer: pushActivation resolves through this.
+			// External-activation producer: pushActivation resolves through this.
 			this.onActivationCallback = (activation: Activation) => {
 				this.onInputCallback = undefined;
 				this.onActivationCallback = undefined;
@@ -3882,8 +3899,8 @@ export class InteractiveMode {
 	}
 
 	/**
-	 * Magenta feature: enqueue an activation from a non-keyboard producer (idle
-	 * peer wake). If the main loop is blocked waiting, resolve it immediately;
+	 * Enqueue an activation from the external hub. If the main loop is blocked
+	 * waiting, resolve it immediately;
 	 * otherwise queue it so the next getNextActivation() picks it up.
 	 */
 	private pushActivation(activation: Activation): void {
@@ -4588,7 +4605,7 @@ export class InteractiveMode {
 		const notes = status.releaseNotes ? this.summarizeReleaseNotes(status.releaseNotes) : undefined;
 		this.showMagentaUpdateBanner(
 			`${APP_NAME} v${status.latestVersion} is available (current: v${status.currentVersion}).`,
-			`${notes ? `${notes}\n` : ""}Run '${APP_NAME.toLowerCase()} --update' to install, then restart.`,
+			`${notes ? `${notes}\n` : ""}Run '${APP_NAME.toLowerCase()} update self' to install, then restart.`,
 		);
 	}
 
@@ -4680,6 +4697,60 @@ export class InteractiveMode {
 			this.pendingImageController.add(marker, input.images![index]!);
 		}
 		return text;
+	}
+
+	private beginSubmittedInputAttempt(input: SubmittedInput): ActiveSubmittedInputAttempt {
+		const attempt: ActiveSubmittedInputAttempt = {
+			input: {
+				...input,
+				...(input.images ? { images: [...input.images] } : {}),
+				...(input.imageMarkers ? { imageMarkers: [...input.imageMarkers] } : {}),
+			},
+			acceptedAt: Date.now(),
+			escapeRestoreRequested: false,
+			hasValidOutput: false,
+			restored: false,
+		};
+		this.activeSubmittedInputAttempt = attempt;
+		return attempt;
+	}
+
+	private endSubmittedInputAttempt(attempt: ActiveSubmittedInputAttempt): void {
+		if (this.activeSubmittedInputAttempt === attempt) this.activeSubmittedInputAttempt = undefined;
+	}
+
+	private markActiveSubmittedInputEscapeAbort(): void {
+		const attempt = this.activeSubmittedInputAttempt;
+		if (!attempt || attempt.restored || attempt.hasValidOutput) return;
+		const elapsed = Date.now() - attempt.acceptedAt;
+		if (elapsed >= 0 && elapsed <= SUBMITTED_INPUT_ESCAPE_RESTORE_WINDOW_MS) {
+			attempt.escapeRestoreRequested = true;
+		}
+	}
+
+	private observeActiveSubmittedInputMessage(message: AssistantMessage, isFinal: boolean): void {
+		const attempt = this.activeSubmittedInputAttempt;
+		if (!attempt) return;
+		if (this.hasValidAssistantOutput(message)) attempt.hasValidOutput = true;
+		if (
+			isFinal &&
+			message.stopReason === "aborted" &&
+			attempt.escapeRestoreRequested &&
+			!attempt.hasValidOutput &&
+			!attempt.restored
+		) {
+			attempt.restored = true;
+			this.restoreSubmittedInputToEditor(attempt.input);
+		}
+	}
+
+	private hasValidAssistantOutput(message: AssistantMessage): boolean {
+		return message.content.some((content) => {
+			if (content.type === "toolCall") return true;
+			if (content.type === "text") return content.text.trim().length > 0;
+			if (content.type === "thinking") return content.thinking.trim().length > 0;
+			return false;
+		});
 	}
 
 	private restoreSubmittedInputToEditor(input: SubmittedInput): void {
@@ -5073,8 +5144,8 @@ export class InteractiveMode {
 		return profiles.map((profile) => `${overlay.packageId}:${profile.name}`);
 	}
 
-	private getHarnessActiveHookEvents(): string[] {
-		return HARNESS_HOOK_EVENTS.filter((event) => this.session.extensionRunner.hasHandlers(event));
+	private getActiveExtensionEvents(): string[] {
+		return this.session.extensionRunner.getRegisteredEventTypes();
 	}
 
 	private async createHarnessRuntimeSnapshot(): Promise<HarnessRuntimeSnapshot> {
@@ -5090,7 +5161,7 @@ export class InteractiveMode {
 			harnessPackages: this.HcpClientgetharnesspackageselectors(),
 			packageToolCount: packageTools.tools.length,
 			packageDiagnosticCount: packageTools.diagnostics.length,
-			activeHookEvents: this.getHarnessActiveHookEvents(),
+			activeExtensionEvents: this.getActiveExtensionEvents(),
 			components: this.getHarnessComponentsView(),
 		};
 	}
@@ -5319,9 +5390,9 @@ export class InteractiveMode {
 		}
 	}
 
-	private showHarnessHooksSummary(): void {
+	private showExtensionEventsSummary(): void {
 		const extensionPaths = this.session.extensionRunner.getExtensionPaths();
-		const activeEvents = this.getHarnessActiveHookEvents();
+		const activeEvents = this.getActiveExtensionEvents();
 		const extensionList =
 			extensionPaths.length > 0
 				? extensionPaths
@@ -5331,10 +5402,10 @@ export class InteractiveMode {
 				: "  none";
 		this.showStatus(
 			[
-				"Harness hooks",
+				"Extension events",
 				`Extensions loaded: ${extensionPaths.length}`,
 				extensionList,
-				`Active hook events: ${activeEvents.length > 0 ? activeEvents.join(", ") : "none"}`,
+				`Registered events: ${activeEvents.length > 0 ? activeEvents.join(", ") : "none"}`,
 			].join("\n"),
 		);
 	}
@@ -5425,7 +5496,7 @@ export class InteractiveMode {
 		}
 
 		if (action === "hooks") {
-			this.showHarnessHooksSummary();
+			this.showExtensionEventsSummary();
 			return;
 		}
 
@@ -5625,7 +5696,7 @@ export class InteractiveMode {
 				value: "command:harness",
 				label: "Harness",
 				aliases: ["h", "harness"],
-				description: "Tools, compaction, skills, hooks, memory",
+				description: "Tools, compaction, skills, extension events, memory",
 				children: (await this.harnessMenuItems()).children,
 			},
 			// Magenta feature: top-level Skills entry so `/skill:` drills straight
@@ -5986,18 +6057,18 @@ export class InteractiveMode {
 				},
 				{
 					value: "harness:hooks",
-					label: "Hooks",
-					description: `${snapshot.loadedExtensions} extensions · ${snapshot.activeHookEvents.length} active events`,
+					label: "Extension events",
+					description: `${snapshot.loadedExtensions} extensions · ${snapshot.activeExtensionEvents.length} registered event${snapshot.activeExtensionEvents.length === 1 ? "" : "s"}`,
 					children: [
 						{
 							value: "harness:hooks:inspect",
-							label: "Inspect active hooks",
+							label: "Inspect registered events",
 							description: "Print extension event wiring",
 						},
 						{
 							value: "harness:hooks:impl:pi",
-							label: "Pi extension events",
-							description: "Current hook substrate",
+							label: "Pi lifecycle handlers",
+							description: "Extension event handler implementation",
 							active: true,
 						},
 					],
@@ -6330,7 +6401,7 @@ export class InteractiveMode {
 			return true;
 		}
 		if (item.value === "harness:hooks:inspect") {
-			this.showHarnessHooksSummary();
+			this.showExtensionEventsSummary();
 			return true;
 		}
 		if (item.value === "harness:memory:inspect") {

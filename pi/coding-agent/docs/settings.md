@@ -33,7 +33,7 @@ Use `/trust` in interactive mode to save a project trust decision for future ses
 | `hideThinkingBlock` | boolean | `false` | Hide thinking blocks in output |
 | `thinkingBudgets` | object | - | Custom token budgets per thinking level |
 
-`ultra` is a Harness execution profile. It maps to the selected model's highest native thinking level and enables workflow orchestration and persistent teammates by default. Providers never receive `ultra` as a thinking value.
+`ultra` is a Harness execution profile. It maps to the selected model's highest native thinking level and enables workflow and managed-teammate capabilities by default. It does not dispatch work automatically, and providers never receive `ultra` as a thinking value.
 
 #### thinkingBudgets
 
@@ -53,9 +53,11 @@ Use `/trust` in interactive mode to save a project trust decision for future ses
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
 | `harness.workflows` | boolean | profile default | Enable `sub_agent` workflow templates |
-| `harness.teammates` | boolean | profile default | Enable persistent `teammate_agent` sessions |
+| `harness.teammates` | boolean | profile default | Enable parent-managed, long-lived `teammate_agent` child sessions |
 
-Both capabilities default to `true` in Ultra and `false` in other profiles. Explicit settings win in either direction, so standard profiles can enable them and Ultra can disable them. Per-run `--harness-workflows` / `--no-harness-workflows` and `--harness-teammates` / `--no-harness-teammates` flags override both settings and profile defaults without changing the provider thinking level.
+Both capabilities default to `true` in Ultra and `false` in other profiles. Enabling a capability only exposes its tool surface; it never starts workers or teammates automatically. Explicit settings win in either direction, so standard profiles can enable them and Ultra can disable them. Per-run `--harness-workflows` / `--no-harness-workflows` and `--harness-teammates` / `--no-harness-teammates` flags override both settings and profile defaults without changing the provider thinking level.
+
+Workflows orchestrate sessionless, one-shot workers. Named presets have fixed runtime-owned control flow, while custom workflow scripts own if/while/await flow through runtime-controlled primitives. `teammate_agent` manages long-lived child sessions for retained context and multiple assignments; the parent stops them when its runtime shuts down. `send_message` is a separate urgent mailbox data plane for known peer session ids and does not create a teammate.
 
 ### UI & Display
 

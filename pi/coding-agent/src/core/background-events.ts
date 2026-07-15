@@ -9,6 +9,22 @@ const DONE_STATUSES = new Set(["exited", "cancelled", "stopped"]);
 
 export type EventStatus = "running" | "exited" | "failed" | "timed_out" | "cancelled" | string;
 
+export type BackgroundReminderThresholds = {
+	expectedMultiplier: number;
+	expectedGraceMs: number;
+	expectedMinimumMs: number;
+	silentMs: number;
+};
+
+export const DEFAULT_BACKGROUND_REMINDER_THRESHOLDS: BackgroundReminderThresholds = {
+	expectedMultiplier: 1.5,
+	expectedGraceMs: 30_000,
+	expectedMinimumMs: 60_000,
+	silentMs: 5 * 60_000,
+};
+
+export type BackgroundStallKind = "overdue" | "silent";
+
 export type MonitoredEvent = {
 	id: string;
 	status: EventStatus;
@@ -20,7 +36,66 @@ export type MonitoredEvent = {
 	tail?: string;
 	/** Optional progress reading (value + source) for a running event, when known. */
 	progress?: ShellProgress;
+	/** Expected wall-clock duration. Used for overdue detection, not as real activity. */
+	expectedSeconds?: number;
+	/** Most recent real output, progress, phase, or transport activity. */
+	lastActivityAt?: number;
+	lastOutputAt?: number;
+	lastProgressAt?: number;
+	activityPhase?: string;
+	/** Sources opt in so legacy running sources are never reminded unexpectedly. */
+	reminderEligible?: boolean;
 	canCancel?: boolean;
+};
+
+export function backgroundEventDeadlines(
+	event: MonitoredEvent,
+	thresholds: BackgroundReminderThresholds = DEFAULT_BACKGROUND_REMINDER_THRESHOLDS,
+): { overdueAt?: number; silentAt?: number } {
+	if (event.status !== "running" || event.reminderEligible !== true) return {};
+	const expectedMs =
+		typeof event.expectedSeconds === "number" && Number.isFinite(event.expectedSeconds) && event.expectedSeconds > 0
+			? event.expectedSeconds * 1000
+			: undefined;
+	return {
+		overdueAt:
+			expectedMs === undefined
+				? undefined
+				: event.startedAt +
+					Math.max(
+						expectedMs * thresholds.expectedMultiplier,
+						expectedMs + thresholds.expectedGraceMs,
+						thresholds.expectedMinimumMs,
+					),
+		silentAt: (event.lastActivityAt ?? event.startedAt) + thresholds.silentMs,
+	};
+}
+
+export function backgroundEventStallKinds(
+	event: MonitoredEvent,
+	now = Date.now(),
+	thresholds: BackgroundReminderThresholds = DEFAULT_BACKGROUND_REMINDER_THRESHOLDS,
+): BackgroundStallKind[] {
+	const deadlines = backgroundEventDeadlines(event, thresholds);
+	const kinds: BackgroundStallKind[] = [];
+	if (deadlines.overdueAt !== undefined && now >= deadlines.overdueAt) kinds.push("overdue");
+	if (deadlines.silentAt !== undefined && now >= deadlines.silentAt) kinds.push("silent");
+	return kinds;
+}
+
+export type EventUiTelemetry = {
+	input?: number;
+	output?: number;
+	cacheRead?: number;
+	cacheWrite?: number;
+	cost?: number;
+	costUnknown?: boolean;
+	contextUsage?: {
+		percent: number | null;
+		contextWindow: number;
+	};
+	autoCompactEnabled?: boolean;
+	assistantMessages?: number;
 };
 
 export type EventSource = {
@@ -28,6 +103,8 @@ export type EventSource = {
 	title: string;
 	getEvents: () => MonitoredEvent[];
 	getEventDetails?: (id: string) => string[];
+	/** UI-only, on-demand telemetry. It must never be copied into MonitoredEvent or headless snapshots. */
+	getUiTelemetry?: (id: string, onUpdate: () => void) => EventUiTelemetry | undefined;
 	cancelEvent?: (id: string, ctx?: ExtensionContext) => boolean;
 };
 
@@ -66,18 +143,35 @@ export class BackgroundEventManager {
 	private overlayTui: TuiLike | undefined;
 	private filter: EventFilter = "all";
 
-	registerSource(source: EventSource): { update: (ctx?: ExtensionContext) => void } {
+	registerSource(source: EventSource): { update: (ctx?: ExtensionContext) => void; dispose: () => void } {
 		this.sources.set(source.id, source);
-		return { update: (ctx) => this.update(ctx) };
+		this.emitChange(false);
+		return {
+			update: (ctx) => this.update(ctx),
+			dispose: () => {
+				if (this.sources.get(source.id) !== source) return;
+				this.sources.delete(source.id);
+				this.update();
+			},
+		};
 	}
 
-	update(ctx?: ExtensionContext): void {
-		for (const listener of this.changeListeners) listener(false);
+	/** Subscribe to source updates without exposing the manager's listener set. */
+	subscribeChanges(listener: (disposed: boolean) => void): () => void {
+		this.changeListeners.add(listener);
+		return () => this.changeListeners.delete(listener);
+	}
+
+	update(ctx?: ExtensionContext, emitChange = true): void {
+		if (emitChange) this.emitChange(false);
 		if (ctx?.hasUI) this.statusCtx = ctx;
 		if (!this.statusCtx?.hasUI) return;
 
 		const running = this.runningEvents();
 		const failed = this.unacknowledgedFailures();
+		const stalled = running.map(({ event }) => backgroundEventStallKinds(event));
+		const overdue = stalled.filter((kinds) => kinds.includes("overdue")).length;
+		const silent = stalled.filter((kinds) => kinds.includes("silent")).length;
 		const theme = this.statusCtx.ui.theme;
 
 		if (running.length === 0 && failed.length === 0) {
@@ -90,9 +184,11 @@ export class BackgroundEventManager {
 		const parts: string[] = [];
 		if (running.length > 0) parts.push(`${running.length} running`);
 		if (failed.length > 0) parts.push(`${failed.length} failed`);
-		const icon = failed.length > 0 && running.length === 0 ? "⚠ " : running.length > 0 ? "● " : "⚠ ";
-		const iconColor: Parameters<typeof theme.fg>[0] =
-			failed.length > 0 && running.length === 0 ? "warning" : "accent";
+		if (overdue > 0) parts.push(`${overdue} overdue`);
+		if (silent > 0) parts.push(`${silent} silent`);
+		const needsAttention = failed.length > 0 || overdue > 0 || silent > 0;
+		const icon = needsAttention ? "⚠ " : "● ";
+		const iconColor: Parameters<typeof theme.fg>[0] = needsAttention ? "warning" : "accent";
 		// When exactly one event is running and it reports progress, show its bar
 		// inline. With multiple running events the bar is ambiguous, so fall back to
 		// the aggregate count (per-event bars live in the /events overlay).
@@ -105,7 +201,9 @@ export class BackgroundEventManager {
 		this.updateOverlay();
 
 		if (running.length > 0 && !this.statusTimer) {
-			this.statusTimer = setInterval(() => this.update(), 1000);
+			// Elapsed/time-based progress is presentation-only. Do not publish this
+			// one-second refresh as real source activity to reminder observers.
+			this.statusTimer = setInterval(() => this.update(undefined, false), 1000);
 			this.statusTimer.unref?.();
 		}
 		if (running.length === 0) this.stopTimer();
@@ -169,7 +267,7 @@ export class BackgroundEventManager {
 				settled = true;
 				if (timeout) clearTimeout(timeout);
 				options.signal?.removeEventListener("abort", onAbort);
-				this.changeListeners.delete(onChange);
+				unsubscribe();
 				resolve(idle);
 			};
 			const onAbort = () => finish(false);
@@ -178,7 +276,7 @@ export class BackgroundEventManager {
 				else if (this.runningEvents().length === 0) finish(true);
 			};
 
-			this.changeListeners.add(onChange);
+			const unsubscribe = this.subscribeChanges(onChange);
 			options.signal?.addEventListener("abort", onAbort, { once: true });
 			if (options.timeoutMs !== undefined) {
 				timeout = setTimeout(() => finish(false), Math.max(0, options.timeoutMs));
@@ -191,8 +289,18 @@ export class BackgroundEventManager {
 		this.hide();
 		this.statusCtx = undefined;
 		this.stopTimer();
-		for (const listener of this.changeListeners) listener(true);
+		this.emitChange(true);
 		this.changeListeners.clear();
+	}
+
+	private emitChange(disposed: boolean): void {
+		for (const listener of [...this.changeListeners]) {
+			try {
+				listener(disposed);
+			} catch {
+				// One observer must not prevent manager/UI updates or other observers.
+			}
+		}
 	}
 
 	private sourceEntries(): EventSource[] {

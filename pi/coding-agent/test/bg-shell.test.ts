@@ -218,6 +218,54 @@ describe("built-in bg_shell tool", () => {
 			const outputSection = statusText.slice(statusText.indexOf("Output:"));
 			expect(outputSection).toContain("real-output-line");
 			expect(outputSection).not.toContain("@@progress");
+			expect(manager.getEvents().find((event) => event.id === eventId)).toMatchObject({
+				lastActivityAt: expect.any(Number),
+				lastOutputAt: expect.any(Number),
+				lastProgressAt: expect.any(Number),
+				activityPhase: "running",
+				reminderEligible: true,
+			});
+		} finally {
+			await tool.execute("call-cancel", { action: "cancel", eventId }, undefined, undefined, ctx);
+		}
+	});
+
+	it("does not treat repeated progress values as new activity", async () => {
+		const tool = controller.createToolDefinition();
+		const ctx = createContext(tempDir);
+		const start = await tool.execute(
+			"call-start",
+			{
+				action: "start",
+				command:
+					`node -e 'console.log("@@progress 0.4"); ` +
+					`setTimeout(()=>console.log("@@progress 0.4"),100); ` +
+					`setTimeout(()=>console.log("@@progress 0.5"),1200); setTimeout(()=>{},30000)'`,
+			},
+			undefined,
+			undefined,
+			ctx,
+		);
+		const eventId = start.details?.id as string;
+
+		try {
+			let firstProgressAt: number | undefined;
+			await waitUntil(() => {
+				const event = manager.getEvents().find((candidate) => candidate.id === eventId);
+				firstProgressAt = event?.lastProgressAt;
+				return event?.progress?.value === 0.4 && firstProgressAt !== undefined;
+			}, 5000);
+
+			await new Promise((resolvePromise) => setTimeout(resolvePromise, 350));
+			const repeated = manager.getEvents().find((candidate) => candidate.id === eventId);
+			expect(repeated?.progress?.value).toBe(0.4);
+			expect(repeated?.lastProgressAt).toBe(firstProgressAt);
+			expect(repeated?.lastActivityAt).toBe(firstProgressAt);
+
+			await waitUntil(() => {
+				const event = manager.getEvents().find((candidate) => candidate.id === eventId);
+				return event?.progress?.value === 0.5 && (event.lastProgressAt ?? 0) > (firstProgressAt ?? 0);
+			}, 5000);
 		} finally {
 			await tool.execute("call-cancel", { action: "cancel", eventId }, undefined, undefined, ctx);
 		}
@@ -247,6 +295,9 @@ describe("built-in bg_shell tool", () => {
 
 			expect(statusText).toContain("Status: running");
 			expect(statusText).toContain("estimated");
+			const monitored = manager.getEvents().find((event) => event.id === eventId);
+			expect(monitored).toMatchObject({ expectedSeconds: 120, activityPhase: "running" });
+			expect(monitored?.lastProgressAt).toBeUndefined();
 		} finally {
 			await tool.execute("call-cancel", { action: "cancel", eventId }, undefined, undefined, ctx);
 		}

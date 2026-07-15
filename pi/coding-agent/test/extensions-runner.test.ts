@@ -905,6 +905,54 @@ describe("ExtensionRunner", () => {
 		});
 	});
 
+	describe("getRegisteredEventTypes", () => {
+		it("returns an empty list when no extension handlers are registered", async () => {
+			const result = await loadExtensions([], tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+
+			expect(runner.getRegisteredEventTypes()).toEqual([]);
+		});
+
+		it("aggregates, deduplicates, and sorts handlers across extensions", async () => {
+			const firstPath = path.join(extensionsDir, "first.ts");
+			const secondPath = path.join(extensionsDir, "second.ts");
+			fs.writeFileSync(
+				firstPath,
+				`export default function(pi) {
+	pi.on("tool_call", async () => undefined);
+	pi.on("tool_call", async () => undefined);
+}`,
+			);
+			fs.writeFileSync(
+				secondPath,
+				`export default function(pi) {
+	pi.on("before_agent_start", async () => undefined);
+	pi.on("tool_call", async () => undefined);
+}`,
+			);
+
+			const result = await loadExtensions([firstPath, secondPath], tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+
+			expect(runner.getRegisteredEventTypes()).toEqual(["before_agent_start", "tool_call"]);
+		});
+
+		it("includes project_trust handlers registered before session startup", async () => {
+			const extensionPath = path.join(extensionsDir, "trust.ts");
+			fs.writeFileSync(
+				extensionPath,
+				`export default function(pi) {
+	pi.on("project_trust", () => ({ trusted: "undecided" }));
+}`,
+			);
+
+			const result = await loadExtensions([extensionPath], tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+
+			expect(runner.getRegisteredEventTypes()).toEqual(["project_trust"]);
+		});
+	});
+
 	describe("Phase 4: lifecycle hook delegation (C4.2 golden hook-order test)", () => {
 		it("invokes pre-tool before extension handlers and post-tool after, preserving byte-identity", async () => {
 			const callOrder: string[] = [];

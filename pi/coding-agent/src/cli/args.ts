@@ -362,7 +362,7 @@ ${chalk.bold("Options:")}
   --ssh <user@host[:path]>       Run read/write/edit/bash against a remote workspace over SSH
   --help, -h                     Show this help
   --version, -v                  Show version number
-  --update                       Check and install updates from GitHub Releases
+  --update                       Deprecated alias for: magenta update self
 
 Extensions can register additional flags (e.g., --plan from plan-mode extension).${extensionFlagsText}
 

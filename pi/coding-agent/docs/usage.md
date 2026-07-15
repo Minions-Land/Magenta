@@ -48,6 +48,7 @@ Type `/` in the editor to open command completion. Extensions can register custo
 | `/fork` | Create a new session from a previous user message |
 | `/clone` | Duplicate the current active branch into a new session |
 | `/compact [prompt]` | Manually compact context, optionally with custom instructions |
+| `/side`, `/btw`, `/s` | Browse this main session's Side/BTW history or start a no-tools conversation |
 | `/copy` | Copy last assistant message to clipboard |
 | `/export [file]` | Export session to HTML or JSONL |
 | `/import <file>` | Import and resume a session from a JSONL file |
@@ -57,6 +58,14 @@ Type `/` in the editor to open command completion. Extensions can register custo
 | `/hotkeys` | Show all keyboard shortcuts |
 | `/changelog` | Display version history |
 | `/quit` | Quit Magenta |
+
+## Side / BTW
+
+Opening `/side`, `/btw`, or `/s` first shows the Side/BTW conversations stored with the current main session plus a new-conversation option. Selecting a history entry resumes it without adding that transcript to the main model context.
+
+The Side/BTW editor uses the standard multiline editor. Shift+Enter inserts a line, bracketed text paste preserves line breaks, Ctrl+C copies the current draft or latest message, PageUp/PageDown scroll the transcript, and Escape closes the window.
+
+Ctrl+T inside the Side/BTW window requests **Enqueue as teammate**. Magenta closes the chat overlay, asks for explicit confirmation, creates a managed child with a bounded hidden snapshot, and reopens the same Side/BTW conversation. The child receives an invitation, not an assignment: it must message the main session with its understanding and ask to be dispatched. The Side/BTW conversation stays usable, and no ownership lease exists until the main agent sends a formal assignment.
 
 ## Message Queue
 
@@ -189,7 +198,7 @@ cat README.md | magenta -p "Summarize this text"
 | `--models <patterns>` | Comma-separated patterns for Ctrl+P cycling |
 | `--list-models [search]` | List available models |
 
-The native levels use each model's `thinkingLevelMap`. Ultra is a Magenta execution profile: it maps to the model's highest native level and defaults Harness workflows and teammates on. Providers never receive `ultra` as a thinking value.
+The native levels use each model's `thinkingLevelMap`. Ultra is a Magenta execution profile: it maps to the model's highest native level, enables workflow and managed-teammate capabilities, and lets a low-frequency background stall reminder wake the main loop through the shared external activation coordinator. It does not dispatch work automatically, and providers never receive `ultra` as a thinking value.
 
 ### Session Options
 
@@ -214,16 +223,27 @@ The native levels use each model's `thinkingLevelMap`. Ultra is a Magenta execut
 | `--harness-workflows`, `--no-harness-workflows` | Explicitly enable or disable `sub_agent` workflow templates |
 | `--harness-teammates`, `--no-harness-teammates` | Explicitly enable or disable `teammate_agent` |
 
-Standard profiles activate native `read`, `bash`, `edit`, `write`, `bg_shell`,
-`sub_agent`, `send_message`, `show`, `grep`, `find`, and `ls`. They retain one-shot
-`sub_agent` tasks but omit workflow templates and `teammate_agent`. Ultra activates
-both by default. `harness.workflows`, `harness.teammates`, and the matching CLI flags explicitly override
-those defaults in either direction. CLI flags have per-run precedence and do not change the provider thinking level. Use `sub_agent` for disposable delegated work
-and `teammate_agent` for a persistent hidden collaborator whose assignments and
-results travel through `send_message`.
+The native tools active by default are `read`, `bash`, `edit`, `write`,
+`bg_shell`, `sub_agent`, `send_message`, `show`, `grep`, `find`, and `ls`.
+HCP also activates `lsp`, `todo`, `web-search`, and `web-fetch` by default.
+Standard profiles retain sessionless, one-shot `sub_agent` workers but omit
+workflow templates and `teammate_agent`. Ultra enables both capabilities by
+default without starting workers or teammates automatically. Its stall reminder
+is driven only by real activity and remains coalesced and rate-limited. `harness.workflows`,
+`harness.teammates`, and the matching CLI flags override those defaults in either
+direction; CLI flags have per-run precedence and do not change provider thinking.
 
-HCP also autoloads `web-search` and `web-fetch`, so both are active by default
-unless the tool-selection options disable them.
+A workflow orchestrates bounded one-shot workers. Named presets have fixed
+runtime-owned control flow; `pattern="script"` gives the script author control
+of if/while/await flow and termination through runtime-controlled primitives.
+Use `teammate_agent` for a parent-managed, long-lived child when retained context
+or iterative assignments matter. For editing, `workspace="worktree"` creates a
+linked checkout under the current repository's parent-session-scoped
+`.magenta/tmp/collaboration/` space. `wait` consumes a structured assignment
+status; `integrate` applies the immutable receipt to a clean parent as unstaged
+changes, while `discard` requires explicit confirmation. Parent shutdown stops
+children but preserves unintegrated worktrees and receipts. `send_message` is the
+urgent mailbox data plane and carries managed terminal receipts.
 
 ### Resource Options
 
@@ -332,10 +352,21 @@ magenta --exclude-tools ask_question
 
 Magenta includes first-class `bg_shell`, `sub_agent`, `send_message`, and
 `teammate_agent` tools and can load user MCP tools through the Harness path.
-Teammates are clean persistent sessions managed by the parent; their RPC
-channel controls lifecycle and interrupt, while work communication uses the
-shared peer mailbox. Workflow-specific UI and commands remain extension
-surfaces.
+`sub_agent` workers are sessionless and one-shot. Workflows orchestrate those
+workers and forbid delegation controllers plus `send_message` inside each
+workflow worker. Teammates are long-lived child sessions managed by the current
+parent runtime; RPC controls process state, while assignment and structured result
+payloads use the peer mailbox. Editing teammates may use managed Git worktrees;
+worktree isolation prevents ordinary path conflicts but is not a permission
+sandbox. The parent stops child processes at shutdown without deleting
+unintegrated work. Workflow-specific UI and commands remain extension surfaces.
+
+External activations become durable session entries only when committed to model
+context. A passive `nextTurn` activation is intentionally held in runtime memory
+until the next user turn; terminating the process first can drop that automatic
+delivery ticket. Peer messages are requeued on orderly shutdown, and background
+logs or worktree receipts remain on disk, but Magenta does not currently restore
+a deferred `nextTurn` ticket after restart.
 
 Extension packages and Harness domain packages are separate. Local selectors use
 `--harness-packages-root` or `<current-workspace>/packages`; Magenta does not
