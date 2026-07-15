@@ -109,14 +109,14 @@ export function getProcessToolsBinaryPath(): string {
 	}
 
 	// 提取嵌入的二进制到缓存
-	console.log(`[Magenta] Extracting process-tools binary to ${CACHE_DIR}...`);
+	console.error(`[Magenta] Extracting process-tools binary to ${CACHE_DIR}...`);
 	mkdirSync(CACHE_DIR, { recursive: true });
 
 	const embeddedContent = readFileSync(embeddedPath);
 	writeFileSync(CACHE_BINARY_PATH, embeddedContent);
 	chmodSync(CACHE_BINARY_PATH, 0o755); // 添加执行权限
 
-	console.log(`[Magenta] Process-tools binary ready at ${CACHE_BINARY_PATH}`);
+	console.error(`[Magenta] Process-tools binary ready at ${CACHE_BINARY_PATH}`);
 	return CACHE_BINARY_PATH;
 }
 
@@ -163,7 +163,9 @@ export function initProcessToolsBinary(hcpRoot = getHarnessRoot()): void {
 		writeFileSync(targetBinaryPath, binaryContent);
 		chmodSync(targetBinaryPath, 0o755);
 
-		console.log(`[Magenta] Process-tools binary installed at ${targetBinaryPath}`);
+		// stdout is a machine protocol in JSON/RPC modes; bootstrap diagnostics must
+		// never corrupt its framing.
+		console.error(`[Magenta] Process-tools binary installed at ${targetBinaryPath}`);
 	} catch (error) {
 		console.error("[Magenta] Failed to initialize process-tools binary:", error);
 		throw error;

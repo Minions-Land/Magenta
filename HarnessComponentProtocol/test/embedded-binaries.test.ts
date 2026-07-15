@@ -1,7 +1,7 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { getProcessToolsBinaryPath, initProcessToolsBinary } from "../_magenta/process-tools/embedded-binaries.ts";
 import { HcpClientisbunbinaryurl } from "../HcpClient.ts";
 
@@ -28,19 +28,28 @@ describe("embedded process-tools installation", () => {
 		root = undefined;
 	});
 
-	it("replaces a stale installed helper with the current bundled binary", () => {
+	it("replaces a stale helper without writing bootstrap diagnostics to stdout", () => {
 		root = mkdtempSync(join(tmpdir(), "magenta-process-tools-"));
-		initProcessToolsBinary(root);
-		const target = join(
-			root,
-			"_magenta/process-tools/target/release",
-			process.platform === "win32" ? "magenta-process-tools.exe" : "magenta-process-tools",
-		);
-		expect(existsSync(target)).toBe(true);
+		const stdout = vi.spyOn(console, "log").mockImplementation(() => {});
+		const stderr = vi.spyOn(console, "error").mockImplementation(() => {});
+		try {
+			initProcessToolsBinary(root);
+			const target = join(
+				root,
+				"_magenta/process-tools/target/release",
+				process.platform === "win32" ? "magenta-process-tools.exe" : "magenta-process-tools",
+			);
+			expect(existsSync(target)).toBe(true);
 
-		writeFileSync(target, "stale helper");
-		initProcessToolsBinary(root);
+			writeFileSync(target, "stale helper");
+			initProcessToolsBinary(root);
 
-		expect(readFileSync(target).equals(readFileSync(getProcessToolsBinaryPath()))).toBe(true);
+			expect(readFileSync(target).equals(readFileSync(getProcessToolsBinaryPath()))).toBe(true);
+			expect(stdout).not.toHaveBeenCalled();
+			expect(stderr).toHaveBeenCalledWith(expect.stringContaining("Process-tools binary installed at"));
+		} finally {
+			stdout.mockRestore();
+			stderr.mockRestore();
+		}
 	});
 });
