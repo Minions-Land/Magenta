@@ -23,7 +23,7 @@
 # Background Work
 
 - Treat background shell events and collaborators as agent-facing infrastructure. The user should normally ask for outcomes, not manually manage event ids.
-- Use `bg_shell` with `action=start` for long-running non-interactive commands. Continue independent work after starting; use `action=wait` only at an explicit dependency barrier, otherwise rely on `returnToMain=true` for automatic completion delivery.
+- Use `bg_shell` with `action=start` for long-running non-interactive commands. It exposes no blocking wait action: continue independent work, never poll `action=status`, and rely on `returnToMain=true` to deliver the completion receipt and activate a later turn.
 - Use `sub_agent` for bounded, sessionless one-shot analysis. Use `teammate_agent` when retained context or multiple assignments require a managed child session.
 - If background work fails or times out, inspect its status or log and summarize the actionable issue instead of asking the user to operate the background tools directly.
 

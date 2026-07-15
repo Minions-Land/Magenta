@@ -140,8 +140,10 @@ describe("buildSystemPrompt", () => {
 		const shellOnly = buildSystemPrompt({ ...base, selectedTools: ["bg_shell"] });
 		expect(shellOnly).toContain("bg_shell action=start");
 		expect(shellOnly).toContain("continue only non-overlapping independent work");
-		expect(shellOnly).toContain("Do not rerun the same command or duplicate its purpose");
-		expect(shellOnly).toContain("action=wait only at an explicit dependency barrier");
+		expect(shellOnly).toContain("intentionally exposes no blocking wait action");
+		expect(shellOnly).toContain("do not rerun the command, duplicate its purpose, or poll action=status");
+		expect(shellOnly).toContain("activate a later turn");
+		expect(shellOnly).not.toContain("action=wait");
 		expect(shellOnly).not.toContain("regular bash tool");
 		expect(shellOnly).not.toContain("sub_agent");
 		expect(shellOnly).not.toContain("soft lease");

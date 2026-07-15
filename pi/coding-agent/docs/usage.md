@@ -352,8 +352,13 @@ magenta --exclude-tools ask_question
 
 Magenta includes first-class `bg_shell`, `sub_agent`, `send_message`, and
 `teammate_agent` tools and can load user MCP tools through the Harness path.
-`sub_agent` workers are sessionless and one-shot. Workflows orchestrate those
-workers and forbid delegation controllers plus `send_message` inside each
+The model-facing `bg_shell` tool intentionally has no blocking wait action:
+completion is delivered through `returnToMain` and `status` is an immediate
+snapshot that must not be polled. Headless `--background-policy wait` is a
+separate bounded host-settlement policy after the model run; it does not hold an
+interactive tool call open. `sub_agent` workers are sessionless and one-shot.
+Workflows orchestrate those workers and forbid delegation controllers plus
+`send_message` inside each
 workflow worker. Teammates are long-lived child sessions managed by the current
 parent runtime; RPC controls process state, while assignment and structured result
 payloads use the peer mailbox. Editing teammates may use managed Git worktrees;

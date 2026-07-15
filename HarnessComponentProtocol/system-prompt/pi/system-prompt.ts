@@ -178,7 +178,7 @@ function buildOperationalFragment(tools: string[], enabled: boolean): string {
 			lines.push("- Use the regular bash tool for short one-off shell commands.");
 		}
 		lines.push(
-			"- After starting bg_shell work, continue only non-overlapping independent work. Do not rerun the same command or duplicate its purpose. Use action=wait only at an explicit dependency barrier where the result is required before the next step; otherwise rely on returnToMain=true for automatic completion delivery.",
+			"- bg_shell intentionally exposes no blocking wait action. After action=start, continue only non-overlapping independent work; do not rerun the command, duplicate its purpose, or poll action=status. When a later step depends on the result, rely on returnToMain=true to deliver the completion receipt and activate a later turn.",
 		);
 	}
 	if (hasSubAgent) {

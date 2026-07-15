@@ -104,13 +104,29 @@ describe("built-in bg_shell tool", () => {
 		}
 	});
 
-	it("starts, waits for, and reports a completed command", async () => {
+	it("does not expose a model-blocking wait action or wait configuration", () => {
+		const tool = controller.createToolDefinition();
+		const properties = (tool.parameters as { properties: Record<string, unknown> }).properties;
+
+		expect(JSON.stringify(properties.action)).not.toContain('"wait"');
+		expect(properties).not.toHaveProperty("waitTimeoutSeconds");
+		expect(properties).not.toHaveProperty("defaultWaitTimeoutSeconds");
+		expect(tool.description).toContain("no blocking wait action");
+		expect(tool.promptGuidelines).toEqual(
+			expect.arrayContaining([
+				expect.stringContaining("Do not rerun"),
+				expect.stringContaining("or poll action=status"),
+			]),
+		);
+	});
+
+	it("starts and reports a completed command through nonblocking status", async () => {
 		const tool = controller.createToolDefinition();
 		const ctx = createContext(tempDir);
 
 		const start = await tool.execute(
 			"call-start",
-			{ action: "start", command: "printf bg-ok" },
+			{ action: "start", command: "printf bg-ok", returnToMain: false },
 			undefined,
 			undefined,
 			ctx,
@@ -119,15 +135,16 @@ describe("built-in bg_shell tool", () => {
 		expect(eventId).toMatch(/^bg_/);
 		expect(textOf(start)).toContain(`Started background event ${eventId}`);
 
-		const waited = await tool.execute(
-			"call-wait",
-			{ action: "wait", eventId, waitTimeoutSeconds: 5 },
+		await waitUntil(() => manager.getEvents().some((event) => event.id === eventId && event.status !== "running"));
+		const completed = await tool.execute(
+			"call-status-completed",
+			{ action: "status", eventId },
 			undefined,
 			undefined,
 			ctx,
 		);
-		expect(textOf(waited)).toContain("Status: exited");
-		expect(textOf(waited)).toContain("bg-ok");
+		expect(textOf(completed)).toContain("Status: exited");
+		expect(textOf(completed)).toContain("bg-ok");
 
 		const status = await tool.execute("call-status", { action: "status" }, undefined, undefined, ctx);
 		expect(textOf(status)).toContain(eventId);
@@ -321,8 +338,8 @@ describe("built-in bg_shell tool", () => {
 		);
 		const eventId = start.details?.id as string;
 
-		// With auto-return, completion alone delivers the result. A terminal wait
-		// would consume it, so here we rely on the scheduled return.
+		// With auto-return, completion alone delivers the result. An id-specific
+		// terminal status would consume it, so here we rely on the scheduled return.
 		await waitUntil(() => returned.length === 1);
 
 		expect(returned[0]?.message.customType).toBe("bg-shell-return");
@@ -408,30 +425,31 @@ describe("built-in bg_shell tool", () => {
 		void eventId;
 	});
 
-	it("suppresses the auto-return when a terminal wait consumes the result inline", async () => {
+	it("suppresses the auto-return when terminal status consumes the result inline", async () => {
 		const tool = controller.createToolDefinition();
 		const ctx = createContext(tempDir);
+		const adopted = controller.adoptExecution(
+			{
+				command: "printf consumed",
+				cwd: tempDir,
+				startedAt: Date.now(),
+				cancel: () => {},
+			},
+			ctx,
+		);
 
-		const start = await tool.execute(
-			"call-start-consume",
-			{ action: "start", command: "printf consumed", returnToMain: true },
+		adopted.finish({ status: "exited", exitCode: 0, tail: "consumed" });
+		const status = await tool.execute(
+			"call-status-consume",
+			{ action: "status", eventId: adopted.id },
 			undefined,
 			undefined,
 			ctx,
 		);
-		const eventId = start.details?.id as string;
-
-		const waitResult = await tool.execute(
-			"call-wait-consume",
-			{ action: "wait", eventId, waitTimeoutSeconds: 5 },
-			undefined,
-			undefined,
-			ctx,
-		);
-		expect(textOf(waitResult)).toContain("consumed");
+		expect(textOf(status)).toContain("consumed");
 
 		// Give the scheduled auto-return a chance to fire; it must have been consumed.
-		await new Promise((r) => setTimeout(r, 50));
+		await new Promise((resolvePromise) => setTimeout(resolvePromise, 50));
 		expect(returned.length).toBe(0);
 	});
 
@@ -444,7 +462,6 @@ describe("built-in bg_shell tool", () => {
 			{
 				action: "config",
 				defaultTimeoutSeconds: 1,
-				defaultWaitTimeoutSeconds: 2,
 				defaultReturnToMain: true,
 				defaultReturnDelivery: "nextTurn",
 			},
@@ -454,7 +471,7 @@ describe("built-in bg_shell tool", () => {
 		);
 
 		expect(textOf(result)).toContain("defaultTimeoutSeconds: 1");
-		expect(textOf(result)).toContain("defaultWaitTimeoutSeconds: 2");
+		expect(textOf(result)).not.toContain("defaultWaitTimeoutSeconds");
 		expect(textOf(result)).toContain("defaultReturnToMain: true");
 		expect(textOf(result)).toContain("defaultReturnDelivery: nextTurn");
 	});
@@ -485,13 +502,10 @@ describe("built-in bg_shell tool", () => {
 				);
 				const id = start.details?.id as string;
 				ids.push(id);
-				// Wait for each to finish so it becomes prune-eligible before the next start.
-				await tool.execute(
-					`call-wait-${i}`,
-					{ action: "wait", eventId: id, waitTimeoutSeconds: 5 },
-					undefined,
-					undefined,
-					ctx,
+				// Let each finish so it becomes prune-eligible before the next start.
+				await waitUntil(
+					() => manager.getEvents().some((event) => event.id === id && event.status !== "running"),
+					5000,
 				);
 			}
 
@@ -505,13 +519,11 @@ describe("built-in bg_shell tool", () => {
 				undefined,
 				ctx,
 			);
-			ids.push(finalStart.details?.id as string);
-			await tool.execute(
-				"call-wait-final",
-				{ action: "wait", eventId: finalStart.details?.id as string, waitTimeoutSeconds: 5 },
-				undefined,
-				undefined,
-				ctx,
+			const finalId = finalStart.details?.id as string;
+			ids.push(finalId);
+			await waitUntil(
+				() => manager.getEvents().some((event) => event.id === finalId && event.status !== "running"),
+				5000,
 			);
 
 			// The map is bounded: at prune time only maxRetainedFinishedEvents finished
@@ -567,12 +579,10 @@ describe("built-in bg_shell tool", () => {
 					undefined,
 					ctx,
 				);
-				await tool.execute(
-					`call-quick-wait-${i}`,
-					{ action: "wait", eventId: start.details?.id as string, waitTimeoutSeconds: 5 },
-					undefined,
-					undefined,
-					ctx,
+				const quickId = start.details?.id as string;
+				await waitUntil(
+					() => manager.getEvents().some((event) => event.id === quickId && event.status !== "running"),
+					5000,
 				);
 			}
 

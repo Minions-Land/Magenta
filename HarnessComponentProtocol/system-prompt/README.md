@@ -47,9 +47,11 @@ The provider emits background-work instructions only when both conditions hold:
 2. `bg_shell` and/or `sub_agent` is present in `selectedTools`.
 
 The fragment mentions only active tools. `bg_shell` guidance tells the agent to
-start long work, continue independent work immediately, and wait only at an
-explicit dependency barrier. `sub_agent` guidance is absent unless that tool is
-active. With neither tool, no background section is emitted.
+start long work, continue independent work immediately, never poll status, and
+let the automatic completion receipt activate a later turn when work depends on
+the result. The model-facing tool exposes no blocking wait action. `sub_agent`
+guidance is absent unless that tool is active. With neither tool, no background
+section is emitted.
 
 ## Host Boundary
 

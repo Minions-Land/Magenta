@@ -41,7 +41,6 @@ type ReturnDelivery = "steer" | "followUp" | "nextTurn";
 
 type BackgroundShellConfig = {
 	defaultTimeoutSeconds?: number;
-	defaultWaitTimeoutSeconds?: number;
 	defaultReturnToMain: boolean;
 	defaultReturnDelivery: ReturnDelivery;
 };
@@ -76,7 +75,7 @@ type BackgroundShellEvent = {
 	timeout?: NodeJS.Timeout;
 	waiters: Array<() => void>;
 	/** True while an automatic return-to-main is pending; cleared when the model
-	 * consumes the result inline via a terminal wait/status. */
+	 * consumes the result inline via an id-specific terminal status. */
 	autoReturnPending?: boolean;
 };
 
@@ -102,7 +101,7 @@ export type BackgroundShellRegisterReturn = (
 	receipt: ExternalActivationReceipt,
 ) => void;
 
-/** Drop a still-pending return from the coordinator (terminal wait/status consumption). */
+/** Drop a still-pending return from the coordinator after terminal status consumption. */
 export type BackgroundShellCancelReturn = (eventIds: string[]) => void;
 
 /** Handle returned by {@link BackgroundShellController.adoptExecution}. */
@@ -121,7 +120,7 @@ export type AdoptedExecutionHandle = {
 };
 
 const bgShellSchema = Type.Object({
-	action: StringEnum(["start", "status", "wait", "cancel", "config"] as const),
+	action: StringEnum(["start", "status", "cancel", "config"] as const),
 	command: Type.Optional(Type.String({ description: "Shell command to run for action=start." })),
 	cwd: Type.Optional(
 		Type.String({
@@ -160,23 +159,12 @@ const bgShellSchema = Type.Object({
 	eventId: Type.Optional(
 		Type.String({
 			description:
-				"Background event identifier for action=status/wait/cancel. Parameter name is 'eventId' (not 'id'). Omit for action=status to list all events.",
-		}),
-	),
-	waitTimeoutSeconds: Type.Optional(
-		Type.Number({
-			description:
-				"Maximum time to wait for action=wait. If omitted, uses configured default or waits until completion/tool cancellation.",
+				"Background event identifier for action=status/cancel. Parameter name is 'eventId' (not 'id'). Omit for action=status to list all events.",
 		}),
 	),
 	defaultTimeoutSeconds: Type.Optional(
 		Type.Number({
 			description: "For action=config: set default maximum runtime for future start calls. Use <=0 to clear.",
-		}),
-	),
-	defaultWaitTimeoutSeconds: Type.Optional(
-		Type.Number({
-			description: "For action=config: set default maximum wait time for future wait calls. Use <=0 to clear.",
 		}),
 	),
 	defaultReturnToMain: Type.Optional(
@@ -200,7 +188,6 @@ function formatConfig(config: BackgroundShellConfig): string {
 	return [
 		"Background shell configuration:",
 		`defaultTimeoutSeconds: ${config.defaultTimeoutSeconds ?? "none"}`,
-		`defaultWaitTimeoutSeconds: ${config.defaultWaitTimeoutSeconds ?? "none"}`,
 		`defaultReturnToMain: ${config.defaultReturnToMain}`,
 		`defaultReturnDelivery: ${config.defaultReturnDelivery}`,
 	].join("\n");
@@ -433,38 +420,9 @@ export function serializableEventSnapshot(event: BackgroundShellEvent): Backgrou
 	};
 }
 
-function waitForEvent(
-	event: BackgroundShellEvent,
-	timeoutSeconds: number | undefined,
-	signal: AbortSignal | undefined,
-): Promise<"done" | "timeout" | "aborted"> {
-	if (event.status !== "running") return Promise.resolve("done");
-	if (signal?.aborted) return Promise.resolve("aborted");
-
-	return new Promise((resolveWait) => {
-		let settled = false;
-		let timer: NodeJS.Timeout | undefined;
-		let waiter: () => void;
-
-		const done = (result: "done" | "timeout" | "aborted") => {
-			if (settled) return;
-			settled = true;
-			if (timer) clearTimeout(timer);
-			signal?.removeEventListener("abort", onAbort);
-			const index = event.waiters.indexOf(waiter);
-			if (index >= 0) event.waiters.splice(index, 1);
-			resolveWait(result);
-		};
-
-		const onAbort = () => done("aborted");
-		waiter = () => done("done");
-		event.waiters.push(waiter);
-		signal?.addEventListener("abort", onAbort, { once: true });
-
-		if (timeoutSeconds && timeoutSeconds > 0) {
-			timer = setTimeout(() => done("timeout"), timeoutSeconds * 1000);
-		}
-	});
+function waitForEventCompletion(event: BackgroundShellEvent): Promise<void> {
+	if (event.status !== "running") return Promise.resolve();
+	return new Promise((resolveWait) => event.waiters.push(resolveWait));
 }
 
 export class BackgroundShellController {
@@ -474,7 +432,6 @@ export class BackgroundShellController {
 	private shellConfig: BackgroundShellConfig = {
 		defaultReturnToMain: true,
 		defaultReturnDelivery: "followUp",
-		defaultWaitTimeoutSeconds: 30,
 	};
 	private monitor: { update: (ctx?: ExtensionContext) => void };
 	private registerReturn: BackgroundShellRegisterReturn;
@@ -611,12 +568,12 @@ export class BackgroundShellController {
 			label: "Background Shell",
 			renderKind: "bg-shell",
 			description:
-				"Manage non-interactive shell commands as background events. Use action=start for long-running commands; set returnToMain=true to automatically send the completed result back to the main agent. Use action=status to inspect events, action=wait to wait, action=cancel to terminate a running event, and action=config to inspect or update session defaults.",
-			promptSnippet: "Start, inspect, wait for, or cancel long-running shell commands as background events",
+				"Manage non-interactive shell commands as background events. Use action=start for long-running commands; set returnToMain=true to automatically send the completed result back to the main agent. Use action=status for an immediate snapshot, action=cancel to terminate a running event, and action=config to inspect or update session defaults. This tool intentionally exposes no blocking wait action.",
+			promptSnippet: "Start, inspect, or cancel long-running shell commands as background events",
 			promptGuidelines: [
 				"Use bg_shell action=start for long-running commands such as builds, tests, dev servers, migrations, downloads, or commands expected to take more than about 10 seconds.",
 				"Use the regular bash tool for short one-off shell commands.",
-				"After bg_shell action=start, continue only non-overlapping independent work. Do not rerun the same command or duplicate its purpose; use action=wait only at an explicit dependency barrier, otherwise rely on returnToMain=true for automatic completion delivery.",
+				"After bg_shell action=start, continue only non-overlapping independent work. Do not rerun the same command, duplicate its purpose, or poll action=status. When a later step depends on the result, rely on returnToMain=true to deliver the completion receipt and activate a later turn.",
 				"Do not use bg_shell action=start for commands that require interactive stdin.",
 				"Progress bars are shown automatically when a command prints percentages or `[n/total]` counters. For exact progress from your own scripts, print lines like `@@progress 0.42` (these are hidden from the output tail). For opaque long tasks, pass expectedSeconds to show a time-based estimate.",
 			],
@@ -716,12 +673,12 @@ export class BackgroundShellController {
 
 	private scheduleReturnToMain(event: BackgroundShellEvent, delivery: ReturnDelivery, instruction?: string): void {
 		// Mark the event as awaiting an auto-return. If the model synchronously
-		// consumes the result this turn (terminal wait / id-specific status), that
-		// handler clears the flag so we do not redundantly deliver + trigger a turn.
+		// consumes the result through an id-specific terminal status, that handler
+		// clears the flag so we do not redundantly deliver + trigger a turn.
 		event.autoReturnPending = true;
-		void waitForEvent(event, undefined, undefined)
+		void waitForEventCompletion(event)
 			.then(async () => {
-				// Yield once so a wait/status resolving on the same tick as completion
+				// Yield once so terminal status consumption on the same tick as completion
 				// clears the flag before we read it (avoids a duplicate delivery race).
 				await Promise.resolve();
 				if (!event.autoReturnPending) return;
@@ -739,8 +696,6 @@ export class BackgroundShellController {
 		if (action === "config") {
 			if ("defaultTimeoutSeconds" in params)
 				this.shellConfig.defaultTimeoutSeconds = positiveNumber(params.defaultTimeoutSeconds);
-			if ("defaultWaitTimeoutSeconds" in params)
-				this.shellConfig.defaultWaitTimeoutSeconds = positiveNumber(params.defaultWaitTimeoutSeconds);
 			if (typeof params.defaultReturnToMain === "boolean")
 				this.shellConfig.defaultReturnToMain = params.defaultReturnToMain;
 			if (params.defaultReturnDelivery) this.shellConfig.defaultReturnDelivery = params.defaultReturnDelivery;
@@ -757,10 +712,6 @@ export class BackgroundShellController {
 
 		if (action === "status") {
 			return this.status(params);
-		}
-
-		if (action === "wait") {
-			return this.wait(params, signal);
 		}
 
 		if (action === "cancel") {
@@ -915,7 +866,7 @@ export class BackgroundShellController {
 			throw new Error(
 				truncateModelText(`Unknown background event: ${params.eventId}`, MODEL_RESULT_LIMIT_BYTES).text,
 			);
-		this.finalizeWaitConsumption(event);
+		this.consumePendingAutoReturn(event);
 		return {
 			content: [{ type: "text" as const, text: summarizeEventForModel(event) }],
 			details: {
@@ -929,76 +880,9 @@ export class BackgroundShellController {
 		};
 	}
 
-	private async wait(params: BgShellInput, signal: AbortSignal | undefined) {
-		if (!params.eventId) throw new Error("bg_shell action=wait requires eventId");
-		const event = this.events.get(params.eventId);
-		if (!event)
-			throw new Error(
-				truncateModelText(`Unknown background event: ${params.eventId}`, MODEL_RESULT_LIMIT_BYTES).text,
-			);
-
-		const waitTimeoutSeconds =
-			positiveNumber(params.waitTimeoutSeconds) ?? this.shellConfig.defaultWaitTimeoutSeconds;
-		const result = await waitForEvent(event, waitTimeoutSeconds, signal);
-		if (result === "aborted") {
-			const content = truncateModelText(
-				`Wait cancelled. Event ${event.id} is still ${event.status}.\nLog: ${event.logPath}`,
-				MODEL_RESULT_LIMIT_BYTES,
-			).text;
-			return {
-				content: [
-					{
-						type: "text" as const,
-						text: content,
-					},
-				],
-				details: {
-					action: "wait",
-					id: event.id,
-					status: event.status,
-					eventData: serializableEventSnapshot(event),
-				},
-			};
-		}
-		if (result === "timeout") {
-			const content = truncateModelText(
-				`Wait timed out. Event ${event.id} is still running.\n\n${summarizeEventForModel(event)}`,
-				MODEL_RESULT_LIMIT_BYTES,
-			).text;
-			return {
-				content: [
-					{
-						type: "text" as const,
-						text: content,
-					},
-				],
-				details: {
-					action: "wait",
-					id: event.id,
-					status: event.status,
-					logPath: event.logPath,
-					eventData: serializableEventSnapshot(event),
-				},
-			};
-		}
-
-		this.finalizeWaitConsumption(event);
-		return {
-			content: [{ type: "text" as const, text: summarizeEventForModel(event) }],
-			details: {
-				action: "wait",
-				id: event.id,
-				status: event.status,
-				exitCode: event.exitCode,
-				logPath: event.logPath,
-				eventData: serializableEventSnapshot(event),
-			},
-		};
-	}
-
-	private finalizeWaitConsumption(event: BackgroundShellEvent): void {
-		// A completed wait shows the model the full result inline; consume the
-		// pending auto-return so the same result is not also delivered as a follow-up.
+	private consumePendingAutoReturn(event: BackgroundShellEvent): void {
+		// An id-specific terminal status shows the model the full result inline;
+		// consume the pending auto-return so it is not delivered twice.
 		if (event.status !== "running" && event.autoReturnPending) {
 			event.autoReturnPending = false;
 			this.cancelReturn([event.id]);
