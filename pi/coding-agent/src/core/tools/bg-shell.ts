@@ -119,63 +119,66 @@ export type AdoptedExecutionHandle = {
 	}) => void;
 };
 
-const bgShellSchema = Type.Object({
-	action: StringEnum(["start", "status", "cancel", "config"] as const),
-	command: Type.Optional(Type.String({ description: "Shell command to run for action=start." })),
-	cwd: Type.Optional(
-		Type.String({
-			description: "Working directory for action=start. Relative paths are resolved against the current cwd.",
-		}),
-	),
-	timeoutSeconds: Type.Optional(
-		Type.Number({
-			description:
-				"Optional maximum runtime for action=start. If exceeded, the event is terminated and marked timed_out.",
-		}),
-	),
-	label: Type.Optional(Type.String({ description: "Optional human-readable label for action=start." })),
-	expectedSeconds: Type.Optional(
-		Type.Number({
-			description:
-				"For action=start, the expected runtime in seconds. When the command emits no progress of its own, a time-based estimate is shown (hinted as an estimate). Real progress from output or an @@progress marker always takes precedence.",
-		}),
-	),
-	returnToMain: Type.Optional(
-		Type.Boolean({
-			description:
-				"For action=start, automatically send the completed event result back to the main agent and trigger continuation. Default: true.",
-		}),
-	),
-	returnDelivery: Type.Optional(
-		StringEnum(["steer", "followUp", "nextTurn"] as const, {
-			description: "Delivery mode when returnToMain=true. Default: followUp.",
-		}),
-	),
-	returnInstruction: Type.Optional(
-		Type.String({
-			description: "Optional instruction prepended to the automatic return message for the parent agent.",
-		}),
-	),
-	eventId: Type.Optional(
-		Type.String({
-			description:
-				"Background event identifier for action=status/cancel. Parameter name is 'eventId' (not 'id'). Omit for action=status to list all events.",
-		}),
-	),
-	defaultTimeoutSeconds: Type.Optional(
-		Type.Number({
-			description: "For action=config: set default maximum runtime for future start calls. Use <=0 to clear.",
-		}),
-	),
-	defaultReturnToMain: Type.Optional(
-		Type.Boolean({ description: "For action=config: default returnToMain for future start calls." }),
-	),
-	defaultReturnDelivery: Type.Optional(
-		StringEnum(["steer", "followUp", "nextTurn"] as const, {
-			description: "For action=config: default delivery mode when automatic return is enabled.",
-		}),
-	),
-});
+const bgShellSchema = Type.Object(
+	{
+		action: StringEnum(["start", "status", "cancel", "config"] as const),
+		command: Type.Optional(Type.String({ description: "Shell command to run for action=start." })),
+		cwd: Type.Optional(
+			Type.String({
+				description: "Working directory for action=start. Relative paths are resolved against the current cwd.",
+			}),
+		),
+		timeoutSeconds: Type.Optional(
+			Type.Number({
+				description:
+					"Optional maximum runtime for action=start. If exceeded, the event is terminated and marked timed_out.",
+			}),
+		),
+		label: Type.Optional(Type.String({ description: "Optional human-readable label for action=start." })),
+		expectedSeconds: Type.Optional(
+			Type.Number({
+				description:
+					"For action=start, the expected runtime in seconds. When the command emits no progress of its own, a time-based estimate is shown (hinted as an estimate). Real progress from output or an @@progress marker always takes precedence.",
+			}),
+		),
+		returnToMain: Type.Optional(
+			Type.Boolean({
+				description:
+					"For action=start, automatically send the completed event result back to the main agent and trigger continuation. Default: true.",
+			}),
+		),
+		returnDelivery: Type.Optional(
+			StringEnum(["steer", "followUp", "nextTurn"] as const, {
+				description: "Delivery mode when returnToMain=true. Default: followUp.",
+			}),
+		),
+		returnInstruction: Type.Optional(
+			Type.String({
+				description: "Optional instruction prepended to the automatic return message for the parent agent.",
+			}),
+		),
+		eventId: Type.Optional(
+			Type.String({
+				description:
+					"Background event identifier for action=status/cancel. Parameter name is 'eventId' (not 'id'). Omit for action=status to list all events.",
+			}),
+		),
+		defaultTimeoutSeconds: Type.Optional(
+			Type.Number({
+				description: "For action=config: set default maximum runtime for future start calls. Use <=0 to clear.",
+			}),
+		),
+		defaultReturnToMain: Type.Optional(
+			Type.Boolean({ description: "For action=config: default returnToMain for future start calls." }),
+		),
+		defaultReturnDelivery: Type.Optional(
+			StringEnum(["steer", "followUp", "nextTurn"] as const, {
+				description: "For action=config: default delivery mode when automatic return is enabled.",
+			}),
+		),
+	},
+	{ additionalProperties: false },
+);
 
 export type BgShellInput = Static<typeof bgShellSchema>;
 export type BgShellDetails = Record<string, unknown>;

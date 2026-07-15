@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { type Tool, type ToolCall, validateToolArguments } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { BackgroundEventManager } from "../src/core/background-events.ts";
 import type { ExtensionContext } from "../src/core/extensions/types.ts";
@@ -104,13 +105,17 @@ describe("built-in bg_shell tool", () => {
 		}
 	});
 
-	it("does not expose a model-blocking wait action or wait configuration", () => {
+	it("rejects the removed model-blocking wait action and wait configuration", () => {
 		const tool = controller.createToolDefinition();
-		const properties = (tool.parameters as { properties: Record<string, unknown> }).properties;
+		const parameters = tool.parameters as {
+			additionalProperties?: boolean;
+			properties: Record<string, unknown>;
+		};
 
-		expect(JSON.stringify(properties.action)).not.toContain('"wait"');
-		expect(properties).not.toHaveProperty("waitTimeoutSeconds");
-		expect(properties).not.toHaveProperty("defaultWaitTimeoutSeconds");
+		expect(JSON.stringify(parameters.properties.action)).not.toContain('"wait"');
+		expect(parameters.properties).not.toHaveProperty("waitTimeoutSeconds");
+		expect(parameters.properties).not.toHaveProperty("defaultWaitTimeoutSeconds");
+		expect(parameters.additionalProperties).toBe(false);
 		expect(tool.description).toContain("no blocking wait action");
 		expect(tool.promptGuidelines).toEqual(
 			expect.arrayContaining([
@@ -118,6 +123,29 @@ describe("built-in bg_shell tool", () => {
 				expect.stringContaining("or poll action=status"),
 			]),
 		);
+
+		const aiTool = tool as unknown as Tool;
+		for (const arguments_ of [
+			{ action: "wait", eventId: "bg_001" },
+			{ action: "config", waitTimeoutSeconds: 30 },
+			{ action: "config", defaultWaitTimeoutSeconds: 30 },
+		]) {
+			const toolCall: ToolCall = {
+				type: "toolCall",
+				id: "call-invalid-bg-shell",
+				name: tool.name,
+				arguments: arguments_,
+			};
+			expect(() => validateToolArguments(aiTool, toolCall)).toThrow("Validation failed");
+		}
+		expect(
+			validateToolArguments(aiTool, {
+				type: "toolCall",
+				id: "call-valid-bg-shell",
+				name: tool.name,
+				arguments: { action: "status" },
+			}),
+		).toEqual({ action: "status" });
 	});
 
 	it("starts and reports a completed command through nonblocking status", async () => {
