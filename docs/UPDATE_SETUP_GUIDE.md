@@ -54,7 +54,8 @@ Before releasing:
 - the local branch is the intended, up-to-date `main`;
 - `origin` points to the source repository;
 - the working tree is clean;
-- every workspace uses the intended lockstep version policy;
+- the active brand product version matches the latest published CLI release;
+- Pi workspace package versions remain intentional, independent infrastructure versions;
 - the coding-agent changelog has useful content under `## [Unreleased]`;
 - repository build, checks, tests, and documentation gate pass;
 - the source repository has a `MAGENTA_CLI_RELEASE_TOKEN` secret allowed to publish Releases in the public CLI repository.
@@ -91,9 +92,9 @@ npm run release:major
 
 For an explicit version, run `node scripts/release.mjs <x.y.z>`.
 
-The script requires a clean tree. It bumps all workspace versions, synchronizes internal versions and lock metadata, converts each changelog's first `## [Unreleased]` heading into the release heading, regenerates model and shrinkwrap artifacts, runs `npm run check`, creates the version commit and tag, adds new Unreleased headings in a second commit, then pushes `main` and the tag to `origin`.
+The script requires a clean `main` that exactly matches an explicitly refreshed `origin/main`, and verifies that `origin` pushes to the official source repository. It reads the active brand from `brands/registry.toml`, bumps only that product version, regenerates the runtime brand version, and converts the coding-agent's non-empty `## [Unreleased]` section into the release heading. After the non-mutating `npm run check:release` gate, it accepts only those three changed product files, creates the release commit and an annotated tag, adds a new Unreleased heading in a second commit, then pushes `main` with a lease on the previously verified remote commit before pushing the fully qualified tag.
 
-Because the script commits, tags, and pushes, inspect it and confirm repository access before running it. Do not run two releases concurrently.
+CLI release commands do not change independent Pi workspace versions, refresh online model catalogs, or rewrite npm lock metadata. The script rejects a dirty tree, a branch other than `main`, local/remote divergence, an existing tag, an empty Unreleased section, or unexpected changed paths. Because it commits, tags, and pushes, inspect it and confirm repository access before running it. Do not run two releases concurrently.
 
 ## Monitor And Verify
 
@@ -114,7 +115,9 @@ Version tags are immutable release records. Never move, delete, or force-update 
 
 - For a transient workflow failure with unchanged tagged source, rerun the failed job or manually dispatch the workflow with that existing tag.
 - For a source, build, installer, checksum, or release-note defect, fix it on `main` and create a new version. Do not repair the old tag in place.
-- If `main` was pushed but the tag push failed, verify the local tag still names the release commit, then push that existing tag. Do not recreate it on the next-cycle commit.
+- If validation fails before the release commit, the script restores the three product files. Inspect any other reported working-tree change before retrying.
+- If local release commits or the tag were created but `main` was not pushed, do not rerun the release command. Inspect `origin/main..HEAD` and the annotated tag, then either resume with the lease-protected commands printed by the script or repair the local state deliberately.
+- If `main` was pushed but the tag push failed, verify the local tag still names the release commit, then run the fully qualified tag push printed by the script. Do not recreate it on the next-cycle commit.
 - If public publication fails, preserve the source tag and rerun after repairing permissions or repository configuration. Confirm existing assets before retrying.
 - If an installer or updater activation fails, it must leave the previous installation active. Treat a missing rollback as a release-blocking defect.
 

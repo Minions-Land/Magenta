@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+- CLI release commands now version the active product brand, finalize only the coding-agent changelog, use annotated tags and lease-protected pushes, restore pre-commit failures, and reject unrelated file changes without modifying independent Pi package versions or refreshing online model catalogs
+
 ## [0.0.23] - 2026-07-16
 
 ### Security

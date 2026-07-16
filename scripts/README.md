@@ -11,7 +11,8 @@ it records the supported arguments and composes prerequisite steps.
 | `npm run build` | Build Pi, Harness, memory, and the coding-agent in dependency order, stopping at the first failed workspace |
 | `npm run check:docs` | Test the documentation checker, then validate maintained Markdown links, anchors, fences, commands, and drift rules |
 | `npm run check` | Run the documentation gate, format/lint, validate pinned dependencies/imports/shrinkwrap, type-check, and run the browser smoke build |
-| `npm run test` | Run every workspace test script |
+| `npm run check:release` | Run the same release gate without writing formatter changes |
+| `npm run test` | Run repository script tests, then every workspace test script |
 | `npm run sync-brand -- --dry-run` | Preview brand metadata synchronization |
 | `npm run shrinkwrap:coding-agent` | Regenerate the published CLI shrinkwrap |
 | `npm run profile:tui` | Profile TUI startup/runtime |
@@ -20,11 +21,14 @@ it records the supported arguments and composes prerequisite steps.
 
 Release commands (`release:patch`, `release:minor`, and `release:major`) are
 remote release operations, not local preparation helpers. `release.mjs`
-requires a clean tree, updates versions and changelogs, creates two commits,
-tags the release, then directly pushes local `main` and the tag to `origin`.
-Run it only from the intended, up-to-date `main` after confirming the remote
-and release version. Use `publish:dry` or `release:local` for non-publishing
-validation.
+requires a clean `main` synchronized with an explicitly refreshed
+`origin/main`, validates the official push remote, bumps only the active
+brand's CLI product version, finalizes the coding-agent changelog, creates two
+commits and an annotated tag, then uses a lease-protected `main` push followed
+by a fully qualified tag push. It does not change independent Pi workspace
+versions or refresh online model catalogs. Run it only after confirming the
+remote and release version. Use `publish:dry` or `release:local` for
+non-publishing validation.
 
 ## Script groups
 
