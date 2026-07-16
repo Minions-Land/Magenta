@@ -130,6 +130,71 @@ describe("TUI frame containment", () => {
 		assert.throws(renderFrame, /Rendered line 0.*contains a CR or LF character/);
 	});
 
+	it("revalidates cached immutable prefixes when strict mode is enabled", () => {
+		const tui = new TUI(new VirtualTerminal(5, 4));
+		const chat = new StaticPrefixContainer();
+		const history = new TestComponent();
+		const live = new TestComponent();
+		history.lines = ["123456"];
+		live.lines = ["live"];
+		chat.addChild(history);
+		chat.beginMutableTail();
+		chat.addChild(live);
+		tui.addChild(chat);
+		const renderFrame = () => (tui as unknown as { renderFrame(metrics: undefined): void }).renderFrame(undefined);
+
+		// The production policy contains this line, so the cached raw prefix has
+		// not yet been accepted by strict validation.
+		renderFrame();
+		live.lines = ["next"];
+		tui.setStrictRenderValidation(true);
+		assert.throws(renderFrame, /Rendered line 0.*visible width 6.*terminal width is 5/);
+		assert.strictEqual(
+			(tui as unknown as { previousFrameValidatedStrictly: boolean }).previousFrameValidatedStrictly,
+			false,
+			"failed strict containment must not advance the validation policy",
+		);
+	});
+
+	it("profiles and preserves revisions when strict suffix containment fails", async () => {
+		await withEnv({ PI_TUI_PROFILE: "1" }, async () => {
+			const tui = new TUI(new VirtualTerminal(5, 4));
+			const chat = new StaticPrefixContainer();
+			const head = new TestComponent();
+			const history = new TestComponent();
+			const live = new TestComponent();
+			head.lines = ["head"];
+			history.lines = ["valid"];
+			live.lines = ["live"];
+			chat.addChild(head);
+			chat.addChild(history);
+			chat.beginMutableTail();
+			chat.addChild(live);
+			tui.addChild(chat);
+			tui.setStrictRenderValidation(true);
+			const doRender = () => (tui as unknown as { doRender(): void }).doRender();
+
+			doRender();
+			const revisionMap = (tui as unknown as { staticPrefixRenderRevisions: Map<StaticPrefixContainer, number> })
+				.staticPrefixRenderRevisions;
+			const committedRevision = revisionMap.get(chat);
+			history.lines = ["123456"];
+			chat.invalidateChild(history);
+			assert.throws(doRender, /Rendered line 1.*visible width 6.*terminal width is 5/);
+
+			const profile = tui.getRenderProfile();
+			assert.ok(profile);
+			assert.strictEqual(profile.renders, 2);
+			assert.strictEqual(profile.containedLines, 4);
+			assert.ok(profile.containmentMs >= 0);
+			assert.strictEqual(revisionMap.get(chat), committedRevision);
+			assert.strictEqual(
+				(tui as unknown as { previousFrameValidatedStrictly: boolean }).previousFrameValidatedStrictly,
+				true,
+			);
+		});
+	});
+
 	it("validates and neutralizes embedded line breaks in image lines", () => {
 		const terminal = new LoggingVirtualTerminal(20, 4);
 		const tui = new TUI(terminal);
@@ -162,6 +227,34 @@ describe("TUI frame containment", () => {
 
 		assert.deepStrictEqual(terminal.getViewport(), ["12345", "", ""]);
 		assert.ok(terminal.getWrites().includes("\x1b[5G"), "cursor should be positioned on the final terminal column");
+		tui.stop();
+	});
+
+	it("keeps cursor columns stable when a contained prefix is reused", async () => {
+		const terminal = new LoggingVirtualTerminal(20, 4);
+		const tui = new TUI(terminal);
+		const chat = new StaticPrefixContainer();
+		const history = new TestComponent();
+		const live = new TestComponent();
+		history.lines = [`a\nb${CURSOR_MARKER}`];
+		live.lines = ["live 0"];
+		chat.addChild(history);
+		chat.beginMutableTail();
+		chat.addChild(live);
+		tui.addChild(chat);
+
+		tui.start();
+		await terminal.waitForRender();
+		assert.ok(terminal.getWrites().includes("\x1b[4G"));
+		assert.deepStrictEqual(terminal.getViewport(), ["a b", "live 0", "", ""]);
+
+		terminal.clearWrites();
+		live.lines = ["live 1"];
+		tui.requestRender();
+		await terminal.waitForRender();
+		assert.ok(terminal.getWrites().includes("\x1b[4G"));
+		assert.ok(!terminal.getWrites().includes("\x1b[3G"));
+		assert.deepStrictEqual(terminal.getViewport(), ["a b", "live 1", "", ""]);
 		tui.stop();
 	});
 
@@ -996,6 +1089,42 @@ describe("TUI static-prefix rendering", () => {
 		tui.stop();
 	});
 
+	it("retains bounded invalidation across unrelated renders for every TUI owner", async () => {
+		const terminalA = new VirtualTerminal(40, 4);
+		const terminalB = new VirtualTerminal(40, 4);
+		const tuiA = new TUI(terminalA);
+		const tuiB = new TUI(terminalB);
+		const chat = new StaticPrefixContainer();
+		const head = new TestComponent();
+		const tail = new TestComponent();
+		head.lines = ["head"];
+		tail.lines = ["before"];
+		chat.addChild(head);
+		chat.addChild(tail);
+		tuiA.addChild(chat);
+		tuiB.addChild(chat);
+		const renderFrame = (tui: TUI) =>
+			(tui as unknown as { renderFrame(metrics: undefined): void }).renderFrame(undefined);
+
+		renderFrame(tuiA);
+		renderFrame(tuiB);
+		await Promise.all([terminalA.flush(), terminalB.flush()]);
+
+		tail.lines = ["after"];
+		chat.invalidateChild(tail);
+		chat.render(40);
+		chat.render(40);
+		renderFrame(tuiA);
+		renderFrame(tuiB);
+
+		const [viewportA, viewportB] = await Promise.all([
+			terminalA.flushAndGetViewport(),
+			terminalB.flushAndGetViewport(),
+		]);
+		assert.deepStrictEqual(viewportA, ["head", "after", "", ""]);
+		assert.deepStrictEqual(viewportB, ["head", "after", "", ""]);
+	});
+
 	it("rerenders only the suffix from the earliest dirty child on invalidateChild", () => {
 		const renders: number[] = [];
 		const make = (index: number, initial: string): Component & { text: string } => {
@@ -1061,33 +1190,95 @@ describe("TUI static-prefix rendering", () => {
 		assert.ok(container.getPrefixRevision() > revisionBefore);
 	});
 
-	it("profiles and normalizes only the proven dirty suffix", async () => {
+	it("profiles containment work at the proven dirty boundary and unsafe fallbacks", async () => {
 		const profilePath = `/tmp/pi-tui-profile-test-${process.pid}-${Math.random().toString(36).slice(2)}.json`;
 		await withEnv({ PI_TUI_PROFILE: profilePath }, async () => {
 			const terminal = new VirtualTerminal(120, 30);
 			const tui = new TUI(terminal);
 			const chat = new StaticPrefixContainer();
-			const history = new TestComponent();
+			const history = Array.from({ length: 200 }, (_, index) => {
+				const line = new TestComponent();
+				line.lines = [`history ${index}`];
+				return line;
+			});
 			const live = new TestComponent();
-			history.lines = Array.from({ length: 200 }, (_, index) => `history ${index}`);
+			const profile = () => {
+				const snapshot = tui.getRenderProfile();
+				assert.ok(snapshot);
+				return snapshot;
+			};
 			live.lines = ["live 0"];
-			chat.addChild(history);
+			for (const line of history) chat.addChild(line);
 			chat.beginMutableTail();
 			chat.addChild(live);
 			tui.addChild(chat);
 
 			tui.start();
 			await terminal.waitForRender();
+			const initial = profile();
+			assert.strictEqual(initial.containedLines, 201);
+
 			live.lines = ["live 1"];
 			tui.requestRender();
 			await terminal.waitForRender();
+			const dirtyTail = profile();
+			assert.strictEqual(dirtyTail.containedLines - initial.containedLines, 1);
+			assert.strictEqual(dirtyTail.comparedLines - initial.comparedLines, 1);
+			assert.strictEqual(dirtyTail.resetLines - initial.resetLines, 1);
 
-			const profile = tui.getRenderProfile();
-			assert.ok(profile);
-			assert.strictEqual(profile.renders, 2);
-			assert.strictEqual(profile.comparedLines, 1);
-			assert.strictEqual(profile.resetLines, 202);
-			assert.strictEqual(profile.components.StaticPrefixContainer?.calls, 2);
+			const overlay = new TestComponent();
+			overlay.lines = ["overlay"];
+			const overlayHandle = tui.showOverlay(overlay, { row: 0, col: 0, width: 20, nonCapturing: true });
+			await terminal.waitForRender();
+			const withOverlay = profile();
+			assert.strictEqual(withOverlay.containedLines - dirtyTail.containedLines, 201);
+
+			overlayHandle.hide();
+			await terminal.waitForRender();
+			const afterOverlay = profile();
+			assert.strictEqual(afterOverlay.containedLines - withOverlay.containedLines, 201);
+
+			live.lines = ["live 2"];
+			tui.requestRender();
+			await terminal.waitForRender();
+			const recovered = profile();
+			assert.strictEqual(recovered.containedLines - afterOverlay.containedLines, 1);
+
+			terminal.resize(100, 30);
+			await terminal.waitForRender();
+			const resized = profile();
+			assert.strictEqual(resized.containedLines - recovered.containedLines, 201);
+
+			history[198].lines = ["history 198 updated"];
+			chat.invalidateChild(history[198]);
+			chat.render(100);
+			chat.render(100);
+			tui.requestRender();
+			await terminal.waitForRender();
+			const boundedInvalidation = profile();
+			assert.strictEqual(boundedInvalidation.containedLines - resized.containedLines, 3);
+			assert.ok(terminal.getViewport().some((line) => line.includes("history 198 updated")));
+
+			history[199].lines = ["history 199 updated"];
+			chat.invalidateChild(history[199]);
+			chat.render(100);
+			history[198].lines = ["history 198 updated again"];
+			chat.invalidateChild(history[198]);
+			chat.render(100);
+			tui.requestRender();
+			await terminal.waitForRender();
+			const multipleRebuilds = profile();
+			assert.strictEqual(multipleRebuilds.containedLines - boundedInvalidation.containedLines, 201);
+			assert.ok(terminal.getViewport().some((line) => line.includes("history 198 updated again")));
+			assert.ok(terminal.getViewport().some((line) => line.includes("history 199 updated")));
+
+			chat.invalidateChild(new TestComponent());
+			tui.requestRender();
+			await terminal.waitForRender();
+			const invalidated = profile();
+			assert.strictEqual(invalidated.containedLines - multipleRebuilds.containedLines, 201);
+			assert.strictEqual(invalidated.renders, 9);
+			assert.strictEqual(invalidated.components.StaticPrefixContainer?.calls, 9);
 			tui.stop();
 			assert.ok(fs.existsSync(profilePath));
 		});

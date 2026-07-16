@@ -302,6 +302,8 @@ export class StaticPrefixContainer extends Container {
 	/** Cached line count per immutable-prefix child, aligned with cachedPrefixLines. */
 	private cachedChildLineCounts: number[] = [];
 	private prefixRevision = 0;
+	private renderRevision = 0;
+	private revisionDirtyFrom = 0;
 	private lastDirtyFrom: number | null = 0;
 	/** Earliest immutable-prefix child index whose content changed since the last render. */
 	private firstDirtyChildIndex: number | null = null;
@@ -380,6 +382,23 @@ export class StaticPrefixContainer extends Container {
 		return this.prefixRevision;
 	}
 
+	getRenderRevision(): number {
+		return this.renderRevision;
+	}
+
+	/**
+	 * Earliest dirty line since an owning TUI committed the supplied revision.
+	 * One unobserved prefix rebuild retains its precise boundary; multiple
+	 * rebuilds conservatively fall back to the start of the container.
+	 */
+	getDirtyFrom(previousRenderRevision: number | undefined): number | null {
+		if (previousRenderRevision === this.renderRevision) return this.lastDirtyFrom;
+		if (previousRenderRevision === undefined || previousRenderRevision + 1 !== this.renderRevision) return 0;
+		return this.lastDirtyFrom === null
+			? this.revisionDirtyFrom
+			: Math.min(this.revisionDirtyFrom, this.lastDirtyFrom);
+	}
+
 	/** Dirty line within the most recent render, or null when output was reused unchanged. */
 	getLastDirtyFrom(): number | null {
 		return this.lastDirtyFrom;
@@ -413,6 +432,8 @@ export class StaticPrefixContainer extends Container {
 			}
 			this.cachedPrefixLines = rebuiltPrefix;
 			this.firstDirtyChildIndex = null;
+			this.renderRevision += 1;
+			this.revisionDirtyFrom = retainedLineCount;
 			if (prefixChildCount === this.children.length) {
 				this.lastDirtyFrom = retainedLineCount;
 				return rebuiltPrefix;
@@ -441,6 +462,8 @@ export class StaticPrefixContainer extends Container {
 			this.cachedPrefixChildCount = prefixChildCount;
 			this.cachedChildLineCounts = counts;
 			this.firstDirtyChildIndex = null;
+			this.renderRevision += 1;
+			this.revisionDirtyFrom = 0;
 		}
 
 		if (prefixChildCount === this.children.length) {
@@ -470,9 +493,11 @@ export interface TUIRenderProfileSnapshot {
 	maxFrameMs: number;
 	rootRenderMs: number;
 	overlayMs: number;
+	containmentMs: number;
 	normalizationMs: number;
 	diffMs: number;
 	terminalWriteMs: number;
+	containedLines: number;
 	comparedLines: number;
 	resetLines: number;
 	components: Record<string, TUIComponentRenderProfile>;
@@ -483,9 +508,11 @@ interface MutableTUIRenderProfile extends Omit<TUIRenderProfileSnapshot, "fullRe
 interface RenderFrameMetrics {
 	rootRenderMs: number;
 	overlayMs: number;
+	containmentMs: number;
 	normalizationMs: number;
 	diffMs: number;
 	terminalWriteMs: number;
+	containedLines: number;
 	comparedLines: number;
 	resetLines: number;
 }
@@ -500,6 +527,7 @@ export class TUI extends Container {
 	private previousRootChildren: Component[] = [];
 	private rootChildSnapshots = new Map<Component, string[]>();
 	private staticPrefixRevisions = new Map<StaticPrefixContainer, number>();
+	private staticPrefixRenderRevisions = new Map<StaticPrefixContainer, number>();
 	private previousWidth = 0;
 	private previousHeight = 0;
 	private focusedComponent: Component | null = null;
@@ -519,6 +547,7 @@ export class TUI extends Container {
 	private maxLinesRendered = 0; // Track terminal's working area (max lines ever rendered)
 	private previousViewportTop = 0; // Track previous viewport top for resize-aware cursor moves
 	private previousFrameHadOverlays = false;
+	private previousFrameValidatedStrictly = false;
 	private fullRedrawCount = 0;
 	private stopped = false;
 	private pendingOsc11BackgroundReplies = 0;
@@ -549,9 +578,11 @@ export class TUI extends Container {
 				maxFrameMs: 0,
 				rootRenderMs: 0,
 				overlayMs: 0,
+				containmentMs: 0,
 				normalizationMs: 0,
 				diffMs: 0,
 				terminalWriteMs: 0,
+				containedLines: 0,
 				comparedLines: 0,
 				resetLines: 0,
 				components: {},
@@ -1375,8 +1406,14 @@ export class TUI extends Container {
 
 	private static readonly SEGMENT_RESET = "\x1b[0m\x1b]8;;\x07";
 
-	private containFrameLines(lines: string[], width: number): string[] {
-		for (let i = 0; i < lines.length; i++) {
+	private containFrameLines(
+		lines: string[],
+		width: number,
+		startLine: number,
+		metrics: RenderFrameMetrics | undefined,
+	): string[] {
+		for (let i = startLine; i < lines.length; i++) {
+			if (metrics) metrics.containedLines += 1;
 			const line = lines[i];
 			const imageLine = isImageLine(line);
 			const hasLineBreak = line.includes("\r") || line.includes("\n");
@@ -1572,6 +1609,7 @@ export class TUI extends Container {
 					this.previousRootChildren = [];
 					this.rootChildSnapshots.clear();
 					this.staticPrefixRevisions.clear();
+					this.staticPrefixRenderRevisions.clear();
 				},
 			};
 		}
@@ -1579,6 +1617,7 @@ export class TUI extends Container {
 		const lines: string[] = [];
 		const nextSnapshots = new Map<Component, string[]>();
 		const nextStaticPrefixRevisions = new Map<StaticPrefixContainer, number>();
+		const nextStaticPrefixRenderRevisions = new Map<StaticPrefixContainer, number>();
 		let dirtyFrom = Number.POSITIVE_INFINITY;
 		let lineOffset = 0;
 
@@ -1598,7 +1637,7 @@ export class TUI extends Container {
 				if (this.staticPrefixRevisions.get(child) !== prefixRevision) {
 					dirtyFrom = Math.min(dirtyFrom, lineOffset);
 				} else {
-					const childDirtyFrom = child.getLastDirtyFrom();
+					const childDirtyFrom = child.getDirtyFrom(this.staticPrefixRenderRevisions.get(child));
 					if (childDirtyFrom !== null) {
 						dirtyFrom = Math.min(dirtyFrom, lineOffset + childDirtyFrom);
 					}
@@ -1623,6 +1662,7 @@ export class TUI extends Container {
 			nextSnapshots.set(child, child instanceof StaticPrefixContainer ? childLines : [...childLines]);
 			if (child instanceof StaticPrefixContainer) {
 				nextStaticPrefixRevisions.set(child, child.getPrefixRevision());
+				nextStaticPrefixRenderRevisions.set(child, child.getRenderRevision());
 			}
 		}
 
@@ -1637,6 +1677,7 @@ export class TUI extends Container {
 				this.previousRootChildren = [...this.children];
 				this.rootChildSnapshots = nextSnapshots;
 				this.staticPrefixRevisions = nextStaticPrefixRevisions;
+				this.staticPrefixRenderRevisions = nextStaticPrefixRenderRevisions;
 			},
 		};
 	}
@@ -1648,8 +1689,9 @@ export class TUI extends Container {
 			const line = lines[row];
 			const markerIndex = line.indexOf(CURSOR_MARKER);
 			if (markerIndex !== -1) {
-				// Calculate visual column (width of text before marker)
-				const beforeMarker = line.slice(0, markerIndex);
+				// Reused raw prefixes may still contain CR/LF that a prior containment
+				// pass rendered as spaces. Apply the same rule before measuring the marker.
+				const beforeMarker = line.slice(0, markerIndex).replace(/\r\n|\r|\n/g, " ");
 				const col = visibleWidth(beforeMarker);
 
 				// Strip marker from the line
@@ -1667,9 +1709,11 @@ export class TUI extends Container {
 			? {
 					rootRenderMs: 0,
 					overlayMs: 0,
+					containmentMs: 0,
 					normalizationMs: 0,
 					diffMs: 0,
 					terminalWriteMs: 0,
+					containedLines: 0,
 					comparedLines: 0,
 					resetLines: 0,
 				}
@@ -1685,9 +1729,11 @@ export class TUI extends Container {
 				this.renderProfile.maxFrameMs = Math.max(this.renderProfile.maxFrameMs, totalMs);
 				this.renderProfile.rootRenderMs += metrics.rootRenderMs;
 				this.renderProfile.overlayMs += metrics.overlayMs;
+				this.renderProfile.containmentMs += metrics.containmentMs;
 				this.renderProfile.normalizationMs += metrics.normalizationMs;
 				this.renderProfile.diffMs += metrics.diffMs;
 				this.renderProfile.terminalWriteMs += metrics.terminalWriteMs;
+				this.renderProfile.containedLines += metrics.containedLines;
 				this.renderProfile.comparedLines += metrics.comparedLines;
 				this.renderProfile.resetLines += metrics.resetLines;
 			}
@@ -1728,9 +1774,25 @@ export class TUI extends Container {
 			dirtyFrom = 0;
 		}
 
-		newLines = this.containFrameLines(newLines, width);
+		const canReuseContainedPrefix =
+			this.previousLines.length > 0 &&
+			!widthChanged &&
+			!heightChanged &&
+			!frameHasOverlays &&
+			!previousFrameHadOverlays &&
+			this.strictRenderValidation === this.previousFrameValidatedStrictly;
+		const containmentStart = canReuseContainedPrefix
+			? Math.min(dirtyFrom, newLines.length, this.previousLines.length)
+			: 0;
+		const containmentStarted = metrics ? performance.now() : 0;
+		try {
+			newLines = this.containFrameLines(newLines, width, containmentStart, metrics);
+		} finally {
+			if (metrics) metrics.containmentMs += performance.now() - containmentStarted;
+		}
 		rootRender.commit();
 		this.previousFrameHadOverlays = frameHasOverlays;
+		this.previousFrameValidatedStrictly = this.strictRenderValidation;
 
 		// Extract cursor position before applying line resets (marker must be found first)
 		const cursorPos = this.extractCursorPosition(newLines, height);
