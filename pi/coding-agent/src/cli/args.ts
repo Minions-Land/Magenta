@@ -59,6 +59,7 @@ export interface Args {
 	verbose?: boolean;
 	projectTrustOverride?: boolean;
 	ssh?: string;
+	sshPort?: number;
 	messages: string[];
 	fileArgs: string[];
 	/** Unknown flags (potentially extension flags) - map of flag name to value */
@@ -256,6 +257,13 @@ export function parseArgs(args: string[]): Args {
 			} else {
 				result.diagnostics.push({ type: "error", message: "--ssh requires a value" });
 			}
+		} else if (arg === "--ssh-port") {
+			const value = i + 1 < args.length ? Number(args[++i]) : Number.NaN;
+			if (Number.isInteger(value) && value > 0 && value <= 65535) {
+				result.sshPort = value;
+			} else {
+				result.diagnostics.push({ type: "error", message: "--ssh-port requires an integer from 1 to 65535" });
+			}
 		} else if (arg.startsWith("@")) {
 			result.fileArgs.push(arg.slice(1)); // Remove @ prefix
 		} else if (arg.startsWith("--")) {
@@ -359,7 +367,8 @@ ${chalk.bold("Options:")}
   --approve, -a                  Trust project-local files for this run
   --no-approve, -na              Ignore project-local files for this run
   --offline                      Disable startup network operations (same as PI_OFFLINE=1)
-  --ssh <user@host[:path]>       Run read/write/edit/bash against a remote workspace over SSH
+  --ssh <user@host[:path]>       Run remote tools and register a transparent peer-mailbox route
+  --ssh-port <port>              SSH port for --ssh (default: 22)
   --help, -h                     Show this help
   --version, -v                  Show version number
   --update                       Deprecated alias for: magenta update self

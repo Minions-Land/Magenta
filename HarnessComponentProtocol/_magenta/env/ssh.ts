@@ -37,10 +37,12 @@ export type SshPtyFactory = {
 export type SshTarget = {
 	remote: string;
 	remoteCwd: string;
+	port?: number;
 };
 
 export type SshCommandOptions = {
 	onData?: (data: Buffer) => void;
+	port?: number;
 	signal?: AbortSignal;
 	timeout?: number;
 	env?: NodeJS.ProcessEnv;
@@ -103,7 +105,8 @@ export function runSshCommand(
 	options: SshCommandOptions = {},
 ): Promise<SshCommandResult> {
 	return new Promise((resolveCommand, reject) => {
-		const child = spawn("ssh", [remote, command], {
+		const sshArgs = [...(options.port ? ["-p", String(options.port)] : []), remote, command];
+		const child = spawn("ssh", sshArgs, {
 			env: options.env,
 			stdio: ["ignore", "pipe", "pipe"],
 		});
@@ -223,13 +226,17 @@ export function createSshPtyCommandRunner(ptyFactory: SshPtyFactory): SshCommand
 			};
 
 			try {
-				ptyProcess = ptyFactory.spawn("ssh", ["-tt", remote, command], {
-					name: "xterm-256color",
-					cols: SSH_PTY_COLUMNS,
-					rows: SSH_PTY_ROWS,
-					cwd: process.cwd(),
-					env: options.env ?? process.env,
-				});
+				ptyProcess = ptyFactory.spawn(
+					"ssh",
+					["-tt", ...(options.port ? ["-p", String(options.port)] : []), remote, command],
+					{
+						name: "xterm-256color",
+						cols: SSH_PTY_COLUMNS,
+						rows: SSH_PTY_ROWS,
+						cwd: process.cwd(),
+						env: options.env ?? process.env,
+					},
+				);
 			} catch (error) {
 				reject(error);
 				return;
@@ -272,35 +279,43 @@ export async function sshExec(
 	remote: string,
 	command: string,
 	runner: SshCommandRunner = runSshCommand,
+	options?: SshCommandOptions,
 ): Promise<Buffer> {
-	const result = await runner(remote, command);
+	const result = await runner(remote, command, options);
 	if (result.exitCode !== 0) {
 		throw new Error(`SSH failed (${result.exitCode}): ${result.stderr.toString()}`);
 	}
 	return result.stdout;
 }
 
-export async function resolveSshTarget(sshArg: string, runner: SshCommandRunner = runSshCommand): Promise<SshTarget> {
+export async function resolveSshTarget(
+	sshArg: string,
+	runner: SshCommandRunner = runSshCommand,
+	port?: number,
+): Promise<SshTarget> {
 	const pathSeparator = sshArg.indexOf(":");
 	if (pathSeparator >= 0) {
 		const remote = sshArg.slice(0, pathSeparator);
 		const remoteCwd = sshArg.slice(pathSeparator + 1) || "/";
-		return { remote, remoteCwd };
+		return { remote, remoteCwd, ...(port ? { port } : {}) };
 	}
 
 	const remote = sshArg;
-	const remoteCwd = (await sshExec(remote, "pwd", runner)).toString().trim();
-	return { remote, remoteCwd };
+	const remoteCwd = (await sshExec(remote, "pwd", runner, { port })).toString().trim();
+	return { remote, remoteCwd, ...(port ? { port } : {}) };
 }
 
 function createRemoteReadOps(target: SshTarget, localCwd: string, runner: SshCommandRunner): ReadOperations {
 	const toRemote = createSshPathMapper(localCwd, target.remoteCwd);
 	return {
-		readFile: (path) => sshExec(target.remote, `cat ${shellQuote(toRemote(path))}`, runner),
-		access: (path) => sshExec(target.remote, `test -r ${shellQuote(toRemote(path))}`, runner).then(() => {}),
+		readFile: (path) => sshExec(target.remote, `cat ${shellQuote(toRemote(path))}`, runner, { port: target.port }),
+		access: (path) =>
+			sshExec(target.remote, `test -r ${shellQuote(toRemote(path))}`, runner, { port: target.port }).then(() => {}),
 		detectImageMimeType: async (path) => {
 			try {
-				const result = await sshExec(target.remote, `file --mime-type -b ${shellQuote(toRemote(path))}`, runner);
+				const result = await sshExec(target.remote, `file --mime-type -b ${shellQuote(toRemote(path))}`, runner, {
+					port: target.port,
+				});
 				const mimeType = result.toString().trim();
 				return ["image/jpeg", "image/png", "image/gif", "image/webp"].includes(mimeType) ? mimeType : null;
 			} catch {
@@ -319,9 +334,11 @@ function createRemoteWriteOps(target: SshTarget, localCwd: string, runner: SshCo
 				target.remote,
 				`printf %s ${shellQuote(encoded)} | base64 -d > ${shellQuote(toRemote(path))}`,
 				runner,
+				{ port: target.port },
 			);
 		},
-		mkdir: (dir) => sshExec(target.remote, `mkdir -p ${shellQuote(toRemote(dir))}`, runner).then(() => {}),
+		mkdir: (dir) =>
+			sshExec(target.remote, `mkdir -p ${shellQuote(toRemote(dir))}`, runner, { port: target.port }).then(() => {}),
 	};
 }
 
@@ -336,7 +353,13 @@ function createRemoteBashOps(target: SshTarget, localCwd: string, runner: SshCom
 	return {
 		exec: async (command, cwd, { onData, signal, timeout, env }) => {
 			const remoteCommand = `cd ${shellQuote(toRemote(cwd))} && ${command}`;
-			const result = await runner(target.remote, remoteCommand, { onData, signal, timeout, env });
+			const result = await runner(target.remote, remoteCommand, {
+				onData,
+				signal,
+				timeout,
+				env,
+				port: target.port,
+			});
 			if (result.aborted) throw new Error("aborted");
 			if (result.timedOut) throw new Error(`timeout:${timeout}`);
 			return { exitCode: result.exitCode };

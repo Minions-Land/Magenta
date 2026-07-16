@@ -13,13 +13,12 @@
  * Two delivery refinements sit on top of that base:
  *  - Priority: an `urgent` message is injected as a steering message (before the
  *    recipient's next tool-calling turn) rather than a follow-up (at loop end).
- *  - External notification ("internal hole-punching"): a session records its
- *    process pid and per-process boot id in the presence table. An urgent sender
- *    signals any online recipient (SIGUSR1). The recipient drains into the
- *    external-activation coordinator, which either joins the active loop at a
- *    boundary or wakes one idle loop. Liveness is probed from the pid (kill(pid, 0)),
- *    so there is no heartbeat; a dead pid simply reads as offline and the
- *    message waits in the mailbox for the session's next start.
+ *  - External notification ("internal hole-punching"): a session records a
+ *    random per-process Unix socket / named-pipe capability in the presence
+ *    table. An urgent sender connects to that path. The recipient drains into
+ *    the external-activation coordinator, which either joins the active loop at
+ *    a boundary or wakes one idle loop. The path includes a boot id, so stale
+ *    presence cannot signal or terminate an unrelated PID-reused process.
  *
  * This controller mirrors the shape of pi's native BackgroundShellController /
  * SubAgentController: it is constructed in AgentSession with closures bound to
@@ -27,6 +26,10 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { existsSync, unlinkSync } from "node:fs";
+import { createConnection, createServer, type Server } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { type MessagePriority, MessageStore, type PresenceState } from "@magenta/harness";
 import { type Static, Type } from "typebox";
@@ -35,14 +38,6 @@ import type { ToolDefinition } from "../extensions/types.ts";
 
 /** customType used for injected peer messages. Namespaced to mark it Magenta. */
 export const PEER_MESSAGE_CUSTOM_TYPE = "magenta-peer-message";
-
-/**
- * Signal used to wake an idle recipient's process. SIGUSR1 is a user-defined
- * signal with no default meaning for our process once a handler is installed.
- * (Node's default action for an unhandled SIGUSR1 is to start the debugger, not
- * to terminate — but we always install a handler before advertising a pid.)
- */
-export const WAKE_SIGNAL: NodeJS.Signals = "SIGUSR1";
 
 /**
  * Default cap on how many peer messages a single drain injects. Chosen small so
@@ -145,9 +140,11 @@ export class SendMessageController {
 	private readonly managedParentSessionId?: string;
 	private readonly wakeForMessages?: () => void;
 	private readonly drainCap: number;
-	/** Random id identifying THIS process instance, to guard wake against PID reuse. */
+	/** Random id identifying THIS process instance and its wake capability. */
 	private readonly bootId: string;
-	private wakeHandler?: () => void;
+	private wakeServer?: Server;
+	private wakePath?: string;
+	private closed = false;
 
 	constructor(deps: SendMessageControllerDeps) {
 		this.store = new MessageStore(deps.dbPath);
@@ -157,21 +154,7 @@ export class SendMessageController {
 		this.drainCap = deps.drainCap ?? DEFAULT_PEER_MESSAGE_DRAIN_CAP;
 		this.bootId = randomUUID();
 
-		// Install the wake-signal handler BEFORE any presence row advertises our pid,
-		// so a sender can never signal us before we can handle it. The handler is
-		// idempotent and self-verifying: it only acts if the presence row still names
-		// this exact process (pid + bootId), guarding against a signal aimed at a
-		// prior process whose pid the OS reused for us.
-		if (this.wakeForMessages) {
-			this.wakeHandler = () => this.onWakeSignal();
-			try {
-				process.on(WAKE_SIGNAL, this.wakeHandler);
-			} catch {
-				// Some platforms/sandboxes disallow custom signal handlers; wake is then
-				// simply unavailable and messages wait for the next natural loop.
-				this.wakeHandler = undefined;
-			}
-		}
+		if (this.wakeForMessages) this.installWakeServer();
 
 		// Advertise presence immediately, before the first agent loop runs. A freshly
 		// started session that is just waiting for the user to type has not yet fired
@@ -183,16 +166,47 @@ export class SendMessageController {
 		this.recordPresence("idle");
 	}
 
-	/** Whether this controller advertises a wake-capable pid (handler installed). */
+	/** Whether this controller advertises a process-specific wake capability. */
 	get wakeable(): boolean {
-		return this.wakeHandler !== undefined;
+		return this.wakeServer !== undefined && this.wakePath !== undefined;
 	}
 
-	/** Handle an incoming signal by submitting mailbox work to the activation hub. */
-	private onWakeSignal(): void {
+	private installWakeServer(): void {
+		const token = this.bootId.replace(/-/g, "").slice(0, 20);
+		const wakePath =
+			process.platform === "win32"
+				? `\\\\.\\pipe\\magenta-wake-${process.pid}-${token}`
+				: join(tmpdir(), `magenta-wake-${process.pid}-${token}.sock`);
 		try {
-			// Guard against PID reuse: only honor the wake if the presence row still
-			// identifies this exact process instance.
+			if (process.platform !== "win32" && existsSync(wakePath)) unlinkSync(wakePath);
+			const server = createServer((socket) => {
+				socket.destroy();
+				this.onWakeRequest();
+			});
+			server.on("error", () => {
+				if (this.wakeServer !== server) return;
+				this.wakeServer = undefined;
+				this.wakePath = undefined;
+				this.recordPresence("idle");
+			});
+			server.listen(wakePath, () => {
+				if (this.closed || this.store.unreadCount(this.getSessionId()) === 0) return;
+				this.onWakeRequest();
+			});
+			server.unref();
+			this.wakeServer = server;
+			this.wakePath = wakePath;
+		} catch {
+			this.wakeServer = undefined;
+			this.wakePath = undefined;
+		}
+	}
+
+	/** Submit a socket wake request to the activation hub after boot-id validation. */
+	private onWakeRequest(): void {
+		if (this.closed) return;
+		try {
+			// Ignore requests for a stale socket if session ownership has changed.
 			const p = this.store.getPresence(this.getSessionId());
 			if (!p || p.bootId !== this.bootId) return;
 			this.wakeForMessages?.();
@@ -271,9 +285,13 @@ export class SendMessageController {
 	 */
 	recordPresence(state: PresenceState): void {
 		try {
-			// Only advertise a pid when we can actually be woken via the signal path.
+			// Only advertise a pid/path when this process owns a live wake server.
 			const pid = this.wakeable ? process.pid : null;
-			this.store.updatePresence(this.getSessionId(), state, { pid, bootId: this.bootId });
+			this.store.updatePresence(this.getSessionId(), state, {
+				pid,
+				bootId: this.bootId,
+				wakePath: this.wakeable ? this.wakePath : null,
+			});
 		} catch {
 			// Presence is best-effort; never break the agent for it.
 		}
@@ -320,7 +338,19 @@ export class SendMessageController {
 		}
 
 		const priority: MessagePriority = urgent ? "urgent" : "normal";
-		const id = this.store.send(from, to, content, priority);
+		const routed = this.store.sendRouted(
+			from,
+			to,
+			content,
+			priority,
+			hasTerminalReceipt
+				? {
+						assignmentId: params.assignmentId!,
+						terminalStatus: params.terminalStatus!,
+					}
+				: undefined,
+		);
+		const id = routed.id;
 
 		// Inspect recipient presence and notify any online process for urgent work.
 		// Active notification closes the final-turn race; the recipient coordinator
@@ -334,7 +364,7 @@ export class SendMessageController {
 			status = "offline — message waits in the mailbox until they next start";
 		} else {
 			status = `${presence.state}`;
-			if (urgent && presence.pid != null) woken = this.wakeRecipient(presence.pid);
+			if (urgent && presence.wakePath) woken = this.wakeRecipient(presence.wakePath);
 		}
 
 		const urgentNote = urgent ? " [urgent]" : "";
@@ -357,14 +387,16 @@ export class SendMessageController {
 	}
 
 	/**
-	 * Send the wake signal to a recipient process. Best-effort: a failure (the
-	 * process died between the presence read and the signal, or we lack
-	 * permission) is not an error — the message is already persisted and will be
-	 * drained when the recipient next loops. Returns whether the signal was sent.
+	 * Connect to a recipient's process-specific wake capability. A stale socket
+	 * path fails harmlessly; the message is already durable and will be drained on
+	 * the recipient's next natural boundary.
 	 */
-	private wakeRecipient(pid: number): boolean {
+	private wakeRecipient(wakePath: string): boolean {
 		try {
-			process.kill(pid, WAKE_SIGNAL);
+			const socket = createConnection(wakePath);
+			socket.once("connect", () => socket.end());
+			socket.once("error", () => socket.destroy());
+			socket.unref();
 			return true;
 		} catch {
 			return false;
@@ -394,18 +426,27 @@ export class SendMessageController {
 	}
 
 	shutdown(): void {
-		// Deregister the wake-signal handler so a stray signal after shutdown cannot
-		// hit a torn-down controller.
-		if (this.wakeHandler) {
+		if (this.closed) return;
+		this.closed = true;
+		const wakePath = this.wakePath;
+		this.wakePath = undefined;
+		if (this.wakeServer) {
 			try {
-				process.off(WAKE_SIGNAL, this.wakeHandler);
+				this.wakeServer.close();
 			} catch {
-				// ignore
+				// The server may still be between listen() and its listening event.
 			}
-			this.wakeHandler = undefined;
+			this.wakeServer = undefined;
+		}
+		if (wakePath && process.platform !== "win32") {
+			try {
+				if (existsSync(wakePath)) unlinkSync(wakePath);
+			} catch {
+				// A random stale path is harmless and will never be advertised again.
+			}
 		}
 		// Best-effort: mark this session offline so peers stop expecting replies and
-		// stop trying to signal our (soon-to-be-freed) pid.
+		// stop connecting to this process's retired wake capability.
 		this.recordPresence("offline");
 		this.store.close();
 	}

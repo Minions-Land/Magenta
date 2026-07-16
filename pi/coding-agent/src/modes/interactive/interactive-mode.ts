@@ -2985,6 +2985,11 @@ export class InteractiveMode {
 				this.showTodoOverlay();
 				return;
 			}
+			if (text === "/remote" || text.startsWith("/remote ")) {
+				this.editor.setText("");
+				await this.handleRemoteCommand(text);
+				return;
+			}
 			if (text === "/harness" || text.startsWith("/harness ") || text === "/h" || text.startsWith("/h ")) {
 				this.editor.setText("");
 				await this.handleHarnessCommand(text);
@@ -5707,6 +5712,7 @@ export class InteractiveMode {
 			{ value: "slash:settings", label: "Settings", aliases: ["settings"], description: "/settings" },
 			this.mcpDockParentItem(),
 			{ value: "slash:events", label: "Events", aliases: ["events"], description: "/events" },
+			{ value: "slash:remote", label: "Remote", aliases: ["remote"], description: "/remote" },
 			{ value: "slash:todo", label: "Todo", aliases: ["todo"], description: "/todo" },
 			{ value: "slash:side", label: "Side Chat", aliases: ["side", "btw", "s"], description: "/side" },
 			{
@@ -5868,6 +5874,9 @@ export class InteractiveMode {
 				return;
 			case "events":
 				await this.session.prompt("/events");
+				return;
+			case "remote":
+				await this.handleRemoteCommand("/remote");
 				return;
 			case "todo":
 				this.showTodoOverlay();
@@ -6568,6 +6577,70 @@ export class InteractiveMode {
 		handle = this.ui.showOverlay(overlay, overlayOptions);
 		if (!overlayOptions.nonCapturing) handle.focus();
 		return handle;
+	}
+
+	private formatRemoteMailboxStatus(): string {
+		const endpoints = this.session.getRemoteMailboxEndpoints();
+		if (endpoints.length === 0) return "Remote mailbox\nNo SSH mailbox endpoints are configured.";
+		return [
+			"Remote mailbox",
+			...endpoints.map((endpoint) => {
+				const address = `${endpoint.remote}${endpoint.port ? `:${endpoint.port}` : ""}`;
+				const remoteStore = endpoint.remoteStoreId ? ` store=${endpoint.remoteStoreId}` : "";
+				const error = endpoint.lastError ? ` error=${endpoint.lastError}` : "";
+				return `${endpoint.id}  ${address}  desired=${endpoint.desiredState} state=${endpoint.observedState}${remoteStore}${error}`;
+			}),
+		].join("\n");
+	}
+
+	private resolveRemoteEndpointId(value: string | undefined): string | undefined {
+		if (!value || value === "all") return undefined;
+		const endpoint = this.session
+			.getRemoteMailboxEndpoints()
+			.find(
+				(candidate) =>
+					candidate.id === value ||
+					candidate.remote === value ||
+					`${candidate.remote}:${candidate.port ?? 22}` === value,
+			);
+		if (!endpoint) throw new Error(`Unknown remote mailbox endpoint: ${value}`);
+		return endpoint.id;
+	}
+
+	private async handleRemoteCommand(text: string): Promise<void> {
+		const [, rawAction, rawEndpoint] = text.trim().split(/\s+/, 3);
+		const action = rawAction ?? "status";
+		try {
+			if (action === "status") {
+				this.showStatus(this.formatRemoteMailboxStatus());
+				return;
+			}
+			if (action !== "open" && action !== "close") {
+				throw new Error("Usage: /remote [status | open [endpoint] | close [endpoint]]");
+			}
+			const endpointId = this.resolveRemoteEndpointId(rawEndpoint);
+			if (this.session.getRemoteMailboxEndpoints().length === 0) {
+				throw new Error("No SSH mailbox endpoints are configured.");
+			}
+			if (action === "close") {
+				const target = endpointId ?? "all configured endpoints";
+				const confirmed = await this.showExtensionConfirm(
+					"Close remote mailbox",
+					`Close ${target}? This affects all Magenta sessions on this machine. Queued messages are preserved.`,
+				);
+				if (!confirmed) {
+					this.showStatus("Remote mailbox close cancelled");
+					return;
+				}
+				this.session.closeRemoteMailbox(endpointId);
+				this.showStatus(`Remote mailbox close requested for ${target}`);
+				return;
+			}
+			this.session.openRemoteMailbox(endpointId);
+			this.showStatus(`Remote mailbox open requested for ${endpointId ?? "all configured endpoints"}`);
+		} catch (error) {
+			this.showError(error instanceof Error ? error.message : String(error));
+		}
 	}
 
 	private showSettingsSelector(): void {

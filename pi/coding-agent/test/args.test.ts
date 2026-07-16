@@ -178,6 +178,21 @@ describe("parseArgs", () => {
 			const result = parseArgs(["--models", "gpt-4o,claude-sonnet,gemini-pro"]);
 			expect(result.models).toEqual(["gpt-4o", "claude-sonnet", "gemini-pro"]);
 		});
+
+		test("parses and validates --ssh-port", () => {
+			const valid = parseArgs(["--ssh", "root@example:/workspace", "--ssh-port", "23915"]);
+			expect(valid.ssh).toBe("root@example:/workspace");
+			expect(valid.sshPort).toBe(23915);
+			expect(valid.diagnostics).toEqual([]);
+
+			for (const value of ["0", "65536", "1.5", "bad"]) {
+				const invalid = parseArgs(["--ssh-port", value]);
+				expect(invalid.sshPort).toBeUndefined();
+				expect(invalid.diagnostics).toEqual([
+					{ type: "error", message: "--ssh-port requires an integer from 1 to 65535" },
+				]);
+			}
+		});
 	});
 
 	describe("--name flag", () => {

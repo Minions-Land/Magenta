@@ -100,6 +100,26 @@ describe("SSH target resolution", () => {
 		expect(commands).toEqual(["pwd"]);
 		expect(target).toEqual({ remote: "user@example", remoteCwd: "/home/user" });
 	});
+
+	it("preserves a custom SSH port for explicit and resolved paths", async () => {
+		const ports: Array<number | undefined> = [];
+		const runner = createRunner((_remote, _command, options) => {
+			ports.push(options?.port);
+			return { stdout: Buffer.from("/home/user\n") };
+		});
+
+		await expect(resolveSshTarget("user@example:/workspace", runner, 23915)).resolves.toEqual({
+			remote: "user@example",
+			remoteCwd: "/workspace",
+			port: 23915,
+		});
+		await expect(resolveSshTarget("user@example", runner, 23915)).resolves.toEqual({
+			remote: "user@example",
+			remoteCwd: "/home/user",
+			port: 23915,
+		});
+		expect(ports).toEqual([23915]);
+	});
 });
 
 describe("SSH tool operations", () => {
@@ -140,6 +160,24 @@ describe("SSH tool operations", () => {
 		]);
 	});
 
+	it("passes a custom port through all SSH-backed tool operations", async () => {
+		const ports: Array<number | undefined> = [];
+		const runner = createRunner((_remote, command, options) => {
+			ports.push(options?.port);
+			return { stdout: Buffer.from(command.startsWith("file --mime-type") ? "text/plain\n" : "ok") };
+		});
+		const ops = createSshToolOperations(
+			{ remote: "user@example", remoteCwd: "/remote/project", port: 23915 },
+			"/local/project",
+			{ runner },
+		);
+
+		await ops.read.access("/local/project/file.txt");
+		await ops.write.mkdir("/local/project/tmp");
+		await ops.bash.exec("true", "/local/project", { onData: () => {} });
+		expect(ports).toEqual([23915, 23915, 23915]);
+	});
+
 	it("can route bash through a separate runner without changing file operations", async () => {
 		const fileCalls: string[] = [];
 		const bashCalls: string[] = [];
@@ -178,6 +216,7 @@ describe("SSH PTY runner", () => {
 		const chunks: string[] = [];
 		const resultPromise = runner("user@example", "echo hi", {
 			env: { TERM: "xterm-256color" },
+			port: 23915,
 			onData: (data) => chunks.push(data.toString()),
 		});
 
@@ -188,7 +227,7 @@ describe("SSH PTY runner", () => {
 		expect(spawnCalls).toEqual([
 			{
 				file: "ssh",
-				args: ["-tt", "user@example", "echo hi"],
+				args: ["-tt", "-p", "23915", "user@example", "echo hi"],
 				options: {
 					name: "xterm-256color",
 					cols: 120,

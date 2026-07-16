@@ -37,6 +37,7 @@ import {
 	createSshToolOperations,
 	formatSkillInvocation,
 	type HcpClient,
+	type PeerEndpoint,
 	type PolicyProvider,
 	type ProcessRuntimeProvider,
 	type SandboxProvider,
@@ -114,6 +115,7 @@ import { HcpClientassembletools } from "./HcpClienttools.ts";
 import type { BashExecutionMessage, CustomMessage } from "./messages.ts";
 import type { ModelRegistry } from "./model-registry.ts";
 import { expandPromptTemplate, type PromptTemplate } from "./prompt-templates.ts";
+import { RemoteMailboxController } from "./remote-mailbox.ts";
 import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.ts";
 import type { BranchSummaryEntry, CompactionEntry, SessionManager } from "./session-manager.ts";
 import { CURRENT_SESSION_VERSION, getLatestCompactionEntry, type SessionHeader } from "./session-manager.ts";
@@ -450,6 +452,7 @@ export class AgentSession {
 	private _subAgents: SubAgentController;
 	/** Magenta feature: peer messaging between agent sessions. */
 	private _peerMessages: SendMessageController;
+	private _remoteMailbox: RemoteMailboxController;
 	private _teammates: TeammateAgentController;
 	private _toolProgressTracker: ToolProgressTracker;
 	private _sideChat: SideChatManager;
@@ -576,6 +579,7 @@ export class AgentSession {
 			// decides whether this joins an active boundary or wakes one idle loop.
 			wakeForMessages: () => this._wakeForPeerMessages(),
 		});
+		this._remoteMailbox = new RemoteMailboxController(peerMessageDbPath, { sshTarget: this._sshTarget });
 		this._teammates = new TeammateAgentController(this._backgroundEvents, {
 			sendPeerMessage: (params) => this._peerMessages.send(params),
 			getUnreadPeerMessageCount: (sessionId) => this._peerMessages.unreadCountFor(sessionId),
@@ -1165,6 +1169,7 @@ export class AgentSession {
 			await this.agent.waitForIdle();
 			await this._externalActivations.shutdown();
 			this._peerMessages.shutdown();
+			this._remoteMailbox.shutdown();
 			this._backgroundEvents.dispose();
 			resourceDisposal = Promise.resolve(this._resourceLoader.dispose?.());
 		} catch {
@@ -1349,6 +1354,18 @@ export class AgentSession {
 
 	get sshTarget(): SshTarget | undefined {
 		return this._sshTarget;
+	}
+
+	getRemoteMailboxEndpoints(): PeerEndpoint[] {
+		return this._remoteMailbox.list();
+	}
+
+	openRemoteMailbox(endpointId?: string): PeerEndpoint[] {
+		return this._remoteMailbox.open(endpointId);
+	}
+
+	closeRemoteMailbox(endpointId?: string): PeerEndpoint[] {
+		return this._remoteMailbox.close(endpointId);
 	}
 
 	/** Update scoped models for cycling */

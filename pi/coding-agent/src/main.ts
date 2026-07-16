@@ -841,7 +841,7 @@ export async function main(args: string[], options?: MainOptions) {
 		let sshTarget: SshTarget | undefined;
 		if (parsed.ssh) {
 			try {
-				sshTarget = await resolveSshTarget(parsed.ssh);
+				sshTarget = await resolveSshTarget(parsed.ssh, undefined, parsed.sshPort);
 			} catch (error) {
 				diagnostics.push({
 					type: "error",

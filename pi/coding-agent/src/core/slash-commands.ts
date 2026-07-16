@@ -28,6 +28,7 @@ export const BUILTIN_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 	{ name: "name", description: "Set session display name" },
 	{ name: "session", description: "Show session info and stats" },
 	{ name: "events", description: "Show background work started by the main agent" },
+	{ name: "remote", description: "Inspect, open, or close shared SSH mailbox links" },
 	{ name: "todo", description: "Show the current branch Todo plan" },
 	{ name: "side", description: "Open Side/BTW history or start a no-tools side chat" },
 	{ name: "btw", description: "Open Side/BTW history or start a no-tools side chat" },

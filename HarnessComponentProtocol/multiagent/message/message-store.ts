@@ -12,13 +12,12 @@
  * The `presence` table is a Magenta addition on top of that kernel: every agent
  * records whether it is `active` (in an agent loop), `idle` (process alive, not
  * looping), or `offline` (cleanly shut down), along with its owning process's
- * pid and a per-process boot id. Liveness is probed directly from the pid
- * (`kill(pid, 0)`) rather than a heartbeat, so a crashed agent reads as offline
- * the instant its process is gone. The pid also lets a sender wake an `idle`
- * recipient by signalling its process (SIGUSR1); the boot id guards that wake
- * against PID reuse. When messages are drained they are enriched with the
- * *sender's* presence at that moment, so a recipient can decide whether a reply
- * will reach anyone.
+ * pid, per-process boot id, and random wake-socket capability. Liveness is
+ * probed from the pid (`kill(pid, 0)`) rather than a heartbeat. Wake requests
+ * connect to the boot-scoped Unix socket / named pipe instead of signalling the
+ * pid, so stale presence cannot terminate a PID-reused process. When messages
+ * are drained they are enriched with the *sender's* presence at that moment, so
+ * a recipient can decide whether a reply will reach anyone.
  *
  * Provenance:
  *   messages kernel — ported from MinionsOS2 (src/eacn3/messages.rs):
@@ -38,6 +37,86 @@ export type PresenceState = "active" | "idle" | "offline";
 /** Message priority: urgent injects mid-loop, normal at loop end. */
 export type MessagePriority = "urgent" | "normal";
 
+/** Structured metadata carried end-to-end with a peer message. */
+export type PeerMessageMetadata = {
+	assignmentId?: string;
+	terminalStatus?: "completed" | "failed" | "blocked" | "cancelled";
+	[key: string]: unknown;
+};
+
+/** A transport-neutral federated message. Relays preserve every field. */
+export type FederatedMessageEnvelope = {
+	id: string;
+	sender: string;
+	recipient: string;
+	content: string;
+	createdAt: string;
+	priority: MessagePriority;
+	metadata?: PeerMessageMetadata;
+};
+
+export type PeerRoute = {
+	sessionId: string;
+	peerStoreId: string;
+	updatedAt: string;
+};
+
+export type PeerOutboxStatus = "pending" | "inflight" | "forwarded";
+
+/** One durable outbox row, including the original transport envelope. */
+export type PeerOutboxMessage = FederatedMessageEnvelope & {
+	targetPeerStoreId: string | null;
+	status: PeerOutboxStatus;
+	claimOwner?: string;
+	claimedAt?: string;
+	nextAttemptAt?: string;
+	attemptCount: number;
+};
+
+export type RoutedSendResult = {
+	id: string;
+	disposition: "local" | "peer" | "unresolved";
+	peerStoreId?: string;
+};
+
+export type FederatedAcceptResult = {
+	id: string;
+	disposition: "local" | "relay" | "duplicate" | "not_found";
+	peerStoreId?: string;
+};
+
+export type PeerOutboxCounts = {
+	pending: number;
+	inflight: number;
+	forwarded: number;
+	/** Pending rows for which no peer route was known at send time. */
+	unresolved: number;
+};
+
+export type PeerEndpointDesiredState = "on" | "off";
+export type PeerEndpointObservedState = "closed" | "connecting" | "connected" | "reconnecting" | "closing" | "error";
+
+export type PeerEndpoint = {
+	id: string;
+	remote: string;
+	port?: number;
+	desiredState: PeerEndpointDesiredState;
+	observedState: PeerEndpointObservedState;
+	remoteStoreId?: string;
+	relayPid?: number;
+	relayBootId?: string;
+	lastError?: string;
+	updatedAt: string;
+};
+
+export type MessageStoreOptions = {
+	stalenessMs?: number;
+	/** Reclaim bridge claims older than this after relay process crashes. */
+	peerOutboxClaimTimeoutMs?: number;
+	/** Optional fixed id for a new store. Must match when reopening it. */
+	storeId?: string;
+};
+
 /** A snapshot of one agent's presence, as seen at read time. */
 export type Presence = {
 	/** Last explicitly-recorded state. */
@@ -45,19 +124,17 @@ export type Presence = {
 	/** RFC3339 timestamp of the last heartbeat / state change. */
 	lastSeen: string;
 	/**
-	 * Effective online flag computed at read time: true when the agent is not
-	 * offline AND its heartbeat is fresh. A crashed process leaves a stale
-	 * `active`/`idle` row; staleness makes it read as offline.
+	 * Effective online flag computed at read time: true when the row is not
+	 * offline and its recorded pid currently exists. Wake safety does not rely on
+	 * this hint; it uses the boot-scoped socket capability below.
 	 */
 	online: boolean;
 	/** Process ID of the agent, when it's running. Null when offline. */
 	pid: number | null;
-	/**
-	 * Boot identifier: a random UUID generated on process start. Used to detect
-	 * PID reuse — if a signal target's pid matches but boot_id differs, that pid
-	 * has been reassigned to a different process instance.
-	 */
+	/** Random identifier for the process instance that owns this presence row. */
 	bootId: string | null;
+	/** Per-process Unix socket / named-pipe capability used for safe mailbox wake. */
+	wakePath: string | null;
 };
 
 /** One delivered message, enriched with the sender's presence at drain time. */
@@ -72,6 +149,8 @@ export type PeerMessage = {
 	createdAt: string;
 	/** Delivery priority. Urgent messages inject mid-loop; normal at loop end. */
 	priority: MessagePriority;
+	/** Optional structured data preserved across local and federated delivery. */
+	metadata?: PeerMessageMetadata;
 	/**
 	 * The sender's presence at the time this message was drained. Undefined when
 	 * the sender never recorded any presence.
@@ -106,7 +185,8 @@ CREATE TABLE IF NOT EXISTS messages (
     drained_at TEXT,
     claim_owner TEXT,
     claim_pid   INTEGER,
-    priority   TEXT NOT NULL DEFAULT 'normal'
+    priority   TEXT NOT NULL DEFAULT 'normal',
+    metadata_json TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_messages_recipient ON messages(recipient, status);
 CREATE INDEX IF NOT EXISTS idx_messages_created   ON messages(created_at);
@@ -116,7 +196,58 @@ CREATE TABLE IF NOT EXISTS presence (
     state      TEXT NOT NULL,
     last_seen  TEXT NOT NULL,
     pid        INTEGER,
-    boot_id    TEXT
+    boot_id    TEXT,
+    wake_path  TEXT
+);
+
+CREATE TABLE IF NOT EXISTS store_identity (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    store_id  TEXT NOT NULL UNIQUE
+);
+
+CREATE TABLE IF NOT EXISTS peer_routes (
+    session_id   TEXT PRIMARY KEY,
+    peer_store_id TEXT NOT NULL,
+    updated_at   TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_peer_routes_store ON peer_routes(peer_store_id, session_id);
+
+CREATE TABLE IF NOT EXISTS peer_outbox (
+    message_id           TEXT PRIMARY KEY,
+    sender               TEXT NOT NULL,
+    recipient            TEXT NOT NULL,
+    content              TEXT NOT NULL,
+    created_at           TEXT NOT NULL,
+    priority             TEXT NOT NULL DEFAULT 'normal',
+    metadata_json        TEXT,
+    target_peer_store_id TEXT,
+    status               TEXT NOT NULL DEFAULT 'pending',
+    claim_owner          TEXT,
+    claimed_at           TEXT,
+    forwarded_at         TEXT,
+    next_attempt_at      TEXT,
+    attempt_count        INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_peer_outbox_claim
+    ON peer_outbox(status, target_peer_store_id, priority, created_at);
+
+CREATE TABLE IF NOT EXISTS peer_endpoints (
+    endpoint_id      TEXT PRIMARY KEY,
+    remote           TEXT NOT NULL,
+    port             INTEGER,
+    desired_state    TEXT NOT NULL DEFAULT 'on',
+    observed_state   TEXT NOT NULL DEFAULT 'closed',
+    remote_store_id  TEXT,
+    relay_pid        INTEGER,
+    relay_boot_id    TEXT,
+    last_error       TEXT,
+    updated_at       TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS peer_seen (
+    message_id            TEXT PRIMARY KEY,
+    first_seen_at         TEXT NOT NULL,
+    ingress_peer_store_id TEXT
 );
 `;
 
@@ -134,8 +265,11 @@ CREATE TABLE IF NOT EXISTS presence (
 export class MessageStore {
 	private readonly db: InstanceType<typeof DatabaseSync>;
 	private readonly stalenessMs: number;
+	private readonly peerOutboxClaimTimeoutMs: number;
+	/** Stable identity persisted in the database and advertised to peer stores. */
+	readonly storeId: string;
 
-	constructor(dbPath: string, options?: { stalenessMs?: number }) {
+	constructor(dbPath: string, options?: MessageStoreOptions) {
 		mkdirSync(dirname(dbPath), { recursive: true });
 		this.db = new DatabaseSync(dbPath);
 		// WAL: concurrent readers/writers across separate agent processes.
@@ -143,7 +277,13 @@ export class MessageStore {
 		this.db.exec("PRAGMA busy_timeout = 5000;");
 		this.db.exec(SCHEMA);
 		this.migrate();
+		this.storeId = this.loadOrCreateStoreId(options?.storeId);
 		this.stalenessMs = options?.stalenessMs ?? DEFAULT_STALENESS_MS;
+		this.peerOutboxClaimTimeoutMs = options?.peerOutboxClaimTimeoutMs ?? 30_000;
+		if (!Number.isFinite(this.peerOutboxClaimTimeoutMs) || this.peerOutboxClaimTimeoutMs < 0) {
+			this.db.close();
+			throw new TypeError("peer outbox claim timeout must be a non-negative finite number");
+		}
 	}
 
 	/**
@@ -157,6 +297,9 @@ export class MessageStore {
 	 *  - `priority`: added for urgent vs normal message delivery.
 	 *  - presence `pid` + `boot_id`: added for signal-based idle wake (a sender
 	 *    signals an idle recipient's process to make it drain immediately).
+	 *  - messages `metadata_json`: structured metadata preserved during delivery.
+	 * Federation tables are created by {@link SCHEMA}; existing local message ids
+	 * are also seeded into `peer_seen` so a message cannot loop back after upgrade.
 	 * Each column is added only if missing. Existing `read` rows are terminal and
 	 * left untouched.
 	 */
@@ -174,6 +317,9 @@ export class MessageStore {
 		if (!msgCols.some((c) => c.name === "claim_pid")) {
 			this.db.exec(`ALTER TABLE messages ADD COLUMN claim_pid INTEGER`);
 		}
+		if (!msgCols.some((c) => c.name === "metadata_json")) {
+			this.db.exec(`ALTER TABLE messages ADD COLUMN metadata_json TEXT`);
+		}
 		const presCols = this.db.prepare(`PRAGMA table_info(presence)`).all() as Array<{ name: string }>;
 		if (!presCols.some((c) => c.name === "pid")) {
 			this.db.exec(`ALTER TABLE presence ADD COLUMN pid INTEGER`);
@@ -181,6 +327,137 @@ export class MessageStore {
 		if (!presCols.some((c) => c.name === "boot_id")) {
 			this.db.exec(`ALTER TABLE presence ADD COLUMN boot_id TEXT`);
 		}
+		if (!presCols.some((c) => c.name === "wake_path")) {
+			this.db.exec(`ALTER TABLE presence ADD COLUMN wake_path TEXT`);
+		}
+		const outboxCols = this.db.prepare(`PRAGMA table_info(peer_outbox)`).all() as Array<{ name: string }>;
+		if (!outboxCols.some((c) => c.name === "next_attempt_at")) {
+			this.db.exec(`ALTER TABLE peer_outbox ADD COLUMN next_attempt_at TEXT`);
+		}
+		if (!outboxCols.some((c) => c.name === "attempt_count")) {
+			this.db.exec(`ALTER TABLE peer_outbox ADD COLUMN attempt_count INTEGER NOT NULL DEFAULT 0`);
+		}
+		this.db.exec(`
+			INSERT OR IGNORE INTO peer_seen (message_id, first_seen_at, ingress_peer_store_id)
+			SELECT id, created_at, NULL FROM messages
+		`);
+	}
+
+	private loadOrCreateStoreId(requested?: string): string {
+		const candidate = requested ?? `store:${randomUUID().replace(/-/g, "")}`;
+		this.db.prepare(`INSERT OR IGNORE INTO store_identity (singleton, store_id) VALUES (1, ?)`).run(candidate);
+		const persisted = this.db.prepare(`SELECT store_id FROM store_identity WHERE singleton = 1`).get() as {
+			store_id: string;
+		};
+		if (requested !== undefined && requested !== persisted.store_id) {
+			this.db.close();
+			throw new Error(`MessageStore id mismatch: database is ${persisted.store_id}, requested ${requested}`);
+		}
+		return persisted.store_id;
+	}
+
+	/** Return the stable id persisted by this store. */
+	getStoreId(): string {
+		return this.storeId;
+	}
+
+	private transaction<T>(operation: () => T): T {
+		this.db.exec("BEGIN IMMEDIATE");
+		try {
+			const result = operation();
+			this.db.exec("COMMIT");
+			return result;
+		} catch (error) {
+			this.db.exec("ROLLBACK");
+			throw error;
+		}
+	}
+
+	private static serializeMetadata(metadata?: PeerMessageMetadata): string | null {
+		if (metadata === undefined) return null;
+		if (metadata === null || Array.isArray(metadata) || typeof metadata !== "object") {
+			throw new TypeError("message metadata must be a JSON object");
+		}
+		const serialized = JSON.stringify(metadata);
+		if (serialized === undefined) throw new TypeError("message metadata must be JSON serializable");
+		return serialized;
+	}
+
+	private static parseMetadata(serialized: string | null): PeerMessageMetadata | undefined {
+		if (serialized === null) return undefined;
+		const parsed: unknown = JSON.parse(serialized);
+		if (parsed === null || Array.isArray(parsed) || typeof parsed !== "object") {
+			throw new Error("stored message metadata is not a JSON object");
+		}
+		return parsed as PeerMessageMetadata;
+	}
+
+	private recordSeen(id: string, seenAt: string, ingressPeerStoreId: string | null): boolean {
+		const result = this.db
+			.prepare(
+				`INSERT OR IGNORE INTO peer_seen (message_id, first_seen_at, ingress_peer_store_id)
+				 VALUES (?, ?, ?)`,
+			)
+			.run(id, seenAt, ingressPeerStoreId) as { changes: number | bigint };
+		return Number(result.changes) > 0;
+	}
+
+	private insertInbox(envelope: FederatedMessageEnvelope): boolean {
+		const result = this.db
+			.prepare(
+				`INSERT OR IGNORE INTO messages
+				 (id, sender, recipient, content, created_at, status, priority, metadata_json)
+				 VALUES (?, ?, ?, ?, ?, 'unread', ?, ?)`,
+			)
+			.run(
+				envelope.id,
+				envelope.sender,
+				envelope.recipient,
+				envelope.content,
+				envelope.createdAt,
+				envelope.priority,
+				MessageStore.serializeMetadata(envelope.metadata),
+			) as { changes: number | bigint };
+		return Number(result.changes) > 0;
+	}
+
+	private insertOutbox(envelope: FederatedMessageEnvelope, targetPeerStoreId: string | null): boolean {
+		const result = this.db
+			.prepare(
+				`INSERT OR IGNORE INTO peer_outbox
+				 (message_id, sender, recipient, content, created_at, priority, metadata_json,
+				  target_peer_store_id, status)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
+			)
+			.run(
+				envelope.id,
+				envelope.sender,
+				envelope.recipient,
+				envelope.content,
+				envelope.createdAt,
+				envelope.priority,
+				MessageStore.serializeMetadata(envelope.metadata),
+				targetPeerStoreId,
+			) as { changes: number | bigint };
+		return Number(result.changes) > 0;
+	}
+
+	private createEnvelope(
+		sender: string,
+		recipient: string,
+		content: string,
+		priority: MessagePriority,
+		metadata?: PeerMessageMetadata,
+	): FederatedMessageEnvelope {
+		return {
+			id: `m:${randomUUID().replace(/-/g, "")}`,
+			sender,
+			recipient,
+			content,
+			createdAt: new Date().toISOString(),
+			priority,
+			...(metadata === undefined ? {} : { metadata }),
+		};
 	}
 
 	/**
@@ -188,16 +465,490 @@ export class MessageStore {
 	 * system-generated; callers provide only sender, recipient, content, and an
 	 * optional priority (defaults to `normal`). Returns the generated message id.
 	 */
-	send(sender: string, recipient: string, content: string, priority: MessagePriority = "normal"): string {
-		const id = `m:${randomUUID().replace(/-/g, "")}`;
-		const createdAt = new Date().toISOString();
+	send(
+		sender: string,
+		recipient: string,
+		content: string,
+		priority: MessagePriority = "normal",
+		metadata?: PeerMessageMetadata,
+	): string {
+		const envelope = this.createEnvelope(sender, recipient, content, priority, metadata);
+		this.transaction(() => {
+			this.recordSeen(envelope.id, envelope.createdAt, null);
+			this.insertInbox(envelope);
+		});
+		return envelope.id;
+	}
+
+	/** Register or update the owning peer for one remote session. */
+	registerPeerRoute(sessionId: string, peerStoreId: string): void {
+		if (sessionId.length === 0 || peerStoreId.length === 0) throw new TypeError("peer route ids must not be empty");
+		if (peerStoreId === this.storeId) throw new Error("a peer route cannot target the local store");
+		const now = new Date().toISOString();
+		this.transaction(() => {
+			this.db
+				.prepare(
+					`INSERT INTO peer_routes (session_id, peer_store_id, updated_at) VALUES (?, ?, ?)
+					 ON CONFLICT(session_id) DO UPDATE SET
+					   peer_store_id = excluded.peer_store_id,
+					   updated_at = excluded.updated_at`,
+				)
+				.run(sessionId, peerStoreId, now);
+			this.db
+				.prepare(
+					`UPDATE peer_outbox SET target_peer_store_id = ?, next_attempt_at = NULL, attempt_count = 0
+					 WHERE recipient = ? AND target_peer_store_id IS NULL AND status = 'pending'`,
+				)
+				.run(peerStoreId, sessionId);
+		});
+	}
+
+	/**
+	 * Atomically replace all session advertisements from one peer. Routes owned by
+	 * other peers are left intact. Newly-known routes resolve matching pending
+	 * outbox rows that were originally queued as unresolved.
+	 */
+	replacePeerRoutes(peerStoreId: string, sessionIds: readonly string[]): void {
+		if (peerStoreId.length === 0) throw new TypeError("peer store id must not be empty");
+		if (peerStoreId === this.storeId) throw new Error("a peer route cannot target the local store");
+		const uniqueSessionIds = [...new Set(sessionIds)];
+		if (uniqueSessionIds.some((sessionId) => sessionId.length === 0)) {
+			throw new TypeError("peer session ids must not be empty");
+		}
+		const now = new Date().toISOString();
+		this.transaction(() => {
+			this.db.prepare(`DELETE FROM peer_routes WHERE peer_store_id = ?`).run(peerStoreId);
+			const insert = this.db.prepare(
+				`INSERT INTO peer_routes (session_id, peer_store_id, updated_at) VALUES (?, ?, ?)
+				 ON CONFLICT(session_id) DO UPDATE SET updated_at = excluded.updated_at
+				 WHERE peer_routes.peer_store_id = excluded.peer_store_id`,
+			);
+			const isLocal = this.db.prepare(`SELECT 1 AS found FROM presence WHERE agent_id = ?`);
+			const resolve = this.db.prepare(
+				`UPDATE peer_outbox SET target_peer_store_id = ?, next_attempt_at = NULL, attempt_count = 0
+				 WHERE recipient = ? AND target_peer_store_id IS NULL AND status = 'pending'`,
+			);
+			for (const sessionId of uniqueSessionIds) {
+				if (isLocal.get(sessionId)) continue;
+				const result = insert.run(sessionId, peerStoreId, now) as { changes: number | bigint };
+				if (Number(result.changes) > 0) resolve.run(peerStoreId, sessionId);
+			}
+		});
+	}
+
+	/** List known remote routes, optionally restricted to one peer store. */
+	listPeerRoutes(peerStoreId?: string): PeerRoute[] {
+		type Row = { session_id: string; peer_store_id: string; updated_at: string };
+		const rows = (
+			peerStoreId === undefined
+				? this.db.prepare(`SELECT session_id, peer_store_id, updated_at FROM peer_routes ORDER BY session_id`).all()
+				: this.db
+						.prepare(
+							`SELECT session_id, peer_store_id, updated_at FROM peer_routes
+						 WHERE peer_store_id = ? ORDER BY session_id`,
+						)
+						.all(peerStoreId)
+		) as Row[];
+		return rows.map((row) => ({
+			sessionId: row.session_id,
+			peerStoreId: row.peer_store_id,
+			updatedAt: row.updated_at,
+		}));
+	}
+
+	/** All sessions registered locally through the presence table. */
+	listRegisteredSessionIds(): string[] {
+		const rows = this.db.prepare(`SELECT agent_id FROM presence ORDER BY agent_id`).all() as Array<{
+			agent_id: string;
+		}>;
+		return rows.map((row) => row.agent_id);
+	}
+
+	/**
+	 * Route a newly-created message. A presence row establishes local ownership,
+	 * regardless of its current online state. Otherwise the current peer route is
+	 * snapshotted into the durable outbox; unknown recipients remain unresolved.
+	 */
+	sendRouted(
+		sender: string,
+		recipient: string,
+		content: string,
+		priority: MessagePriority = "normal",
+		metadata?: PeerMessageMetadata,
+	): RoutedSendResult {
+		const envelope = this.createEnvelope(sender, recipient, content, priority, metadata);
+		return this.transaction(() => {
+			const local = this.db.prepare(`SELECT 1 AS found FROM presence WHERE agent_id = ?`).get(recipient) as
+				| { found: number }
+				| undefined;
+			const route = this.db.prepare(`SELECT peer_store_id FROM peer_routes WHERE session_id = ?`).get(recipient) as
+				| { peer_store_id: string }
+				| undefined;
+			this.recordSeen(envelope.id, envelope.createdAt, null);
+			if (local) {
+				this.insertInbox(envelope);
+				return { id: envelope.id, disposition: "local" };
+			}
+			const peerStoreId = route?.peer_store_id ?? null;
+			this.insertOutbox(envelope, peerStoreId);
+			return peerStoreId === null
+				? { id: envelope.id, disposition: "unresolved" }
+				: { id: envelope.id, disposition: "peer", peerStoreId };
+		});
+	}
+
+	/**
+	 * Accept one message received from a peer. Accepted ids are recorded in
+	 * `peer_seen` in the same transaction as inbox/relay insertion. A known local
+	 * recipient is delivered locally; a route to a different peer is relayed; an
+	 * unknown recipient or a route back to ingress is rejected as not found.
+	 */
+	acceptFederatedMessage(envelope: FederatedMessageEnvelope, ingressPeerStoreId: string): FederatedAcceptResult {
+		return this.transaction(() => {
+			const seen = this.db.prepare(`SELECT 1 AS found FROM peer_seen WHERE message_id = ?`).get(envelope.id);
+			if (seen) return { id: envelope.id, disposition: "duplicate" };
+
+			const local = this.db.prepare(`SELECT 1 AS found FROM presence WHERE agent_id = ?`).get(envelope.recipient);
+			const route = this.db
+				.prepare(`SELECT peer_store_id FROM peer_routes WHERE session_id = ?`)
+				.get(envelope.recipient) as { peer_store_id: string } | undefined;
+			const relayPeerStoreId = route?.peer_store_id;
+			if (
+				!local &&
+				(relayPeerStoreId === undefined ||
+					relayPeerStoreId === ingressPeerStoreId ||
+					relayPeerStoreId === this.storeId)
+			) {
+				return { id: envelope.id, disposition: "not_found" };
+			}
+
+			if (!this.recordSeen(envelope.id, new Date().toISOString(), ingressPeerStoreId)) {
+				return { id: envelope.id, disposition: "duplicate" };
+			}
+			if (local) {
+				if (!this.insertInbox(envelope)) return { id: envelope.id, disposition: "duplicate" };
+				return { id: envelope.id, disposition: "local" };
+			}
+			if (!this.insertOutbox(envelope, relayPeerStoreId ?? null)) {
+				return { id: envelope.id, disposition: "duplicate" };
+			}
+			return { id: envelope.id, disposition: "relay", peerStoreId: relayPeerStoreId };
+		});
+	}
+
+	/**
+	 * Atomically claim pending rows for a bridge connected to `peerStoreId`.
+	 * `includeUnresolved` lets that bridge also attempt route discovery for rows
+	 * which had no known target. Each row can be owned by only one claimant.
+	 */
+	claimPeerOutbox(peerStoreId: string, owner: string, limit = 100, includeUnresolved = false): PeerOutboxMessage[] {
+		if (peerStoreId.length === 0 || owner.length === 0) {
+			throw new TypeError("peer store id and claim owner must not be empty");
+		}
+		const normalizedLimit =
+			Number.isFinite(limit) && limit > 0 ? Math.max(1, Math.floor(limit)) : Number.MAX_SAFE_INTEGER;
+		const nowMs = Date.now();
+		const claimedAt = new Date(nowMs).toISOString();
+		const staleBefore = new Date(nowMs - this.peerOutboxClaimTimeoutMs).toISOString();
+		type Row = {
+			rowid: number;
+			message_id: string;
+			sender: string;
+			recipient: string;
+			content: string;
+			created_at: string;
+			priority: MessagePriority;
+			metadata_json: string | null;
+			target_peer_store_id: string | null;
+			status: PeerOutboxStatus;
+			claim_owner: string | null;
+			claimed_at: string | null;
+			next_attempt_at: string | null;
+			attempt_count: number;
+		};
+		const rows = this.transaction(() => {
+			this.db
+				.prepare(
+					`UPDATE peer_outbox SET status = 'pending', claim_owner = NULL, claimed_at = NULL
+					 WHERE status = 'inflight' AND (claimed_at IS NULL OR claimed_at <= ?)`,
+				)
+				.run(staleBefore);
+			return this.db
+				.prepare(
+					`UPDATE peer_outbox SET status = 'inflight', claim_owner = ?, claimed_at = ?
+					 WHERE status = 'pending' AND rowid IN (
+					   SELECT rowid FROM peer_outbox
+					    WHERE status = 'pending'
+					      AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
+					      AND (target_peer_store_id = ? OR (? = 1 AND target_peer_store_id IS NULL))
+					    ORDER BY (CASE priority WHEN 'urgent' THEN 0 ELSE 1 END), rowid
+					    LIMIT ?
+					 )
+					 RETURNING rowid, message_id, sender, recipient, content, created_at, priority,
+					           metadata_json, target_peer_store_id, status, claim_owner, claimed_at,
+					           next_attempt_at, attempt_count`,
+				)
+				.all(owner, claimedAt, claimedAt, peerStoreId, includeUnresolved ? 1 : 0, normalizedLimit) as Row[];
+		});
+		return rows
+			.slice()
+			.sort((a, b) => {
+				if (a.priority !== b.priority) return a.priority === "urgent" ? -1 : 1;
+				return a.rowid - b.rowid;
+			})
+			.map((row) => {
+				const metadata = MessageStore.parseMetadata(row.metadata_json);
+				return {
+					id: row.message_id,
+					sender: row.sender,
+					recipient: row.recipient,
+					content: row.content,
+					createdAt: row.created_at,
+					priority: row.priority,
+					targetPeerStoreId: row.target_peer_store_id,
+					status: row.status,
+					attemptCount: row.attempt_count,
+					...(metadata === undefined ? {} : { metadata }),
+					...(row.claim_owner === null ? {} : { claimOwner: row.claim_owner }),
+					...(row.claimed_at === null ? {} : { claimedAt: row.claimed_at }),
+					...(row.next_attempt_at === null ? {} : { nextAttemptAt: row.next_attempt_at }),
+				};
+			});
+	}
+
+	/** Mark owned in-flight outbox rows as durably forwarded. */
+	ackPeerOutbox(ids: readonly string[], owner: string): number {
+		if (ids.length === 0) return 0;
+		const placeholders = ids.map(() => "?").join(",");
+		const result = this.db
+			.prepare(
+				`UPDATE peer_outbox SET status = 'forwarded', claim_owner = NULL, claimed_at = NULL, forwarded_at = ?
+				 WHERE status = 'inflight' AND claim_owner = ? AND message_id IN (${placeholders})`,
+			)
+			.run(new Date().toISOString(), owner, ...ids) as { changes: number | bigint };
+		return Number(result.changes);
+	}
+
+	/** Return owned in-flight outbox rows to pending for another bridge attempt. */
+	requeuePeerOutbox(ids: readonly string[], owner: string, options?: { notFound?: boolean }): number {
+		if (ids.length === 0) return 0;
+		const placeholders = ids.map(() => "?").join(",");
+		if (!options?.notFound) {
+			const result = this.db
+				.prepare(
+					`UPDATE peer_outbox SET
+					   status = 'pending',
+					   claim_owner = NULL,
+					   claimed_at = NULL,
+					   next_attempt_at = NULL,
+					   target_peer_store_id = COALESCE(
+					     (SELECT peer_store_id FROM peer_routes WHERE session_id = peer_outbox.recipient),
+					     target_peer_store_id
+					   )
+					 WHERE status = 'inflight' AND claim_owner = ? AND message_id IN (${placeholders})`,
+				)
+				.run(owner, ...ids) as { changes: number | bigint };
+			return Number(result.changes);
+		}
+
+		return this.transaction(() => {
+			const rows = this.db
+				.prepare(
+					`SELECT message_id, recipient, target_peer_store_id, attempt_count FROM peer_outbox
+					 WHERE status = 'inflight' AND claim_owner = ? AND message_id IN (${placeholders})`,
+				)
+				.all(owner, ...ids) as Array<{
+				message_id: string;
+				recipient: string;
+				target_peer_store_id: string | null;
+				attempt_count: number;
+			}>;
+			const invalidateRoute = this.db.prepare(`DELETE FROM peer_routes WHERE session_id = ? AND peer_store_id = ?`);
+			const requeue = this.db.prepare(
+				`UPDATE peer_outbox SET status = 'pending', claim_owner = NULL, claimed_at = NULL,
+				   target_peer_store_id = NULL, next_attempt_at = ?, attempt_count = ?
+				 WHERE message_id = ? AND status = 'inflight' AND claim_owner = ?`,
+			);
+			let changed = 0;
+			const now = Date.now();
+			for (const row of rows) {
+				if (row.target_peer_store_id) invalidateRoute.run(row.recipient, row.target_peer_store_id);
+				const attemptCount = row.attempt_count + 1;
+				const delayMs = Math.min(30_000, 1_000 * 2 ** Math.min(row.attempt_count, 5));
+				const result = requeue.run(new Date(now + delayMs).toISOString(), attemptCount, row.message_id, owner) as {
+					changes: number | bigint;
+				};
+				changed += Number(result.changes);
+			}
+			return changed;
+		});
+	}
+
+	/** Status totals, optionally for rows explicitly targeted at one peer. */
+	getPeerOutboxCounts(peerStoreId?: string): PeerOutboxCounts {
+		const predicate = peerStoreId === undefined ? "" : "WHERE target_peer_store_id = ?";
+		const row = this.db
+			.prepare(
+				`SELECT
+				   SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending,
+				   SUM(CASE WHEN status = 'inflight' THEN 1 ELSE 0 END) AS inflight,
+				   SUM(CASE WHEN status = 'forwarded' THEN 1 ELSE 0 END) AS forwarded,
+				   SUM(CASE WHEN status = 'pending' AND target_peer_store_id IS NULL THEN 1 ELSE 0 END) AS unresolved
+				 FROM peer_outbox ${predicate}`,
+			)
+			.get(...(peerStoreId === undefined ? [] : [peerStoreId])) as {
+			pending: number | null;
+			inflight: number | null;
+			forwarded: number | null;
+			unresolved: number | null;
+		};
+		return {
+			pending: row.pending ?? 0,
+			inflight: row.inflight ?? 0,
+			forwarded: row.forwarded ?? 0,
+			unresolved: row.unresolved ?? 0,
+		};
+	}
+
+	/** Register an SSH mailbox endpoint without changing an explicit manual-off choice. */
+	upsertPeerEndpoint(id: string, remote: string, port?: number): PeerEndpoint {
+		if (!id || !remote) throw new TypeError("peer endpoint id and remote must not be empty");
+		if (port !== undefined && (!Number.isInteger(port) || port <= 0 || port > 65535)) {
+			throw new TypeError("peer endpoint port must be an integer from 1 to 65535");
+		}
+		const now = new Date().toISOString();
 		this.db
 			.prepare(
-				`INSERT INTO messages (id, sender, recipient, content, created_at, status, priority)
-				 VALUES (?, ?, ?, ?, ?, 'unread', ?)`,
+				`INSERT INTO peer_endpoints
+				 (endpoint_id, remote, port, desired_state, observed_state, updated_at)
+				 VALUES (?, ?, ?, 'on', 'closed', ?)
+				 ON CONFLICT(endpoint_id) DO UPDATE SET
+				   remote = excluded.remote,
+				   port = excluded.port,
+				   updated_at = excluded.updated_at`,
 			)
-			.run(id, sender, recipient, content, createdAt, priority);
-		return id;
+			.run(id, remote, port ?? null, now);
+		return this.getPeerEndpoint(id)!;
+	}
+
+	getPeerEndpoint(id: string): PeerEndpoint | undefined {
+		type Row = {
+			endpoint_id: string;
+			remote: string;
+			port: number | null;
+			desired_state: PeerEndpointDesiredState;
+			observed_state: PeerEndpointObservedState;
+			remote_store_id: string | null;
+			relay_pid: number | null;
+			relay_boot_id: string | null;
+			last_error: string | null;
+			updated_at: string;
+		};
+		const row = this.db
+			.prepare(
+				`SELECT endpoint_id, remote, port, desired_state, observed_state, remote_store_id,
+				        relay_pid, relay_boot_id, last_error, updated_at
+				   FROM peer_endpoints WHERE endpoint_id = ?`,
+			)
+			.get(id) as Row | undefined;
+		if (!row) return undefined;
+		return {
+			id: row.endpoint_id,
+			remote: row.remote,
+			...(row.port === null ? {} : { port: row.port }),
+			desiredState: row.desired_state,
+			observedState: row.observed_state,
+			...(row.remote_store_id === null ? {} : { remoteStoreId: row.remote_store_id }),
+			...(row.relay_pid === null ? {} : { relayPid: row.relay_pid }),
+			...(row.relay_boot_id === null ? {} : { relayBootId: row.relay_boot_id }),
+			...(row.last_error === null ? {} : { lastError: row.last_error }),
+			updatedAt: row.updated_at,
+		};
+	}
+
+	listPeerEndpoints(): PeerEndpoint[] {
+		const ids = this.db.prepare(`SELECT endpoint_id FROM peer_endpoints ORDER BY endpoint_id`).all() as Array<{
+			endpoint_id: string;
+		}>;
+		return ids.map((row) => this.getPeerEndpoint(row.endpoint_id)!);
+	}
+
+	setPeerEndpointDesiredState(id: string, desiredState: PeerEndpointDesiredState): boolean {
+		const result = this.db
+			.prepare(`UPDATE peer_endpoints SET desired_state = ?, updated_at = ? WHERE endpoint_id = ?`)
+			.run(desiredState, new Date().toISOString(), id) as { changes: number | bigint };
+		return Number(result.changes) > 0;
+	}
+
+	/** Acquire the host-level relay slot, fencing stale or crashed owners by pid+boot id. */
+	claimPeerEndpointRelay(id: string, pid: number, bootId: string): boolean {
+		if (!Number.isInteger(pid) || pid <= 0 || !bootId) throw new TypeError("relay owner requires pid and boot id");
+		return this.transaction(() => {
+			const current = this.db
+				.prepare(`SELECT desired_state, relay_pid, relay_boot_id FROM peer_endpoints WHERE endpoint_id = ?`)
+				.get(id) as
+				| {
+						desired_state: PeerEndpointDesiredState;
+						relay_pid: number | null;
+						relay_boot_id: string | null;
+				  }
+				| undefined;
+			if (!current || current.desired_state !== "on") return false;
+			if (
+				current.relay_pid !== null &&
+				current.relay_boot_id !== bootId &&
+				MessageStore.isProcessAlive(current.relay_pid)
+			) {
+				return false;
+			}
+			this.db
+				.prepare(
+					`UPDATE peer_endpoints SET relay_pid = ?, relay_boot_id = ?, observed_state = 'connecting',
+					 last_error = NULL, updated_at = ? WHERE endpoint_id = ?`,
+				)
+				.run(pid, bootId, new Date().toISOString(), id);
+			return true;
+		});
+	}
+
+	updatePeerEndpointRelay(
+		id: string,
+		bootId: string,
+		observedState: PeerEndpointObservedState,
+		options?: { remoteStoreId?: string; lastError?: string },
+	): boolean {
+		const result = this.db
+			.prepare(
+				`UPDATE peer_endpoints SET observed_state = ?, remote_store_id = COALESCE(?, remote_store_id),
+				 last_error = ?, updated_at = ? WHERE endpoint_id = ? AND relay_boot_id = ?`,
+			)
+			.run(
+				observedState,
+				options?.remoteStoreId ?? null,
+				options?.lastError ?? null,
+				new Date().toISOString(),
+				id,
+				bootId,
+			) as { changes: number | bigint };
+		return Number(result.changes) > 0;
+	}
+
+	releasePeerEndpointRelay(id: string, bootId: string, observedState: PeerEndpointObservedState = "closed"): boolean {
+		const result = this.db
+			.prepare(
+				`UPDATE peer_endpoints SET relay_pid = NULL, relay_boot_id = NULL, observed_state = ?, updated_at = ?
+				 WHERE endpoint_id = ? AND relay_boot_id = ?`,
+			)
+			.run(observedState, new Date().toISOString(), id, bootId) as { changes: number | bigint };
+		return Number(result.changes) > 0;
+	}
+
+	/** Unique live Magenta process ids advertised by local session presence rows. */
+	listLiveSessionPids(): number[] {
+		const rows = this.db
+			.prepare(`SELECT DISTINCT pid FROM presence WHERE state != 'offline' AND pid IS NOT NULL ORDER BY pid`)
+			.all() as Array<{ pid: number }>;
+		return rows.map((row) => row.pid).filter((pid) => MessageStore.isProcessAlive(pid));
 	}
 
 	/**
@@ -252,6 +1003,7 @@ export class MessageStore {
 			content: string;
 			created_at: string;
 			priority: MessagePriority;
+			metadata_json: string | null;
 		};
 
 		let rows: Row[];
@@ -265,7 +1017,7 @@ export class MessageStore {
 					    ORDER BY (CASE priority WHEN 'urgent' THEN 0 ELSE 1 END), rowid
 					    LIMIT ?
 					 )
-					 RETURNING rowid, id, sender, recipient, content, created_at, priority`,
+					 RETURNING rowid, id, sender, recipient, content, created_at, priority, metadata_json`,
 				)
 				.all(drainedAt, claim?.ownerId ?? null, claim?.pid ?? null, recipient, normalizedLimit) as Row[];
 		} else {
@@ -273,7 +1025,7 @@ export class MessageStore {
 				.prepare(
 					`UPDATE messages SET status = 'pending', drained_at = ?, claim_owner = ?, claim_pid = ?
 					 WHERE recipient = ? AND status = 'unread'
-					 RETURNING rowid, id, sender, recipient, content, created_at, priority`,
+					 RETURNING rowid, id, sender, recipient, content, created_at, priority, metadata_json`,
 				)
 				.all(drainedAt, claim?.ownerId ?? null, claim?.pid ?? null, recipient) as Row[];
 		}
@@ -283,15 +1035,19 @@ export class MessageStore {
 			if (a.priority !== b.priority) return a.priority === "urgent" ? -1 : 1;
 			return a.rowid - b.rowid;
 		});
-		return ordered.map((r) => ({
-			id: r.id,
-			sender: r.sender,
-			recipient: r.recipient,
-			content: r.content,
-			createdAt: r.created_at,
-			priority: r.priority,
-			senderPresence: this.getPresence(r.sender),
-		}));
+		return ordered.map((r) => {
+			const metadata = MessageStore.parseMetadata(r.metadata_json);
+			return {
+				id: r.id,
+				sender: r.sender,
+				recipient: r.recipient,
+				content: r.content,
+				createdAt: r.created_at,
+				priority: r.priority,
+				...(metadata === undefined ? {} : { metadata }),
+				senderPresence: this.getPresence(r.sender),
+			};
+		});
 	}
 
 	/**
@@ -392,25 +1148,31 @@ export class MessageStore {
 	 * (active/idle/offline). Unlike the old design there is no periodic heartbeat:
 	 * liveness is probed directly from the pid at read time (see {@link getPresence}).
 	 *
-	 * `pid`/`bootId` identify the concrete process instance that currently owns
-	 * this session, so a sender can signal it to wake and the recipient can reject
-	 * a signal aimed at a stale pid that the OS has since reused. On a clean
-	 * `offline` transition they are cleared.
+	 * `pid`/`bootId` identify the concrete process instance. `wakePath` is a
+	 * random per-process Unix socket or named-pipe capability; unlike a POSIX
+	 * signal, a stale path cannot terminate an unrelated PID-reused process.
+	 * On a clean `offline` transition all three fields are cleared.
 	 */
-	updatePresence(agentId: string, state: PresenceState, opts?: { pid?: number | null; bootId?: string | null }): void {
+	updatePresence(
+		agentId: string,
+		state: PresenceState,
+		opts?: { pid?: number | null; bootId?: string | null; wakePath?: string | null },
+	): void {
 		const now = new Date().toISOString();
 		const pid = state === "offline" ? null : (opts?.pid ?? null);
 		const bootId = state === "offline" ? null : (opts?.bootId ?? null);
+		const wakePath = state === "offline" ? null : (opts?.wakePath ?? null);
 		this.db
 			.prepare(
-				`INSERT INTO presence (agent_id, state, last_seen, pid, boot_id) VALUES (?, ?, ?, ?, ?)
+				`INSERT INTO presence (agent_id, state, last_seen, pid, boot_id, wake_path) VALUES (?, ?, ?, ?, ?, ?)
 				 ON CONFLICT(agent_id) DO UPDATE SET
 				   state = excluded.state,
 				   last_seen = excluded.last_seen,
 				   pid = excluded.pid,
-				   boot_id = excluded.boot_id`,
+				   boot_id = excluded.boot_id,
+				   wake_path = excluded.wake_path`,
 			)
-			.run(agentId, state, now, pid, bootId);
+			.run(agentId, state, now, pid, bootId, wakePath);
 	}
 
 	/**
@@ -423,9 +1185,15 @@ export class MessageStore {
 	 */
 	getPresence(agentId: string): Presence | undefined {
 		const row = this.db
-			.prepare(`SELECT state, last_seen, pid, boot_id FROM presence WHERE agent_id = ?`)
+			.prepare(`SELECT state, last_seen, pid, boot_id, wake_path FROM presence WHERE agent_id = ?`)
 			.get(agentId) as
-			| { state: PresenceState; last_seen: string; pid: number | null; boot_id: string | null }
+			| {
+					state: PresenceState;
+					last_seen: string;
+					pid: number | null;
+					boot_id: string | null;
+					wake_path: string | null;
+			  }
 			| undefined;
 		if (!row) return undefined;
 		const alive = row.pid != null && MessageStore.isProcessAlive(row.pid);
@@ -435,6 +1203,7 @@ export class MessageStore {
 			online: row.state !== "offline" && alive,
 			pid: row.pid,
 			bootId: row.boot_id,
+			wakePath: row.wake_path,
 		};
 	}
 
@@ -447,8 +1216,8 @@ export class MessageStore {
 	 *  - EPERM     → process exists but owned by another user → alive for our
 	 *                purposes (it is running; we just can't signal it).
 	 * NOTE: this cannot distinguish the original process from a PID the OS has
-	 * reused. Callers that act on the result (e.g. sending a wake signal) must also
-	 * verify the boot id to guard against PID reuse.
+	 * reused. It is only a liveness hint; mailbox wake uses a random boot-scoped
+	 * socket capability and never sends a signal to this pid.
 	 */
 	static isProcessAlive(pid: number): boolean {
 		if (!Number.isInteger(pid) || pid <= 0) return false;

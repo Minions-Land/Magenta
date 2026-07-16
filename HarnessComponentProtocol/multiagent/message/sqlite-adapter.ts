@@ -3,13 +3,16 @@
  * Supports both Node.js (node:sqlite) and Bun (bun:sqlite).
  */
 
-// Detect runtime and import appropriate SQLite implementation
+import { createRequire } from "node:module";
+
+// Synchronous loading matters for compiled binaries that dynamically import the
+// hidden peer helper: an exported mutable binding behind top-level await can be
+// observed before Bun has assigned it.
+const runtimeRequire = createRequire(import.meta.url);
 let DatabaseSync: any;
 
 if (typeof (globalThis as any).Bun !== "undefined") {
-	// Bun runtime - use bun:sqlite
-	// @ts-expect-error - Bun-specific import
-	const { Database } = await import("bun:sqlite");
+	const { Database } = runtimeRequire("bun:sqlite") as { Database: new (...args: any[]) => any };
 
 	// Adapt Bun's Database to match Node.js DatabaseSync interface
 	DatabaseSync = class BunDatabaseAdapter {
@@ -37,8 +40,7 @@ if (typeof (globalThis as any).Bun !== "undefined") {
 		}
 	};
 } else {
-	// Node.js runtime - use node:sqlite
-	const nodeSqlite = await import("node:sqlite");
+	const nodeSqlite = runtimeRequire("node:sqlite") as { DatabaseSync: new (...args: any[]) => any };
 	DatabaseSync = nodeSqlite.DatabaseSync;
 }
 

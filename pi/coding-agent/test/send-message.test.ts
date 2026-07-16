@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { MessageStore } from "@magenta/harness";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
 	formatPeerMessages,
@@ -242,20 +243,23 @@ describe("SendMessageController", () => {
 		}
 	});
 
-	it("wakes an idle recipient (every message is urgent)", async () => {
+	it("wakes an idle recipient through a process-specific socket capability", async () => {
 		let woke = 0;
 		const alice = controller("alice");
-		// bob is wakeable and idle: an urgent message should signal its process,
-		// firing the wake handler in-process (same pid).
+		// bob advertises a random boot-id socket rather than a reusable PID signal.
 		const bob = controller("bob", { wakeForMessages: () => woke++ });
 		try {
 			bob.recordPresence("idle");
 			const res = await call(alice, { to: "bob", content: "urgent!" });
-			// The wake signal is delivered synchronously within the same process, but
-			// signal handlers run on the next tick; allow the microtask/timer to flush.
 			await new Promise((r) => setTimeout(r, 20));
 			expect(res.details?.woken).toBe(true);
 			expect(woke).toBeGreaterThan(0);
+			const inspection = new MessageStore(dbPath);
+			try {
+				expect(inspection.getPresence("bob")?.wakePath).toMatch(/magenta-wake-/);
+			} finally {
+				inspection.close();
+			}
 		} finally {
 			alice.shutdown();
 			bob.shutdown();
