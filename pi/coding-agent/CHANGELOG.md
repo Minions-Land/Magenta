@@ -4,7 +4,7 @@ All notable changes to Magenta CLI are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## [Unreleased]
+## [0.0.23] - 2026-07-16
 
 ### Security
 - The public `sub_agent` workflow schema no longer exposes or accepts model-authored inline JavaScript; trusted programmatic script workflows remain internal to the Harness
