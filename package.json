@@ -14,7 +14,7 @@
 	],
 	"scripts": {
 		"clean": "npm run clean --workspaces",
-		"build": "npm run build -w @earendil-works/pi-ai -w @earendil-works/pi-agent-core -w @earendil-works/pi-tui -w @magenta/harness -w @magenta/memory -w @earendil-works/pi-coding-agent",
+		"build": "npm run build -w @earendil-works/pi-ai && npm run build -w @earendil-works/pi-agent-core && npm run build -w @earendil-works/pi-tui && npm run build -w @magenta/harness && npm run build -w @magenta/memory && npm run build -w @earendil-works/pi-coding-agent",
 		"sync-brand": "node scripts/sync-brand.mjs",
 		"check:docs": "node --test scripts/check-docs.test.mjs && node scripts/check-docs.mjs",
 		"check": "npm run check:docs && biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:ts-imports && npm run check:shrinkwrap && node scripts/tsc.mjs --noEmit && npm run check:browser-smoke",

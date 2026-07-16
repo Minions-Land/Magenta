@@ -10,6 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - The public `sub_agent` workflow schema no longer exposes or accepts model-authored inline JavaScript; trusted programmatic script workflows remain internal to the Harness
 
 ### Fixed
+- Source builds prefer freshly compiled process-tools, fall back to the checked-in platform binary only when Cargo is unavailable, and stop the root workspace build at the first failed package
 - Multi-agent `sub_agent` start results wrap footer text to the available terminal width instead of returning embedded newlines that can crash the TUI
 - The TUI contains malformed or over-width ordinary frame lines across first, full, and differential renders, preserves image and cursor control sequences, and leaves render caches unchanged when strict validation fails
 - Tool activity galleries, floating windows, rich-content links, and narrow animated components keep every physical output line within the requested width

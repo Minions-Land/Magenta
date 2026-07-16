@@ -8,7 +8,7 @@ it records the supported arguments and composes prerequisite steps.
 
 | Command | Purpose |
 |---|---|
-| `npm run build` | Build Pi, Harness, memory, and the coding-agent in dependency order |
+| `npm run build` | Build Pi, Harness, memory, and the coding-agent in dependency order, stopping at the first failed workspace |
 | `npm run check:docs` | Test the documentation checker, then validate maintained Markdown links, anchors, fences, commands, and drift rules |
 | `npm run check` | Run the documentation gate, format/lint, validate pinned dependencies/imports/shrinkwrap, type-check, and run the browser smoke build |
 | `npm run test` | Run every workspace test script |

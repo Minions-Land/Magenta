@@ -24,18 +24,18 @@ function getHarnessRoot(): string {
 
 // 确定当前平台的二进制文件名
 function getEmbeddedBinaryName(): string {
-	if (PLATFORM === "darwin") {
-		return ARCH === "arm64" ? "magenta-process-tools-macos-arm64" : "magenta-process-tools-macos-x64";
-	} else if (PLATFORM === "linux") {
-		return "magenta-process-tools-linux-x64";
-	} else if (PLATFORM === "win32") {
-		return "magenta-process-tools-windows-x64.exe";
-	}
-	throw new Error(`Unsupported platform: ${PLATFORM} ${ARCH}`);
+	if (PLATFORM === "darwin" && ARCH === "arm64") return "magenta-process-tools-macos-arm64";
+	if (PLATFORM === "darwin" && ARCH === "x64") return "magenta-process-tools-macos-x64";
+	if (PLATFORM === "linux" && ARCH === "x64") return "magenta-process-tools-linux-x64";
+	if (PLATFORM === "win32" && ARCH === "x64") return "magenta-process-tools-windows-x64.exe";
+	throw new Error(`Unsupported process-tools platform: ${PLATFORM} ${ARCH}`);
 }
 
 // 动态导入嵌入的二进制（编译时条件导入）
 function getEmbeddedBinaryPath(): string | null {
+	const isBunBinary = typeof (globalThis as any).Bun !== "undefined" && HcpClientisbunbinaryurl(import.meta.url);
+	if (!isBunBinary) return null;
+
 	try {
 		// Bun 编译时，会根据 target 平台只打包对应的二进制
 		// 这里的路径会在编译时被解析为虚拟路径
@@ -69,24 +69,26 @@ const CACHE_BINARY_PATH = join(CACHE_DIR, PLATFORM === "win32" ? "magenta-proces
  * 3. 返回缓存路径
  *
  * 如果是开发环境：
- * 返回相对于当前目录的预编译二进制路径
+ * 优先返回本地构建目标，不存在时回退到当前平台的预编译二进制
  */
-export function getProcessToolsBinaryPath(): string {
+export function getProcessToolsBinaryPath(harnessRoot = getHarnessRoot()): string {
 	const embeddedPath = getEmbeddedBinaryPath();
 
-	// 开发环境或非嵌入场景，直接返回 prebuilt 目录的路径
+	// 开发环境优先使用 Cargo 或构建回退准备好的 canonical target。
 	if (!embeddedPath) {
-		const devPath = join(getHarnessRoot(), "_magenta/process-tools/prebuilt", getEmbeddedBinaryName());
-		if (existsSync(devPath)) {
-			return devPath;
-		}
-
-		// Fallback 到 target/release（本地编译）
 		const releasePath = join(
-			getHarnessRoot(),
+			harnessRoot,
 			"_magenta/process-tools/target/release",
 			PLATFORM === "win32" ? "magenta-process-tools.exe" : "magenta-process-tools",
 		);
+		if (existsSync(releasePath)) {
+			return releasePath;
+		}
+
+		const prebuiltPath = join(harnessRoot, "_magenta/process-tools/prebuilt", getEmbeddedBinaryName());
+		if (existsSync(prebuiltPath)) {
+			return prebuiltPath;
+		}
 		return releasePath;
 	}
 
