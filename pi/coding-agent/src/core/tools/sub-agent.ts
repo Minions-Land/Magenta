@@ -1,4 +1,5 @@
 import { type ChildProcess, type SpawnOptions, spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { createWriteStream, type WriteStream } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -22,12 +23,12 @@ import {
 	timestampForFile,
 	truncateModelText,
 	truncateTail,
+	Utf8TailDecoder,
 } from "../background-shell-utils.ts";
 import type { ExtensionContext, ToolDefinition } from "../extensions/types.ts";
 import type { ExternalActivationReceipt } from "../external-activation-coordinator.ts";
 
-const WORK_DIR = join(getAgentDir(), "tmp", "sub-agents");
-const MAIN_PROGRESS_PATH = join(WORK_DIR, "main-tool-progress.md");
+const WORK_DIR_ROOT = join(getAgentDir(), "tmp", "sub-agents");
 const TERM_GRACE_MS = 3000;
 /**
  * Cap on how many finished (non-running) sub-agent events are retained.
@@ -43,7 +44,15 @@ const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "ma
 const DELEGATION_LEASE_NOTICE =
 	"Delegation soft lease active for each running event: do not duplicate its scope. Continue only non-overlapping work, coordination, or integration preparation; after a terminal result, synthesize and independently verify it.";
 
-type AgentStatus = "running" | "exited" | "failed" | "timed_out" | "cancelled";
+type AgentStatus = "running" | "terminating" | "exited" | "failed" | "timed_out" | "cancelled";
+type RequestedTerminalStatus = Extract<AgentStatus, "failed" | "timed_out" | "cancelled">;
+type SubAgentOutputStream = "stdout" | "stderr" | "single";
+
+type TerminationRequest = {
+	status: RequestedTerminalStatus;
+	error: string;
+	signal: NodeJS.Signals | null;
+};
 type Action = "start" | "status" | "wait" | "cancel" | "config";
 type ThinkingLevel = (typeof THINKING_LEVELS)[number];
 type ReturnDelivery = "steer" | "followUp" | "nextTurn";
@@ -115,11 +124,14 @@ type SubAgentEvent = {
 	signal: NodeJS.Signals | null;
 	error?: string;
 	tail: string;
+	outputDecoders: Record<SubAgentOutputStream, Utf8TailDecoder>;
 	lastActivityAt: number;
 	lastOutputAt?: number;
 	lastProgressAt?: number;
 	activityPhase: string;
 	timeout?: NodeJS.Timeout;
+	graceKillTimer?: NodeJS.Timeout;
+	terminationRequest?: TerminationRequest;
 	waiters: Array<() => void>;
 	/**
 	 * True while a returnToMain auto-delivery is still pending for this event.
@@ -153,9 +165,9 @@ export type SubAgentReturnMessage<T = unknown> = {
 };
 
 /**
- * Register a completed batch's fully-formed return message with the scheduling
- * external-activation coordinator. It coalesces the typed payload and reports
- * persistence or rollback through one receipt.
+ * Register one completed event's return message with the scheduling external-
+ * activation coordinator. Independent records may still be coalesced into one
+ * delivery turn by the coordinator.
  */
 export type SubAgentRegisterReturn = (
 	eventIds: string[],
@@ -223,10 +235,9 @@ const WorkflowSlotSchema = Type.Object({
 });
 
 /**
- * A workflow orchestrates sessionless, one-shot workers. Named presets have
- * fixed runtime-owned control flow and expose task-content slots. The `script`
- * pattern instead lets the script author own if/while/await flow while the
- * runtime retains worker spawning, guards, denial, timeout, and cancellation.
+ * A workflow orchestrates sessionless, one-shot workers. Public tool calls may
+ * select only runtime-owned named presets and supply their task-content slots.
+ * Trusted harness callers retain the separate programmatic script capability.
  * Which slot fields apply depends on `pattern`; unused slots are ignored.
  */
 const WorkflowSchema = Type.Object({
@@ -238,24 +249,10 @@ const WorkflowSchema = Type.Object({
 			"generate_and_filter",
 			"tournament",
 			"loop_until_done",
-			"script",
 		] as const,
 		{
-			description:
-				'Which orchestration to run. Six named presets are ready-made templates for common shapes; use "script" to author your own workflow inline via the `script` field when none of the presets fit.',
+			description: "Which runtime-owned orchestration preset to run.",
 		},
-	),
-	script: Type.Optional(
-		Type.String({
-			description:
-				'For pattern="script": the workflow source as a JavaScript ES module. Must `export default async (args, ctx) => { ... }`. Compose the run with the injected `ctx` primitives: ctx.agent(prompt, opts) spawns one agent (returns { text, structured, success, ... }); ctx.parallelAgents(tasks[], maxConcurrent) runs task thunks in parallel (input order); ctx.pipeline(items[], fn, maxConcurrent) stream-processes items (completion order); ctx.phase(name) and ctx.log(msg) are observability; ctx.guards holds reusable system-prompt guard atoms (e.g. ctx.guards.verifier, ctx.guards.synthesizer); ctx.signal is the abort signal. Own termination in code (a cap or a no-new-findings round), never let a worker declare itself done. Return either a plain value (wrapped as the outcome) or an envelope with any of { outcome, confidence, finalists, iterations, terminatedBy }.',
-		}),
-	),
-	args: Type.Optional(
-		Type.Unknown({
-			description:
-				'For pattern="script": arguments passed as the first parameter to the workflow\'s default function.',
-		}),
 	),
 	name: Type.Optional(
 		Type.String({ description: "Human-readable name shown in /events. Defaults to the pattern name." }),
@@ -378,6 +375,30 @@ function positiveNumber(value: unknown): number | undefined {
 	return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
 }
 
+async function openLogStream(path: string): Promise<WriteStream> {
+	const log = createWriteStream(path, { flags: "a" });
+	// Keep a permanent listener installed so a later filesystem failure cannot
+	// become an uncaught EventEmitter "error". Event-specific listeners below
+	// still turn such failures into terminal event state.
+	log.on("error", () => {});
+	return new Promise((resolveOpen, rejectOpen) => {
+		const onOpen = () => {
+			cleanup();
+			resolveOpen(log);
+		};
+		const onError = (error: Error) => {
+			cleanup();
+			rejectOpen(error);
+		};
+		const cleanup = () => {
+			log.off("open", onOpen);
+			log.off("error", onError);
+		};
+		log.once("open", onOpen);
+		log.once("error", onError);
+	});
+}
+
 function normalizePackageSelectors(values: string[] | undefined): string[] {
 	return values?.map((selector) => selector.trim()).filter((selector) => selector.length > 0) ?? [];
 }
@@ -412,12 +433,37 @@ function formatConfig(config: SubAgentConfig): string {
 	].join("\n");
 }
 
-function appendTail(event: SubAgentEvent, data: Buffer): void {
-	event.tail = appendTailText(event.tail, data);
-	if (data.toString("utf8").trim().length > 0) {
+function isEventActive(event: SubAgentEvent): boolean {
+	return event.status === "running" || event.status === "terminating";
+}
+
+function createOutputDecoders(): Record<SubAgentOutputStream, Utf8TailDecoder> {
+	return {
+		stdout: new Utf8TailDecoder(),
+		stderr: new Utf8TailDecoder(),
+		single: new Utf8TailDecoder(),
+	};
+}
+
+function appendDecodedOutput(event: SubAgentEvent, decoded: string, writeLog: boolean): void {
+	if (!decoded) return;
+	if (writeLog && !event.log.writableEnded && !event.log.destroyed) event.log.write(decoded);
+	event.tail = appendTailText(event.tail, Buffer.from(decoded, "utf8"));
+	if (decoded.trim().length > 0) {
 		const now = Date.now();
 		event.lastOutputAt = now;
 		event.lastActivityAt = now;
+	}
+}
+
+function appendOutput(event: SubAgentEvent, stream: SubAgentOutputStream, data: Buffer, writeLog = true): void {
+	if (!isEventActive(event)) return;
+	appendDecodedOutput(event, event.outputDecoders[stream].write(data), writeLog);
+}
+
+function flushOutput(event: SubAgentEvent): void {
+	for (const decoder of Object.values(event.outputDecoders)) {
+		appendDecodedOutput(event, decoder.end(), true);
 	}
 }
 
@@ -453,15 +499,32 @@ function killTarget(
 }
 
 /**
- * Terminate an event now (SIGTERM / abort) and escalate to SIGKILL after the
- * grace period. Captures child/abort up front because finishEvent() releases
- * event.child, and unref()s the escalation timer so a promptly-exiting process
- * cannot keep the event (or process entry) pinned.
+ * Request termination without releasing the delegation lease. The event stays
+ * active until its child or workflow provider actually settles.
  */
-function terminateWithGrace(event: SubAgentEvent): void {
+function requestTermination(event: SubAgentEvent, request: TerminationRequest): boolean {
+	if (!isEventActive(event) || event.terminationRequest) return false;
+
+	event.status = "terminating";
+	event.terminationRequest = request;
+	event.activityPhase = "terminating";
+	if (event.timeout !== undefined) clearTimeout(event.timeout);
+	event.timeout = undefined;
+
 	const { kind, child, abort } = event;
+	if (kind === "agent") {
+		const graceKillTimer = setTimeout(() => {
+			if (event.graceKillTimer === graceKillTimer) event.graceKillTimer = undefined;
+			killTarget(kind, child, abort, "SIGKILL");
+		}, TERM_GRACE_MS);
+		event.graceKillTimer = graceKillTimer;
+		graceKillTimer.unref();
+	}
+	// Install the escalation timer before signaling: ChildProcess.kill() may emit
+	// an "error" synchronously, and termination must still retain its child and
+	// lease until the corresponding close event proves the process settled.
 	killTarget(kind, child, abort, "SIGTERM");
-	setTimeout(() => killTarget(kind, child, abort, "SIGKILL"), TERM_GRACE_MS).unref();
+	return true;
 }
 
 function finishEvent(
@@ -471,21 +534,38 @@ function finishEvent(
 	signal: NodeJS.Signals | null,
 	error?: string,
 ): void {
-	if (event.status !== "running") return;
+	if (!isEventActive(event)) return;
 
+	flushOutput(event);
 	event.status = status;
 	event.exitCode = exitCode;
 	event.signal = signal;
 	event.error = error;
 	event.endedAt = Date.now();
-	if (event.timeout) clearTimeout(event.timeout);
+	if (event.timeout !== undefined) clearTimeout(event.timeout);
+	event.timeout = undefined;
+	if (event.graceKillTimer !== undefined) clearTimeout(event.graceKillTimer);
+	event.graceKillTimer = undefined;
 	if (!event.log.writableEnded && !event.log.destroyed) event.log.end();
-	// Release the ChildProcess reference (and its attached listeners) so a retained
-	// finished event no longer pins the process object.
+	// Release live process/cancellation references once terminal so retained
+	// events do not pin resources or expose stale cancellation state.
 	event.child = undefined;
+	event.abort = undefined;
+	event.terminationRequest = undefined;
 
 	const waiters = event.waiters.splice(0);
 	for (const resolveWaiter of waiters) resolveWaiter();
+}
+
+function finishSettledEvent(
+	event: SubAgentEvent,
+	status: AgentStatus,
+	exitCode: number | null,
+	signal: NodeJS.Signals | null,
+	error?: string,
+): void {
+	const requested = event.terminationRequest;
+	finishEvent(event, requested?.status ?? status, exitCode, requested?.signal ?? signal, requested?.error ?? error);
 }
 
 function summarizeEvent(
@@ -664,6 +744,7 @@ function summarizeWorkflowEvent(
 			);
 			lines.push(
 				"",
+				"Result:",
 				...(output.truncated
 					? [`[Result shortened to last ${outputLimitBytes} bytes; full result remains in the log]`]
 					: []),
@@ -687,32 +768,27 @@ function summarizeWorkflowEvent(
  * validates required slots per pattern and rejects malformed requests.
  */
 export function buildOrchestrationRequest(input: WorkflowInput): MultiAgentOrchestrationRequest {
-	// Inline "script" workflow: the model supplies JS ES-module source directly.
-	// Encode it as a data: URL so the orchestrator's dynamic import(scriptPath)
-	// loads it with zero disk I/O and no runtime transpiler — the runtime only
-	// consumes JavaScript, so the inline source must be plain JS.
-	if (input.pattern === "script") {
-		const { name: _name, script, args, ...rest } = input as WorkflowInput & { script?: string; args?: unknown };
-		if (typeof script !== "string" || script.trim().length === 0) {
-			throw new Error('workflow pattern "script" requires a non-empty `script` (JavaScript ES module source)');
-		}
-		const scriptPath = `data:text/javascript;base64,${Buffer.from(script, "utf8").toString("base64")}`;
-		return { ...rest, pattern: "script", scriptPath, args } as unknown as MultiAgentOrchestrationRequest;
+	// The harness retains trusted programmatic script workflows, but this facade
+	// accepts model-authored tool input. Never turn that input into executable
+	// module source in the main process, even if a caller bypasses the schema.
+	if ((input as { pattern?: string }).pattern === "script") {
+		throw new Error('workflow pattern "script" is not accepted by the sub_agent tool');
 	}
 	// Tool-only keys that either map to a differently-named contract field
-	// (below) or are not part of the contract at all (`name`, and the
-	// script-only `script`/`args` which never apply to a preset).
+	// (below) or must never pass through from a schema-bypassing caller.
 	const {
 		name: _name,
 		script: _script,
 		args: _args,
+		scriptPath: _scriptPath,
 		threshold,
 		candidateCount,
 		topK,
 		...rest
 	} = input as WorkflowInput & {
-		script?: string;
+		script?: unknown;
 		args?: unknown;
+		scriptPath?: unknown;
 	};
 	const request = { ...rest } as Record<string, unknown>;
 	// adversarial_verify: tool `threshold` -> contract `confidenceThreshold`.
@@ -759,7 +835,7 @@ function waitForEvent(
 	timeoutSeconds: number | undefined,
 	signal: AbortSignal | undefined,
 ): Promise<"done" | "timeout" | "aborted"> {
-	if (event.status !== "running") return Promise.resolve("done");
+	if (!isEventActive(event)) return Promise.resolve("done");
 	if (signal?.aborted) return Promise.resolve("aborted");
 
 	return new Promise((resolveWait) => {
@@ -791,9 +867,14 @@ function waitForEvent(
 export class SubAgentController {
 	private nextAgentNumber = 1;
 	private shuttingDown = false;
+	private shutdownGeneration = 0;
+	private reservedStarts = 0;
 	private events = new Map<string, SubAgentEvent>();
 	private maxRetainedFinishedEvents = MAX_RETAINED_FINISHED_EVENTS;
 	private mainToolProgress = new Map<string, MainToolProgress>();
+	private readonly workDir: string;
+	private readonly mainProgressPath: string;
+	private progressWriteChain: Promise<void> = Promise.resolve();
 	private config: SubAgentConfig = {
 		defaultReturnToMain: true,
 		defaultReturnDelivery: "followUp",
@@ -823,8 +904,13 @@ export class SubAgentController {
 			isWorkflowEnabled?: () => boolean;
 			/** Override the finished-event retention cap (primarily for tests). */
 			maxRetainedFinishedEvents?: number;
+			/** Override the namespace root (primarily for embedders and tests). */
+			workDirRoot?: string;
 		},
 	) {
+		const controllerToken = `${process.pid}-${randomUUID()}`;
+		this.workDir = join(options.workDirRoot ?? WORK_DIR_ROOT, controllerToken);
+		this.mainProgressPath = join(this.workDir, "main-tool-progress.md");
 		this.registerReturn = options.registerReturn;
 		this.cancelReturn = options.cancelReturn;
 		this.spawnAgent = options.spawnAgent ?? spawn;
@@ -897,7 +983,7 @@ export class SubAgentController {
 			name: "sub_agent",
 			label: "Sub Agent",
 			description: workflowsEnabled
-				? `Start, inspect, wait for, or cancel sessionless, one-shot ${APP_NAME} workers whose results return to the parent. Use teammate_agent instead when retained context, iterative follow-up, or explicit ownership requires a long-lived managed child session. action=start accepts one task, a parallel tasks array, or a workflow object. A workflow orchestrates the same sessionless workers: six named presets (classify_and_act, fan_out_synthesize, adversarial_verify, generate_and_filter, tournament, loop_until_done) use fixed runtime-owned control flow, while pattern="script" lets the script author own if/while/await flow through runtime-controlled primitives. Set returnToMain=true to return completed results automatically. Workers are read-only by default, inherit the parent model unless overridden, run with --no-session --no-extensions, and receive parent progress.`
+				? `Start, inspect, wait for, or cancel sessionless, one-shot ${APP_NAME} workers whose results return to the parent. Use teammate_agent instead when retained context, iterative follow-up, or explicit ownership requires a long-lived managed child session. action=start accepts one task, a parallel tasks array, or a workflow object. A workflow orchestrates the same sessionless workers through one of six named presets (classify_and_act, fan_out_synthesize, adversarial_verify, generate_and_filter, tournament, loop_until_done) with fixed runtime-owned control flow. Set returnToMain=true to return completed results automatically. Workers are read-only by default, inherit the parent model unless overridden, run with --no-session --no-extensions, and receive parent progress.`
 				: `Start, inspect, wait for, or cancel sessionless, one-shot ${APP_NAME} workers whose results return to the parent. Use teammate_agent instead when retained context, iterative follow-up, or explicit ownership requires a long-lived managed child session. action=start accepts one task or a parallel tasks array. Set returnToMain=true to return completed results automatically. Workers are read-only by default, inherit the parent model unless overridden, run with --no-session --no-extensions, and receive parent progress.`,
 			promptSnippet: `Run one or more sessionless, one-shot ${APP_NAME} workers for bounded delegation`,
 			promptGuidelines: [
@@ -914,7 +1000,6 @@ export class SubAgentController {
 				...(workflowsEnabled
 					? [
 							"Use a workflow object when a bounded task needs orchestration over sessionless one-shot workers rather than only independent parallel tasks. Named presets provide fixed runtime-owned control flow; you supply their task slots. A workflow appears as one background event whose expansion reveals its workers.",
-							'Reach for a named preset first. When none fits, use pattern="script" and author the workflow yourself: `script` is a JS ES module that does `export default async (args, ctx) => { ... }`. The script author owns if/while/await flow and termination, but must spawn work only through injected primitives (ctx.agent, ctx.parallelAgents, ctx.pipeline), leaving routing, depth guard, tool denial, timeouts, guard injection, and cancellation under runtime control. Separate producer and grader roles, compute verdicts in code, and cap termination explicitly. The runtime consumes JavaScript, not TypeScript; pass runtime inputs via `args`.',
 						]
 					: []),
 			],
@@ -928,7 +1013,7 @@ export class SubAgentController {
 		if (event.type === "agent_start") {
 			this.shuttingDown = false;
 			this.mainToolProgress.clear();
-			this.writeMainProgressSnapshot();
+			void this.writeMainProgressSnapshot().catch(() => undefined);
 			return;
 		}
 		if (event.type === "tool_execution_start") {
@@ -942,7 +1027,7 @@ export class SubAgentController {
 				updatedAt: now,
 			});
 			this.pruneMainToolProgress();
-			this.writeMainProgressSnapshot();
+			void this.writeMainProgressSnapshot().catch(() => undefined);
 			return;
 		}
 		if (event.type === "tool_execution_update") {
@@ -958,13 +1043,13 @@ export class SubAgentController {
 					startedAt: now,
 					updatedAt: now,
 				});
-				this.writeMainProgressSnapshot();
+				void this.writeMainProgressSnapshot().catch(() => undefined);
 				return;
 			}
 			existing.args = event.args ?? existing.args;
 			existing.partialResult = event.partialResult;
 			existing.updatedAt = Date.now();
-			this.writeMainProgressSnapshot();
+			void this.writeMainProgressSnapshot().catch(() => undefined);
 			return;
 		}
 		if (event.type === "tool_execution_end") {
@@ -983,18 +1068,62 @@ export class SubAgentController {
 				endedAt: now,
 			});
 			this.pruneMainToolProgress();
-			this.writeMainProgressSnapshot();
+			void this.writeMainProgressSnapshot().catch(() => undefined);
 		}
 	}
 
 	shutdown(): void {
 		this.shuttingDown = true;
+		this.shutdownGeneration += 1;
 		for (const event of this.events.values()) {
-			if (event.status !== "running") continue;
-			terminateWithGrace(event);
-			finishEvent(event, "cancelled", null, "SIGTERM", "Cancelled by session shutdown");
+			if (!isEventActive(event)) continue;
+			if (event.autoReturnPending) {
+				event.autoReturnPending = false;
+				this.cancelReturn([event.id]);
+			}
+			requestTermination(event, {
+				status: "cancelled",
+				error: "Cancelled by session shutdown",
+				signal: "SIGTERM",
+			});
 		}
 		this.monitor.update();
+	}
+
+	private assertStartAllowed(signal: AbortSignal | undefined, generation = this.shutdownGeneration): void {
+		if (signal?.aborted) throw new Error("sub_agent start was aborted");
+		if (this.shuttingDown || generation !== this.shutdownGeneration) {
+			throw new Error("sub_agent controller is shutting down or interrupted the start");
+		}
+	}
+
+	private reserveStartSlots(
+		count: number,
+		signal: AbortSignal | undefined,
+	): { consume: () => void; release: () => void; generation: number } {
+		const generation = this.shutdownGeneration;
+		this.assertStartAllowed(signal, generation);
+		const running = [...this.events.values()].filter(isEventActive).length;
+		const occupied = running + this.reservedStarts;
+		if (occupied + count > MAX_START_MANY) {
+			throw new Error(
+				`Cannot start ${count} sub-agent(s): ${running} running, ${this.reservedStarts} starting, and the limit is ${MAX_START_MANY}. Wait or cancel some before starting more.`,
+			);
+		}
+		this.reservedStarts += count;
+		let remaining = count;
+		return {
+			generation,
+			consume: () => {
+				if (remaining <= 0) throw new Error("sub_agent start reservation was over-consumed");
+				remaining -= 1;
+				this.reservedStarts -= 1;
+			},
+			release: () => {
+				this.reservedStarts -= remaining;
+				remaining = 0;
+			},
+		};
 	}
 
 	private async execute(params: SubAgentInput, signal: AbortSignal | undefined, ctx: ExtensionContext) {
@@ -1016,7 +1145,7 @@ export class SubAgentController {
 		}
 
 		if (action === "start") {
-			return this.start(params, ctx, returnToMain, returnDelivery, returnInstruction);
+			return this.start(params, signal, ctx, returnToMain, returnDelivery, returnInstruction);
 		}
 		if (action === "status") {
 			return this.status(params);
@@ -1033,27 +1162,70 @@ export class SubAgentController {
 
 	private async start(
 		params: SubAgentInput,
+		signal: AbortSignal | undefined,
 		ctx: ExtensionContext,
 		returnToMain: boolean,
 		returnDelivery: ReturnDelivery,
 		returnInstruction: string | undefined,
 	) {
-		// Workflow branch: one orchestration over sessionless workers. Named presets
-		// own fixed control flow; scripts own their flow through runtime-controlled
-		// primitives. This facade manages either form as one background event and
-		// reuses the same return-to-main auto-continuation.
+		const hasSingle = Boolean(params.task);
+		const hasTasks = Boolean(params.tasks?.length);
+		if (!params.workflow && hasSingle === hasTasks) {
+			throw new Error("sub_agent action=start requires exactly one of task or tasks");
+		}
+		const requestedSlots = params.workflow ? 1 : hasTasks ? params.tasks!.length : 1;
+		if (requestedSlots > MAX_START_MANY) {
+			throw new Error(`sub_agent action=start supports at most ${MAX_START_MANY} tasks`);
+		}
+		const reservation = this.reserveStartSlots(requestedSlots, signal);
+		try {
+			return await this.startReserved(
+				params,
+				signal,
+				ctx,
+				returnToMain,
+				returnDelivery,
+				returnInstruction,
+				reservation.consume,
+				reservation.generation,
+			);
+		} finally {
+			reservation.release();
+		}
+	}
+
+	private async startReserved(
+		params: SubAgentInput,
+		signal: AbortSignal | undefined,
+		ctx: ExtensionContext,
+		returnToMain: boolean,
+		returnDelivery: ReturnDelivery,
+		returnInstruction: string | undefined,
+		consumeReservation: () => void,
+		startGeneration: number,
+	) {
+		// A workflow is represented by one background event and reuses the same
+		// return-to-main auto-continuation as a plain worker batch.
 		if (params.workflow) {
 			if (!this.isWorkflowEnabled()) {
 				throw new Error("sub_agent workflows are disabled for the current execution profile");
 			}
-			const running = [...this.events.values()].filter((event) => event.status === "running").length;
+			const running = [...this.events.values()].filter(isEventActive).length;
 			if (running + 1 > MAX_START_MANY) {
 				throw new Error(
 					`Cannot start a workflow: ${running} already running and the limit is ${MAX_START_MANY}. Wait or cancel some before starting more.`,
 				);
 			}
 			const workflowPackages = normalizePackageSelectors(params.workflow.packages ?? params.packages);
-			const event = this.startWorkflow({ ...params.workflow, packages: workflowPackages } as WorkflowInput, ctx.cwd);
+			const timeoutSeconds = positiveNumber(params.timeoutSeconds) ?? this.config.defaultTimeoutSeconds;
+			const event = await this.startWorkflow(
+				{ ...params.workflow, packages: workflowPackages } as WorkflowInput,
+				ctx.cwd,
+				signal,
+				timeoutSeconds,
+				consumeReservation,
+				startGeneration,
+			);
 			if (returnToMain) this.scheduleReturnToMain([event], returnDelivery, returnInstruction);
 			this.monitor.update(ctx);
 			const content = truncateModelText(
@@ -1093,7 +1265,7 @@ export class SubAgentController {
 		}));
 		if (tasks.length > MAX_START_MANY)
 			throw new Error(`sub_agent action=start supports at most ${MAX_START_MANY} tasks`);
-		const running = [...this.events.values()].filter((event) => event.status === "running").length;
+		const running = [...this.events.values()].filter(isEventActive).length;
 		if (running + tasks.length > MAX_START_MANY) {
 			throw new Error(
 				`Cannot start ${tasks.length} sub-agent(s): ${running} already running and the limit is ${MAX_START_MANY}. Wait or cancel some before starting more.`,
@@ -1101,14 +1273,28 @@ export class SubAgentController {
 		}
 
 		const started: SubAgentEvent[] = [];
-		for (const task of tasks) started.push(await this.startSubAgent(task, ctx.cwd));
+		try {
+			for (const task of tasks) {
+				started.push(await this.startSubAgent(task, ctx.cwd, signal, consumeReservation, startGeneration));
+			}
+		} catch (error) {
+			for (const event of started) {
+				requestTermination(event, {
+					status: "cancelled",
+					error: "Cancelled because another batch member failed to start",
+					signal: "SIGTERM",
+				});
+			}
+			this.monitor.update(ctx);
+			throw error;
+		}
 		if (returnToMain) this.scheduleReturnToMain(started, returnDelivery, returnInstruction);
 		this.monitor.update(ctx);
 
 		if (started.length === 1) {
 			const event = started[0]!;
 			const content = truncateModelText(
-				`Started sub-agent ${event.id}${event.label ? ` (${event.label})` : ""}${returnToMain ? " with automatic return to main agent" : ""}\nRole: ${event.role ?? "general"}\nCWD: ${event.cwd}\nTools: ${event.tools.join(",")}\nPrompt: ${event.promptPath}\nLog: ${event.logPath}\nParent progress: ${MAIN_PROGRESS_PATH}\n${DELEGATION_LEASE_NOTICE}`,
+				`Started sub-agent ${event.id}${event.label ? ` (${event.label})` : ""}${returnToMain ? " with automatic return to main agent" : ""}\nRole: ${event.role ?? "general"}\nCWD: ${event.cwd}\nTools: ${event.tools.join(",")}\nPrompt: ${event.promptPath}\nLog: ${event.logPath}\nParent progress: ${this.mainProgressPath}\n${DELEGATION_LEASE_NOTICE}`,
 				MODEL_RESULT_LIMIT_BYTES,
 			).text;
 			return {
@@ -1123,7 +1309,7 @@ export class SubAgentController {
 					status: event.status,
 					promptPath: event.promptPath,
 					logPath: event.logPath,
-					parentProgressPath: MAIN_PROGRESS_PATH,
+					parentProgressPath: this.mainProgressPath,
 					returnsToMain: returnToMain,
 				},
 			};
@@ -1133,7 +1319,7 @@ export class SubAgentController {
 			(event) => `${event.id}\t${event.status}\t${event.label ?? event.role ?? "sub-agent"}\t${event.logPath}`,
 		);
 		const content = truncateModelText(
-			`Started ${started.length} sub-agents concurrently${returnToMain ? " with automatic return to main agent" : ""}:\n${lines.join("\n")}\nParent progress: ${MAIN_PROGRESS_PATH}\n${DELEGATION_LEASE_NOTICE}`,
+			`Started ${started.length} sub-agents concurrently${returnToMain ? " with automatic return to main agent" : ""}:\n${lines.join("\n")}\nParent progress: ${this.mainProgressPath}\n${DELEGATION_LEASE_NOTICE}`,
 			MODEL_RESULT_TOTAL_LIMIT_BYTES,
 		).text;
 		return {
@@ -1145,7 +1331,7 @@ export class SubAgentController {
 			],
 			details: {
 				ids: started.map((event) => event.id),
-				parentProgressPath: MAIN_PROGRESS_PATH,
+				parentProgressPath: this.mainProgressPath,
 				returnsToMain: returnToMain,
 			},
 		};
@@ -1162,7 +1348,7 @@ export class SubAgentController {
 			// If the model is shown a finished event's full result inline here, a
 			// pending returnToMain auto-delivery for it would be redundant — cancel
 			// it. Polling a still-running agent must not cancel.
-			if (includeOutput && event.status !== "running" && event.autoReturnPending) {
+			if (includeOutput && !isEventActive(event) && event.autoReturnPending) {
 				event.autoReturnPending = false;
 				this.cancelReturn([event.id]);
 			}
@@ -1199,7 +1385,7 @@ export class SubAgentController {
 		// turn. Events still running (e.g. we hit the wait timeout) keep their
 		// pending auto-return so they are delivered when they eventually complete.
 		for (const event of knownEvents) {
-			if (event.status !== "running" && event.autoReturnPending) {
+			if (!isEventActive(event) && event.autoReturnPending) {
 				event.autoReturnPending = false;
 				this.cancelReturn([event.id]);
 			}
@@ -1232,19 +1418,30 @@ export class SubAgentController {
 				lines.push(`Unknown sub-agent: ${id}`);
 				continue;
 			}
-			if (event.status !== "running") {
+			if (!isEventActive(event)) {
 				lines.push(`${event.id} already ${event.status}`);
 				continue;
 			}
+			if (event.status === "terminating") {
+				lines.push(`${event.id} cancellation already requested; soft lease remains active`);
+				continue;
+			}
 			this.cancelEvent(event.id, ctx);
-			lines.push(`${event.id} cancelled`);
+			lines.push(`${event.id} cancellation requested; soft lease remains active until it settles`);
 		}
 		const content = truncateModelText(lines.join("\n"), MODEL_RESULT_TOTAL_LIMIT_BYTES).text;
 		return { content: [{ type: "text" as const, text: content }], details: { ids } };
 	}
 
-	private async startSubAgent(input: AgentTask, parentCwd: string): Promise<SubAgentEvent> {
-		await mkdir(WORK_DIR, { recursive: true });
+	private async startSubAgent(
+		input: AgentTask,
+		parentCwd: string,
+		signal: AbortSignal | undefined,
+		consumeReservation: () => void,
+		startGeneration: number,
+	): Promise<SubAgentEvent> {
+		await mkdir(this.workDir, { recursive: true });
+		this.assertStartAllowed(signal, startGeneration);
 
 		const id = `agent_${String(this.nextAgentNumber++).padStart(3, "0")}`;
 		const cwd = resolve(parentCwd, input.cwd ?? ".");
@@ -1252,11 +1449,13 @@ export class SubAgentController {
 		const packages = normalizePackageSelectors(input.packages);
 		const thinking = input.thinking ?? DEFAULT_THINKING;
 		const stamp = timestampForFile();
-		const promptPath = join(WORK_DIR, `${id}-${stamp}.prompt.md`);
-		const logPath = join(WORK_DIR, `${id}-${stamp}.log`);
-		await writeFile(MAIN_PROGRESS_PATH, `${this.formatMainToolProgress()}\n`, "utf8");
+		const promptPath = join(this.workDir, `${id}-${stamp}.prompt.md`);
+		const logPath = join(this.workDir, `${id}-${stamp}.log`);
+		await this.writeMainProgressSnapshot();
+		this.assertStartAllowed(signal, startGeneration);
 		const prompt = this.buildPrompt(input, cwd, tools);
 		await writeFile(promptPath, prompt, "utf8");
+		this.assertStartAllowed(signal, startGeneration);
 
 		const args = ["--print", "--no-session", "--no-extensions", "--tools", tools.join(","), "--thinking", thinking];
 		// Packages are independent of extensions: --no-extensions above still stands,
@@ -1270,14 +1469,28 @@ export class SubAgentController {
 		if (model) args.push("--model", model);
 		args.push(`@${promptPath}`);
 
-		const log = createWriteStream(logPath, { flags: "a" });
+		const log = await openLogStream(logPath);
+		try {
+			this.assertStartAllowed(signal, startGeneration);
+		} catch (error) {
+			log.end();
+			throw error;
+		}
 		const invocation = this.resolveAgentInvocation(args);
-		const child = this.spawnAgent(invocation.command, invocation.args, {
-			cwd,
-			detached: true,
-			stdio: ["ignore", "pipe", "pipe"],
-			env: { ...process.env, PI_SUB_AGENT: "1" },
-		});
+		let child: ChildProcess | undefined;
+		try {
+			child = this.spawnAgent(invocation.command, invocation.args, {
+				cwd,
+				detached: true,
+				stdio: ["ignore", "pipe", "pipe"],
+				env: { ...process.env, PI_SUB_AGENT: "1" },
+			});
+			this.assertStartAllowed(signal, startGeneration);
+		} catch (error) {
+			if (child) killTarget("agent", child, undefined, "SIGTERM");
+			log.end();
+			throw error;
+		}
 
 		const startedAt = Date.now();
 		const event: SubAgentEvent = {
@@ -1301,39 +1514,54 @@ export class SubAgentController {
 			exitCode: null,
 			signal: null,
 			tail: "",
+			outputDecoders: createOutputDecoders(),
 			lastActivityAt: startedAt,
 			activityPhase: "agent",
 			waiters: [],
 		};
+		consumeReservation();
 		this.events.set(id, event);
 		this.monitor.update();
 		this.pruneFinishedEvents();
 
+		log.on("error", (error) => {
+			if (!isEventActive(event)) return;
+			requestTermination(event, {
+				status: "failed",
+				error: `Log stream failed: ${error.message}`,
+				signal: "SIGTERM",
+			});
+			this.monitor.update();
+		});
 		log.write(`$ ${invocation.command} ${invocation.args.map((arg) => JSON.stringify(arg)).join(" ")}\n\n`);
 		child.stdout?.on("data", (data: Buffer) => {
-			if (!log.writableEnded && !log.destroyed) log.write(data);
-			appendTail(event, data);
+			appendOutput(event, "stdout", data);
 			this.monitor.update();
 		});
 		child.stderr?.on("data", (data: Buffer) => {
-			if (!log.writableEnded && !log.destroyed) log.write(data);
-			appendTail(event, data);
+			appendOutput(event, "stderr", data);
 			this.monitor.update();
 		});
 		child.on("error", (error) => {
-			finishEvent(event, "failed", null, null, error.message);
+			// A pid-bearing child can emit "error" when a termination signal fails.
+			// Its close event remains the authority for process settlement. Spawn
+			// errors have no pid and preserve the existing immediate failure path.
+			if (event.status === "terminating" && child.pid) return;
+			finishSettledEvent(event, "failed", null, null, error.message);
 			this.monitor.update();
 		});
 		child.on("close", (code, closeSignal) => {
-			if (event.status === "timed_out" || event.status === "cancelled") return;
-			finishEvent(event, code === 0 ? "exited" : "failed", code, closeSignal);
+			finishSettledEvent(event, code === 0 ? "exited" : "failed", code, closeSignal);
 			this.monitor.update();
 		});
 
 		if (input.timeoutSeconds && input.timeoutSeconds > 0) {
 			event.timeout = setTimeout(() => {
-				terminateWithGrace(event);
-				finishEvent(event, "timed_out", null, "SIGTERM", `Timed out after ${input.timeoutSeconds}s`);
+				requestTermination(event, {
+					status: "timed_out",
+					error: `Timed out after ${input.timeoutSeconds}s`,
+					signal: "SIGTERM",
+				});
 				this.monitor.update();
 			}, input.timeoutSeconds * 1000);
 		}
@@ -1341,20 +1569,35 @@ export class SubAgentController {
 		return event;
 	}
 
-	private startWorkflow(input: WorkflowInput, parentCwd: string): SubAgentEvent {
+	private async startWorkflow(
+		input: WorkflowInput,
+		parentCwd: string,
+		signal: AbortSignal | undefined,
+		timeoutSeconds: number | undefined,
+		consumeReservation: () => void,
+		startGeneration: number,
+	): Promise<SubAgentEvent> {
 		const provider = this.getWorkflowProvider?.();
 		if (!provider) {
 			throw new Error("Multi-agent workflow capability is unavailable from the session HCP");
 		}
+		const cwd = resolve(parentCwd, ".");
+		const request = { ...buildOrchestrationRequest(input), cwd } as MultiAgentOrchestrationRequest;
+		await mkdir(this.workDir, { recursive: true });
+		this.assertStartAllowed(signal, startGeneration);
 
 		const id = `agent_${String(this.nextAgentNumber++).padStart(3, "0")}`;
-		const cwd = resolve(parentCwd, ".");
 		const stamp = timestampForFile();
-		const logPath = join(WORK_DIR, `${id}-${stamp}.workflow.log`);
-		const label = input.name?.trim() || (input.pattern === "script" ? "custom workflow" : input.pattern);
+		const logPath = join(this.workDir, `${id}-${stamp}.workflow.log`);
+		const label = input.name?.trim() || input.pattern;
 		const abort = new AbortController();
-		void mkdir(WORK_DIR, { recursive: true }).catch(() => undefined);
-		const log = createWriteStream(logPath, { flags: "a" });
+		const log = await openLogStream(logPath);
+		try {
+			this.assertStartAllowed(signal, startGeneration);
+		} catch (error) {
+			log.end();
+			throw error;
+		}
 
 		const startedAt = Date.now();
 		const event: SubAgentEvent = {
@@ -1377,24 +1620,45 @@ export class SubAgentController {
 			exitCode: null,
 			signal: null,
 			tail: "",
+			outputDecoders: createOutputDecoders(),
 			lastActivityAt: startedAt,
 			activityPhase: `workflow:${input.pattern}`,
 			waiters: [],
 		};
+		consumeReservation();
 		this.events.set(id, event);
 		this.monitor.update();
 		this.pruneFinishedEvents();
 
-		const request = { ...buildOrchestrationRequest(input), cwd } as MultiAgentOrchestrationRequest;
+		log.on("error", (error) => {
+			if (!isEventActive(event)) return;
+			requestTermination(event, {
+				status: "failed",
+				error: `Log stream failed: ${error.message}`,
+				signal: "SIGTERM",
+			});
+			this.monitor.update();
+		});
 		log.write(`# workflow ${input.pattern}${input.name ? ` (${input.name})` : ""}\n\n`);
 
-		void provider
-			.orchestrate(request, abort.signal)
+		if (timeoutSeconds) {
+			event.timeout = setTimeout(() => {
+				requestTermination(event, {
+					status: "timed_out",
+					error: `Timed out after ${timeoutSeconds}s`,
+					signal: "SIGTERM",
+				});
+				this.monitor.update();
+			}, timeoutSeconds * 1000);
+		}
+
+		void Promise.resolve()
+			.then(() => provider.orchestrate(request, abort.signal))
 			.then((result) => {
-				if (event.status !== "running") return;
+				if (!isEventActive(event)) return;
 				event.workflowResult = result;
 				const summary = formatWorkflowResult(result);
-				appendTail(event, Buffer.from(`${summary}\n`));
+				appendOutput(event, "single", Buffer.from(`${summary}\n`), false);
 				if (!log.writableEnded && !log.destroyed) {
 					let completeResult: string;
 					try {
@@ -1404,14 +1668,21 @@ export class SubAgentController {
 					}
 					log.write(`${completeResult}\n`);
 				}
-				finishEvent(event, "exited", 0, null);
+				const overallFailed = (result as MultiAgentOrchestrationResult & { success?: boolean }).success === false;
+				const outcomeFailed = result.outcome?.success === false;
+				const budgetFailed = result.terminatedBy === "budget";
+				const failed = overallFailed || outcomeFailed || budgetFailed;
+				const error = failed
+					? (result.outcome?.error ?? `Workflow reported failure (terminatedBy=${result.terminatedBy})`)
+					: undefined;
+				finishSettledEvent(event, failed ? "failed" : "exited", failed ? null : 0, null, error);
 				this.monitor.update();
 			})
 			.catch((error: unknown) => {
-				if (event.status !== "running") return;
+				if (!isEventActive(event)) return;
 				const message = error instanceof Error ? error.message : String(error);
 				const aborted = abort.signal.aborted;
-				finishEvent(event, aborted ? "cancelled" : "failed", null, aborted ? "SIGTERM" : null, message);
+				finishSettledEvent(event, aborted ? "cancelled" : "failed", null, aborted ? "SIGTERM" : null, message);
 				this.monitor.update();
 			});
 
@@ -1427,10 +1698,13 @@ export class SubAgentController {
 	private cancelEvent(id: string, ctx?: ExtensionContext): boolean {
 		const event = this.events.get(id);
 		if (!event || event.status !== "running") return false;
-		terminateWithGrace(event);
-		finishEvent(event, "cancelled", null, "SIGTERM", "Cancelled by background events UI");
+		const requested = requestTermination(event, {
+			status: "cancelled",
+			error: "Cancelled by background events UI",
+			signal: "SIGTERM",
+		});
 		this.monitor.update(ctx);
-		return true;
+		return requested;
 	}
 
 	/**
@@ -1441,7 +1715,7 @@ export class SubAgentController {
 	 */
 	private pruneFinishedEvents(): void {
 		const finished = [...this.events.values()].filter(
-			(event) => event.status !== "running" && event.waiters.length === 0 && !event.autoReturnPending,
+			(event) => !isEventActive(event) && event.waiters.length === 0 && !event.autoReturnPending,
 		);
 		if (finished.length <= this.maxRetainedFinishedEvents) return;
 		finished.sort((a, b) => (a.endedAt ?? a.startedAt) - (b.endedAt ?? b.startedAt));
@@ -1450,12 +1724,8 @@ export class SubAgentController {
 		}
 	}
 
-	private returnSubAgentResultsToMain(
-		completedEvents: SubAgentEvent[],
-		delivery: ReturnDelivery,
-		instruction?: string,
-	): void {
-		if (this.shuttingDown || completedEvents.length === 0) return;
+	private returnSubAgentResultToMain(event: SubAgentEvent, delivery: ReturnDelivery, instruction?: string): void {
+		if (this.shuttingDown || !event.autoReturnPending) return;
 
 		const defaultInstruction =
 			"Sub-agent work is terminal and its soft lease is released. Synthesize these results, independently verify them, and continue the original task. Do not ask the user to manually inspect event ids unless more information is needed.";
@@ -1466,45 +1736,32 @@ export class SubAgentController {
 			1024,
 			MODEL_RESULT_TOTAL_LIMIT_BYTES - Buffer.byteLength(boundedInstruction, "utf8") - separatorBytes,
 		);
+		const summary = summarizeSubAgentForModel(event, Math.min(MODEL_RESULT_LIMIT_BYTES, summaryBudget));
+		const content = truncateModelText(`${boundedInstruction}\n\n${summary}`, MODEL_RESULT_TOTAL_LIMIT_BYTES).text;
 
-		// Model context receives a bounded complete payload per event. Full captured
-		// tails stay in eventData for Ctrl+O and in each event log for inspection.
-		const perEventLimit = Math.min(
-			MODEL_RESULT_LIMIT_BYTES,
-			Math.max(1024, Math.floor(summaryBudget / completedEvents.length)),
-		);
-		const summaries = completedEvents
-			.map((event) => summarizeSubAgentForModel(event, perEventLimit))
-			.join("\n\n---\n\n");
-		const content = truncateModelText(`${boundedInstruction}\n\n${summaries}`, MODEL_RESULT_TOTAL_LIMIT_BYTES).text;
-		// Hand the fully-formed batch message to the scheduling layer keyed by the
-		// first event id. The coordinator coalesces it with other near-simultaneous
-		// returns (including bg_shell and other sub_agent batches) into one turn.
+		// Each event owns one independently cancellable coordinator record. The
+		// coordinator can still debounce several records into one continuation turn.
 		this.registerReturn(
-			completedEvents.map((event) => event.id),
+			[event.id],
 			{
 				customType: "sub-agent-return",
 				content,
 				display: true,
 				details: {
-					ids: completedEvents.map((event) => event.id),
-					statuses: completedEvents.map((event) => event.status),
-					// Instruction is stored separately so the renderer can regenerate the
-					// collapsed/expanded body without fragile content parsing.
+					ids: [event.id],
+					statuses: [event.status],
 					instruction: boundedInstruction,
-					// Plain-data snapshots so the renderer can regenerate collapsed/expanded
-					// views on ctrl+o without holding non-cloneable live event handles.
-					eventData: completedEvents.map((event) => serializableSubAgentSnapshot(event)),
+					eventData: [serializableSubAgentSnapshot(event)],
 				},
 			},
 			delivery,
 			{
 				onPersisted: () => {
-					for (const event of completedEvents) event.autoReturnPending = false;
+					event.autoReturnPending = false;
 					this.pruneFinishedEvents();
 				},
 				onDropped: () => {
-					for (const event of completedEvents) event.autoReturnPending = false;
+					event.autoReturnPending = false;
 					this.pruneFinishedEvents();
 				},
 			},
@@ -1516,20 +1773,15 @@ export class SubAgentController {
 		delivery: ReturnDelivery,
 		instruction?: string,
 	): void {
-		// Mark these events as awaiting an auto-return. If the model synchronously
-		// consumes their results this turn (action=wait / status), that handler
-		// clears the flag so we don't redundantly deliver + trigger another turn.
-		for (const event of completedEvents) event.autoReturnPending = true;
-		void (async () => {
-			for (const event of completedEvents) await waitForEvent(event, undefined, undefined);
-			// Yield once so a wait/status tool call resolving on the same tick as the
-			// final completion clears its flag before we read it (avoids a race where
-			// the auto-return still fires for the last-finishing event).
-			await Promise.resolve();
-			const pending = completedEvents.filter((event) => event.autoReturnPending);
-			if (pending.length === 0) return;
-			this.returnSubAgentResultsToMain(pending, delivery, instruction);
-		})().catch(() => undefined);
+		for (const event of completedEvents) {
+			event.autoReturnPending = true;
+			void (async () => {
+				await waitForEvent(event, undefined, undefined);
+				// Let an inline wait/status consumer clear this event's record first.
+				await Promise.resolve();
+				this.returnSubAgentResultToMain(event, delivery, instruction);
+			})().catch(() => undefined);
+		}
 	}
 
 	private formatMainToolProgress(): string {
@@ -1561,10 +1813,16 @@ export class SubAgentController {
 		for (const entry of entries.slice(60)) this.mainToolProgress.delete(entry.id);
 	}
 
-	private writeMainProgressSnapshot(): void {
-		void mkdir(WORK_DIR, { recursive: true })
-			.then(() => writeFile(MAIN_PROGRESS_PATH, `${this.formatMainToolProgress()}\n`, "utf8"))
-			.catch(() => undefined);
+	private writeMainProgressSnapshot(): Promise<void> {
+		const snapshot = `${this.formatMainToolProgress()}\n`;
+		const write = this.progressWriteChain.then(async () => {
+			await mkdir(this.workDir, { recursive: true });
+			await writeFile(this.mainProgressPath, snapshot, "utf8");
+		});
+		// Keep future writes moving after a failure while returning the current
+		// rejection to startup callers that require a usable configuration path.
+		this.progressWriteChain = write.catch(() => undefined);
+		return write;
 	}
 
 	private buildPrompt(input: AgentTask, cwd: string, tools: string[]): string {
@@ -1585,7 +1843,7 @@ ${input.task}
 Parent main-agent progress:
 ${progressSnapshot}
 
-${canReadProgress ? `The parent also writes a live progress file at ${MAIN_PROGRESS_PATH}. If your work depends on what the parent is doing now, read that file for a fresher snapshot before finalizing.` : `You do not have the read tool, so you only have the progress snapshot above.`}
+${canReadProgress ? `The parent also writes a live progress file at ${this.mainProgressPath}. If your work depends on what the parent is doing now, read that file for a fresher snapshot before finalizing.` : `You do not have the read tool, so you only have the progress snapshot above.`}
 
 Operating rules:
 - Work independently and stay narrowly focused on the task.

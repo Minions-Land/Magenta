@@ -2,7 +2,7 @@
  * Armin says hi! A fun easter egg with animated XBM art.
  */
 
-import type { Component, TUI } from "@earendil-works/pi-tui";
+import { type Component, type TUI, truncateToWidth } from "@earendil-works/pi-tui";
 import { theme } from "../theme/theme.ts";
 
 // XBM image: 31x36 pixels, LSB first, 1=background, 0=foreground
@@ -88,20 +88,18 @@ export class ArminComponent implements Component {
 			return this.cachedLines;
 		}
 
-		const padding = 1;
-		const availableWidth = width - padding;
+		const normalizedWidth = Math.max(0, width);
+		const padding = Math.min(1, normalizedWidth);
+		const availableWidth = normalizedWidth - padding;
+		const prefix = " ".repeat(padding);
 
 		this.cachedLines = this.currentGrid.map((row) => {
-			// Clip row to available width before applying color
-			const clipped = row.slice(0, availableWidth).join("");
-			const padRight = Math.max(0, width - padding - clipped.length);
-			return ` ${theme.fg("accent", clipped)}${" ".repeat(padRight)}`;
+			const clipped = truncateToWidth(row.join(""), availableWidth, "", true);
+			return `${prefix}${theme.fg("accent", clipped)}`;
 		});
 
-		// Add "ARMIN SAYS HI" at the end
-		const message = "ARMIN SAYS HI";
-		const msgPadRight = Math.max(0, width - padding - message.length);
-		this.cachedLines.push(` ${theme.fg("accent", message)}${" ".repeat(msgPadRight)}`);
+		const message = truncateToWidth("ARMIN SAYS HI", availableWidth, "", true);
+		this.cachedLines.push(`${prefix}${theme.fg("accent", message)}`);
 
 		this.cachedWidth = width;
 		this.cachedVersion = this.gridVersion;

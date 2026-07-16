@@ -562,6 +562,17 @@ export async function execProcess(input: ProcessExecInput, signal?: AbortSignal)
 			});
 		});
 
+		child.stdin.on("error", (error: NodeJS.ErrnoException) => {
+			// A short-lived command may exit successfully without reading stdin. The
+			// resulting asynchronous EPIPE must not escape as an uncaught exception;
+			// the child close status remains authoritative in that case.
+			if (error.code === "EPIPE" || settled) return;
+			settled = true;
+			if (timeout) clearTimeout(timeout);
+			signal?.removeEventListener("abort", onAbort);
+			child.kill();
+			reject(error);
+		});
 		child.stdin.end(input.stdin ?? JSON.stringify(input.stdin_json ?? {}));
 	});
 }

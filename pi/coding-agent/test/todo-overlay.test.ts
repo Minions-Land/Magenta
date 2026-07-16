@@ -1,5 +1,7 @@
+import { visibleWidth } from "@earendil-works/pi-tui";
 import type { TodoPlanState } from "@magenta/harness";
 import { beforeAll, describe, expect, it } from "vitest";
+import { renderFloatingWindow } from "../src/modes/interactive/components/floating-window.ts";
 import { TodoOverlay } from "../src/modes/interactive/components/todo-overlay.ts";
 import { initTheme, theme } from "../src/modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../src/utils/ansi.ts";
@@ -125,5 +127,51 @@ describe("TodoOverlay", () => {
 
 		expect(closed).toBe(1);
 		expect(emptyCurrent).toEqual(original);
+	});
+});
+
+describe("renderFloatingWindow", () => {
+	beforeAll(() => initTheme("dark"));
+
+	it("neutralizes embedded line endings without changing the frame height", () => {
+		const width = 64;
+		const lines = renderFloatingWindow({
+			theme,
+			width,
+			title: "Todo\r\nPlan",
+			subtitle: "current\nfollow-up",
+			body: [
+				theme.fg("error", "command failed\r\nfollow-up diagnostic"),
+				theme.fg("text", "node title\ncontinued\rtail"),
+			],
+			footer: "first action\rsecond action",
+		});
+
+		expect(lines).toHaveLength(6);
+		for (const line of lines) {
+			expect(line).not.toMatch(/[\r\n]/);
+			expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+		}
+
+		const plain = stripAnsi(lines.join("\n"));
+		expect(plain).toContain("Todo Plan");
+		expect(plain).toContain("current follow-up");
+		expect(plain).toContain("command failed follow-up diagnostic");
+		expect(plain).toContain("node title continued tail");
+		expect(plain).toContain("first action second action");
+	});
+
+	it("keeps later text in the narrow-width fallback", () => {
+		const width = 7;
+		const lines = renderFloatingWindow({
+			theme,
+			width,
+			title: "unused",
+			body: ["A\r\nB\nC\rD"],
+		});
+
+		expect(lines).toEqual(["A B C D"]);
+		expect(lines[0]).not.toMatch(/[\r\n]/);
+		expect(visibleWidth(lines[0]!)).toBeLessThanOrEqual(width);
 	});
 });

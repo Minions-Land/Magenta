@@ -233,9 +233,10 @@ is driven only by real activity and remains coalesced and rate-limited. `harness
 `harness.teammates`, and the matching CLI flags override those defaults in either
 direction; CLI flags have per-run precedence and do not change provider thinking.
 
-A workflow orchestrates bounded one-shot workers. Named presets have fixed
-runtime-owned control flow; `pattern="script"` gives the script author control
-of if/while/await flow and termination through runtime-controlled primitives.
+A workflow orchestrates bounded one-shot workers through named presets with
+fixed runtime-owned control flow. The public `sub_agent` tool does not execute
+model-authored inline JavaScript; trusted programmatic workflow modules remain
+an internal Harness capability.
 Use `teammate_agent` for a parent-managed, long-lived child when retained context
 or iterative assignments matter. For editing, `workspace="worktree"` creates a
 linked checkout under the current repository's parent-session-scoped

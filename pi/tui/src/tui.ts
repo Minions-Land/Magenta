@@ -515,6 +515,7 @@ export class TUI extends Container {
 	private hardwareCursorRow = 0; // Actual terminal cursor row (may differ due to IME positioning)
 	private showHardwareCursor = process.env.PI_HARDWARE_CURSOR === "1";
 	private clearOnShrink = process.env.PI_CLEAR_ON_SHRINK === "1"; // Clear empty rows when content shrinks (default: off)
+	private strictRenderValidation = false;
 	private maxLinesRendered = 0; // Track terminal's working area (max lines ever rendered)
 	private previousViewportTop = 0; // Track previous viewport top for resize-aware cursor moves
 	private previousFrameHadOverlays = false;
@@ -636,6 +637,11 @@ export class TUI extends Container {
 	 */
 	setClearOnShrink(enabled: boolean): void {
 		this.clearOnShrink = enabled;
+	}
+
+	/** Throw when a component emits line breaks or content wider than the terminal. */
+	setStrictRenderValidation(enabled: boolean): void {
+		this.strictRenderValidation = enabled;
 	}
 
 	setFocus(component: Component | null): void {
@@ -1369,6 +1375,35 @@ export class TUI extends Container {
 
 	private static readonly SEGMENT_RESET = "\x1b[0m\x1b]8;;\x07";
 
+	private containFrameLines(lines: string[], width: number): string[] {
+		for (let i = 0; i < lines.length; i++) {
+			const line = lines[i];
+			const imageLine = isImageLine(line);
+			const hasLineBreak = line.includes("\r") || line.includes("\n");
+			const containedLine = hasLineBreak ? line.replace(/\r\n|\r|\n/g, " ") : line;
+			const lineWidth = visibleWidth(containedLine);
+			const overWidth = !imageLine && lineWidth > width;
+			if (this.strictRenderValidation && (hasLineBreak || overWidth)) {
+				const violations: string[] = [];
+				if (hasLineBreak) violations.push("contains a CR or LF character");
+				if (overWidth) violations.push(`has visible width ${lineWidth}, terminal width is ${width}`);
+				throw new Error(`Rendered line ${i} violates frame constraints: ${violations.join("; ")}`);
+			}
+
+			if (!overWidth) {
+				lines[i] = containedLine;
+				continue;
+			}
+
+			const truncatedLine = sliceByColumn(containedLine, 0, width, true);
+			lines[i] =
+				containedLine.includes(CURSOR_MARKER) && !truncatedLine.includes(CURSOR_MARKER)
+					? truncatedLine + CURSOR_MARKER
+					: truncatedLine;
+		}
+		return lines;
+	}
+
 	private applyLineResets(lines: string[]): string[] {
 		const reset = TUI.SEGMENT_RESET;
 		for (let i = 0; i < lines.length; i++) {
@@ -1528,12 +1563,17 @@ export class TUI extends Container {
 	 * @param height - Terminal height (visible viewport size)
 	 * @returns Cursor position { row, col } or null if no marker found
 	 */
-	private renderRoot(width: number): { lines: string[]; dirtyFrom: number } {
+	private renderRoot(width: number): { lines: string[]; dirtyFrom: number; commit: () => void } {
 		if (this.render !== Container.prototype.render) {
-			this.previousRootChildren = [];
-			this.rootChildSnapshots.clear();
-			this.staticPrefixRevisions.clear();
-			return { lines: this.render(width), dirtyFrom: 0 };
+			return {
+				lines: this.render(width),
+				dirtyFrom: 0,
+				commit: () => {
+					this.previousRootChildren = [];
+					this.rootChildSnapshots.clear();
+					this.staticPrefixRevisions.clear();
+				},
+			};
 		}
 
 		const lines: string[] = [];
@@ -1589,13 +1629,15 @@ export class TUI extends Container {
 		if (this.previousRootChildren.length > this.children.length) {
 			dirtyFrom = Math.min(dirtyFrom, lines.length);
 		}
-		this.previousRootChildren = [...this.children];
-		this.rootChildSnapshots = nextSnapshots;
-		this.staticPrefixRevisions = nextStaticPrefixRevisions;
 
 		return {
 			lines,
 			dirtyFrom: Number.isFinite(dirtyFrom) ? dirtyFrom : lines.length,
+			commit: () => {
+				this.previousRootChildren = [...this.children];
+				this.rootChildSnapshots = nextSnapshots;
+				this.staticPrefixRevisions = nextStaticPrefixRevisions;
+			},
 		};
 	}
 
@@ -1657,7 +1699,6 @@ export class TUI extends Container {
 		const height = this.terminal.rows;
 		const previousFrameHadOverlays = this.previousFrameHadOverlays;
 		const frameHasOverlays = this.overlayStack.length > 0;
-		this.previousFrameHadOverlays = frameHasOverlays;
 		const widthChanged = this.previousWidth !== 0 && this.previousWidth !== width;
 		const heightChanged = this.previousHeight !== 0 && this.previousHeight !== height;
 		const previousBufferLength = this.previousHeight > 0 ? this.previousViewportTop + this.previousHeight : height;
@@ -1686,6 +1727,10 @@ export class TUI extends Container {
 			if (metrics) metrics.overlayMs += performance.now() - overlayStarted;
 			dirtyFrom = 0;
 		}
+
+		newLines = this.containFrameLines(newLines, width);
+		rootRender.commit();
+		this.previousFrameHadOverlays = frameHasOverlays;
 
 		// Extract cursor position before applying line resets (marker must be found first)
 		const cursorPos = this.extractCursorPosition(newLines, height);
@@ -1953,34 +1998,6 @@ export class TUI extends Container {
 			}
 
 			buffer += "\x1b[2K"; // Clear current line
-			if (!isImage && visibleWidth(line) > width) {
-				// Log all lines to crash file for debugging
-				const crashLogPath = path.join(os.homedir(), ".pi", "agent", "pi-crash.log");
-				const crashData = [
-					`Crash at ${new Date().toISOString()}`,
-					`Terminal width: ${width}`,
-					`Line ${i} visible width: ${visibleWidth(line)}`,
-					"",
-					"=== All rendered lines ===",
-					...newLines.map((l, idx) => `[${idx}] (w=${visibleWidth(l)}) ${l}`),
-					"",
-				].join("\n");
-				fs.mkdirSync(path.dirname(crashLogPath), { recursive: true });
-				fs.writeFileSync(crashLogPath, crashData);
-
-				// Clean up terminal state before throwing
-				this.stop();
-
-				const errorMsg = [
-					`Rendered line ${i} exceeds terminal width (${visibleWidth(line)} > ${width}).`,
-					"",
-					"This is likely caused by a custom TUI component not truncating its output.",
-					"Use visibleWidth() to measure and truncateToWidth() to truncate lines.",
-					"",
-					`Debug log written to: ${crashLogPath}`,
-				].join("\n");
-				throw new Error(errorMsg);
-			}
 			buffer += line;
 		}
 
@@ -2068,7 +2085,7 @@ export class TUI extends Container {
 
 		// Clamp cursor position to valid range
 		const targetRow = Math.max(0, Math.min(cursorPos.row, totalLines - 1));
-		const targetCol = Math.max(0, cursorPos.col);
+		const targetCol = Math.max(0, Math.min(cursorPos.col, this.terminal.columns - 1));
 
 		// Move cursor from current position to target
 		const rowDelta = targetRow - this.hardwareCursorRow;

@@ -20,7 +20,9 @@ import {
 	matchesKey,
 	Spacer,
 	Text,
+	truncateToWidth,
 } from "@earendil-works/pi-tui";
+import { stripAnsi } from "../../../utils/ansi.ts";
 import type { Theme } from "../theme/theme.ts";
 
 /**
@@ -135,28 +137,22 @@ export class RichContentLink implements Component, Focusable {
 		}
 	}
 
-	render(_width: number): string[] {
+	render(width: number): string[] {
 		const icon = getIconForType(this.reference.type);
 		const filename = this.reference.metadata?.title || basename(this.reference.path);
 		const description = getTypeDescription(this.reference);
 		const actionHint = this.expanded ? "[Ctrl+O 收起]" : "[Ctrl+O 展开 | Enter 浮窗]";
+		const safeText = stripAnsi(`${icon} ${filename} ${description} ${actionHint}`).replace(/[\r\n]+/g, " ");
+		const linkText = truncateToWidth(safeText, Math.max(0, width), "…");
 
-		// 构建链接文本
-		const linkText = `${icon} ${filename} ${description} ${actionHint}`;
-
-		// 使用终端超链接（如果支持）
+		// Truncate before adding OSC 8 so the hyperlink always has a complete closing sequence.
 		const displayText = hyperlink(
 			linkText,
-			`pi-internal://rich-content/${this.reference.type}?path=${this.reference.path}`,
+			`pi-internal://rich-content/${this.reference.type}?path=${encodeURIComponent(this.reference.path)}`,
 		);
-
-		// 添加光标标记（如果获得焦点）
 		const finalText = this.focused ? displayText + CURSOR_MARKER : displayText;
 
-		// 应用样式
-		const styled = this.theme.fg("mdLink", finalText);
-
-		return [styled];
+		return [this.theme.fg("mdLink", finalText)];
 	}
 
 	invalidate(): void {

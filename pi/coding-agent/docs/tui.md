@@ -296,7 +296,9 @@ handleInput(data: string) {
 
 ## Line Width
 
-**Critical:** Each line from `render()` must not exceed the `width` parameter.
+**Critical:** Each element returned from `render()` represents one physical terminal line. It must not contain CR/LF characters or exceed the `width` parameter.
+
+The TUI contains invalid ordinary frame lines as a production safety boundary so a faulty custom component cannot terminate the entire session. This is not a substitute for correct component layout: call `tui.setStrictRenderValidation(true)` in development or tests to fail fast on embedded line breaks and over-width output.
 
 ```typescript
 import { visibleWidth, truncateToWidth } from "@earendil-works/pi-tui";

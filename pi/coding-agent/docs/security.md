@@ -55,11 +55,12 @@ If you bind-mount a host workspace read/write, writes from inside the container 
 ## Delegated Work Boundaries
 
 `sub_agent` runs sessionless, one-shot workers for bounded delegation. A workflow
-orchestrates the same kind of worker. Named workflow presets have fixed
-runtime-owned control flow; custom scripts own their if/while/await flow but can
-spawn workers only through runtime-controlled primitives. Workflow workers are
-denied `sub_agent`, `bg_shell`, `teammate_agent`, and `send_message`, preventing
-nested delegation and out-of-band peer coordination.
+orchestrates the same kind of worker through named presets with fixed
+runtime-owned control flow. The public tool neither exposes nor accepts
+model-authored inline JavaScript; trusted programmatic script modules remain an
+internal Harness capability. Workflow workers are denied `sub_agent`, `bg_shell`,
+`teammate_agent`, and `send_message`, preventing nested delegation and
+out-of-band peer coordination.
 
 `teammate_agent` is the parent-managed control plane for long-lived child sessions.
 With `workspace="worktree"`, Magenta requires a clean Git parent, creates a linked

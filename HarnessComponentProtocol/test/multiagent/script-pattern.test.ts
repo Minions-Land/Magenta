@@ -118,12 +118,12 @@ describe("script workflow pattern", () => {
 		expect(result.terminatedBy).toBe("budget");
 	});
 
-	it("runs an inline script supplied as a data: URL (the sub_agent inline path)", async () => {
+	it("runs a trusted programmatic script supplied as a data URL", async () => {
 		const { runner, calls } = makeRunner((opts) => ({ text: `did ${opts.workerId}` }));
 		const orch = new MultiAgentOrchestrator({ cwd: tmpCwd, runner });
 
-		// Mirrors how the sub_agent tool encodes an inline `script` string: plain
-		// JavaScript ES module, base64 in a data: URL used as scriptPath.
+		// Trusted Harness callers may provide a JavaScript ES module as a data URL.
+		// The public sub_agent facade intentionally does not expose this path.
 		const source = [
 			"export default async (args, ctx) => {",
 			"  const lead = await ctx.agent('lead task', { label: 'lead' });",

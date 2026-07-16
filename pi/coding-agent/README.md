@@ -144,9 +144,10 @@ real-activity-based background stall reminder proactive through the shared
 external activation coordinator. `harness.workflows` and `harness.teammates` can
 override either delegation capability.
 
-A workflow orchestrates sessionless, one-shot workers. Named presets have fixed
-runtime-owned control flow, while a script author owns the flow of a custom
-workflow through runtime-controlled primitives. Use `teammate_agent` for a
+A workflow orchestrates sessionless, one-shot workers through named presets with
+fixed runtime-owned control flow. The public `sub_agent` tool does not execute
+model-authored inline JavaScript; trusted programmatic workflow modules remain
+an internal Harness capability. Use `teammate_agent` for a
 parent-managed, long-lived child when retained context or iterative assignments
 matter. Editing teammates can use `workspace="worktree"`; Magenta creates a
 parent-session-scoped checkout under `.magenta/tmp/collaboration/`, waits for a

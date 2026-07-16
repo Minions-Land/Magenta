@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Security
+- The public `sub_agent` workflow schema no longer exposes or accepts model-authored inline JavaScript; trusted programmatic script workflows remain internal to the Harness
+
+### Fixed
+- Multi-agent `sub_agent` start results wrap footer text to the available terminal width instead of returning embedded newlines that can crash the TUI
+- The TUI contains malformed or over-width ordinary frame lines across first, full, and differential renders, preserves image and cursor control sequences, and leaves render caches unchanged when strict validation fails
+- Tool activity galleries, floating windows, rich-content links, and narrow animated components keep every physical output line within the requested width
+- `sub_agent` starts honor abort and shutdown barriers, enforce the eight-worker limit atomically, isolate controller files, and report workflow timeout, startup, log, and outcome failures accurately
+- `sub_agent` cancellation and timeout keep their soft lease until the child or workflow actually settles, and automatic returns are independently cancellable per event
+- Background stdout and stderr preserve independent UTF-8 state across process chunks, compiled Bun builds flush empty decoders safely, and terminating or disposed background work no longer produces premature or permanently blocked quiescence
+- One-shot Harness process execution no longer leaks an unhandled `EPIPE` when a successful child exits without reading stdin
+
 ## [0.0.22] - 2026-07-15
 
 ### Fixed

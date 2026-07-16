@@ -46,6 +46,26 @@ describe("BackgroundEventManager headless APIs", () => {
 		await expect(waiting).resolves.toBe(true);
 	});
 
+	it("keeps terminating work active until the underlying task settles", async () => {
+		const manager = new BackgroundEventManager();
+		const event: MonitoredEvent = { id: "agent_001", status: "terminating", startedAt: 10, label: "review" };
+		const monitor = manager.registerSource({ id: "agents", title: "agents", getEvents: () => [event] });
+		let settled = false;
+		const waiting = manager.waitForIdle({ timeoutMs: 1_000 }).then((idle) => {
+			settled = true;
+			return idle;
+		});
+
+		monitor.update();
+		await Promise.resolve();
+		expect(settled).toBe(false);
+
+		event.status = "cancelled";
+		event.endedAt = 20;
+		monitor.update();
+		await expect(waiting).resolves.toBe(true);
+	});
+
 	it("returns false on timeout or disposal", async () => {
 		const manager = new BackgroundEventManager();
 		const event: MonitoredEvent = { id: "bg_001", status: "running", startedAt: 10, label: "server" };
@@ -55,6 +75,43 @@ describe("BackgroundEventManager headless APIs", () => {
 		const disposedWait = manager.waitForIdle();
 		manager.dispose();
 		await expect(disposedWait).resolves.toBe(false);
+	});
+
+	it("returns false immediately when waiting after disposal", async () => {
+		const manager = new BackgroundEventManager();
+		const event: MonitoredEvent = { id: "bg_001", status: "running", startedAt: 10, label: "server" };
+		manager.registerSource({ id: "shell", title: "shell", getEvents: () => [event] });
+		manager.dispose();
+
+		await expect(manager.waitForIdle()).resolves.toBe(false);
+	});
+
+	it("disposes once and ignores later registrations, updates, and subscriptions", () => {
+		const manager = new BackgroundEventManager();
+		const listener = vi.fn();
+		manager.subscribeChanges(listener);
+
+		manager.dispose();
+		manager.dispose();
+
+		expect(listener).toHaveBeenCalledTimes(1);
+		expect(listener).toHaveBeenCalledWith(true);
+
+		const lateListener = vi.fn();
+		const unsubscribe = manager.subscribeChanges(lateListener);
+		expect(lateListener).toHaveBeenCalledTimes(1);
+		expect(lateListener).toHaveBeenCalledWith(true);
+
+		const event: MonitoredEvent = { id: "bg_late", status: "running", startedAt: 10, label: "late" };
+		const source = manager.registerSource({ id: "late", title: "late", getEvents: () => [event] });
+		source.update();
+		manager.update();
+		unsubscribe();
+		source.dispose();
+
+		expect(manager.getEvents()).toEqual([]);
+		expect(listener).toHaveBeenCalledTimes(1);
+		expect(lateListener).toHaveBeenCalledTimes(1);
 	});
 
 	it("publishes telemetry snapshots and supports safe subscription/source removal", () => {

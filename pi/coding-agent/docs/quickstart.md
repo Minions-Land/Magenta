@@ -70,10 +70,12 @@ profiles expose sessionless, one-shot `sub_agent` workers but omit workflows
 and `teammate_agent`. Ultra enables both capabilities by default but never
 dispatches work automatically.
 
-Use a workflow to orchestrate bounded one-shot workers: named presets have fixed
-control flow, while a custom script owns its flow through runtime-controlled
-primitives. Use `teammate_agent` when a parent-managed child needs retained
-context, multiple assignments, or explicit file ownership. `send_message` sends
+Use a workflow to orchestrate bounded one-shot workers through named presets
+with fixed runtime-owned control flow. The public `sub_agent` tool does not
+execute model-authored inline JavaScript; trusted programmatic script modules
+remain an internal Harness capability. Use `teammate_agent` when a
+parent-managed child needs retained context, multiple assignments, or explicit
+file ownership. `send_message` sends
 an urgent mailbox message to any known peer session id; it does not create a
 teammate. All tools and extensions run with the permissions of the Magenta
 process; project trust is not a sandbox.

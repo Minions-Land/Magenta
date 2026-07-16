@@ -23,6 +23,7 @@ import {
 	timestampForFile,
 	truncateModelText,
 	truncateTail,
+	Utf8TailDecoder,
 } from "../background-shell-utils.ts";
 import type { ExtensionContext, ToolDefinition } from "../extensions/types.ts";
 import type { ExternalActivationReceipt } from "../external-activation-coordinator.ts";
@@ -37,6 +38,7 @@ const TERM_GRACE_MS = 3000;
 const MAX_RETAINED_FINISHED_EVENTS = 200;
 
 type BackgroundShellStatus = "running" | "exited" | "failed" | "timed_out" | "cancelled";
+type BackgroundShellOutputStream = "stdout" | "stderr" | "adopted";
 type ReturnDelivery = "steer" | "followUp" | "nextTurn";
 
 type BackgroundShellConfig = {
@@ -64,6 +66,7 @@ type BackgroundShellEvent = {
 	signal: NodeJS.Signals | null;
 	error?: string;
 	tail: string;
+	outputDecoders: Record<BackgroundShellOutputStream, Utf8TailDecoder>;
 	/** Latest progress reading (value + source), if any has been detected. */
 	progress?: ShellProgress;
 	/** Optional expected runtime in seconds, enabling time-based progress fallback. */
@@ -196,8 +199,8 @@ function formatConfig(config: BackgroundShellConfig): string {
 	].join("\n");
 }
 
-function appendTail(event: BackgroundShellEvent, data: Buffer): void {
-	const text = data.toString("utf8");
+function appendDecodedTail(event: BackgroundShellEvent, text: string): void {
+	if (!text) return;
 	const now = Date.now();
 	// A marker-only chunk is progress activity, not user-visible output. Strip
 	// markers before deciding whether the output timestamp should advance.
@@ -226,6 +229,29 @@ function appendTail(event: BackgroundShellEvent, data: Buffer): void {
 			event.lastProgressAt = now;
 			event.lastActivityAt = now;
 		}
+	}
+}
+
+function createOutputDecoders(): Record<BackgroundShellOutputStream, Utf8TailDecoder> {
+	return {
+		stdout: new Utf8TailDecoder(),
+		stderr: new Utf8TailDecoder(),
+		adopted: new Utf8TailDecoder(),
+	};
+}
+
+function appendOutput(event: BackgroundShellEvent, stream: BackgroundShellOutputStream, data: Buffer): void {
+	if (event.status !== "running") return;
+	const decoded = event.outputDecoders[stream].write(data);
+	if (decoded && event.log && !event.log.writableEnded && !event.log.destroyed) event.log.write(decoded);
+	appendDecodedTail(event, decoded);
+}
+
+function flushOutput(event: BackgroundShellEvent): void {
+	for (const decoder of Object.values(event.outputDecoders)) {
+		const decoded = decoder.end();
+		if (decoded && event.log && !event.log.writableEnded && !event.log.destroyed) event.log.write(decoded);
+		appendDecodedTail(event, decoded);
 	}
 }
 
@@ -289,6 +315,7 @@ function finishEvent(
 ): void {
 	if (event.status !== "running") return;
 
+	flushOutput(event);
 	event.status = status;
 	event.exitCode = exitCode;
 	event.signal = signal;
@@ -531,6 +558,7 @@ export class BackgroundShellController {
 			exitCode: null,
 			signal: null,
 			tail: options.tail ?? "",
+			outputDecoders: createOutputDecoders(),
 			expectedSeconds: options.expectedSeconds,
 			lastActivityAt: now,
 			lastOutputAt: options.tail?.trim() ? now : undefined,
@@ -547,7 +575,7 @@ export class BackgroundShellController {
 			id,
 			pushOutput: (text: string) => {
 				if (event.status !== "running") return;
-				appendTail(event, Buffer.from(text, "utf8"));
+				appendOutput(event, "adopted", Buffer.from(text, "utf8"));
 				this.monitor.update(ctx);
 			},
 			finish: (result: {
@@ -767,6 +795,7 @@ export class BackgroundShellController {
 			exitCode: null,
 			signal: null,
 			tail: "",
+			outputDecoders: createOutputDecoders(),
 			expectedSeconds: positiveNumber(params.expectedSeconds),
 			lastActivityAt: startedAt,
 			activityPhase: "running",
@@ -777,13 +806,11 @@ export class BackgroundShellController {
 
 		log.write(`$ cd ${shellQuote(cwd)} && ${params.command}\n\n`);
 		child.stdout?.on("data", (data: Buffer) => {
-			if (!log.writableEnded && !log.destroyed) log.write(data);
-			appendTail(event, data);
+			appendOutput(event, "stdout", data);
 			this.monitor.update(ctx);
 		});
 		child.stderr?.on("data", (data: Buffer) => {
-			if (!log.writableEnded && !log.destroyed) log.write(data);
-			appendTail(event, data);
+			appendOutput(event, "stderr", data);
 			this.monitor.update(ctx);
 		});
 		child.on("error", (error) => {

@@ -1,3 +1,5 @@
+import { StringDecoder } from "node:string_decoder";
+
 export const RESULT_LIMIT_BYTES = 50 * 1024;
 export const TAIL_LIMIT_BYTES = 64 * 1024;
 /** Per-event budget for the complete model-visible background result. */
@@ -62,31 +64,46 @@ export function shellQuote(value: string): string {
 	return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
-export function appendTail(current: string, data: Buffer, limitBytes = TAIL_LIMIT_BYTES): string {
-	let next = current + data.toString("utf8");
-	const bytes = Buffer.byteLength(next, "utf8");
-	if (bytes <= limitBytes) return next;
+export class Utf8TailDecoder {
+	readonly #decoder = new StringDecoder("utf8");
 
-	let cut = bytes - limitBytes;
-	let index = 0;
-	while (index < next.length && cut > 0) {
-		cut -= Buffer.byteLength(next[index], "utf8");
-		index++;
+	write(data: Buffer): string {
+		return this.#decoder.write(data);
 	}
-	next = next.slice(index);
-	return next;
+
+	end(data?: Buffer): string {
+		return data === undefined ? this.#decoder.end() : this.#decoder.end(data);
+	}
+}
+
+function appendDecodedTail(current: string, decoded: string, limitBytes: number): string {
+	const next = current + decoded;
+	if (Buffer.byteLength(next, "utf8") <= limitBytes) return next;
+	return takeUtf8Suffix(next, limitBytes);
+}
+
+export function appendTail(
+	current: string,
+	data: Buffer,
+	limitBytes = TAIL_LIMIT_BYTES,
+	decoder?: Utf8TailDecoder,
+): string {
+	return appendDecodedTail(current, decoder ? decoder.write(data) : data.toString("utf8"), limitBytes);
+}
+
+/** Flush any incomplete final UTF-8 sequence held by a per-event decoder. */
+export function flushTail(
+	current: string,
+	decoder: Utf8TailDecoder,
+	limitBytes = TAIL_LIMIT_BYTES,
+	data?: Buffer,
+): string {
+	return appendDecodedTail(current, decoder.end(data), limitBytes);
 }
 
 export function truncateTail(text: string, maxBytes = RESULT_LIMIT_BYTES): { text: string; truncated: boolean } {
 	if (Buffer.byteLength(text, "utf8") <= maxBytes) return { text, truncated: false };
-
-	let bytes = 0;
-	let index = text.length;
-	while (index > 0 && bytes < maxBytes) {
-		index--;
-		bytes += Buffer.byteLength(text[index], "utf8");
-	}
-	return { text: text.slice(index), truncated: true };
+	return { text: takeUtf8Suffix(text, maxBytes), truncated: true };
 }
 
 export function formatDuration(ms: number): string {

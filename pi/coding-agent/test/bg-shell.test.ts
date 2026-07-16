@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type Tool, type ToolCall, validateToolArguments } from "@earendil-works/pi-ai";
@@ -177,6 +177,49 @@ describe("built-in bg_shell tool", () => {
 		const status = await tool.execute("call-status", { action: "status" }, undefined, undefined, ctx);
 		expect(textOf(status)).toContain(eventId);
 		expect(textOf(status)).toContain("exited");
+	});
+
+	it("keeps interleaved stdout and stderr UTF-8 state independent in the tail and log", async () => {
+		const tool = controller.createToolDefinition();
+		const ctx = createContext(tempDir);
+		const stdoutText = "前🙂后";
+		const bytes = [...Buffer.from(stdoutText, "utf8")];
+		const script = [
+			`const output = Buffer.from([${bytes.join(",")}])`,
+			"process.stdout.write(output.subarray(0, 1))",
+			'process.stderr.write("stderr-ascii|")',
+			"setTimeout(() => process.stdout.write(output.subarray(1, 5)), 10)",
+			"setTimeout(() => process.stdout.write(output.subarray(5)), 20)",
+		].join(";");
+		const command = `${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)}`;
+
+		const start = await tool.execute(
+			"call-start-split-utf8",
+			{ action: "start", command, returnToMain: false },
+			undefined,
+			undefined,
+			ctx,
+		);
+		const eventId = start.details?.id as string;
+		await waitUntil(() => manager.getEvents().some((event) => event.id === eventId && event.status !== "running"));
+
+		const completed = await tool.execute(
+			"call-status-split-utf8",
+			{ action: "status", eventId },
+			undefined,
+			undefined,
+			ctx,
+		);
+		const expected = `stderr-ascii|${stdoutText}`;
+		const eventData = completed.details?.eventData as BackgroundShellEventSnapshot;
+		expect(eventData.tail).toBe(expected);
+		expect(textOf(completed)).not.toContain("�");
+
+		const logPath = start.details?.logPath as string;
+		await waitUntil(() => readFileSync(logPath, "utf8").split("\n\n").slice(1).join("\n\n").includes(expected));
+		const loggedOutput = readFileSync(logPath, "utf8").split("\n\n").slice(1).join("\n\n");
+		expect(loggedOutput).toContain(expected);
+		expect(loggedOutput).not.toContain("�");
 	});
 
 	it("cancels a running command", async () => {

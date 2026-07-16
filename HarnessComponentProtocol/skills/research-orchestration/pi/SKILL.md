@@ -98,7 +98,7 @@ Use distributed execution when work units are independent or benefit from specia
 ### Capability topology
 
 - `sub_agent` starts sessionless, one-shot workers. Use it for bounded research, review, test analysis, planning, or parallel tasks whose results return to the parent. A worker does not retain a session for another assignment.
-- A `workflow` orchestrates those same sessionless, one-shot workers. Named presets provide fixed runtime-owned control flow; `pattern="script"` gives the script author if/while/await flow and termination through runtime-controlled primitives and safety guards.
+- A `workflow` orchestrates those same sessionless, one-shot workers through named presets with fixed runtime-owned control flow. The public `sub_agent` facade does not execute model-authored inline JavaScript; trusted programmatic workflow modules remain an internal Harness capability.
 - `teammate_agent` is the parent-managed control plane for long-lived child sessions. Use it when retained context or multiple follow-up assignments matter. For editing, request `workspace="worktree"`, wait for the structured assignment receipt, then explicitly integrate or discard the captured Git changes. Parent shutdown stops children but preserves unintegrated work.
 - `send_message` is the urgent mailbox data plane for any known peer session id. It does not create or manage a teammate; use `teammate_agent` for child lifecycle.
 - Ultra selects the model's highest native reasoning level and enables workflow and managed-teammate capabilities by default. Its coalesced, rate-limited background stall reminder may wake the main loop after a real silent or overdue epoch. It never dispatches work automatically; the main agent still decides whether and how to delegate.

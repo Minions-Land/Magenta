@@ -365,6 +365,40 @@ describe("runPrintMode", () => {
 		});
 	});
 
+	it("treats terminating background work as active", async () => {
+		const runtimeHost = createRuntimeHost(createAssistantMessage({ text: "done" }));
+		const { session } = runtimeHost;
+		const backgroundEvent = {
+			sourceId: "agents",
+			sourceTitle: "agents",
+			id: "agent_001",
+			status: "terminating",
+			startedAt: Date.now(),
+			label: "review",
+		};
+		session.getBackgroundEvents.mockImplementation(() => [backgroundEvent]);
+		runtimeHost.dispose.mockImplementation(async () => {
+			backgroundEvent.status = "cancelled";
+			await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
+		});
+
+		const exitCode = await runPrintMode(runtimeHost as unknown as Parameters<typeof runPrintMode>[0], {
+			mode: "json",
+			backgroundPolicy: "error",
+		});
+
+		expect(exitCode).toBe(1);
+		expect(outputRecords().at(-1)).toMatchObject({
+			type: "run_end",
+			status: "error",
+			background: {
+				policy: "error",
+				settled: false,
+				events: [expect.objectContaining({ id: "agent_001", status: "cancelled" })],
+			},
+		});
+	});
+
 	it("fails if completed background returns cannot reach quiescence before finalization", async () => {
 		const runtimeHost = createRuntimeHost(createAssistantMessage({ text: "done" }));
 		const { session } = runtimeHost;

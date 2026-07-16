@@ -39,6 +39,41 @@ describe("tool-call gallery", () => {
 		}
 	});
 
+	test("normalizes multiline arguments and output before rendering physical lines", () => {
+		const lines = renderToolCallGallery(
+			[
+				{
+					id: "multiline-bash",
+					name: "bash",
+					args: { command: "a\r\nb" },
+					status: "running",
+					output: "bash output",
+					sortIndex: 0,
+				},
+				{
+					id: "multiline-grep",
+					name: "grep",
+					args: { pattern: "first\nsecond", path: "src" },
+					status: "pending",
+					output: "output one\routput two",
+					sortIndex: 1,
+				},
+			],
+			80,
+			{ maxHeight: 8 },
+		);
+		const plain = stripAnsi(lines.join("\n"));
+
+		expect(plain).toContain("$ a b");
+		expect(plain).toContain("'first second' in src");
+		expect(plain).toContain("output one");
+		expect(plain).toContain("output two");
+		for (const line of lines) {
+			expect(line).not.toMatch(/[\r\n]/);
+			expect(visibleWidth(line)).toBeLessThanOrEqual(80);
+		}
+	});
+
 	test("shows overflow instead of spilling past the height budget", () => {
 		const lines = renderToolCallGallery(
 			Array.from({ length: 20 }, (_, index) => tile(index)),
@@ -73,6 +108,44 @@ describe("tool-call gallery", () => {
 		expect(plain).toContain("Ctrl+o gallery");
 		for (const line of lines) {
 			expect(visibleWidth(line)).toBeLessThanOrEqual(80);
+		}
+	});
+
+	test.each([40, 80])("keeps multiline activity arguments within a single row at width %i", (width) => {
+		const lines = renderToolCallActivity(
+			[
+				{
+					id: "multiline-bash",
+					name: "bash",
+					args: { command: "a\r\nb" },
+					status: "running",
+					sortIndex: 0,
+				},
+				{
+					id: "multiline-grep",
+					name: "grep",
+					args: { pattern: "first\nsecond", path: "src" },
+					status: "pending",
+					sortIndex: 1,
+				},
+				{
+					id: "single-line-bash",
+					name: "bash",
+					args: { command: "echo stable" },
+					status: "success",
+					sortIndex: 2,
+				},
+			],
+			width,
+		);
+		const plain = stripAnsi(lines.join("\n"));
+
+		expect(plain).toContain("$ a b");
+		expect(plain).toContain("first second");
+		expect(plain).toMatch(/✓ bash\s+\$ echo stable/);
+		for (const line of lines) {
+			expect(line).not.toMatch(/[\r\n]/);
+			expect(visibleWidth(line)).toBeLessThanOrEqual(width);
 		}
 	});
 

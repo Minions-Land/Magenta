@@ -63,6 +63,20 @@ process.stdin.on("end", () => {
 		});
 	});
 
+	it("does not leak EPIPE when a successful child exits without reading stdin", async () => {
+		const dir = await mkdtemp(join(tmpdir(), "magenta-runtime-early-exit-"));
+		const output = await execProcess({
+			command: process.execPath,
+			args: ["-e", "process.exit(0)"],
+			stdin: "x".repeat(1024 * 1024),
+			cwd: dir,
+			workspace_root: dir,
+			allow_direct_exec: true,
+		});
+
+		expect(output.status).toBe(0);
+	});
+
 	it("requires tool metadata unless direct exec is explicitly allowed", async () => {
 		const dir = await mkdtemp(join(tmpdir(), "magenta-runtime-direct-"));
 		await expect(

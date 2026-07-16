@@ -113,14 +113,18 @@ function outputLines(tile: ToolCallTile): string[] {
 	if (!output) return [];
 	const error = conciseToolErrorSummary(output);
 	if (error) return [error];
-	return output.split(/\r?\n/).filter((line) => line.trim() !== "");
+	return output.split(/\r\n|[\r\n]/).filter((line) => line.trim() !== "");
+}
+
+function normalizeTileBodyLine(text: string): string {
+	return text.replace(/[\r\n]+/g, " ");
 }
 
 function tileBody(tile: ToolCallTile, width: number): string[] {
 	const summary = summarizeToolCall({ name: tile.name, args: tile.args }, width);
 	const lines = summary ? [summary] : [];
 	lines.push(...outputLines(tile));
-	return lines;
+	return lines.map(normalizeTileBodyLine);
 }
 
 function wrapTail(lines: string[], width: number, height: number): string[] {
@@ -213,12 +217,16 @@ function activitySummary(tiles: ToolCallTile[]): string {
 	return parts.join("  ");
 }
 
+function normalizeActivityLine(text: string): string {
+	return text.replace(/[\r\n]+/g, " ");
+}
+
 function activityDetail(tile: ToolCallTile, width: number): string {
 	const output = tile.output?.trim() ?? "";
 	const error = tile.status === "error" && output ? conciseToolErrorSummary(output) : undefined;
 	const summary = summarizeToolCall({ name: tile.name, args: tile.args }, width);
 	const detail = error || summary || outputLines(tile).at(-1) || "";
-	return truncateToWidth(detail, width, "…");
+	return truncateToWidth(normalizeActivityLine(detail), width, "…");
 }
 
 function activityRow(tile: ToolCallTile, width: number): string {

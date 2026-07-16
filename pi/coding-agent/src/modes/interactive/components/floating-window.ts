@@ -24,21 +24,25 @@ function padToWidth(text: string, width: number): string {
 	return text + " ".repeat(Math.max(0, width - visibleWidth(text)));
 }
 
+function toSingleLine(text: string): string {
+	return text.replace(/\r\n|\r|\n/g, " ");
+}
+
 function frameLine(theme: Theme, content: string, width: number): string {
 	const innerWidth = Math.max(1, width - 4);
-	const line = padToWidth(truncateToWidth(content, innerWidth, ""), innerWidth);
+	const line = padToWidth(truncateToWidth(toSingleLine(content), innerWidth, ""), innerWidth);
 	return `${theme.fg("borderMuted", "│ ")}${line}${theme.fg("borderMuted", " │")}`;
 }
 
 function horizontal(theme: Theme, left: string, right: string, width: number, label = ""): string {
-	const safeLabel = truncateToWidth(label, Math.max(0, width - 2), "");
+	const safeLabel = truncateToWidth(toSingleLine(label), Math.max(0, width - 2), "");
 	const available = Math.max(0, width - 2 - visibleWidth(safeLabel));
 	return `${theme.fg("borderMuted", left)}${safeLabel}${theme.fg("borderMuted", "─".repeat(available))}${theme.fg("borderMuted", right)}`;
 }
 
 export function renderFloatingWindow(options: FloatingWindowOptions): string[] {
 	const { theme, width } = options;
-	if (width < 8) return options.body.map((line) => truncateToWidth(line, width, ""));
+	if (width < 8) return options.body.map((line) => truncateToWidth(toSingleLine(line), width, ""));
 
 	const title = ` ${theme.fg("accent", theme.bold(options.title))}${options.subtitle ? theme.fg("dim", ` · ${options.subtitle}`) : ""} `;
 	const lines = [horizontal(theme, "╭", "╮", width, title)];

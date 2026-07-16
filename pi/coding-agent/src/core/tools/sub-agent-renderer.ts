@@ -21,8 +21,8 @@ const COLLAPSED_TAIL_LINES = 5;
  * Expected format from summarizeEvent:
  * - Header lines (Sub-agent:, Status:, Role:, etc.)
  * - Empty line
- * - "Output:" or "[Output truncated...]"
- * - Actual output content
+ * - "Output:" / "Result:" or a shortened-output marker
+ * - Actual output/result content
  */
 function parseSubAgentOutput(text: string): {
 	header: string[];
@@ -30,7 +30,9 @@ function parseSubAgentOutput(text: string): {
 	outputContent: string[];
 } {
 	const lines = text.split("\n");
-	const outputIndex = lines.findIndex((line) => line.startsWith("Output:") || line.startsWith("[Output truncated"));
+	const outputIndex = lines.findIndex(
+		(line) => line === "Output:" || line === "Result:" || /^\[(?:Output|Result) (?:shortened|truncated)\b/.test(line),
+	);
 
 	if (outputIndex === -1) {
 		// No output section found, treat everything as header
@@ -120,23 +122,24 @@ export const subAgentRenderer: ToolRenderer = {
 				sortIndex: index,
 			}));
 
-			// Render using the existing activity renderer (compact view)
+			// Render using the existing activity renderer (compact view).
 			container.addChild({
-				render: (width: number) => {
-					const lines = renderToolCallActivity(tiles, width, {
+				render: (width: number) => [
+					"",
+					...renderToolCallActivity(tiles, width, {
 						maxRows: 8,
 						hint: undefined, // No hint needed for sub-agent starts
-					});
-					// Prepend a blank line and append footer
-					const output = ["", ...lines];
-					if (multiStart.footer) {
-						output.push("");
-						output.push(theme.fg("dim", multiStart.footer));
-					}
-					return output;
-				},
+					}),
+				],
 				invalidate: () => {},
 			});
+
+			// Footer text may contain multiple long lines. Let Text split and wrap
+			// them so each returned TUI line respects the requested width.
+			if (multiStart.footer) {
+				container.addChild(new Spacer(1));
+				container.addChild(new Text(theme.fg("dim", multiStart.footer), 0, 0));
+			}
 
 			return container;
 		}

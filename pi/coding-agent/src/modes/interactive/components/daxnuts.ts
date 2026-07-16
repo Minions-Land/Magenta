@@ -4,7 +4,7 @@
  * A heartfelt tribute to dax (@thdxr) for providing free Kimi K2.5 access via OpenCode.
  */
 
-import type { Component, TUI } from "@earendil-works/pi-tui";
+import { type Component, type TUI, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { theme } from "../theme/theme.ts";
 
 // 32x32 RGB image of dax, hex encoded (3 bytes per pixel)
@@ -99,11 +99,12 @@ export class DaxnutsComponent implements Component {
 
 		const t = theme;
 		const lines: string[] = [];
+		const normalizedWidth = Math.max(0, width);
 
-		const center = (s: string) => {
-			const visible = s.replace(/\x1b\[[0-9;]*m/g, "").length;
-			const left = Math.max(0, Math.floor((width - visible) / 2));
-			return " ".repeat(left) + s;
+		const center = (text: string) => {
+			const clipped = truncateToWidth(text, normalizedWidth, "");
+			const left = Math.max(0, Math.floor((normalizedWidth - visibleWidth(clipped)) / 2));
+			return " ".repeat(left) + clipped;
 		};
 
 		lines.push("");

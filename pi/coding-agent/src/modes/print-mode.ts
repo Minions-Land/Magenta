@@ -276,7 +276,8 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 	};
 
 	const settleBackgroundWork = async (): Promise<void> => {
-		const running = () => session.getBackgroundEvents().filter((event) => event.status === "running");
+		const running = () =>
+			session.getBackgroundEvents().filter((event) => event.status === "running" || event.status === "terminating");
 		const deadline = Date.now() + Math.max(0, backgroundWaitTimeoutMs);
 		const failTimeout = (message: string): false => {
 			backgroundSettled = false;

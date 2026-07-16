@@ -132,6 +132,10 @@ function eventKey(sourceId: string, eventId: string): string {
 	return `${sourceId}:${eventId}`;
 }
 
+function isActiveStatus(status: string): boolean {
+	return status === "running" || status === "terminating";
+}
+
 export class BackgroundEventManager {
 	private sources = new Map<string, EventSource>();
 	private acknowledgedFailures = new Set<string>();
@@ -142,8 +146,10 @@ export class BackgroundEventManager {
 	private overlayDone: (() => void) | undefined;
 	private overlayTui: TuiLike | undefined;
 	private filter: EventFilter = "all";
+	private disposed = false;
 
 	registerSource(source: EventSource): { update: (ctx?: ExtensionContext) => void; dispose: () => void } {
+		if (this.disposed) return { update: () => {}, dispose: () => {} };
 		this.sources.set(source.id, source);
 		this.emitChange(false);
 		return {
@@ -158,11 +164,20 @@ export class BackgroundEventManager {
 
 	/** Subscribe to source updates without exposing the manager's listener set. */
 	subscribeChanges(listener: (disposed: boolean) => void): () => void {
+		if (this.disposed) {
+			try {
+				listener(true);
+			} catch {
+				// Match normal notification behavior: one observer cannot disrupt cleanup.
+			}
+			return () => {};
+		}
 		this.changeListeners.add(listener);
 		return () => this.changeListeners.delete(listener);
 	}
 
 	update(ctx?: ExtensionContext, emitChange = true): void {
+		if (this.disposed) return;
 		if (emitChange) this.emitChange(false);
 		if (ctx?.hasUI) this.statusCtx = ctx;
 		if (!this.statusCtx?.hasUI) return;
@@ -255,12 +270,14 @@ export class BackgroundEventManager {
 
 	/** Wait until no source reports running work, or until the optional deadline/abort fires. */
 	waitForIdle(options: { timeoutMs?: number; signal?: AbortSignal } = {}): Promise<boolean> {
+		if (this.disposed) return Promise.resolve(false);
 		if (this.runningEvents().length === 0) return Promise.resolve(true);
 		if (options.signal?.aborted) return Promise.resolve(false);
 
 		return new Promise((resolve) => {
 			let timeout: NodeJS.Timeout | undefined;
 			let settled = false;
+			let unsubscribe = () => {};
 
 			const finish = (idle: boolean) => {
 				if (settled) return;
@@ -276,7 +293,11 @@ export class BackgroundEventManager {
 				else if (this.runningEvents().length === 0) finish(true);
 			};
 
-			const unsubscribe = this.subscribeChanges(onChange);
+			unsubscribe = this.subscribeChanges(onChange);
+			if (settled) {
+				unsubscribe();
+				return;
+			}
 			options.signal?.addEventListener("abort", onAbort, { once: true });
 			if (options.timeoutMs !== undefined) {
 				timeout = setTimeout(() => finish(false), Math.max(0, options.timeoutMs));
@@ -285,6 +306,8 @@ export class BackgroundEventManager {
 	}
 
 	dispose(): void {
+		if (this.disposed) return;
+		this.disposed = true;
 		this.statusCtx?.ui.setStatus(STATUS_KEY, undefined);
 		this.hide();
 		this.statusCtx = undefined;
@@ -320,7 +343,7 @@ export class BackgroundEventManager {
 	}
 
 	private runningEvents(): EventEntry[] {
-		return this.allEntries().filter(({ event }) => event.status === "running");
+		return this.allEntries().filter(({ event }) => isActiveStatus(event.status));
 	}
 
 	private unacknowledgedFailures(): EventEntry[] {
@@ -333,7 +356,7 @@ export class BackgroundEventManager {
 		const entries = this.allEntries();
 		if (this.filter === "all") return entries;
 		if (this.filter === "failed") return entries.filter(({ event }) => FAILED_STATUSES.has(event.status));
-		if (this.filter === "running") return entries.filter(({ event }) => event.status === "running");
+		if (this.filter === "running") return entries.filter(({ event }) => isActiveStatus(event.status));
 		if (this.filter === "exited") return entries.filter(({ event }) => DONE_STATUSES.has(event.status));
 		return entries.filter(({ source }) => source.id === this.filter);
 	}

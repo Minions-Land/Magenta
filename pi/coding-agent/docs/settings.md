@@ -57,7 +57,7 @@ Use `/trust` in interactive mode to save a project trust decision for future ses
 
 Both capabilities default to `true` in Ultra and `false` in other profiles. Enabling a capability only exposes its tool surface; it never starts workers or teammates automatically. Explicit settings win in either direction, so standard profiles can enable them and Ultra can disable them. Per-run `--harness-workflows` / `--no-harness-workflows` and `--harness-teammates` / `--no-harness-teammates` flags override both settings and profile defaults without changing the provider thinking level.
 
-Workflows orchestrate sessionless, one-shot workers. Named presets have fixed runtime-owned control flow, while custom workflow scripts own if/while/await flow through runtime-controlled primitives. `teammate_agent` manages long-lived child sessions for retained context and multiple assignments; the parent stops them when its runtime shuts down. `send_message` is a separate urgent mailbox data plane for known peer session ids and does not create a teammate.
+Workflows orchestrate sessionless, one-shot workers through named presets with fixed runtime-owned control flow. The public `sub_agent` tool does not execute model-authored inline JavaScript; trusted programmatic script modules remain an internal Harness capability. `teammate_agent` manages long-lived child sessions for retained context and multiple assignments; the parent stops them when its runtime shuts down. `send_message` is a separate urgent mailbox data plane for known peer session ids and does not create a teammate.
 
 ### UI & Display
 

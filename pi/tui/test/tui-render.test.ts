@@ -10,7 +10,7 @@ import {
 	setCapabilities,
 	setCellDimensions,
 } from "../src/terminal-image.ts";
-import { type Component, StaticPrefixContainer, TUI } from "../src/tui.ts";
+import { type Component, CURSOR_MARKER, StaticPrefixContainer, TUI } from "../src/tui.ts";
 import { VirtualTerminal } from "./virtual-terminal.ts";
 
 class TestComponent implements Component {
@@ -71,6 +71,142 @@ function getCellItalic(terminal: VirtualTerminal, row: number, col: number): num
 	assert.ok(cell, `Missing cell at row ${row} col ${col}`);
 	return cell.isItalic();
 }
+
+describe("TUI frame containment", () => {
+	it("contains overwide lines on first and differential renders", async () => {
+		const terminal = new VirtualTerminal(10, 4);
+		const tui = new TUI(terminal);
+		const component = new TestComponent();
+		tui.addChild(component);
+
+		component.lines = ["12345678901", "tail"];
+		tui.start();
+		await terminal.waitForRender();
+		assert.deepStrictEqual(terminal.getViewport(), ["1234567890", "tail", "", ""]);
+
+		component.lines = ["abcdefghijk", "updated"];
+		tui.requestRender();
+		await terminal.waitForRender();
+		assert.deepStrictEqual(terminal.getViewport(), ["abcdefghij", "updated", "", ""]);
+		tui.stop();
+	});
+
+	it("neutralizes embedded line breaks without changing the frame line count", async () => {
+		const terminal = new VirtualTerminal(20, 6);
+		const tui = new TUI(terminal);
+		const component = new TestComponent();
+		tui.addChild(component);
+
+		component.lines = ["a\nb", "c\r\nd", "e\rf", "stable"];
+		tui.start();
+		await terminal.waitForRender();
+		assert.deepStrictEqual(terminal.getViewport(), ["a b", "c d", "e f", "stable", "", ""]);
+		tui.stop();
+	});
+
+	it("truncates ANSI and CJK content at terminal column boundaries", async () => {
+		const terminal = new VirtualTerminal(5, 4);
+		const tui = new TUI(terminal);
+		const component = new TestComponent();
+		tui.addChild(component);
+
+		component.lines = ["\x1b[31mABCD界Z\x1b[0m", "\x1b[32mAB界CDE\x1b[0m"];
+		tui.start();
+		await terminal.waitForRender();
+		assert.deepStrictEqual(terminal.getViewport(), ["ABCD", "AB界C", "", ""]);
+		tui.stop();
+	});
+
+	it("can fail fast on invalid component output in strict mode", () => {
+		const tui = new TUI(new VirtualTerminal(5, 4));
+		const component = new TestComponent();
+		tui.addChild(component);
+		tui.setStrictRenderValidation(true);
+		const renderFrame = () => (tui as unknown as { renderFrame(metrics: undefined): void }).renderFrame(undefined);
+
+		component.lines = ["123456"];
+		assert.throws(renderFrame, /Rendered line 0.*visible width 6.*terminal width is 5/);
+		component.lines = ["left\nright"];
+		assert.throws(renderFrame, /Rendered line 0.*contains a CR or LF character/);
+	});
+
+	it("validates and neutralizes embedded line breaks in image lines", () => {
+		const terminal = new LoggingVirtualTerminal(20, 4);
+		const tui = new TUI(terminal);
+		const component = new TestComponent();
+		const image = encodeKitty("AAAA", { columns: 2, rows: 1, imageId: 90, moveCursor: false });
+		const invalidImageLine = `${image}\r\nspill`;
+		tui.addChild(component);
+		component.lines = [invalidImageLine];
+		const renderFrame = () => (tui as unknown as { renderFrame(metrics: undefined): void }).renderFrame(undefined);
+
+		tui.setStrictRenderValidation(true);
+		assert.throws(renderFrame, /Rendered line 0.*contains a CR or LF character/);
+
+		tui.setStrictRenderValidation(false);
+		renderFrame();
+		const writes = terminal.getWrites();
+		assert.ok(writes.includes(`${image} spill`), "production rendering should neutralize the image line break");
+		assert.ok(!writes.includes(invalidImageLine), "the raw image line break must not reach the terminal");
+	});
+
+	it("preserves an overwide cursor marker and clamps hardware positioning to the terminal", async () => {
+		const terminal = new LoggingVirtualTerminal(5, 3);
+		const tui = new TUI(terminal);
+		const component = new TestComponent();
+		tui.addChild(component);
+
+		component.lines = [`123456789${CURSOR_MARKER}`];
+		tui.start();
+		await terminal.waitForRender();
+
+		assert.deepStrictEqual(terminal.getViewport(), ["12345", "", ""]);
+		assert.ok(terminal.getWrites().includes("\x1b[5G"), "cursor should be positioned on the final terminal column");
+		tui.stop();
+	});
+
+	it("does not commit root snapshots when strict containment fails", async () => {
+		const terminal = new VirtualTerminal(5, 3);
+		const tui = new TUI(terminal);
+		const component = new TestComponent();
+		tui.addChild(component);
+		const renderFrame = () => (tui as unknown as { renderFrame(metrics: undefined): void }).renderFrame(undefined);
+
+		component.lines = ["old"];
+		const overlay = new TestComponent();
+		overlay.lines = ["over"];
+		const overlayHandle = tui.showOverlay(overlay, { row: 0, col: 0, width: 5, nonCapturing: true });
+		renderFrame();
+		await terminal.flush();
+		overlayHandle.hide();
+
+		component.lines = ["123456"];
+		tui.setStrictRenderValidation(true);
+		assert.throws(renderFrame, /Rendered line 0.*visible width 6.*terminal width is 5/);
+		assert.equal(
+			(tui as unknown as { previousFrameHadOverlays: boolean }).previousFrameHadOverlays,
+			true,
+			"failed strict frames must not commit overlay history",
+		);
+
+		tui.setStrictRenderValidation(false);
+		renderFrame();
+		assert.deepStrictEqual(await terminal.flushAndGetViewport(), ["12345", "", ""]);
+	});
+
+	it("leaves exact-width lines unchanged", async () => {
+		const terminal = new VirtualTerminal(5, 3);
+		const tui = new TUI(terminal);
+		const component = new TestComponent();
+		tui.addChild(component);
+
+		component.lines = ["abc界", "tail"];
+		tui.start();
+		await terminal.waitForRender();
+		assert.deepStrictEqual(terminal.getViewport(), ["abc界", "tail", ""]);
+		tui.stop();
+	});
+});
 
 describe("TUI Kitty image cleanup", () => {
 	it("clears reserved Kitty image rows before drawing appended image placements", async () => {
