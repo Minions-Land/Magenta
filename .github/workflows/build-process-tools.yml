@@ -28,7 +28,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -36,7 +36,7 @@ jobs:
           targets: ${{ matrix.target }}
       
       - name: Cache Rust dependencies
-        uses: actions/cache@v3
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/bin/
@@ -67,7 +67,7 @@ jobs:
           Copy-Item target/${{ matrix.target }}/release/magenta-process-tools.exe artifacts/${{ matrix.artifact }}
       
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact }}
           path: HarnessComponentProtocol/_magenta/process-tools/artifacts/${{ matrix.artifact }}
@@ -78,10 +78,10 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: artifacts
       
@@ -92,7 +92,7 @@ jobs:
           ls -lh HarnessComponentProtocol/_magenta/process-tools/prebuilt/
       
       - name: Upload collected binaries
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: all-process-tools-binaries
           path: HarnessComponentProtocol/_magenta/process-tools/prebuilt/
