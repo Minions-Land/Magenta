@@ -458,6 +458,15 @@ function supportsOpenAiXhigh(modelId: string): boolean {
 	);
 }
 
+/**
+ * Native xhigh support for catalog models awaiting regeneration with explicit
+ * thinkingLevelMap entries. `max` is intentionally NOT covered here: max is an
+ * opt-in level that always requires explicit metadata (AI-024). Native xhigh is
+ * limited to the Claude generations that support it (Opus 4.6+/Sonnet 4.6+/
+ * Sonnet 5/Fable 5) plus GPT-5.2+.
+ *
+ * @deprecated Remove after catalog regeneration encodes xhigh in thinkingLevelMap.
+ */
 function supportsDefaultXhigh<TApi extends Api>(model: Model<TApi>): boolean {
 	const id = model.id.toLowerCase();
 	const compat = model.compat as { forceAdaptiveThinking?: boolean } | undefined;
@@ -481,7 +490,9 @@ export function getSupportedThinkingLevels<TApi extends Api>(model: Model<TApi>)
 	return EXTENDED_THINKING_LEVELS.filter((level) => {
 		const mapped = model.thinkingLevelMap?.[level];
 		if (mapped === null) return false;
+		// xhigh falls back to metadata-driven native support when unmapped.
 		if (level === "xhigh" && mapped === undefined) return supportsDefaultXhigh(model);
+		// max is opt-in: it always requires an explicit thinkingLevelMap entry (AI-024).
 		if (level === "xhigh" || level === "max") return mapped !== undefined;
 		return true;
 	});

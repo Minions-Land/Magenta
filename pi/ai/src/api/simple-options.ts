@@ -1,5 +1,6 @@
 import type { Api, Model, SimpleStreamOptions, StreamOptions, ThinkingBudgets, ThinkingLevel, Context } from "../types.ts";
 import { estimateMaxOutputTokens } from "../utils/estimate.ts";
+import { clampThinkingLevel } from "../models.ts";
 
 export function buildBaseOptions(_model: Model<Api>, options?: SimpleStreamOptions, apiKey?: string): StreamOptions {
 	return {
@@ -23,8 +24,27 @@ export function buildBaseOptions(_model: Model<Api>, options?: SimpleStreamOptio
 	};
 }
 
+/**
+ * Blanket clamp xhigh/max to high for budget-based thinking systems that don't
+ * support extended levels. Used by adjustMaxTokensForThinking.
+ */
 export function clampReasoning(effort: ThinkingLevel | undefined): Exclude<ThinkingLevel, "xhigh" | "max"> | undefined {
 	return effort === "xhigh" || effort === "max" ? "high" : effort;
+}
+
+/**
+ * Model-aware clamping for Bedrock budget keys. Clamps to the highest supported
+ * level per the model's thinkingLevelMap, then further restricts to budget tiers.
+ */
+export function clampReasoningForBudget<TApi extends Api>(
+	model: Model<TApi>,
+	effort: ThinkingLevel | undefined,
+): Exclude<ThinkingLevel, "xhigh" | "max" | "off"> | undefined {
+	if (!effort) return undefined;
+	const clamped = clampThinkingLevel(model, effort);
+	// Budget keys exclude off/xhigh/max.
+	if (clamped === "off") return "low";
+	return clamped === "xhigh" || clamped === "max" ? "high" : clamped;
 }
 
 export function adjustMaxTokensForThinking(

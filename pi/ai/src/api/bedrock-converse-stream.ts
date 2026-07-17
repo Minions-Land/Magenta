@@ -54,7 +54,7 @@ import { parseStreamingJson } from "../utils/json-parse.ts";
 import { resolveHttpProxyUrlForTarget } from "../utils/node-http-proxy.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
-import { adjustMaxTokensForThinking, buildBaseOptions, clampReasoning, resolveMaxTokens } from "./simple-options.ts";
+import { adjustMaxTokensForThinking, buildBaseOptions, clampReasoningForBudget, resolveMaxTokens } from "./simple-options.ts";
 import { transformMessages } from "./transform-messages.ts";
 
 export type BedrockThinkingDisplay = "summarized" | "omitted";
@@ -414,7 +414,7 @@ export const streamSimple: StreamFunction<"bedrock-converse-stream", SimpleStrea
 			reasoning: options.reasoning,
 			thinkingBudgets: {
 				...(options.thinkingBudgets || {}),
-				[clampReasoning(options.reasoning)!]: adjusted.thinkingBudget,
+				[clampReasoningForBudget(model, options.reasoning)!]: adjusted.thinkingBudget,
 			},
 		} satisfies BedrockOptions);
 	}
