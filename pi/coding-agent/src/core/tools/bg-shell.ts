@@ -30,6 +30,7 @@ import type { ExternalActivationReceipt } from "../external-activation-coordinat
 
 const LOG_DIR = join(getAgentDir(), "tmp", "background-shell");
 const TERM_GRACE_MS = 3000;
+const MAX_TIMEOUT_SECONDS = 2_147_483_647 / 1000;
 /**
  * Cap on how many finished (non-running) background-shell events are retained.
  * Prevents the events Map from growing without bound over a long interactive
@@ -135,6 +136,8 @@ const bgShellSchema = Type.Object(
 		),
 		timeoutSeconds: Type.Optional(
 			Type.Number({
+				exclusiveMinimum: 0,
+				maximum: MAX_TIMEOUT_SECONDS,
 				description:
 					"Optional maximum runtime for action=start. If exceeded, the event is terminated and marked timed_out.",
 			}),
@@ -164,6 +167,7 @@ const bgShellSchema = Type.Object(
 		),
 		defaultTimeoutSeconds: Type.Optional(
 			Type.Number({
+				maximum: MAX_TIMEOUT_SECONDS,
 				description: "For action=config: set default maximum runtime for future start calls. Use <=0 to clear.",
 			}),
 		),
@@ -182,6 +186,16 @@ export type BgShellDetails = Record<string, unknown>;
 
 function positiveNumber(value: unknown): number | undefined {
 	return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
+function validateTimeoutSeconds(value: unknown, name: "timeoutSeconds" | "defaultTimeoutSeconds"): number {
+	if (typeof value !== "number" || !Number.isFinite(value)) {
+		throw new Error(`bg_shell ${name} must be a finite number`);
+	}
+	if (value * 1000 > 2_147_483_647) {
+		throw new Error(`bg_shell ${name} exceeds the maximum supported timer duration`);
+	}
+	return value;
 }
 
 function formatConfig(config: BackgroundShellConfig): string {
@@ -730,8 +744,10 @@ export class BackgroundShellController {
 		const returnInstruction = params.returnInstruction as string | undefined;
 
 		if (action === "config") {
-			if ("defaultTimeoutSeconds" in params)
-				this.shellConfig.defaultTimeoutSeconds = positiveNumber(params.defaultTimeoutSeconds);
+			if ("defaultTimeoutSeconds" in params) {
+				const configuredTimeout = validateTimeoutSeconds(params.defaultTimeoutSeconds, "defaultTimeoutSeconds");
+				this.shellConfig.defaultTimeoutSeconds = configuredTimeout > 0 ? configuredTimeout : undefined;
+			}
 			if (params.defaultReturnDelivery) this.shellConfig.defaultReturnDelivery = params.defaultReturnDelivery;
 			const content = truncateModelText(formatConfig(this.shellConfig), MODEL_RESULT_LIMIT_BYTES).text;
 			return {
@@ -764,6 +780,13 @@ export class BackgroundShellController {
 		returnInstruction: string | undefined,
 	) {
 		if (!params.command) throw new Error("bg_shell action=start requires command");
+		const explicitTimeoutSeconds =
+			params.timeoutSeconds === undefined
+				? undefined
+				: validateTimeoutSeconds(params.timeoutSeconds, "timeoutSeconds");
+		if (explicitTimeoutSeconds !== undefined && explicitTimeoutSeconds <= 0) {
+			throw new Error("bg_shell timeoutSeconds must be greater than 0");
+		}
 		if (signal?.aborted)
 			return {
 				content: [{ type: "text" as const, text: "Cancelled before start" }],
@@ -833,7 +856,7 @@ export class BackgroundShellController {
 			}
 		});
 
-		const timeoutSeconds = positiveNumber(params.timeoutSeconds) ?? this.shellConfig.defaultTimeoutSeconds;
+		const timeoutSeconds = explicitTimeoutSeconds ?? this.shellConfig.defaultTimeoutSeconds;
 		if (timeoutSeconds) {
 			event.timeout = setTimeout(() => {
 				if (requestTermination(event, "timed_out", `Timed out after ${timeoutSeconds}s`)) {

@@ -161,6 +161,47 @@ describe("built-in bg_shell tool", () => {
 		).toEqual({ action: "status" });
 	});
 
+	it("rejects invalid execution timeouts before spawning and preserves config clear semantics", async () => {
+		const tool = controller.createToolDefinition();
+		const ctx = createContext(tempDir);
+		const tooLarge = 2_147_483_647 / 1000 + 0.001;
+
+		for (const timeoutSeconds of [Number.NaN, Number.POSITIVE_INFINITY, 0, -1, tooLarge]) {
+			await expect(
+				tool.execute(
+					"call-invalid-timeout",
+					{ action: "start", command: "printf should-not-spawn", timeoutSeconds },
+					undefined,
+					undefined,
+					ctx,
+				),
+			).rejects.toThrow(/timeoutSeconds/);
+		}
+		expect(manager.getEvents()).toHaveLength(0);
+
+		await tool.execute("call-config-set", { action: "config", defaultTimeoutSeconds: 1 }, undefined, undefined, ctx);
+		const cleared = await tool.execute(
+			"call-config-clear",
+			{ action: "config", defaultTimeoutSeconds: 0 },
+			undefined,
+			undefined,
+			ctx,
+		);
+		expect(cleared.details?.defaultTimeoutSeconds).toBeUndefined();
+		for (const defaultTimeoutSeconds of [Number.NaN, Number.NEGATIVE_INFINITY, tooLarge]) {
+			await expect(
+				tool.execute(
+					"call-invalid-default-timeout",
+					{ action: "config", defaultTimeoutSeconds },
+					undefined,
+					undefined,
+					ctx,
+				),
+			).rejects.toThrow(/defaultTimeoutSeconds/);
+		}
+		expect(manager.getEvents()).toHaveLength(0);
+	});
+
 	it("starts and reports a completed command through nonblocking status", async () => {
 		const tool = controller.createToolDefinition();
 		const ctx = createContext(tempDir);

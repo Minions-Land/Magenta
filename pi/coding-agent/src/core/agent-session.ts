@@ -1154,7 +1154,15 @@ export class AgentSession {
 			};
 			const replacement = await this._extensionRunner.emitMessageEnd(extensionEvent);
 			if (replacement) {
-				this._replaceMessageInPlace(event.message, replacement);
+				const normalized =
+					(replacement.role === "user" ||
+						replacement.role === "assistant" ||
+						replacement.role === "toolResult" ||
+						replacement.role === "custom") &&
+					replacement.content == null
+						? ({ ...replacement, content: [] } as AgentMessage)
+						: replacement;
+				this._replaceMessageInPlace(event.message, normalized);
 			}
 		} else if (event.type === "tool_execution_start") {
 			const extensionEvent: ToolExecutionStartEvent = {
@@ -1761,7 +1769,7 @@ export class AgentSession {
 					messages.push({
 						role: "custom",
 						customType: msg.customType,
-						content: msg.content,
+						content: msg.content ?? [],
 						display: msg.display,
 						details: msg.details,
 						timestamp: Date.now(),
@@ -2248,7 +2256,7 @@ export class AgentSession {
 		const appMessage = {
 			role: "custom" as const,
 			customType: message.customType,
-			content: message.content,
+			content: message.content ?? [],
 			display: message.display,
 			details: message.details,
 			timestamp: Date.now(),

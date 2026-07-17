@@ -389,10 +389,18 @@ export function buildSessionContext(
 
 	const appendMessage = (entry: SessionEntry) => {
 		if (entry.type === "message") {
-			messages.push(entry.message);
+			const message = entry.message;
+			if (
+				(message.role === "user" || message.role === "assistant" || message.role === "toolResult") &&
+				message.content == null
+			) {
+				messages.push({ ...message, content: [] });
+			} else {
+				messages.push(message);
+			}
 		} else if (entry.type === "custom_message") {
 			messages.push(
-				createCustomMessage(entry.customType, entry.content, entry.display, entry.details, entry.timestamp),
+				createCustomMessage(entry.customType, entry.content ?? [], entry.display, entry.details, entry.timestamp),
 			);
 		} else if (entry.type === "branch_summary" && entry.summary) {
 			messages.push(createBranchSummaryMessage(entry.summary, entry.fromId, entry.timestamp));
@@ -796,10 +804,13 @@ export class SessionManager {
 		if (existsSync(this.sessionFile)) {
 			this.fileEntries = loadEntriesFromFile(this.sessionFile);
 
-			// If file was empty or corrupted (no valid header), truncate and start fresh
-			// to avoid appending messages without a session header (which breaks the session)
+			// Empty explicit files are initialized. Invalid non-empty files are never
+			// overwritten at this session-open boundary.
 			if (this.fileEntries.length === 0) {
 				const explicitPath = this.sessionFile;
+				if (statSync(explicitPath).size > 0) {
+					throw new Error(`Session file is not a valid pi session: ${explicitPath}`);
+				}
 				this.newSession();
 				this.sessionFile = explicitPath;
 				this._rewriteFile();
