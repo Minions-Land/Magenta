@@ -45,7 +45,7 @@ describe("research-orchestration state contract", () => {
 		expect(skill).toContain("matching structured terminal receipt");
 		expect(skill).toContain("main agent may advance only non-overlapping Todo work");
 		expect(skill).toContain("A teammate becoming idle does not release");
-		expect(skill).toContain("confirm terminal state before reclaiming the scope");
+		expect(skill).toContain("reclaim the scope only after its terminal event or receipt arrives");
 		expect(skill).toContain("synthesize the result and independently verify it");
 		expect(skill).toContain("Do not add a Todo owner schema or a separate lease registry");
 		expect(skill).toContain("blocks `bash`");
