@@ -674,6 +674,35 @@ export interface VercelGatewayRouting {
 	order?: string[];
 }
 
+/**
+ * Model cost rates in $/million tokens.
+ * For volume-based tiered pricing, use the tiers field with threshold-based rates.
+ * For flat pricing, use the direct rate fields (backward compatible).
+ */
+export type ModelCost =
+	| {
+			input: number;
+			output: number;
+			cacheRead: number;
+			cacheWrite: number;
+	  }
+	| {
+			tiers: {
+				default: ModelCostRates;
+				scale: ModelCostRates;
+			};
+	  };
+
+/**
+ * Per-tier cost rates in $/million tokens.
+ */
+export interface ModelCostRates {
+	input: number;
+	output: number;
+	cacheRead: number;
+	cacheWrite: number;
+}
+
 // Model interface for the unified model system
 export interface Model<TApi extends Api> {
 	id: string;
@@ -688,12 +717,7 @@ export interface Model<TApi extends Api> {
 	 */
 	thinkingLevelMap?: ThinkingLevelMap;
 	input: ("text" | "image")[];
-	cost: {
-		input: number; // $/million tokens
-		output: number; // $/million tokens
-		cacheRead: number; // $/million tokens
-		cacheWrite: number; // $/million tokens
-	};
+	cost: ModelCost;
 	/** The provider chooses the concrete model/price at request time. */
 	variablePricing?: boolean;
 	contextWindow: number;

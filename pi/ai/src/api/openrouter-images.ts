@@ -6,7 +6,7 @@ import type {
 	ChatCompletionContentPartText,
 	ChatCompletionCreateParamsNonStreaming,
 } from "openai/resources/chat/completions.js";
-import { applyReportedCost } from "../models.ts";
+import { applyReportedCost, resolveModelCostRates } from "../models.ts";
 import type {
 	AssistantImages,
 	ImageContent,
@@ -169,6 +169,7 @@ function parseUsage(
 		cacheWriteTokens > 0 ? Math.max(0, reportedCachedTokens - cacheWriteTokens) : reportedCachedTokens;
 	const input = Math.max(0, promptTokens - cacheReadTokens - cacheWriteTokens);
 	const output = rawUsage.completion_tokens || 0;
+	const rates = resolveModelCostRates(model.cost, input + cacheReadTokens + cacheWriteTokens);
 	const usage: Usage = {
 		input,
 		output,
@@ -176,10 +177,10 @@ function parseUsage(
 		cacheWrite: cacheWriteTokens,
 		totalTokens: input + output + cacheReadTokens + cacheWriteTokens,
 		cost: {
-			input: (model.cost.input / 1000000) * input,
-			output: (model.cost.output / 1000000) * output,
-			cacheRead: (model.cost.cacheRead / 1000000) * cacheReadTokens,
-			cacheWrite: (model.cost.cacheWrite / 1000000) * cacheWriteTokens,
+			input: (rates.input / 1000000) * input,
+			output: (rates.output / 1000000) * output,
+			cacheRead: (rates.cacheRead / 1000000) * cacheReadTokens,
+			cacheWrite: (rates.cacheWrite / 1000000) * cacheWriteTokens,
 			total: 0,
 		},
 	};

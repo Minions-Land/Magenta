@@ -10,6 +10,8 @@ import type {
 	AssistantMessageEventStream,
 	Context,
 	Model,
+	ModelCost,
+	ModelCostRates,
 	ModelThinkingLevel,
 	ProviderHeaders,
 	ProviderStreams,
@@ -396,16 +398,34 @@ export function calculateCost<TApi extends Api>(model: Model<TApi>, usage: Usage
 		usage.cost.unknown = true;
 		return usage.cost;
 	}
+
+	// Select cost rates: flat or tiered.
+	// Volume-based tiered pricing selects by input+cacheRead+cacheWrite, request-wide.
+	const inputVolume = usage.input + usage.cacheRead + usage.cacheWrite;
+	const rates = resolveModelCostRates(model.cost, inputVolume);
 	// Anthropic charges 2x base input for 1h cache writes.
 	const longWrite = usage.cacheWrite1h ?? 0;
 	const shortWrite = usage.cacheWrite - longWrite;
-	usage.cost.input = (model.cost.input / 1000000) * usage.input;
-	usage.cost.output = (model.cost.output / 1000000) * usage.output;
-	usage.cost.cacheRead = (model.cost.cacheRead / 1000000) * usage.cacheRead;
-	usage.cost.cacheWrite = (model.cost.cacheWrite * shortWrite + model.cost.input * 2 * longWrite) / 1000000;
+	usage.cost.input = (rates.input / 1000000) * usage.input;
+	usage.cost.output = (rates.output / 1000000) * usage.output;
+	usage.cost.cacheRead = (rates.cacheRead / 1000000) * usage.cacheRead;
+	usage.cost.cacheWrite = (rates.cacheWrite * shortWrite + rates.input * 2 * longWrite) / 1000000;
 	usage.cost.total = usage.cost.input + usage.cost.output + usage.cost.cacheRead + usage.cost.cacheWrite;
 	delete usage.cost.unknown;
 	return usage.cost;
+}
+
+/**
+ * Resolve the applicable per-token cost rates for a given input volume.
+ * Flat pricing returns the direct rates; tiered pricing selects the highest
+ * tier whose threshold is met by `inputVolume` (input + cacheRead + cacheWrite).
+ */
+export function resolveModelCostRates(cost: ModelCost, inputVolume: number): ModelCostRates {
+	if ("tiers" in cost) {
+		const SCALE_THRESHOLD = 128_000;
+		return inputVolume >= SCALE_THRESHOLD ? cost.tiers.scale : cost.tiers.default;
+	}
+	return cost;
 }
 
 /** Apply a provider-reported total charge (USD) when catalog pricing is dynamic. */
