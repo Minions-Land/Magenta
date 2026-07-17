@@ -36,7 +36,7 @@ import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
-import { adjustMaxTokensForThinking, buildBaseOptions } from "./simple-options.ts";
+import { adjustMaxTokensForThinking, buildBaseOptions, resolveMaxTokens } from "./simple-options.ts";
 import { transformMessages } from "./transform-messages.ts";
 
 /**
@@ -902,6 +902,7 @@ export const streamSimple: StreamFunction<"anthropic-messages", SimpleStreamOpti
 
 	const base = buildBaseOptions(model, options, options?.apiKey);
 	if (!options?.reasoning) {
+		base.maxTokens = resolveMaxTokens(context, model, options?.maxTokens);
 		return stream(model, context, { ...base, thinkingEnabled: false } satisfies AnthropicOptions);
 	}
 
@@ -909,6 +910,7 @@ export const streamSimple: StreamFunction<"anthropic-messages", SimpleStreamOpti
 	// For older models: use budget-based thinking.
 	if (model.compat?.forceAdaptiveThinking === true) {
 		const effort = mapThinkingLevelToEffort(model, options.reasoning);
+		base.maxTokens = resolveMaxTokens(context, model, options?.maxTokens);
 		return stream(model, context, {
 			...base,
 			thinkingEnabled: true,
@@ -918,9 +920,10 @@ export const streamSimple: StreamFunction<"anthropic-messages", SimpleStreamOpti
 
 	// Undefined means the caller did not request an output cap; let the helper use the model cap.
 	// Do not coerce to 0 here, or the thinking budget would become the entire max_tokens value.
+	const contextAwareCap = resolveMaxTokens(context, model, undefined);
 	const adjusted = adjustMaxTokensForThinking(
 		base.maxTokens,
-		model.maxTokens,
+		contextAwareCap,
 		options.reasoning,
 		options.thinkingBudgets,
 	);

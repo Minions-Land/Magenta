@@ -22,7 +22,7 @@ import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
 import { convertResponsesMessages, convertResponsesTools, processResponsesStream } from "./openai-responses-shared.ts";
-import { buildBaseOptions } from "./simple-options.ts";
+import { buildBaseOptions, resolveMaxTokens } from "./simple-options.ts";
 
 const OPENAI_TOOL_CALL_PROVIDERS = new Set(["openai", "openai-codex", "opencode"]);
 // OpenAI Responses rejects max_output_tokens below 16.
@@ -287,6 +287,7 @@ export const streamSimple: StreamFunction<"openai-responses", SimpleStreamOption
 	getClientApiKey(model.provider, options?.apiKey, { ...model.headers, ...options?.headers });
 
 	const base = buildBaseOptions(model, options, options?.apiKey);
+	base.maxTokens = resolveMaxTokens(context, model, options?.maxTokens);
 	const clampedReasoning = options?.reasoning ? clampThinkingLevel(model, options.reasoning) : undefined;
 	const reasoningEffort = clampedReasoning === "off" ? undefined : clampedReasoning;
 

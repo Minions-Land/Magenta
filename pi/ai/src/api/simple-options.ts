@@ -1,4 +1,5 @@
-import type { Api, Model, SimpleStreamOptions, StreamOptions, ThinkingBudgets, ThinkingLevel } from "../types.ts";
+import type { Api, Model, SimpleStreamOptions, StreamOptions, ThinkingBudgets, ThinkingLevel, Context } from "../types.ts";
+import { estimateMaxOutputTokens } from "../utils/estimate.ts";
 
 export function buildBaseOptions(_model: Model<Api>, options?: SimpleStreamOptions, apiKey?: string): StreamOptions {
 	return {
@@ -52,4 +53,25 @@ export function adjustMaxTokensForThinking(
 	}
 
 	return { maxTokens, thinkingBudget };
+}
+
+/**
+ * Resolve the effective maxTokens for a request, applying a context-aware cap
+ * when the caller hasn't specified one. This ensures input + output tokens fit
+ * within the model's contextWindow budget.
+ *
+ * @param context - The request context (system prompt, messages, tools).
+ * @param model - The model with contextWindow and maxTokens.
+ * @param explicitMaxTokens - The caller's explicit maxTokens value (if any).
+ * @returns A maxTokens value capped to fit within the contextWindow.
+ */
+export function resolveMaxTokens<TApi extends Api>(
+	context: Context,
+	model: Model<TApi>,
+	explicitMaxTokens: number | undefined,
+): number {
+	if (explicitMaxTokens !== undefined) {
+		return explicitMaxTokens;
+	}
+	return estimateMaxOutputTokens(context, model);
 }

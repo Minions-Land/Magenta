@@ -54,7 +54,7 @@ import { parseStreamingJson } from "../utils/json-parse.ts";
 import { resolveHttpProxyUrlForTarget } from "../utils/node-http-proxy.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
-import { adjustMaxTokensForThinking, buildBaseOptions, clampReasoning } from "./simple-options.ts";
+import { adjustMaxTokensForThinking, buildBaseOptions, clampReasoning, resolveMaxTokens } from "./simple-options.ts";
 import { transformMessages } from "./transform-messages.ts";
 
 export type BedrockThinkingDisplay = "summarized" | "omitted";
@@ -384,11 +384,13 @@ export const streamSimple: StreamFunction<"bedrock-converse-stream", SimpleStrea
 ): AssistantMessageEventStream => {
 	const base = buildBaseOptions(model, options, undefined);
 	if (!options?.reasoning) {
+		base.maxTokens = resolveMaxTokens(context, model, options?.maxTokens);
 		return stream(model, context, { ...base, reasoning: undefined } satisfies BedrockOptions);
 	}
 
 	if (isAnthropicClaudeModel(model)) {
 		if (supportsAdaptiveThinking(model.id, model.name)) {
+			base.maxTokens = resolveMaxTokens(context, model, options?.maxTokens);
 			return stream(model, context, {
 				...base,
 				reasoning: options.reasoning,
@@ -398,9 +400,10 @@ export const streamSimple: StreamFunction<"bedrock-converse-stream", SimpleStrea
 
 		// Undefined means the caller did not request an output cap; let the helper use the model cap.
 		// Do not coerce to 0 here, or the thinking budget would become the entire maxTokens value.
+		const contextAwareCap = resolveMaxTokens(context, model, undefined);
 		const adjusted = adjustMaxTokensForThinking(
 			base.maxTokens,
-			model.maxTokens,
+			contextAwareCap,
 			options.reasoning,
 			options.thinkingBudgets,
 		);
@@ -416,6 +419,7 @@ export const streamSimple: StreamFunction<"bedrock-converse-stream", SimpleStrea
 		} satisfies BedrockOptions);
 	}
 
+	base.maxTokens = resolveMaxTokens(context, model, options?.maxTokens);
 	return stream(model, context, {
 		...base,
 		reasoning: options.reasoning,

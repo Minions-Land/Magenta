@@ -38,7 +38,7 @@ import {
 	mapToolChoice,
 	retainThoughtSignature,
 } from "./google-shared.ts";
-import { buildBaseOptions } from "./simple-options.ts";
+import { buildBaseOptions, resolveMaxTokens } from "./simple-options.ts";
 
 export interface GoogleVertexOptions extends StreamOptions {
 	toolChoice?: "auto" | "none" | "any";
@@ -305,6 +305,7 @@ export const streamSimple: StreamFunction<"google-vertex", SimpleStreamOptions> 
 	options?: SimpleStreamOptions,
 ): AssistantMessageEventStream => {
 	const base = buildBaseOptions(model, options, undefined);
+	base.maxTokens = resolveMaxTokens(context, model, options?.maxTokens);
 	if (!options?.reasoning) {
 		return stream(model, context, {
 			...base,
