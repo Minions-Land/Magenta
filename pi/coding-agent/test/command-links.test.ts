@@ -28,4 +28,19 @@ describe("command links", () => {
 			expect(names.has(name)).toBe(true);
 		}
 	});
+
+	it("describes /refresh as reloading resources including context files", () => {
+		const refresh = BUILTIN_SLASH_COMMANDS.find((command) => command.name === "refresh");
+		expect(refresh).toBeDefined();
+		for (const resource of ["keybindings", "extensions", "skills", "prompts", "themes", "context files"]) {
+			expect(refresh?.description).toContain(resource);
+		}
+	});
+
+	it("describes /reload as recompiling and restarting", () => {
+		const reload = BUILTIN_SLASH_COMMANDS.find((command) => command.name === "reload");
+		expect(reload).toBeDefined();
+		expect(reload?.description).toContain("Recompile");
+		expect(reload?.description).toContain("restart");
+	});
 });

@@ -44,7 +44,10 @@ export const BUILTIN_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 	{ name: "new", description: "Start a new session" },
 	{ name: "compact", description: "Manually compact the session context" },
 	{ name: "resume", description: "Resume a different session" },
-	{ name: "refresh", description: "Refresh keybindings, extensions, skills, prompts, and themes (no recompile)" },
+	{
+		name: "refresh",
+		description: "Refresh keybindings, extensions, skills, prompts, themes, and context files (no recompile)",
+	},
 	{ name: "reload", description: `Recompile ${APP_NAME} and restart the TUI with the current session` },
 	{ name: "quit", description: `Quit ${APP_NAME}` },
 	{ name: "exit", description: `Exit ${APP_NAME}` },
