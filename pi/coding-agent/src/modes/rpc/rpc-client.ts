@@ -542,8 +542,10 @@ export class RpcClient {
 	// =========================================================================
 
 	/**
-	 * Host-only event barrier. This waits in the external client process, not in
-	 * the child AgentLoop. Agent orchestration should subscribe to events instead.
+	 * Host-only event barrier. Waits for the agent to fully settle (agent_settled event):
+	 * no active run, retries complete, and queued continuations drained. This waits in the
+	 * external client process, not in the child AgentLoop. Agent orchestration should
+	 * subscribe to events instead.
 	 */
 	waitForIdle(timeout = 60000): Promise<void> {
 		return new Promise((resolve, reject) => {
@@ -553,7 +555,7 @@ export class RpcClient {
 			}, timeout);
 
 			const unsubscribe = this.onEvent((event) => {
-				if (event.type === "agent_end") {
+				if (event.type === "agent_settled") {
 					clearTimeout(timer);
 					unsubscribe();
 					resolve();
@@ -573,7 +575,7 @@ export class RpcClient {
 
 			const unsubscribe = this.onEvent((event) => {
 				events.push(event);
-				if (event.type === "agent_end") {
+				if (event.type === "agent_settled") {
 					clearTimeout(timer);
 					unsubscribe();
 					resolve(events);

@@ -292,7 +292,7 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 			}
 			if (
 				session.isStreaming &&
-				!(await waitForAgentIdleWithDeadline(() => session.agent.waitForIdle(), deadline))
+				!(await waitForAgentIdleWithDeadline(() => session.waitForIdle(), deadline))
 			) {
 				return failTimeout(`Timed out after ${backgroundWaitTimeoutMs}ms waiting for a background continuation`);
 			}

@@ -178,6 +178,7 @@ export type AgentSessionEvent =
 			messages: AgentMessage[];
 			willRetry: boolean;
 	  }
+	| { type: "agent_settled" }
 	| {
 			type: "queue_update";
 			steering: readonly string[];
@@ -382,6 +383,11 @@ export class AgentSession {
 	// Event subscription state
 	private _unsubscribeAgent?: () => void;
 	private _eventListeners: AgentSessionEventListener[] = [];
+	// Settled-lifecycle state (D4): tracks whether an agent run (including retries,
+	// auto-compaction, and queued/run-owned continuations) is still in progress.
+	private _isAgentRunActive = false;
+	private _idleWaitPromise: Promise<void> | undefined;
+	private _resolveIdleWait: (() => void) | undefined;
 	private _activePromptWithdrawal?: PromptWithdrawalTransaction;
 
 	/** Tracks pending steering messages and attachments. Removed when delivered. */
@@ -1587,6 +1593,7 @@ export class AgentSession {
 	// =========================================================================
 
 	private async _runAgentPrompt(messages: AgentMessage | AgentMessage[]): Promise<void> {
+		this._isAgentRunActive = true;
 		try {
 			await this.agent.prompt(messages);
 			while (await this._handlePostAgentRun()) {
@@ -1594,6 +1601,7 @@ export class AgentSession {
 			}
 		} finally {
 			this._flushPendingBashMessages();
+			await this._emitAgentSettled();
 		}
 	}
 
@@ -2410,7 +2418,53 @@ export class AgentSession {
 	 */
 	async abort(): Promise<void> {
 		this.requestAbort();
-		await this.agent.waitForIdle();
+		await this.waitForIdle();
+	}
+
+	/**
+	 * Wait for the agent to become fully idle (no active run, including retries and continuations).
+	 */
+	async waitForIdle(): Promise<void> {
+		if (this.isIdle) {
+			return;
+		}
+		await this._getIdleWaitPromise();
+	}
+
+	/**
+	 * Whether the agent is fully idle (no active run).
+	 */
+	get isIdle(): boolean {
+		return !this._isAgentRunActive;
+	}
+
+	private _getIdleWaitPromise(): Promise<void> {
+		if (!this._idleWaitPromise) {
+			this._idleWaitPromise = new Promise((resolve) => {
+				this._resolveIdleWait = resolve;
+			});
+		}
+		return this._idleWaitPromise;
+	}
+
+	private async _emitAgentSettled(): Promise<void> {
+		// Phase 1: the run has drained (agent_end handlers, retries, compaction, and
+		// run-owned continuations already completed in _runAgentPrompt). Mark inactive.
+		this._isAgentRunActive = false;
+		// Phase 2: notify listeners. Extension settled callbacks are awaited before the
+		// internal completion barrier (waitForIdle) resolves, so RPC promptAndWait only
+		// completes once same-run settled work is done.
+		try {
+			await this._extensionRunner.emit({ type: "agent_settled" });
+			this._emit({ type: "agent_settled" });
+		} finally {
+			if (this._resolveIdleWait) {
+				const resolve = this._resolveIdleWait;
+				this._resolveIdleWait = undefined;
+				this._idleWaitPromise = undefined;
+				resolve();
+			}
+		}
 	}
 
 	// =========================================================================
@@ -3354,7 +3408,7 @@ export class AgentSession {
 			},
 			{
 				getModel: () => this.model,
-				isIdle: () => !this.isStreaming,
+				isIdle: () => this.isIdle,
 				isProjectTrusted: () => this.settingsManager.isProjectTrusted(),
 				getSignal: () => this.agent.signal,
 				abort: () => {
