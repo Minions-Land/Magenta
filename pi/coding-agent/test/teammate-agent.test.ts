@@ -669,7 +669,7 @@ describe("built-in teammate_agent tool", () => {
 			cacheRead: 30_000_000,
 			cacheWrite: 51_000,
 			cost: 19.504,
-			contextUsage: { percent: 94.5, contextWindow: 372_000 },
+			contextUsage: { tokens: 351_540, percent: 94.5, contextWindow: 372_000 },
 			autoCompactEnabled: true,
 			assistantMessages: 151,
 		});

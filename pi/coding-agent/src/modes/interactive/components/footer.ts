@@ -24,8 +24,43 @@ function formatTokens(count: number): string {
 	if (count < 1000) return count.toString();
 	if (count < 10000) return `${(count / 1000).toFixed(1)}k`;
 	if (count < 1000000) return `${Math.round(count / 1000)}k`;
-	if (count < 10000000) return `${(count / 1000000).toFixed(1)}M`;
-	return `${Math.round(count / 1000000)}M`;
+	const millions = count / 1000000;
+	if (count < 100000000) return `${millions.toFixed(1).replace(/\.0$/, "")}M`;
+	return `${Math.round(millions)}M`;
+}
+
+function knownNonNegative(value: number | null | undefined): value is number {
+	return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}
+
+function fitGroupsToWidth(groups: string[], separator: string, width: number, ellipsis: string): string {
+	if (groups.length === 0 || width <= 0) return "";
+
+	const first = groups[0];
+	const firstWidth = visibleWidth(first);
+	if (firstWidth > width) return truncateToWidth(first, width, ellipsis);
+
+	let result = first;
+	let usedWidth = firstWidth;
+	const separatorWidth = visibleWidth(separator);
+	for (let i = 1; i < groups.length; i++) {
+		const remainingWidth = width - usedWidth;
+		if (remainingWidth <= separatorWidth) break;
+
+		const group = groups[i];
+		const groupWidth = visibleWidth(group);
+		if (separatorWidth + groupWidth <= remainingWidth) {
+			result += separator + group;
+			usedWidth += separatorWidth + groupWidth;
+			continue;
+		}
+
+		const availableGroupWidth = remainingWidth - separatorWidth;
+		const truncatedGroup = truncateToWidth(group, availableGroupWidth, ellipsis);
+		if (visibleWidth(truncatedGroup) > 0) result += separator + truncatedGroup;
+		break;
+	}
+	return result;
 }
 
 /**
@@ -168,7 +203,7 @@ export class FooterComponent implements Component {
 			assistantMessageCount,
 		} = this.getUsageTotals();
 
-		// Calculate average cache hit rate across all messages
+		// Calculate the cumulative, token-weighted cache hit rate across persisted assistant entries.
 		const totalPromptTokens = totalInput + totalCacheRead + totalCacheWrite;
 		const avgCacheHitRate = totalPromptTokens > 0 ? (totalCacheRead / totalPromptTokens) * 100 : undefined;
 
@@ -176,8 +211,8 @@ export class FooterComponent implements Component {
 		// After compaction, tokens are unknown until the next LLM response.
 		const contextUsage = this.session.getContextUsage();
 		const contextWindow = contextUsage?.contextWindow ?? state.model?.contextWindow ?? 0;
-		const contextPercentValue = contextUsage?.percent ?? 0;
-		const contextPercent = contextUsage?.percent !== null ? contextPercentValue.toFixed(1) : "?";
+		const contextTokens = knownNonNegative(contextUsage?.tokens) ? contextUsage.tokens : undefined;
+		const contextPercentValue = knownNonNegative(contextUsage?.percent) ? contextUsage.percent : undefined;
 
 		// Replace home directory with ~
 		let pwd = formatCwdForFooter(this.session.sessionManager.getCwd(), process.env.HOME || process.env.USERPROFILE);
@@ -202,108 +237,91 @@ export class FooterComponent implements Component {
 			pwd = `${pwd} • ${sessionName}`;
 		}
 
-		// Build stats line
-		const statsParts = [];
-		if (totalInput) statsParts.push(`↑${formatTokens(totalInput)}`);
-		if (totalOutput) statsParts.push(`↓${formatTokens(totalOutput)}`);
-		if (totalCacheRead) statsParts.push(`R${formatTokens(totalCacheRead)}`);
-		if (totalCacheWrite) statsParts.push(`W${formatTokens(totalCacheWrite)}`);
-		if ((totalCacheRead > 0 || totalCacheWrite > 0) && avgCacheHitRate !== undefined) {
-			statsParts.push(`CH${avgCacheHitRate.toFixed(1)}%`);
+		// Build stats groups. Current context comes first so it stays visible on narrow
+		// terminals; cumulative session usage is explicitly separated as "total".
+		const statsGroups: string[] = [];
+		if (contextWindow > 0) {
+			const contextDetails: string[] = [];
+			if (contextPercentValue !== undefined) contextDetails.push(`${contextPercentValue.toFixed(1)}%`);
+			if (this.autoCompactEnabled) contextDetails.push("auto");
+			let contextDisplay = `ctx ${contextTokens === undefined ? "?" : formatTokens(contextTokens)}/${formatTokens(contextWindow)}`;
+			if (contextDetails.length > 0) contextDisplay += ` (${contextDetails.join(", ")})`;
+
+			if (contextPercentValue !== undefined && contextPercentValue > 90) {
+				contextDisplay = theme.fg("error", contextDisplay);
+			} else if (contextPercentValue !== undefined && contextPercentValue > 70) {
+				contextDisplay = theme.fg("warning", contextDisplay);
+			} else {
+				contextDisplay = theme.fg("dim", contextDisplay);
+			}
+			statsGroups.push(contextDisplay);
 		}
 
-		// Show cost with "(sub)" indicator if using OAuth subscription
+		const totalParts: string[] = [];
+		if (totalInput) totalParts.push(`↑${formatTokens(totalInput)}`);
+		if (totalOutput) totalParts.push(`↓${formatTokens(totalOutput)}`);
+		if (totalCacheRead) totalParts.push(`R${formatTokens(totalCacheRead)}`);
+		if (totalCacheWrite) totalParts.push(`W${formatTokens(totalCacheWrite)}`);
+		if ((totalCacheRead > 0 || totalCacheWrite > 0) && avgCacheHitRate !== undefined) {
+			totalParts.push(`CH${avgCacheHitRate.toFixed(1)}%`);
+		}
+
+		// Show cost with "(sub)" indicator if using OAuth subscription.
 		const usingSubscription = state.model ? this.session.modelRegistry.isUsingOAuth(state.model) : false;
 		if (costUnknown) {
-			statsParts.push("cost?");
+			totalParts.push("cost?");
 		} else if (totalCost || usingSubscription) {
-			const costStr = `$${totalCost.toFixed(3)}${usingSubscription ? " (sub)" : ""}`;
-			statsParts.push(costStr);
+			totalParts.push(`$${totalCost.toFixed(3)}${usingSubscription ? " (sub)" : ""}`);
 		}
-
-		// Colorize context percentage based on usage
-		let contextPercentStr: string;
-		const autoIndicator = this.autoCompactEnabled ? " (auto)" : "";
-		const contextPercentDisplay =
-			contextPercent === "?"
-				? `?/${formatTokens(contextWindow)}${autoIndicator}`
-				: `${contextPercent}%/${formatTokens(contextWindow)}${autoIndicator}`;
-		if (contextPercentValue > 90) {
-			contextPercentStr = theme.fg("error", contextPercentDisplay);
-		} else if (contextPercentValue > 70) {
-			contextPercentStr = theme.fg("warning", contextPercentDisplay);
-		} else {
-			contextPercentStr = contextPercentDisplay;
-		}
-		statsParts.push(contextPercentStr);
-		if (areExperimentalFeaturesEnabled()) {
-			statsParts.push(`${theme.fg("dim", "•")} ${theme.bold(theme.fg("warning", "xp"))}`);
-		}
-
-		// Add message count at the end
 		if (assistantMessageCount > 0) {
-			statsParts.push(`${assistantMessageCount} msg${assistantMessageCount === 1 ? "" : "s"}`);
+			totalParts.push(`${assistantMessageCount} call${assistantMessageCount === 1 ? "" : "s"}`);
+		}
+		if (totalParts.length > 0) statsGroups.push(theme.fg("dim", `total ${totalParts.join(" ")}`));
+
+		if (areExperimentalFeaturesEnabled()) {
+			statsGroups.push(`${theme.fg("dim", "•")} ${theme.bold(theme.fg("warning", "xp"))}`);
 		}
 
-		let statsLeft = statsParts.join(" ");
+		const groupSeparator = theme.fg("dim", " | ");
+		let statsLeft = "";
 
-		// Add model name on the right side, plus thinking level if model supports it
+		// Add model name on the right side, plus thinking level if model supports it.
 		const modelName = state.model?.id || "no-model";
-
-		let statsLeftWidth = visibleWidth(statsLeft);
-
-		// If statsLeft is too wide, truncate it
-		if (statsLeftWidth > width) {
-			statsLeft = truncateToWidth(statsLeft, width, "...");
-			statsLeftWidth = visibleWidth(statsLeft);
-		}
-
-		// Calculate available space for padding (minimum 2 spaces between stats and model)
 		const minPadding = 2;
-
-		// Add thinking level indicator if model supports reasoning
 		let rightSideWithoutProvider = modelName;
 		if (state.model?.reasoning || this.session.executionProfile === "ultra") {
 			const profile = this.session.executionProfile;
 			rightSideWithoutProvider = profile === "off" ? `${modelName} • thinking off` : `${modelName} • ${profile}`;
 		}
 
-		// Prepend the provider in parentheses if there are multiple providers and there's enough room
+		// Provider is lower priority than the complete current-context group, but higher
+		// priority than cumulative totals that can be truncated from the right.
 		let rightSide = rightSideWithoutProvider;
 		if (this.footerData.getAvailableProviderCount() > 1 && state.model) {
-			rightSide = `(${state.model!.provider}) ${rightSideWithoutProvider}`;
-			if (statsLeftWidth + minPadding + visibleWidth(rightSide) > width) {
-				// Too wide, fall back
-				rightSide = rightSideWithoutProvider;
+			const withProvider = `(${state.model.provider}) ${rightSideWithoutProvider}`;
+			const criticalStatsWidth = visibleWidth(statsGroups[0] ?? "");
+			if (criticalStatsWidth + minPadding + visibleWidth(withProvider) <= width) {
+				rightSide = withProvider;
 			}
 		}
 
-		const rightSideWidth = visibleWidth(rightSide);
-		const totalNeeded = statsLeftWidth + minPadding + rightSideWidth;
-
-		let statsLine: string;
-		if (totalNeeded <= width) {
-			// Both fit - add padding to right-align model
-			const padding = " ".repeat(width - statsLeftWidth - rightSideWidth);
-			statsLine = statsLeft + padding + rightSide;
+		let rightSideWidth = visibleWidth(rightSide);
+		if (rightSideWidth > width) {
+			rightSide = truncateToWidth(rightSide, width, "");
+			rightSideWidth = visibleWidth(rightSide);
+			statsLeft = "";
 		} else {
-			// Need to truncate right side
-			const availableForRight = width - statsLeftWidth - minPadding;
-			if (availableForRight > 0) {
-				const truncatedRight = truncateToWidth(rightSide, availableForRight, "");
-				const truncatedRightWidth = visibleWidth(truncatedRight);
-				const padding = " ".repeat(Math.max(0, width - statsLeftWidth - truncatedRightWidth));
-				statsLine = statsLeft + padding + truncatedRight;
-			} else {
-				// Not enough space for right side at all
-				statsLine = statsLeft;
-			}
+			const maxStatsWidth = Math.max(0, width - rightSideWidth - minPadding);
+			statsLeft = fitGroupsToWidth(statsGroups, groupSeparator, maxStatsWidth, theme.fg("dim", "..."));
 		}
 
-		// Apply dim to each part separately. statsLeft may contain color codes (for context %)
-		// that end with a reset, which would clear an outer dim wrapper. So we dim the parts
-		// before and after the colored section independently.
-		const dimStatsLeft = theme.fg("dim", statsLeft);
+		const statsLeftWidth = visibleWidth(statsLeft);
+		const padding = " ".repeat(Math.max(0, width - statsLeftWidth - rightSideWidth));
+		const statsLine = statsLeft + padding + rightSide;
+
+		// Stats groups already carry their final colors; only the padding/model remainder
+		// needs the default dim styling.
+		const dimStatsLeft = statsLeft;
 		const remainder = statsLine.slice(statsLeft.length); // padding + rightSide
 		const dimRemainder = theme.fg("dim", remainder);
 

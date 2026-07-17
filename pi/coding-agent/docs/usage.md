@@ -15,6 +15,8 @@ The interface has four main areas:
 
 The editor can be replaced temporarily by built-in UI such as `/settings` or by custom extension UI.
 
+The default footer separates two scopes. `ctx used/window (percent, auto)` is the current active-context estimate used by automatic compaction. Immediately after compaction it shows `ctx ?/window (auto)` until the next valid assistant response reports fresh usage. `total` is cumulative persisted session usage: `↑` is uncached input, `↓` is output, `R`/`W` are cache reads/writes, `CH` is the weighted cache-hit rate, and `calls` counts assistant request records. Cache reads are counted again on every request, so a large cumulative `R` value is not the current context size. Teammate event telemetry uses `active` for usage on the child's currently resolved branch rather than persisted lifetime totals.
+
 ### Editor Features
 
 | Feature | How |

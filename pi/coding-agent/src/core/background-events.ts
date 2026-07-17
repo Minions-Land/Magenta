@@ -91,6 +91,7 @@ export type EventUiTelemetry = {
 	cost?: number;
 	costUnknown?: boolean;
 	contextUsage?: {
+		tokens?: number | null;
 		percent: number | null;
 		contextWindow: number;
 	};

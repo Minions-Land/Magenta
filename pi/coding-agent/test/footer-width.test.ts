@@ -22,6 +22,7 @@ function createSession(options: {
 	thinkingLevel?: string;
 	usage?: AssistantUsage;
 	sessionId?: string;
+	contextUsage?: "unavailable" | { tokens: number | null; contextWindow: number; percent: number | null };
 }): AgentSession {
 	const usage = options.usage;
 	const entries =
@@ -38,6 +39,7 @@ function createSession(options: {
 				];
 
 	const session = {
+		executionProfile: options.thinkingLevel ?? "off",
 		get sessionId() {
 			return options.sessionId ?? "a1b2c3d4";
 		},
@@ -56,7 +58,10 @@ function createSession(options: {
 			getSessionName: () => options.sessionName,
 			getCwd: () => "/tmp/project",
 		},
-		getContextUsage: () => ({ contextWindow: 200_000, percent: 12.3 }),
+		getContextUsage: () =>
+			options.contextUsage === "unavailable"
+				? undefined
+				: (options.contextUsage ?? { tokens: 24_600, contextWindow: 200_000, percent: 12.3 }),
 		modelRegistry: {
 			isUsingOAuth: () => false,
 		},
@@ -130,6 +135,54 @@ describe("FooterComponent width handling", () => {
 		}
 	});
 
+	it("preserves current context and model at common narrow widths", () => {
+		const session = createSession({
+			sessionName: "",
+			modelId: "gpt-5.6-sol",
+			provider: "openai",
+			reasoning: true,
+			thinkingLevel: "high",
+			usage: {
+				input: 339_422,
+				output: 54_127,
+				cacheRead: 16_528_384,
+				cacheWrite: 0,
+				cost: { total: 11.585112 },
+			},
+			contextUsage: { tokens: 302_940, contextWindow: 372_000, percent: 81.43548 },
+		});
+		const footer = new FooterComponent(session, createFooterData(2));
+
+		const statsLine = stripAnsi(footer.render(80)[1]);
+		expect(visibleWidth(statsLine)).toBeLessThanOrEqual(80);
+		expect(statsLine).toContain("ctx 303k/372k (81.4%, auto)");
+		expect(statsLine).toContain("gpt-5.6-sol • high");
+	});
+
+	it("does not truncate context when context plus model exactly fits", () => {
+		const modelId = "m".repeat(44);
+		const session = createSession({
+			sessionName: "",
+			modelId,
+			provider: "openai",
+			reasoning: true,
+			thinkingLevel: "high",
+			usage: {
+				input: 339_422,
+				output: 54_127,
+				cacheRead: 16_528_384,
+				cacheWrite: 0,
+				cost: { total: 11.585112 },
+			},
+			contextUsage: { tokens: 302_940, contextWindow: 372_000, percent: 81.43548 },
+		});
+		const footer = new FooterComponent(session, createFooterData(2));
+
+		const statsLine = stripAnsi(footer.render(80)[1]);
+		expect(statsLine).toBe(`ctx 303k/372k (81.4%, auto)  ${modelId} • high`);
+		expect(visibleWidth(statsLine)).toBe(80);
+	});
+
 	it("shows the session id on the first line for easy copying", () => {
 		const session = createSession({ sessionName: "", sessionId: "deadbeef" });
 		const footer = new FooterComponent(session, createFooterData(1));
@@ -138,7 +191,36 @@ describe("FooterComponent width handling", () => {
 		expect(firstLine).toContain("SessionID deadbeef");
 	});
 
-	it("shows the latest cache hit rate when cache usage is present", () => {
+	it("separates current context from cumulative session usage", () => {
+		const session = createSession({
+			sessionName: "",
+			usage: {
+				input: 339_422,
+				output: 54_127,
+				cacheRead: 16_528_384,
+				cacheWrite: 0,
+				cost: { total: 11.585112 },
+			},
+			contextUsage: { tokens: 302_940, contextWindow: 372_000, percent: 81.43548 },
+		});
+		const footer = new FooterComponent(session, createFooterData(1));
+
+		const statsLine = stripAnsi(footer.render(160)[1]);
+		expect(statsLine).toContain("ctx 303k/372k (81.4%, auto) | total ↑339k ↓54k R16.5M CH98.0% $11.585 1 call");
+	});
+
+	it("shows unknown context instead of inventing zero percent", () => {
+		for (const contextUsage of ["unavailable" as const, { tokens: null, contextWindow: 200_000, percent: null }]) {
+			const session = createSession({ sessionName: "", contextUsage });
+			const footer = new FooterComponent(session, createFooterData(1));
+
+			const statsLine = stripAnsi(footer.render(120)[1]);
+			expect(statsLine).toContain("ctx ?/200k (auto)");
+			expect(statsLine).not.toContain("0.0%");
+		}
+	});
+
+	it("shows the cumulative cache hit rate when cache usage is present", () => {
 		const session = createSession({
 			sessionName: "",
 			usage: {

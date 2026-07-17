@@ -33,24 +33,40 @@ function formatTokens(count: number): string {
 	if (count < 1000) return count.toString();
 	if (count < 10_000) return `${(count / 1000).toFixed(1)}k`;
 	if (count < 1_000_000) return `${Math.round(count / 1000)}k`;
-	if (count < 10_000_000) return `${(count / 1_000_000).toFixed(1)}M`;
-	return `${Math.round(count / 1_000_000)}M`;
+	const millions = count / 1_000_000;
+	if (count < 100_000_000) return `${millions.toFixed(1).replace(/\.0$/, "")}M`;
+	return `${Math.round(millions)}M`;
 }
 
-function knownNonNegative(value: number | undefined): value is number {
-	return value !== undefined && Number.isFinite(value) && value >= 0;
+function knownNonNegative(value: number | null | undefined): value is number {
+	return typeof value === "number" && Number.isFinite(value) && value >= 0;
 }
 
 export function formatEventUiTelemetry(telemetry: EventUiTelemetry | undefined): string {
 	if (!telemetry) return "";
-	const parts: string[] = [];
-	if (knownNonNegative(telemetry.input) && telemetry.input > 0) parts.push(`↑${formatTokens(telemetry.input)}`);
-	if (knownNonNegative(telemetry.output) && telemetry.output > 0) parts.push(`↓${formatTokens(telemetry.output)}`);
+	const groups: string[] = [];
+	const contextUsage = telemetry.contextUsage;
+	if (contextUsage && knownNonNegative(contextUsage.contextWindow) && contextUsage.contextWindow > 0) {
+		const tokens = knownNonNegative(contextUsage.tokens) ? formatTokens(contextUsage.tokens) : "?";
+		const contextDetails: string[] = [];
+		if (knownNonNegative(contextUsage.percent)) contextDetails.push(`${contextUsage.percent.toFixed(1)}%`);
+		if (telemetry.autoCompactEnabled) contextDetails.push("auto");
+		const details = contextDetails.length > 0 ? ` (${contextDetails.join(", ")})` : "";
+		groups.push(`ctx ${tokens}/${formatTokens(contextUsage.contextWindow)}${details}`);
+	}
+
+	const totalParts: string[] = [];
+	if (knownNonNegative(telemetry.input) && telemetry.input > 0) {
+		totalParts.push(`↑${formatTokens(telemetry.input)}`);
+	}
+	if (knownNonNegative(telemetry.output) && telemetry.output > 0) {
+		totalParts.push(`↓${formatTokens(telemetry.output)}`);
+	}
 	if (knownNonNegative(telemetry.cacheRead) && telemetry.cacheRead > 0) {
-		parts.push(`R${formatTokens(telemetry.cacheRead)}`);
+		totalParts.push(`R${formatTokens(telemetry.cacheRead)}`);
 	}
 	if (knownNonNegative(telemetry.cacheWrite) && telemetry.cacheWrite > 0) {
-		parts.push(`W${formatTokens(telemetry.cacheWrite)}`);
+		totalParts.push(`W${formatTokens(telemetry.cacheWrite)}`);
 	}
 	if (
 		knownNonNegative(telemetry.input) &&
@@ -59,26 +75,18 @@ export function formatEventUiTelemetry(telemetry: EventUiTelemetry | undefined):
 	) {
 		const promptTokens = telemetry.input + telemetry.cacheRead + telemetry.cacheWrite;
 		if ((telemetry.cacheRead > 0 || telemetry.cacheWrite > 0) && promptTokens > 0) {
-			parts.push(`CH${((telemetry.cacheRead / promptTokens) * 100).toFixed(1)}%`);
+			totalParts.push(`CH${((telemetry.cacheRead / promptTokens) * 100).toFixed(1)}%`);
 		}
 	}
-	if (telemetry.costUnknown) parts.push("cost?");
-	else if (knownNonNegative(telemetry.cost) && telemetry.cost > 0) parts.push(`$${telemetry.cost.toFixed(3)}`);
-
-	const contextUsage = telemetry.contextUsage;
-	if (contextUsage && knownNonNegative(contextUsage.contextWindow)) {
-		const percent =
-			contextUsage.percent === null || !knownNonNegative(contextUsage.percent)
-				? "?"
-				: `${contextUsage.percent.toFixed(1)}%`;
-		parts.push(
-			`${percent}/${formatTokens(contextUsage.contextWindow)}${telemetry.autoCompactEnabled ? " (auto)" : ""}`,
-		);
+	if (telemetry.costUnknown) totalParts.push("cost?");
+	else if (knownNonNegative(telemetry.cost) && telemetry.cost > 0) {
+		totalParts.push(`$${telemetry.cost.toFixed(3)}`);
 	}
 	if (knownNonNegative(telemetry.assistantMessages)) {
-		parts.push(`${telemetry.assistantMessages} msg${telemetry.assistantMessages === 1 ? "" : "s"}`);
+		totalParts.push(`${telemetry.assistantMessages} call${telemetry.assistantMessages === 1 ? "" : "s"}`);
 	}
-	return parts.join(" ");
+	if (totalParts.length > 0) groups.push(`active ${totalParts.join(" ")}`);
+	return groups.join(" | ");
 }
 
 type ThemeColor = Parameters<Theme["fg"]>[0];

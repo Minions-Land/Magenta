@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { EventEntry } from "../src/core/background-events.ts";
-import { EventsOverlay } from "../src/modes/interactive/components/events-overlay.ts";
+import { EventsOverlay, formatEventUiTelemetry } from "../src/modes/interactive/components/events-overlay.ts";
 import type { Theme } from "../src/modes/interactive/theme/theme.ts";
 
 function createOverlay(entry: EventEntry): EventsOverlay {
@@ -25,7 +25,7 @@ describe("EventsOverlay background attention state", () => {
 			cacheRead: 30_000_000,
 			cacheWrite: 51_000,
 			cost: 19.504,
-			contextUsage: { percent: 94.5, contextWindow: 372_000 },
+			contextUsage: { tokens: 351_540, percent: 94.5, contextWindow: 372_000 },
 			autoCompactEnabled: true,
 			assistantMessages: 151,
 		}));
@@ -42,8 +42,19 @@ describe("EventsOverlay background attention state", () => {
 
 		const lines = createOverlay(entry).renderEntry(entry, true, 120);
 
-		expect(lines.join("\n")).toContain("↑462k ↓67k R30M W51k CH98.3% $19.504 94.5%/372k (auto) 151 msgs");
+		expect(lines.join("\n")).toContain(
+			"ctx 352k/372k (94.5%, auto) | active ↑462k ↓67k R30M W51k CH98.3% $19.504 151 calls",
+		);
 		expect(getUiTelemetry).toHaveBeenCalledWith("teammate_001", expect.any(Function));
+	});
+
+	it("keeps percentage visible when telemetry does not provide context tokens", () => {
+		const text = formatEventUiTelemetry({
+			contextUsage: { percent: 50, contextWindow: 200_000 },
+			autoCompactEnabled: true,
+		});
+
+		expect(text).toBe("ctx ?/200k (50.0%, auto)");
 	});
 
 	it("shows unknown cost and context without inventing missing fields", () => {
@@ -55,14 +66,16 @@ describe("EventsOverlay background attention state", () => {
 				getEvents: () => [],
 				getUiTelemetry: () => ({
 					costUnknown: true,
-					contextUsage: { percent: null, contextWindow: 200_000 },
+					contextUsage: { tokens: null, percent: null, contextWindow: 200_000 },
 					assistantMessages: 1,
 				}),
 			},
 			event: { id: "teammate_001", status: "running", startedAt: Date.now(), label: "reviewer" },
 		};
 
-		expect(createOverlay(entry).renderEntry(entry, true, 100).join("\n")).toContain("cost? ?/200k 1 msg");
+		expect(createOverlay(entry).renderEntry(entry, true, 100).join("\n")).toContain(
+			"ctx ?/200k | active cost? 1 call",
+		);
 	});
 
 	it("renders overdue and silent status without emitting notifications", () => {

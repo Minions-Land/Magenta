@@ -1316,6 +1316,7 @@ export class TeammateAgentController {
 					...(stats.contextUsage
 						? {
 								contextUsage: {
+									tokens: stats.contextUsage.tokens,
 									percent: stats.contextUsage.percent,
 									contextWindow: stats.contextUsage.contextWindow,
 								},
