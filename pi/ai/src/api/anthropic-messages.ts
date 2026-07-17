@@ -809,19 +809,21 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 					}
 					// Only update usage fields if present (not null).
 					// Preserves input_tokens from message_start when proxies omit it in message_delta.
-					if (event.usage.input_tokens != null) {
-						output.usage.input = event.usage.input_tokens;
+					if (event.usage) {
+						if (event.usage.input_tokens != null) {
+							output.usage.input = event.usage.input_tokens;
+						}
+						if (event.usage.output_tokens != null) {
+							output.usage.output = event.usage.output_tokens;
+						}
+						if (event.usage.cache_read_input_tokens != null) {
+							output.usage.cacheRead = event.usage.cache_read_input_tokens;
+						}
+						if (event.usage.cache_creation_input_tokens != null) {
+							output.usage.cacheWrite = event.usage.cache_creation_input_tokens;
+						}
+						setAnthropicReasoning(output.usage, event.usage);
 					}
-					if (event.usage.output_tokens != null) {
-						output.usage.output = event.usage.output_tokens;
-					}
-					if (event.usage.cache_read_input_tokens != null) {
-						output.usage.cacheRead = event.usage.cache_read_input_tokens;
-					}
-					if (event.usage.cache_creation_input_tokens != null) {
-						output.usage.cacheWrite = event.usage.cache_creation_input_tokens;
-					}
-					setAnthropicReasoning(output.usage, event.usage);
 					// Anthropic doesn't provide total_tokens, compute from components
 					output.usage.totalTokens =
 						output.usage.input + output.usage.output + output.usage.cacheRead + output.usage.cacheWrite;
