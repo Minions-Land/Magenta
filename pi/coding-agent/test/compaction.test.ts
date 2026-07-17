@@ -30,9 +30,10 @@ import {
 // Test fixtures
 // ============================================================================
 
+const LARGE_SESSION_FIXTURE_PATH = join(__dirname, "fixtures/large-session.jsonl");
+
 function loadLargeSessionEntries(): SessionEntry[] {
-	const sessionPath = join(__dirname, "fixtures/large-session.jsonl");
-	const content = readFileSync(sessionPath, "utf-8");
+	const content = readFileSync(LARGE_SESSION_FIXTURE_PATH, "utf-8");
 	const entries = parseSessionEntries(content);
 	migrateSessionEntries(entries); // Add id/parentId for v1 fixtures
 	return entries.filter((e): e is SessionEntry => e.type !== "session");
@@ -474,31 +475,56 @@ describe("prepareCompaction with previous compaction", () => {
 // Integration tests with real session data
 // ============================================================================
 
-describe("Large session fixture", () => {
-	it("should parse the large session", () => {
-		const entries = loadLargeSessionEntries();
-		expect(entries.length).toBeGreaterThan(100);
+describe("Synthetic v1 session fixture", () => {
+	it("parses and migrates the exact synthetic contract", () => {
+		const rawEntries = parseSessionEntries(readFileSync(LARGE_SESSION_FIXTURE_PATH, "utf-8"));
+		expect(rawEntries).toHaveLength(121);
+		const header = rawEntries[0];
+		if (header.type !== "session") throw new Error("synthetic fixture must begin with a session header");
+		expect(header.version).toBeUndefined();
+		expect(header.id).toBe("00000000-0000-4000-8000-000000000001");
+		expect(header.timestamp).toBe("2026-01-01T00:00:00.000Z");
+		expect(header.cwd).toBe("/workspace/synthetic-project");
 
-		const messageCount = entries.filter((e) => e.type === "message").length;
-		expect(messageCount).toBeGreaterThan(100);
+		const entries = loadLargeSessionEntries();
+		expect(entries).toHaveLength(120);
+		expect(entries.every((entry) => entry.type === "message")).toBe(true);
+		expect(entries.every((entry) => typeof entry.id === "string" && entry.id.length > 0)).toBe(true);
+
+		const firstMessage = entries[0] as SessionMessageEntry;
+		const lastMessage = entries.at(-1) as SessionMessageEntry;
+		expect(firstMessage.message.role).toBe("user");
+		expect(lastMessage.message.role).toBe("assistant");
+		expect(lastMessage.message.timestamp).toBe(Date.parse("2026-01-01T02:00:30.000Z"));
 	});
 
-	it("should find cut point in large session", () => {
+	it("finds a nontrivial cut point using the default retention budget", () => {
 		const entries = loadLargeSessionEntries();
 		const result = findCutPoint(entries, 0, entries.length, DEFAULT_COMPACTION_SETTINGS.keepRecentTokens);
 
-		// Cut point should be at a message entry (user or assistant)
+		expect(result.firstKeptEntryIndex).toBeGreaterThan(0);
+		expect(result.firstKeptEntryIndex).toBeLessThan(entries.length);
 		expect(entries[result.firstKeptEntryIndex].type).toBe("message");
 		const role = (entries[result.firstKeptEntryIndex] as SessionMessageEntry).message.role;
 		expect(role === "user" || role === "assistant").toBe(true);
 	});
 
-	it("should load session correctly", () => {
+	it("loads all messages and preserves the synthetic model", () => {
 		const entries = loadLargeSessionEntries();
 		const loaded = buildSessionContext(entries);
 
-		expect(loaded.messages.length).toBeGreaterThan(100);
-		expect(loaded.model).not.toBeNull();
+		expect(loaded.messages).toHaveLength(120);
+		expect(loaded.model).toEqual({ provider: "anthropic", modelId: "claude-sonnet-4-5" });
+	});
+
+	it("prepares history for optional summarization", () => {
+		const entries = loadLargeSessionEntries();
+		const preparation = prepareCompaction(entries, DEFAULT_COMPACTION_SETTINGS);
+
+		expect(preparation).toBeDefined();
+		expect(preparation!.messagesToSummarize.length).toBeGreaterThan(0);
+		expect(preparation!.firstKeptEntryId).toBeTruthy();
+		expect(preparation!.tokensBefore).toBeGreaterThan(80000);
 	});
 });
 
