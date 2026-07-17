@@ -271,6 +271,15 @@ function appendCacheMissDiagnostic(
 	];
 }
 
+function setAnthropicReasoning(usage: AssistantMessage["usage"], rawUsage: unknown): void {
+	const details = (rawUsage as { output_tokens_details?: { thinking_tokens?: number } } | null | undefined)
+		?.output_tokens_details;
+	const thinking = details?.thinking_tokens;
+	if (typeof thinking === "number" && thinking > 0) {
+		usage.reasoning = thinking;
+	}
+}
+
 function getAnthropicCompat(
 	model: Model<"anthropic-messages">,
 ): Required<Omit<AnthropicMessagesCompat, "forceAdaptiveThinking">> {
@@ -665,6 +674,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 					output.usage.cacheRead = event.message.usage.cache_read_input_tokens || 0;
 					output.usage.cacheWrite = event.message.usage.cache_creation_input_tokens || 0;
 					output.usage.cacheWrite1h = event.message.usage.cache_creation?.ephemeral_1h_input_tokens || 0;
+					setAnthropicReasoning(output.usage, event.message.usage);
 					// Anthropic doesn't provide total_tokens, compute from components
 					output.usage.totalTokens =
 						output.usage.input + output.usage.output + output.usage.cacheRead + output.usage.cacheWrite;
@@ -811,6 +821,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 					if (event.usage.cache_creation_input_tokens != null) {
 						output.usage.cacheWrite = event.usage.cache_creation_input_tokens;
 					}
+					setAnthropicReasoning(output.usage, event.usage);
 					// Anthropic doesn't provide total_tokens, compute from components
 					output.usage.totalTokens =
 						output.usage.input + output.usage.output + output.usage.cacheRead + output.usage.cacheWrite;

@@ -1117,6 +1117,7 @@ function parseChunkUsage(
 		cost?: number | string;
 		prompt_cache_hit_tokens?: number;
 		prompt_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number };
+		completion_tokens_details?: { reasoning_tokens?: number };
 	},
 	model: Model<"openai-completions">,
 ): AssistantMessage["usage"] {
@@ -1135,11 +1136,14 @@ function parseChunkUsage(
 	const input = Math.max(0, promptTokens - cacheReadTokens - cacheWriteTokens);
 	// OpenAI completion_tokens already includes reasoning_tokens.
 	const outputTokens = rawUsage.completion_tokens || 0;
+	const reasoningTokens = Math.max(0, rawUsage.completion_tokens_details?.reasoning_tokens ?? 0);
 	const usage: AssistantMessage["usage"] = {
 		input,
 		output: outputTokens,
 		cacheRead: cacheReadTokens,
 		cacheWrite: cacheWriteTokens,
+		// Reasoning is a subset of output tokens; report it without touching totals.
+		...(reasoningTokens > 0 ? { reasoning: reasoningTokens } : {}),
 		totalTokens: input + outputTokens + cacheReadTokens + cacheWriteTokens,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 	};

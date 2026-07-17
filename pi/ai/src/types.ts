@@ -364,6 +364,14 @@ export interface Usage {
 	cacheWrite: number;
 	/** Subset of `cacheWrite` written with 1h retention. Only Anthropic reports this split. */
 	cacheWrite1h?: number;
+	/**
+	 * Reasoning/thinking tokens the provider reports as part of `output`. This is
+	 * a subset of `output`, never an additional bucket: it is informational only
+	 * and must never be added to `totalTokens` or to any cost total (that would
+	 * double-count tokens already included in `output`). Left undefined by
+	 * providers that do not expose a reasoning-token breakdown.
+	 */
+	reasoning?: number;
 	totalTokens: number;
 	cost: {
 		input: number;

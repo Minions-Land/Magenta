@@ -342,6 +342,7 @@ export async function processResponsesStream<TApi extends Api>(
 			);
 			const inputTokens = promptTokens - cachedTokens - cacheWriteTokens;
 			const outputTokens = Math.max(0, response.usage.output_tokens ?? 0);
+			const reasoningTokens = Math.max(0, response.usage.output_tokens_details?.reasoning_tokens ?? 0);
 			output.usage = {
 				// OpenAI includes cache reads and writes in input_tokens. Keep the
 				// normalized components disjoint so token totals and cost are not doubled.
@@ -349,6 +350,9 @@ export async function processResponsesStream<TApi extends Api>(
 				output: outputTokens,
 				cacheRead: cachedTokens,
 				cacheWrite: cacheWriteTokens,
+				// Reasoning tokens are a subset of output_tokens; expose them for
+				// telemetry only. Never fold them into totals or cost.
+				...(reasoningTokens > 0 ? { reasoning: reasoningTokens } : {}),
 				totalTokens: response.usage.total_tokens ?? inputTokens + outputTokens + cachedTokens + cacheWriteTokens,
 				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 			};

@@ -232,13 +232,15 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 				}
 
 				if (chunk.usageMetadata) {
+					const thoughtsTokens = chunk.usageMetadata.thoughtsTokenCount || 0;
 					output.usage = {
 						input:
 							(chunk.usageMetadata.promptTokenCount || 0) - (chunk.usageMetadata.cachedContentTokenCount || 0),
-						output:
-							(chunk.usageMetadata.candidatesTokenCount || 0) + (chunk.usageMetadata.thoughtsTokenCount || 0),
+						output: (chunk.usageMetadata.candidatesTokenCount || 0) + thoughtsTokens,
 						cacheRead: chunk.usageMetadata.cachedContentTokenCount || 0,
 						cacheWrite: 0,
+						// thoughtsTokenCount is the reasoning subset already included in `output`.
+						...(thoughtsTokens > 0 ? { reasoning: thoughtsTokens } : {}),
 						totalTokens: chunk.usageMetadata.totalTokenCount || 0,
 						cost: {
 							input: 0,
