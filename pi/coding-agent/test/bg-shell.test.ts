@@ -15,6 +15,15 @@ function textOf(result: { content: Array<{ type: string; text?: string }> }): st
 	return result.content.map((part) => part.text ?? "").join("\n");
 }
 
+function executeInternalBgShell(
+	tool: ReturnType<BackgroundShellController["createToolDefinition"]>,
+	callId: string,
+	params: Parameters<typeof tool.execute>[1] & { returnToMain: boolean },
+	ctx: ExtensionContext,
+) {
+	return tool.execute(callId, params, undefined, undefined, ctx);
+}
+
 function createContext(cwd: string): ExtensionContext {
 	return {
 		cwd,
@@ -156,11 +165,10 @@ describe("built-in bg_shell tool", () => {
 		const tool = controller.createToolDefinition();
 		const ctx = createContext(tempDir);
 
-		const start = await tool.execute(
+		const start = await executeInternalBgShell(
+			tool,
 			"call-start",
 			{ action: "start", command: "printf bg-ok", returnToMain: false },
-			undefined,
-			undefined,
 			ctx,
 		);
 		const eventId = start.details?.id as string;
@@ -197,11 +205,10 @@ describe("built-in bg_shell tool", () => {
 		].join(";");
 		const command = `${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)}`;
 
-		const start = await tool.execute(
+		const start = await executeInternalBgShell(
+			tool,
 			"call-start-split-utf8",
 			{ action: "start", command, returnToMain: false },
-			undefined,
-			undefined,
 			ctx,
 		);
 		const eventId = start.details?.id as string;
@@ -286,7 +293,7 @@ describe("built-in bg_shell tool", () => {
 			ctx,
 		);
 		expect(textOf(terminal)).toContain("Status: cancelled");
-		expect((returned[0]?.message.details as any).status).toBe("cancelled");
+		expect((returned[0]?.message.details as { status?: string } | undefined)?.status).toBe("cancelled");
 	});
 
 	it("parses progress from output and reports it while running", async () => {
@@ -441,7 +448,8 @@ describe("built-in bg_shell tool", () => {
 		const tool = controller.createToolDefinition();
 		const ctx = createContext(tempDir);
 
-		const start = await tool.execute(
+		const start = await executeInternalBgShell(
+			tool,
 			"call-start",
 			{
 				action: "start",
@@ -449,8 +457,6 @@ describe("built-in bg_shell tool", () => {
 				returnToMain: true,
 				returnDelivery: "nextTurn",
 			},
-			undefined,
-			undefined,
 			ctx,
 		);
 		const eventId = start.details?.id as string;
@@ -483,11 +489,10 @@ describe("built-in bg_shell tool", () => {
 		const ctx = createContext(tempDir);
 		const command = `${JSON.stringify(process.execPath)} -e "process.stdout.write('x'.repeat(20000) + 'TAIL-MARKER')"`;
 
-		const start = await tool.execute(
+		const start = await executeInternalBgShell(
+			tool,
 			"call-start-large",
 			{ action: "start", command, returnToMain: true, returnDelivery: "nextTurn" },
-			undefined,
-			undefined,
 			ctx,
 		);
 		const eventId = start.details?.id as string;
@@ -508,7 +513,8 @@ describe("built-in bg_shell tool", () => {
 		const ctx = createContext(tempDir);
 		const label = `large-label-${"l".repeat(20_000)}`;
 
-		const start = await tool.execute(
+		const start = await executeInternalBgShell(
+			tool,
 			"call-start-huge-metadata",
 			{
 				action: "start",
@@ -518,8 +524,6 @@ describe("built-in bg_shell tool", () => {
 				returnDelivery: "nextTurn",
 				returnInstruction: `instruction-${"i".repeat(30_000)}`,
 			},
-			undefined,
-			undefined,
 			ctx,
 		);
 		const eventId = start.details?.id as string;
@@ -605,11 +609,10 @@ describe("built-in bg_shell tool", () => {
 
 			const ids: string[] = [];
 			for (let i = 0; i < 5; i++) {
-				const start = await tool.execute(
+				const start = await executeInternalBgShell(
+					tool,
 					`call-start-${i}`,
 					{ action: "start", command: `printf job-${i}`, returnToMain: false },
-					undefined,
-					undefined,
 					ctx,
 				);
 				const id = start.details?.id as string;
@@ -624,11 +627,10 @@ describe("built-in bg_shell tool", () => {
 			// Pruning is triggered when a new event starts (mirrors the sub-agent
 			// progress-prune pattern), so kick off one more finished job to force the
 			// map down to the retention cap.
-			const finalStart = await tool.execute(
+			const finalStart = await executeInternalBgShell(
+				tool,
 				"call-start-final",
 				{ action: "start", command: "printf job-final", returnToMain: false },
-				undefined,
-				undefined,
 				ctx,
 			);
 			const finalId = finalStart.details?.id as string;
@@ -672,22 +674,20 @@ describe("built-in bg_shell tool", () => {
 			const ctx = createContext(tempDir);
 
 			// A long-running job that stays alive across subsequent starts.
-			const longStart = await tool.execute(
+			const longStart = await executeInternalBgShell(
+				tool,
 				"call-long",
 				{ action: "start", command: "sleep 5", returnToMain: false },
-				undefined,
-				undefined,
 				ctx,
 			);
 			const longId = longStart.details?.id as string;
 
 			// Several quick finished jobs to trigger pruning past the cap of 1.
 			for (let i = 0; i < 4; i++) {
-				const start = await tool.execute(
+				const start = await executeInternalBgShell(
+					tool,
 					`call-quick-${i}`,
 					{ action: "start", command: `printf quick-${i}`, returnToMain: false },
-					undefined,
-					undefined,
 					ctx,
 				);
 				const quickId = start.details?.id as string;
