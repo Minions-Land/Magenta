@@ -118,7 +118,7 @@ import type { ModelRegistry } from "./model-registry.ts";
 import { expandPromptTemplate, type PromptTemplate } from "./prompt-templates.ts";
 import { RemoteMailboxController } from "./remote-mailbox.ts";
 import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.ts";
-import type { BranchSummaryEntry, CompactionEntry, SessionManager } from "./session-manager.ts";
+import type { BranchSummaryEntry, CompactionEntry, SessionEntry, SessionManager } from "./session-manager.ts";
 import { CURRENT_SESSION_VERSION, getLatestCompactionEntry, type SessionHeader } from "./session-manager.ts";
 import type { SettingsManager } from "./settings-manager.ts";
 import {
@@ -193,6 +193,7 @@ export type AgentSessionEvent =
 			totalBytes?: number;
 			completedChunks?: number;
 	  }
+	| { type: "entry_appended"; entry: SessionEntry }
 	| { type: "session_info_changed"; name: string | undefined }
 	| { type: "thinking_level_changed"; level: ThinkingLevel }
 	| { type: "execution_profile_changed"; profile: ExecutionProfile; thinkingLevel: ThinkingLevel }
@@ -3382,7 +3383,11 @@ export class AgentSession {
 					});
 				},
 				appendEntry: (customType, data) => {
-					this.sessionManager.appendCustomEntry(customType, data);
+					const entryId = this.sessionManager.appendCustomEntry(customType, data);
+					const entry = this.sessionManager.getEntry(entryId);
+					if (entry) {
+						this._emit({ type: "entry_appended", entry });
+					}
 				},
 				setSessionName: (name) => {
 					this.setSessionName(name);

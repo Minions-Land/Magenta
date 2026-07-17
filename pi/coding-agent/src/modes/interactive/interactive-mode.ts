@@ -112,7 +112,7 @@ import { PendingImageController } from "../../core/pending-images.ts";
 import { BUILT_IN_PROVIDER_DISPLAY_NAMES } from "../../core/provider-display-names.ts";
 import type { ResourceDiagnostic } from "../../core/resource-loader.ts";
 import { formatMissingSessionCwdPrompt, MissingSessionCwdError } from "../../core/session-cwd.ts";
-import { type SessionContext, SessionManager } from "../../core/session-manager.ts";
+import { type SessionEntry, SessionManager, sessionEntryToContextMessages } from "../../core/session-manager.ts";
 import { BUILTIN_SLASH_COMMANDS } from "../../core/slash-commands.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
 import { isInstallTelemetryEnabled } from "../../core/telemetry.ts";
@@ -159,6 +159,7 @@ import {
 import { CompactionSummaryMessageComponent } from "./components/compaction-summary-message.ts";
 import { CountdownTimer } from "./components/countdown-timer.ts";
 import { CustomEditor } from "./components/custom-editor.ts";
+import { CustomEntryComponent } from "./components/custom-entry.ts";
 import { CustomMessageComponent } from "./components/custom-message.ts";
 import { DaxnutsComponent } from "./components/daxnuts.ts";
 import { DynamicBorder } from "./components/dynamic-border.ts";
@@ -246,6 +247,12 @@ class ExpandableText extends Text implements Expandable {
 type CompactionQueuedMessage = SubmittedInput & {
 	mode: "steer" | "followUp";
 };
+
+type RenderSessionItem = AgentMessage | Extract<SessionEntry, { type: "custom" }>;
+
+function isCustomSessionEntry(item: RenderSessionItem): item is Extract<SessionEntry, { type: "custom" }> {
+	return "type" in item && item.type === "custom";
+}
 
 /**
  * Magenta feature: an activation is anything that drives the main interactive
@@ -3228,6 +3235,13 @@ export class InteractiveMode {
 				this.ui.requestRender();
 				break;
 
+			case "entry_appended":
+				if (event.entry.type === "custom") {
+					this.addCustomEntryToChat(event.entry);
+					this.ui.requestRender();
+				}
+				break;
+
 			case "thinking_level_changed":
 			case "execution_profile_changed":
 				this.footer.invalidate();
@@ -3742,13 +3756,13 @@ export class InteractiveMode {
 	}
 
 	/**
-	 * Render session context to chat. Used for initial load and rebuild after compaction.
-	 * @param sessionContext Session context to render
+	 * Render session items to chat. Used for initial load and rebuild after compaction.
+	 * @param items Session messages and custom entries to render
 	 * @param options.updateFooter Update footer state
 	 * @param options.populateHistory Add user messages to editor history
 	 */
-	private renderSessionContext(
-		sessionContext: SessionContext,
+	private renderSessionItems(
+		items: readonly RenderSessionItem[],
 		options: { updateFooter?: boolean; populateHistory?: boolean } = {},
 	): void {
 		this.clearPendingToolDisplays();
@@ -3765,7 +3779,13 @@ export class InteractiveMode {
 			this.updateEditorBorderColor();
 		}
 
-		for (const message of sessionContext.messages) {
+		for (const item of items) {
+			if (isCustomSessionEntry(item)) {
+				this.addCustomEntryToChat(item);
+				continue;
+			}
+
+			const message = item;
 			// Assistant messages need special handling for tool calls
 			if (message.role === "assistant") {
 				this.addMessageToChat(message);
@@ -3837,10 +3857,50 @@ export class InteractiveMode {
 		this.ui.requestRender();
 	}
 
+	/**
+	 * Render session entries to chat. Used for initial load and rebuild after compaction.
+	 * @param entries Compaction-aware session entries to render
+	 * @param options.updateFooter Update footer state
+	 * @param options.populateHistory Add user messages to editor history
+	 */
+	private renderSessionEntries(
+		entries: SessionEntry[],
+		options: { updateFooter?: boolean; populateHistory?: boolean } = {},
+	): void {
+		const items = entries.flatMap((entry): RenderSessionItem[] => {
+			if (entry.type === "custom") {
+				return [entry];
+			}
+			return sessionEntryToContextMessages(entry);
+		});
+		this.renderSessionItems(items, options);
+	}
+
+	private addCustomEntryToChat(entry: Extract<SessionEntry, { type: "custom" }>): void {
+		const renderer = this.session.extensionRunner.getEntryRenderer(entry.customType);
+		if (!renderer) {
+			return;
+		}
+		const component = new CustomEntryComponent(entry, renderer);
+		component.setExpanded(this.toolOutputExpanded);
+		if (!component.hasContent()) {
+			return;
+		}
+
+		if (this.streamingComponent) {
+			const streamingIndex = this.chatContainer.children.indexOf(this.streamingComponent);
+			if (streamingIndex >= 0) {
+				this.chatContainer.children.splice(streamingIndex, 0, component);
+				return;
+			}
+		}
+
+		this.chatContainer.addChild(component);
+	}
+
 	renderInitialMessages(): void {
-		// Get aligned messages and entries from session context
-		const context = this.sessionManager.buildSessionContext();
-		this.renderSessionContext(context, {
+		const entries = this.sessionManager.buildContextEntries();
+		this.renderSessionEntries(entries, {
 			updateFooter: true,
 			populateHistory: true,
 		});
@@ -3970,8 +4030,8 @@ export class InteractiveMode {
 		this.chatContainer.clear();
 		// Tracked expansion identities are invalidated by clearing the chat.
 		this.expandedChatOutputs = [];
-		const context = this.sessionManager.buildSessionContext();
-		this.renderSessionContext(context);
+		const context = this.sessionManager.buildContextEntries();
+		this.renderSessionEntries(context);
 	}
 
 	// =========================================================================

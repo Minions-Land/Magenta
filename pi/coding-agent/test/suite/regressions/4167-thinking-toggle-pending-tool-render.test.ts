@@ -28,7 +28,7 @@ const EMPTY_USAGE: Usage = {
 	},
 };
 
-type RenderSessionContextThis = {
+type RenderSessionEntriesThis = {
 	pendingTools: Map<string, ToolExecutionComponent>;
 	pendingToolGroups: Map<string, ToolExecutionGroupComponent>;
 	streamingToolGroup?: ToolExecutionGroupComponent;
@@ -53,17 +53,24 @@ type RenderSessionContextThis = {
 	isInitialized: boolean;
 	updateEditorBorderColor(): void;
 	addMessageToChat(message: AgentMessage, options?: { populateHistory?: boolean }): void;
+	renderSessionItems: RenderSessionItems;
 };
 
-type RenderSessionContext = (
-	this: RenderSessionContextThis,
-	sessionContext: SessionContext,
+type RenderSessionItems = (
+	this: RenderSessionEntriesThis,
+	items: AgentMessage[],
 	options?: { updateFooter?: boolean; populateHistory?: boolean },
 ) => void;
 
-type HandleEvent = (this: RenderSessionContextThis, event: AgentSessionEvent) => Promise<void>;
+type RenderSessionEntries = (
+	this: RenderSessionEntriesThis,
+	entries: SessionEntry[],
+	options?: { updateFooter?: boolean; populateHistory?: boolean },
+) => void;
 
-function createFakeInteractiveModeThis(): RenderSessionContextThis {
+type HandleEvent = (this: RenderSessionEntriesThis, event: AgentSessionEvent) => Promise<void>;
+
+function createFakeInteractiveModeThis(): RenderSessionEntriesThis {
 	const chatContainer = new Container();
 	const fakeThis = Object.create(InteractiveMode.prototype) as Record<string, unknown>;
 	Object.defineProperties(fakeThis, {
@@ -83,8 +90,10 @@ function createFakeInteractiveModeThis(): RenderSessionContextThis {
 						getShowImages: () => false,
 						getImageWidthCells: () => 60,
 						getCodeBlockIndent: () => 0,
+						getShowCacheMissNotices: () => false,
 					},
-					sessionManager: { getCwd: () => process.cwd() },
+					sessionManager: { getCwd: () => process.cwd(), getEntries: () => [] },
+					modelRegistry: {},
 					getToolDefinition: (_toolName: string) => undefined,
 				},
 			},
@@ -100,7 +109,7 @@ function createFakeInteractiveModeThis(): RenderSessionContextThis {
 			writable: true,
 		},
 	});
-	return fakeThis as RenderSessionContextThis;
+	return fakeThis as RenderSessionEntriesThis;
 }
 
 function createAssistantToolCallMessage(
@@ -131,31 +140,33 @@ function createToolResultMessage(text: string): ToolResultMessage {
 	};
 }
 
-function createSessionContext(messages: AgentMessage[]): SessionContext {
-	return {
-		messages,
-		thinkingLevel: "off",
-		model: null,
-	};
+function createSessionEntries(messages: AgentMessage[]): SessionEntry[] {
+	return messages.map((message, index) => ({
+		type: "message" as const,
+		id: `entry-${index}`,
+		parentId: index > 0 ? `entry-${index - 1}` : null,
+		timestamp: new Date().toISOString(),
+		message,
+	}));
 }
 
 function renderChat(container: Container): string {
 	return stripAnsi(container.render(120).join("\n"));
 }
 
-describe("InteractiveMode.renderSessionContext", () => {
+describe("InteractiveMode.renderSessionEntries", () => {
 	beforeAll(() => {
 		initTheme("dark");
 	});
 
 	test("keeps unresolved rendered tool calls registered for live completion events", async () => {
 		const fakeThis = createFakeInteractiveModeThis();
-		const renderSessionContext = (
-			InteractiveMode.prototype as unknown as { renderSessionContext: RenderSessionContext }
-		).renderSessionContext;
+		const renderSessionEntries = (
+			InteractiveMode.prototype as unknown as { renderSessionEntries: RenderSessionEntries }
+		).renderSessionEntries;
 		const handleEvent = (InteractiveMode.prototype as unknown as { handleEvent: HandleEvent }).handleEvent;
 
-		renderSessionContext.call(fakeThis, createSessionContext([createAssistantToolCallMessage()]));
+		renderSessionEntries.call(fakeThis, createSessionEntries([createAssistantToolCallMessage()]));
 
 		expect(fakeThis.pendingTools.has(TOOL_CALL_ID)).toBe(true);
 
@@ -173,13 +184,13 @@ describe("InteractiveMode.renderSessionContext", () => {
 
 	test("does not keep completed historical tool calls registered as pending", () => {
 		const fakeThis = createFakeInteractiveModeThis();
-		const renderSessionContext = (
-			InteractiveMode.prototype as unknown as { renderSessionContext: RenderSessionContext }
-		).renderSessionContext;
+		const renderSessionEntries = (
+			InteractiveMode.prototype as unknown as { renderSessionEntries: RenderSessionEntries }
+		).renderSessionEntries;
 
-		renderSessionContext.call(
+		renderSessionEntries.call(
 			fakeThis,
-			createSessionContext([createAssistantToolCallMessage(), createToolResultMessage("HISTORICAL_RESULT")]),
+			createSessionEntries([createAssistantToolCallMessage(), createToolResultMessage("HISTORICAL_RESULT")]),
 		);
 
 		expect(fakeThis.pendingTools.size).toBe(0);
