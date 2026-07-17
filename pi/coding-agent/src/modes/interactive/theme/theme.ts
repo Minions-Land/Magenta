@@ -91,7 +91,8 @@ const ThemeJsonSchema = Type.Object({
 		thinkingMedium: ColorValueSchema,
 		thinkingHigh: ColorValueSchema,
 		thinkingXhigh: ColorValueSchema,
-		thinkingMax: ColorValueSchema,
+		// Optional with fallback to xhigh for legacy themes (CU-013)
+		thinkingMax: Type.Optional(ColorValueSchema),
 		// Bash Mode (1 color)
 		bashMode: ColorValueSchema,
 	}),
@@ -645,6 +646,11 @@ function createTheme(themeJson: ThemeJson, mode?: ColorMode, sourcePath?: string
 			fgColors[key as ThemeColor] = value;
 		}
 	}
+	// CU-013: legacy themes may omit thinkingMax; fall back to thinkingXhigh so the
+	// `max` thinking level still renders instead of throwing "Unknown theme color".
+	if (fgColors.thinkingMax === undefined && fgColors.thinkingXhigh !== undefined) {
+		fgColors.thinkingMax = fgColors.thinkingXhigh;
+	}
 	return new Theme(fgColors, bgColors, colorMode, {
 		name: themeJson.name,
 		sourcePath,
@@ -1069,6 +1075,10 @@ export function getResolvedThemeColors(themeName?: string): Record<string, strin
 		} else {
 			cssColors[key] = value;
 		}
+	}
+	// CU-013: legacy themes may omit thinkingMax; mirror the runtime fallback to xhigh.
+	if (cssColors.thinkingMax === undefined && cssColors.thinkingXhigh !== undefined) {
+		cssColors.thinkingMax = cssColors.thinkingXhigh;
 	}
 	return cssColors;
 }
