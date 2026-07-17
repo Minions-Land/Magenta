@@ -284,7 +284,11 @@ describe("AgentSession prompt withdrawal", () => {
 			harness.sessionManager
 				.buildSessionContext()
 				.messages.filter((message) => message.role === "user")
-				.map((message) => (typeof message.content === "string" ? message.content : message.content[0]?.text)),
+				.map((message) => {
+					if (typeof message.content === "string") return message.content;
+					const firstContent = message.content[0];
+					return firstContent?.type === "text" ? firstContent.text : undefined;
+				}),
 		).toEqual(["second"]);
 	});
 });
