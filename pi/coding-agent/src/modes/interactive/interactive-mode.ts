@@ -117,7 +117,7 @@ import {
 	ProjectTrustStore,
 } from "../../core/trust-manager.ts";
 import { getChangelogPath, getNewEntries, normalizeChangelogLinks, parseChangelog } from "../../utils/changelog.ts";
-import { copyToClipboard } from "../../utils/clipboard.ts";
+import { copyToClipboard, readClipboardText } from "../../utils/clipboard.ts";
 import { readClipboardImage } from "../../utils/clipboard-image.ts";
 import { parseGitUrl } from "../../utils/git.ts";
 import type { UpdateCheckResult } from "../../utils/github-release-update.ts";
@@ -854,7 +854,7 @@ export class InteractiveMode {
 				rawKeyHint("!!", "to run bash (no context)"),
 				hint("app.message.followUp", "to queue follow-up"),
 				rawKeyHint("↑/↓", "to edit/restore queued messages"),
-				hint("app.clipboard.pasteImage", "to paste image"),
+				hint("app.clipboard.pasteImage", "to paste image (with text fallback)"),
 				rawKeyHint("drop files", "to attach"),
 			].join("\n");
 			const compactInstructions = [
@@ -2829,7 +2829,8 @@ export class InteractiveMode {
 			this.syncCommandDockFromEditorText(text);
 		};
 
-		// Handle clipboard image paste (triggered on Ctrl+V)
+		// Handle clipboard paste (triggered on Ctrl+V). Images are attached by path or
+		// pending marker; when the clipboard holds no image, fall back to plain text.
 		this.defaultEditor.onPasteImage = () => {
 			const generation = this.clipboardImageDraftGeneration;
 			const targetEditor = this.editor;
@@ -2911,9 +2912,18 @@ export class InteractiveMode {
 			if (handledPath || !this.isClipboardImagePasteCurrent(generation, targetEditor)) return;
 
 			const image = await readClipboardImage();
-			if (!image || !this.isClipboardImagePasteCurrent(generation, targetEditor)) return;
-			const content = await this.prepareClipboardImage(image.bytes, image.mimeType);
-			if (content) this.insertPendingImage(content, targetEditor, generation);
+			if (!this.isClipboardImagePasteCurrent(generation, targetEditor)) return;
+			if (image) {
+				const content = await this.prepareClipboardImage(image.bytes, image.mimeType);
+				if (content) this.insertPendingImage(content, targetEditor, generation);
+				return;
+			}
+
+			// No image on the clipboard: fall back to plain text paste.
+			const text = await readClipboardText();
+			if (!text || !this.isClipboardImagePasteCurrent(generation, targetEditor)) return;
+			targetEditor.insertTextAtCursor?.(text);
+			this.ui.requestRender();
 		} catch {
 			// Clipboard access is best-effort and can be denied by the OS or terminal.
 		}
@@ -8466,7 +8476,7 @@ export class InteractiveMode {
 | \`${followUp}\` | Queue follow-up message |
 | \`↑\` | Restore queued messages into editor (empty editor) |
 | \`↓\` | Re-queue the pulled-back draft (cursor at end) |
-| \`${pasteImage}\` | Paste image from clipboard |
+| \`${pasteImage}\` | Paste image or text from clipboard |
 | \`/\` | Slash commands |
 | \`!\` | Run bash command |
 | \`!!\` | Run bash command (excluded from context) |
