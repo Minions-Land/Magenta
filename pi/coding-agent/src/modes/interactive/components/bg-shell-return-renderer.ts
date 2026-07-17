@@ -3,15 +3,10 @@
  * Supports collapsing long output with ctrl+o to expand.
  */
 
-import { Box, Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
+import { Box, type Component, Container, Spacer, Text, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import type { MessageRenderer } from "../../../core/extensions/types.ts";
 import type { CustomMessage } from "../../../core/messages.ts";
-import {
-	type BackgroundShellEventSnapshot,
-	summarizeEventCollapsed,
-	summarizeEventExpanded,
-} from "../../../core/tools/bg-shell.ts";
-import { getMarkdownTheme } from "../theme/theme.ts";
+import { type BackgroundShellEventSnapshot, summarizeEventExpanded } from "../../../core/tools/bg-shell.ts";
 
 export interface BgShellReturnDetails {
 	id: string;
@@ -20,6 +15,79 @@ export interface BgShellReturnDetails {
 	logPath: string;
 	instruction?: string;
 	eventData?: BackgroundShellEventSnapshot;
+}
+
+const SECTION_HEADER = /^(?:Event|Status|Command|CWD|Elapsed|Progress|Exit code|Signal|Log|Error|Output):/;
+const MAX_COLLAPSED_SECTION_LINES = 2;
+
+/**
+ * Split the return into independently collapsible fields. Background-shell
+ * payloads are line-oriented, and continuation lines belong to the preceding
+ * field (notably Command, Error, and Output).
+ */
+function splitSections(content: string): string[] {
+	const lines = content.replace(/\r\n?/g, "\n").split("\n");
+	const firstHeader = lines.findIndex((line) => SECTION_HEADER.test(line));
+	const sections: string[] = [];
+	if (firstHeader > 0) {
+		const preamble = lines.slice(0, firstHeader);
+		while (preamble.at(-1) === "") preamble.pop();
+		if (preamble.length > 0) sections.push(preamble.join("\n"));
+	}
+	const sectionLines = firstHeader >= 0 ? lines.slice(firstHeader) : lines;
+	let current: string[] = [];
+
+	for (const line of sectionLines) {
+		const outputStarted = current[0]?.startsWith("Output:") === true;
+		if (!outputStarted && SECTION_HEADER.test(line) && current.length > 0) {
+			while (current.at(-1) === "") current.pop();
+			if (current.length > 0) sections.push(current.join("\n"));
+			current = [];
+		}
+		current.push(line);
+	}
+	while (current.at(-1) === "") current.pop();
+	if (current.length > 0) sections.push(current.join("\n"));
+
+	return sections.length > 0 ? sections : ["(no return details)"];
+}
+
+class SectionProjection implements Component {
+	private readonly sections: string[];
+	private readonly color: (text: string) => string;
+
+	constructor(sections: string[], color: (text: string) => string) {
+		this.sections = sections;
+		this.color = color;
+	}
+
+	render(width: number): string[] {
+		const contentWidth = Math.max(1, width);
+		const lines: string[] = [];
+		for (const section of this.sections) {
+			const rendered = wrapTextWithAnsi(this.color(section), contentWidth);
+			// A heading with no inline value (for example `Output:`) occupies its
+			// own row and does not consume either of the two visible content rows.
+			const headingRows = /^[^\n:]+:\s*(?:\n|$)/.test(section) ? 1 : 0;
+			const visibleRows = MAX_COLLAPSED_SECTION_LINES + headingRows;
+			if (rendered.length <= visibleRows) {
+				lines.push(...rendered);
+				continue;
+			}
+
+			lines.push(...rendered.slice(0, visibleRows));
+			const hidden = rendered.length - visibleRows;
+			lines.push(
+				...wrapTextWithAnsi(
+					this.color(`... ${hidden} ${hidden === 1 ? "line" : "lines"} hidden (ctrl+o to expand)`),
+					contentWidth,
+				),
+			);
+		}
+		return lines;
+	}
+
+	invalidate(): void {}
 }
 
 export const bgShellReturnRenderer = ((message: CustomMessage<BgShellReturnDetails>, options, theme) => {
@@ -45,27 +113,16 @@ export const bgShellReturnRenderer = ((message: CustomMessage<BgShellReturnDetai
 			.join("\n");
 	}
 
-	// When we have event data, render only the compact event summary. The
-	// model-facing instruction (details.instruction) is intentionally omitted from
-	// the TUI: it exists to steer the model, not to inform the user. Collapsed mode
-	// stays a single status line plus an output hint; expanded reveals metadata and
-	// the captured output tail.
+	// eventData gives both views a stable user-facing projection without the
+	// model-only instruction. Legacy messages fall back to their persisted payload.
 	const eventData = message.details?.eventData;
-	if (eventData && options.expanded !== undefined) {
-		content = options.expanded ? summarizeEventExpanded(eventData) : summarizeEventCollapsed(eventData);
-	} else if (!options.expanded && message.details) {
-		// Legacy messages without eventData: stay compact until expanded instead of
-		// dumping the full raw payload into the collapsed chat view.
-		const { id, status } = message.details;
-		if (id && status) content = `Background job ${id}: ${status} (ctrl+o to expand)`;
-	}
+	if (eventData) content = summarizeEventExpanded(eventData);
 
-	// Render content as markdown
-	box.addChild(
-		new Markdown(content, 0, 0, getMarkdownTheme(), {
-			color: (text: string) => theme.fg("customMessageText", text),
-		}),
-	);
+	if (options.expanded === true) {
+		box.addChild(new Text(theme.fg("customMessageText", content), 0, 0));
+	} else {
+		box.addChild(new SectionProjection(splitSections(content), (text) => theme.fg("customMessageText", text)));
+	}
 
 	return container;
 }) satisfies MessageRenderer<BgShellReturnDetails>;
