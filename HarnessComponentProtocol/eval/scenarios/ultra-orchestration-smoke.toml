@@ -16,7 +16,7 @@ capabilities = { workflows = true, teammates = true }
 active_tools_include = ["sub_agent", "teammate_agent", "bg_shell", "send_message"]
 successful_tools_include = ["sub_agent", "teammate_agent"]
 require_workflow_sub_agent = true
-teammate_actions_include = ["start", "wait", "stop"]
+teammate_actions_include = ["start", "stop"]
 
 [[variants]]
 name = "ultra"

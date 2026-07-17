@@ -150,8 +150,15 @@ export function parseCodexModel(toml: string): string | undefined {
 
 /**
  * Read credentials from Codex.
- * Key lives in ~/.codex/auth.json ({ "OPENAI_API_KEY": "..." }); the custom
- * base_url and default model live in ~/.codex/config.toml.
+ * Key lives in ~/.codex/auth.json, which can be:
+ *   - OAuth format: { "auth_mode": "chatgpt", "tokens": { "access_token": "..." } }
+ *   - API key format: { "OPENAI_API_KEY": "sk-..." }
+ * The custom base_url and default model live in ~/.codex/config.toml.
+ *
+ * Strategy:
+ *   - OAuth tokens (ChatGPT Plus/Pro): ignore custom base_url, use official OpenAI API
+ *   - API key: respect custom base_url and model from config.toml
+ *   - If both OPENAI_API_KEY and custom provider exist: create multiple credentials
  */
 export function loadCodexAuth(): ExternalCredential[] {
 	const creds: ExternalCredential[] = [];
@@ -160,15 +167,14 @@ export function loadCodexAuth(): ExternalCredential[] {
 	const authPath = join(codexDir, "auth.json");
 	if (!existsSync(authPath)) return creds;
 
-	let apiKey: string | undefined;
+	let auth: any;
 	try {
-		const auth = JSON.parse(readFileSync(authPath, "utf-8"));
-		apiKey = auth.OPENAI_API_KEY || auth.openai?.key;
+		auth = JSON.parse(readFileSync(authPath, "utf-8"));
 	} catch {
 		return creds;
 	}
-	if (!apiKey) return creds;
 
+	// Read config.toml for base_url and model
 	let baseUrl: string | undefined;
 	let model: string | undefined;
 	const configPath = join(codexDir, "config.toml");
@@ -182,7 +188,30 @@ export function loadCodexAuth(): ExternalCredential[] {
 		}
 	}
 
-	creds.push({ provider: "openai", apiKey, baseUrl, model, source: "codex" });
+	// Case 1: OAuth token (ChatGPT Plus/Pro)
+	// OAuth tokens only work with official OpenAI API, ignore custom base_url
+	if (auth.auth_mode === "chatgpt" && auth.tokens?.access_token) {
+		creds.push({
+			provider: "openai",
+			apiKey: auth.tokens.access_token,
+			baseUrl: undefined, // Force official API for OAuth
+			model: undefined,   // Let Magenta choose default model
+			source: "codex",
+		});
+	}
+
+	// Case 2: API key (can use custom base_url)
+	const explicitApiKey = auth.OPENAI_API_KEY || auth.openai?.key;
+	if (explicitApiKey) {
+		creds.push({
+			provider: "openai",
+			apiKey: explicitApiKey,
+			baseUrl,
+			model,
+			source: "codex",
+		});
+	}
+
 	return creds;
 }
 

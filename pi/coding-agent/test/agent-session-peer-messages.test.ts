@@ -80,6 +80,10 @@ describe("AgentSession peer messaging", () => {
 			expect(tool).toBeDefined();
 			expect(tool?.description).toContain("parent-managed, long-lived hidden");
 			expect(tool?.description).toContain("current parent runtime");
+			const properties = (tool?.parameters as any).properties;
+			expect(JSON.stringify(properties.action)).not.toContain('"wait"');
+			expect(properties.assignmentId).toBeUndefined();
+			expect(properties.waitTimeoutSeconds).toBeUndefined();
 			expect(tool?.promptGuidelines?.some((guideline) => guideline.includes("send_message"))).toBe(true);
 			expect(ultra.executionProfile).toBe("ultra");
 			expect(ultra.thinkingLevel).not.toBe("ultra");
@@ -131,12 +135,17 @@ describe("AgentSession peer messaging", () => {
 		const session = await makeSession("medium");
 		try {
 			const standardSubAgent = session.getAllTools().find((tool) => tool.name === "sub_agent");
-			expect((standardSubAgent?.parameters as any).properties.workflow).toBeUndefined();
+			const standardProperties = (standardSubAgent?.parameters as any).properties;
+			expect(standardProperties.workflow).toBeUndefined();
+			expect(JSON.stringify(standardProperties.action)).not.toContain('"wait"');
+			expect(standardProperties.returnToMain).toBeUndefined();
+			expect(standardProperties.waitTimeoutSeconds).toBeUndefined();
 			expect(session.getActiveToolNames()).not.toContain("teammate_agent");
 
 			session.setExecutionProfile("ultra");
 			const ultraSubAgent = session.getAllTools().find((tool) => tool.name === "sub_agent");
 			expect((ultraSubAgent?.parameters as any).properties.workflow).toBeDefined();
+			expect((ultraSubAgent?.parameters as any).properties.returnToMain).toBeUndefined();
 			expect(session.getActiveToolNames()).toContain("teammate_agent");
 
 			session.setExecutionProfile("high");

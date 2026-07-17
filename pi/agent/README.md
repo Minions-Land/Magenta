@@ -306,9 +306,10 @@ The `ThinkingLevel` type is the library-wide vocabulary. A concrete model may su
 ### Control
 
 ```typescript
-agent.abort();           // Cancel current operation
-await agent.waitForIdle(); // Wait for completion
+agent.abort(); // Request cancellation and return immediately
 ```
+
+`waitForIdle()` remains a host-only settlement barrier for shutdown and tests. Never call it from an agent listener, model-facing tool, or active AgentLoop; observe `agent_end` instead.
 
 ### Events
 

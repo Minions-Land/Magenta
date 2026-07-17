@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { BUILTIN_SLASH_COMMANDS } from "../src/core/slash-commands.ts";
 import { FloatingMenuBody, type FloatingMenuItem } from "../src/modes/interactive/components/floating-menu.ts";
 import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
 
@@ -53,6 +54,11 @@ type InteractiveModePrivate = {
 	showMcpManager(this: SubmitContext): void;
 	mcpDockParentItem(this: SubmitContext): FloatingMenuItem;
 	applyCommandDockFilter(this: { commandDockBody?: FloatingMenuBody }, filter: string): void;
+	appendMissingBuiltinSlashDockItems(items: FloatingMenuItem[]): void;
+	commandDockShouldSubmitExactBuiltin(this: {
+		editor: { getText: () => string };
+		commandDockBody?: FloatingMenuBody;
+	}): boolean;
 	skillDockParentItem(this: {
 		settingsManager: { getEnableSkillCommands: () => boolean };
 		skillMenuItems: () => FloatingMenuItem[];
@@ -255,6 +261,109 @@ describe("InteractiveMode startup input", () => {
 			skillMenuItems: () => children,
 		});
 		expect(disabled).toEqual([]);
+	});
+
+	it("keeps the command dock in parity with the builtin slash registry", () => {
+		const items: FloatingMenuItem[] = [
+			{ value: "slash:new", label: "New Session", aliases: ["new", "clear"] },
+			{ value: "slash:side", label: "Side Chat", aliases: ["side", "btw", "s"] },
+			{ value: "slash:quit", label: "Quit", aliases: ["quit", "exit"] },
+		];
+
+		interactiveModePrototype.appendMissingBuiltinSlashDockItems.call({}, items);
+
+		for (const command of BUILTIN_SLASH_COMMANDS) {
+			expect(
+				items.some((item) => item.aliases?.includes(command.name)),
+				command.name,
+			).toBe(true);
+		}
+		expect(items.filter((item) => item.aliases?.includes("new"))).toHaveLength(1);
+		expect(items.filter((item) => item.aliases?.includes("btw"))).toHaveLength(1);
+		expect(items.filter((item) => item.aliases?.includes("exit"))).toHaveLength(1);
+	});
+
+	it("submits exact session commands unless the user selects a different fuzzy match", () => {
+		const requestedCommands = ["resume", "new", "session", "name", "tree", "fork", "clone", "export"];
+		const items: FloatingMenuItem[] = [
+			{ value: "slash:new", label: "New Session", aliases: ["new", "clear"] },
+			{ value: "slash:tree", label: "Tree", aliases: ["tree"] },
+			{ value: "slash:resume", label: "Resume", aliases: ["resume"] },
+		];
+		interactiveModePrototype.appendMissingBuiltinSlashDockItems.call({}, items);
+
+		for (const command of requestedCommands) {
+			const commandDockBody = new FloatingMenuBody({
+				title: "command dock",
+				items,
+				onSelect: () => undefined,
+				requestRender: () => undefined,
+				navigationRepeatDelayMs: 0,
+			});
+			commandDockBody.setFilter(command);
+			expect(
+				interactiveModePrototype.commandDockShouldSubmitExactBuiltin.call({
+					editor: { getText: () => `/${command}` },
+					commandDockBody,
+				}),
+				command,
+			).toBe(true);
+		}
+
+		const commandDockBody = new FloatingMenuBody({
+			title: "command dock",
+			items,
+			onSelect: () => undefined,
+			requestRender: () => undefined,
+			navigationRepeatDelayMs: 0,
+		});
+		commandDockBody.setFilter("session");
+		expect(commandDockBody.getSelectedItem()?.aliases).toContain("session");
+		commandDockBody.handleInput("\x1b[B");
+		expect(commandDockBody.getSelectedItem()?.aliases).toContain("new");
+		expect(
+			interactiveModePrototype.commandDockShouldSubmitExactBuiltin.call({
+				editor: { getText: () => "/session" },
+				commandDockBody,
+			}),
+		).toBe(false);
+	});
+
+	it("lets exact builtin Enter reach editor submit instead of a fuzzy dock action", () => {
+		const selected: string[] = [];
+		const items: FloatingMenuItem[] = [{ value: "slash:new", label: "New Session", aliases: ["new", "clear"] }];
+		interactiveModePrototype.appendMissingBuiltinSlashDockItems.call({}, items);
+		const commandDockBody = new FloatingMenuBody({
+			title: "command dock",
+			items,
+			onSelect: (item) => {
+				selected.push(item.value);
+				return undefined;
+			},
+			requestRender: () => undefined,
+			navigationRepeatDelayMs: 0,
+		});
+		commandDockBody.setFilter("session");
+		const closeCommandDock = vi.fn();
+		const context = {
+			commandDockHandle: { isHidden: () => false },
+			commandDockBody,
+			editor: { getText: () => "/session" },
+			closeCommandDock,
+			ui: { requestRender: vi.fn() },
+		};
+		Object.assign(context, {
+			commandDockShouldRouteInput: (data: string) =>
+				(InteractiveMode.prototype as any).commandDockShouldRouteInput.call(context, data),
+			commandDockShouldSubmitExactBuiltin: () =>
+				interactiveModePrototype.commandDockShouldSubmitExactBuiltin.call(context),
+		});
+
+		const result = (InteractiveMode.prototype as any).handleCommandDockInput.call(context, "\r");
+
+		expect(result).toBeUndefined();
+		expect(closeCommandDock).toHaveBeenCalledTimes(1);
+		expect(selected).toEqual([]);
 	});
 
 	it("routes /skill:<partial> into the filtered Skills submenu", () => {

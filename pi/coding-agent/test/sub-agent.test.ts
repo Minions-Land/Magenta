@@ -3,6 +3,7 @@ import { EventEmitter } from "node:events";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { type Tool, type ToolCall, validateToolArguments } from "@earendil-works/pi-ai";
 import { MultiAgentOrchestrator } from "@magenta/harness";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getAgentInvocation } from "../src/config.ts";
@@ -163,7 +164,17 @@ describe("built-in sub_agent tool", () => {
 		expect(tool.description).toContain("sessionless, one-shot");
 		expect(tool.description).toContain("fixed runtime-owned control flow");
 		expect(tool.description).not.toContain("script");
-		const workflowSchema = (tool.parameters as any).properties.workflow;
+		const properties = (tool.parameters as any).properties;
+		expect(JSON.stringify(properties.action)).not.toContain('"wait"');
+		expect(properties.waitTimeoutSeconds).toBeUndefined();
+		expect(properties.defaultWaitTimeoutSeconds).toBeUndefined();
+		expect(properties.returnToMain).toBeUndefined();
+		expect(properties.defaultReturnToMain).toBeUndefined();
+		expect((tool.parameters as any).additionalProperties).toBe(false);
+		expect(tool.promptGuidelines?.join("\n")).toContain("automatic external activation");
+		expect(tool.promptGuidelines?.join("\n")).toContain("do not poll status");
+		expect(tool.promptGuidelines?.join("\n")).not.toContain("action=wait");
+		const workflowSchema = properties.workflow;
 		expect(JSON.stringify(workflowSchema)).not.toContain('"script"');
 		expect(workflowSchema.properties.script).toBeUndefined();
 		expect(workflowSchema.properties.args).toBeUndefined();
@@ -179,9 +190,26 @@ describe("built-in sub_agent tool", () => {
 				expect.stringContaining("fixed runtime-owned control flow"),
 			]),
 		);
+
+		const aiTool = tool as unknown as Tool;
+		for (const arguments_ of [
+			{ action: "wait", eventId: "agent_001" },
+			{ action: "status", waitTimeoutSeconds: 30 },
+			{ action: "start", task: "hidden", returnToMain: false },
+			{ action: "config", defaultReturnToMain: false },
+			{ action: "config", defaultWaitTimeoutSeconds: 30 },
+		]) {
+			const toolCall: ToolCall = {
+				type: "toolCall",
+				id: "call-invalid-sub-agent",
+				name: tool.name,
+				arguments: arguments_,
+			};
+			expect(() => validateToolArguments(aiTool, toolCall)).toThrow("Validation failed");
+		}
 	});
 
-	it("action=wait consumes results inline and cancels the pending auto-return", async () => {
+	it("retains non-public wait compatibility for internal callers", async () => {
 		const tool = controller.createToolDefinition();
 		const ctx = createContext(tempDir);
 		controller.handleAgentEvent({
@@ -236,9 +264,8 @@ describe("built-in sub_agent tool", () => {
 			reminderEligible: false,
 		});
 
-		// Because the model synchronously waited for (and was shown) the result,
-		// the pending returnToMain auto-delivery must be cancelled: no duplicate
-		// "[sub-agent-return]" message and no extra triggered turn.
+		// Direct execution bypasses the public schema to cover the internal legacy
+		// helper. Model-visible calls cannot select this action.
 		await new Promise((resolve) => setTimeout(resolve, 50));
 		expect(returned).toHaveLength(0);
 	});
@@ -330,7 +357,7 @@ describe("built-in sub_agent tool", () => {
 		expect(progress).not.toContain("latest update: old snapshot");
 	});
 
-	it("returnToMain without waiting delivers results to the main agent once", async () => {
+	it("automatically delivers terminal results to the main agent once", async () => {
 		const tool = controller.createToolDefinition();
 		const ctx = createContext(tempDir);
 
@@ -342,7 +369,6 @@ describe("built-in sub_agent tool", () => {
 			ctx,
 		);
 
-		// No wait/status this turn, so the auto-return is the only delivery path.
 		await waitUntil(() => returned.length === 1);
 		expect(returned[0]?.message.customType).toBe("sub-agent-return");
 		expect(returned[0]?.message.content).toContain("soft lease is released");
@@ -354,6 +380,25 @@ describe("built-in sub_agent tool", () => {
 		// Exactly one delivery — it must not fire again.
 		await new Promise((resolve) => setTimeout(resolve, 50));
 		expect(returned).toHaveLength(1);
+	});
+
+	it("keeps automatic terminal delivery pending after a status snapshot", async () => {
+		const tool = controller.createToolDefinition();
+		const ctx = createContext(tempDir);
+		const start = await tool.execute(
+			"call-start-status",
+			{ action: "start", task: "Inspect" },
+			undefined,
+			undefined,
+			ctx,
+		);
+		const eventId = start.details?.id as string;
+
+		const status = await tool.execute("call-status", { action: "status", eventId }, undefined, undefined, ctx);
+		expect(textOf(status)).toContain(`Sub-agent: ${eventId}`);
+		expect(textOf(status)).toMatch(/Status: (running|exited)/);
+		await waitUntil(() => returned.length === 1);
+		expect(returned[0]?.message.customType).toBe("sub-agent-return");
 	});
 
 	it("bounds model-visible return output while retaining the full expandable snapshot", async () => {
@@ -1137,8 +1182,6 @@ describe("built-in sub_agent tool", () => {
 			{
 				action: "config",
 				defaultTimeoutSeconds: 1,
-				defaultWaitTimeoutSeconds: 2,
-				defaultReturnToMain: true,
 				defaultReturnDelivery: "nextTurn",
 				defaultThinking: "max",
 			},
@@ -1148,8 +1191,8 @@ describe("built-in sub_agent tool", () => {
 		);
 
 		expect(textOf(result)).toContain("defaultTimeoutSeconds: 1");
-		expect(textOf(result)).toContain("defaultWaitTimeoutSeconds: 2");
-		expect(textOf(result)).toContain("defaultReturnToMain: true");
+		expect(textOf(result)).not.toContain("defaultWaitTimeoutSeconds");
+		expect(textOf(result)).not.toContain("defaultReturnToMain");
 		expect(textOf(result)).toContain("defaultReturnDelivery: nextTurn");
 		expect(textOf(result)).toContain("defaultThinking: max");
 	});

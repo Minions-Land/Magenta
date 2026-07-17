@@ -248,14 +248,10 @@ type CompactionQueuedMessage = SubmittedInput & {
  */
 type Activation = { type: "user_input"; input: SubmittedInput } | { type: "external_activation" };
 
-export const SUBMITTED_INPUT_ESCAPE_RESTORE_WINDOW_MS = 3_000;
-
-type ActiveSubmittedInputAttempt = {
+type ActiveSubmittedInput = {
 	input: SubmittedInput;
-	acceptedAt: number;
-	escapeRestoreRequested: boolean;
-	hasValidOutput: boolean;
-	restored: boolean;
+	preflightComplete: boolean;
+	withdrawalRequested: boolean;
 };
 
 const DEAD_TERMINAL_ERROR_CODES = new Set(["EIO", "EPIPE", "ENOTCONN"]);
@@ -418,7 +414,7 @@ export class InteractiveMode {
 	private activationQueue: Activation[] = [];
 	private onActivationCallback?: (activation: Activation) => void;
 	private releaseExternalTurnRunner?: () => void;
-	private activeSubmittedInputAttempt?: ActiveSubmittedInputAttempt;
+	private activeSubmittedInput?: ActiveSubmittedInput;
 	private loadingAnimation: Loader | undefined = undefined;
 	private workingMessage: string | undefined = undefined;
 	private workingVisible = true;
@@ -998,15 +994,17 @@ export class InteractiveMode {
 		while (true) {
 			const activation = await this.getNextActivation();
 			let promptAccepted = false;
-			let activeAttempt: ActiveSubmittedInputAttempt | undefined;
+			const activeInput =
+				activation.type === "user_input" ? this.beginActiveSubmittedInput(activation.input) : undefined;
 			try {
 				if (activation.type === "user_input") {
 					await this.session.prompt(activation.input.text, {
 						images: activation.input.images,
 						imageMarkers: activation.input.imageMarkers,
+						withdrawable: activation.input,
 						preflightResult: (success) => {
 							promptAccepted = success;
-							if (success) activeAttempt = this.beginSubmittedInputAttempt(activation.input);
+							if (activeInput) this.completeActiveSubmittedInputPreflight(activeInput, success);
 						},
 					});
 				} else {
@@ -1020,7 +1018,7 @@ export class InteractiveMode {
 				const errorMessage = error instanceof Error ? error.message : "Unknown error occurred";
 				this.showError(errorMessage);
 			} finally {
-				if (activeAttempt) this.endSubmittedInputAttempt(activeAttempt);
+				if (activeInput) this.endActiveSubmittedInput(activeInput);
 			}
 		}
 	}
@@ -1743,7 +1741,6 @@ export class InteractiveMode {
 				this.restoreQueuedMessagesToEditor({ abort: true });
 			},
 			commandContextActions: {
-				waitForIdle: () => this.session.agent.waitForIdle(),
 				newSession: async (options) => {
 					if (this.loadingAnimation) {
 						this.loadingAnimation.stop();
@@ -2765,36 +2762,7 @@ export class InteractiveMode {
 
 		// Set up handlers on defaultEditor - they use this.editor for text access
 		// so they work correctly regardless of which editor is active
-		this.defaultEditor.onEscape = () => {
-			if (this.session.isStreaming) {
-				// Esc while streaming: mark this exact user-origin abort before aborting;
-				// a fast empty response can then restore its submitted draft safely.
-				this.markActiveSubmittedInputEscapeAbort();
-				this.interruptAndFeedPendingMessages();
-			} else if (this.session.isBashRunning) {
-				this.session.abortBash();
-			} else if (this.isBashMode) {
-				this.editor.setText("");
-				this.isBashMode = false;
-				this.updateEditorBorderColor();
-			} else if (!this.editor.getText().trim()) {
-				// Double-escape with empty editor triggers /tree, /fork, or nothing based on setting
-				const action = this.settingsManager.getDoubleEscapeAction();
-				if (action !== "none") {
-					const now = Date.now();
-					if (now - this.lastEscapeTime < 500) {
-						if (action === "tree") {
-							this.showTreeSelector();
-						} else {
-							this.showUserMessageSelector();
-						}
-						this.lastEscapeTime = 0;
-					} else {
-						this.lastEscapeTime = now;
-					}
-				}
-			}
-		};
+		this.defaultEditor.onEscape = () => this.handleEscape();
 
 		// Bare Up (empty editor) restores pending messages back into the editor and
 		// cancels the pending. Returns true only when there were messages to restore,
@@ -3194,12 +3162,6 @@ export class InteractiveMode {
 	}
 
 	private async handleEvent(event: AgentSessionEvent): Promise<void> {
-		// AgentSession listeners are not awaited by the UI event fan-out. Capture
-		// output/abort state synchronously before any initialization await so the
-		// prompt's finally block cannot clear the attempt first.
-		if ((event.type === "message_update" || event.type === "message_end") && event.message.role === "assistant") {
-			this.observeActiveSubmittedInputMessage(event.message, event.type === "message_end");
-		}
 		if (!this.isInitialized) {
 			await this.init();
 		}
@@ -3253,6 +3215,19 @@ export class InteractiveMode {
 				// The hub appended one coalesced batch and handed the claimed turn to
 				// the interactive loop. Queue exactly one run through this turn-runner.
 				this.pushActivation({ type: "external_activation" });
+				break;
+
+			case "prompt_withdrawn":
+				this.streamingComponent = undefined;
+				this.streamingMessage = undefined;
+				this.stopStreamingAnimation();
+				this.streamingToolGroup = undefined;
+				this.clearPendingToolDisplays();
+				this.chatContainer.commitMutableTail?.();
+				this.rebuildChatFromMessages();
+				this.restoreWithdrawnInputToEditor(event.input);
+				this.footer.invalidate();
+				this.ui.requestRender();
 				break;
 
 			case "message_start":
@@ -3431,7 +3406,7 @@ export class InteractiveMode {
 				// Keep editor active; submissions are queued during compaction.
 				this.autoCompactionEscapeHandler = this.defaultEditor.onEscape;
 				this.defaultEditor.onEscape = () => {
-					this.session.abortCompaction();
+					if (!this.requestActiveSubmittedInputWithdrawal()) this.session.abortCompaction();
 				};
 				this.statusContainer.clear();
 				const cancelHint = `(${keyText("app.interrupt")} to cancel)`;
@@ -3533,7 +3508,7 @@ export class InteractiveMode {
 				// Set up escape to abort retry
 				this.retryEscapeHandler = this.defaultEditor.onEscape;
 				this.defaultEditor.onEscape = () => {
-					this.session.abortRetry();
+					if (!this.requestActiveSubmittedInputWithdrawal()) this.session.abortRetry();
 				};
 				// Show retry indicator
 				this.statusContainer.clear();
@@ -3928,7 +3903,37 @@ export class InteractiveMode {
 	// Key handlers
 	// =========================================================================
 
+	private handleEscape(): void {
+		if (this.requestActiveSubmittedInputWithdrawal()) return;
+		if (this.session.isStreaming) {
+			this.interruptAndFeedPendingMessages();
+		} else if (this.session.isBashRunning) {
+			this.session.abortBash();
+		} else if (this.isBashMode) {
+			this.editor.setText("");
+			this.isBashMode = false;
+			this.updateEditorBorderColor();
+		} else if (!this.editor.getText().trim()) {
+			// Double-escape with empty editor triggers /tree, /fork, or nothing based on setting
+			const action = this.settingsManager.getDoubleEscapeAction();
+			if (action !== "none") {
+				const now = Date.now();
+				if (now - this.lastEscapeTime < 500) {
+					if (action === "tree") {
+						this.showTreeSelector();
+					} else {
+						this.showUserMessageSelector();
+					}
+					this.lastEscapeTime = 0;
+				} else {
+					this.lastEscapeTime = now;
+				}
+			}
+		}
+	}
+
 	private handleCtrlC(): void {
+		if (this.requestActiveSubmittedInputWithdrawal()) return;
 		const now = Date.now();
 		if (now - this.lastSigintTime < 500) {
 			void this.shutdown();
@@ -4688,6 +4693,45 @@ export class InteractiveMode {
 		}
 	}
 
+	private beginActiveSubmittedInput(input: SubmittedInput): ActiveSubmittedInput {
+		const activeInput: ActiveSubmittedInput = {
+			input: {
+				...input,
+				...(input.images ? { images: [...input.images] } : {}),
+				...(input.imageMarkers ? { imageMarkers: [...input.imageMarkers] } : {}),
+			},
+			preflightComplete: false,
+			withdrawalRequested: false,
+		};
+		this.activeSubmittedInput = activeInput;
+		return activeInput;
+	}
+
+	private completeActiveSubmittedInputPreflight(activeInput: ActiveSubmittedInput, success: boolean): void {
+		if (this.activeSubmittedInput !== activeInput) return;
+		activeInput.preflightComplete = true;
+		if (success && activeInput.withdrawalRequested && !this.session.requestPromptWithdrawal()) {
+			activeInput.withdrawalRequested = false;
+		}
+	}
+
+	private endActiveSubmittedInput(activeInput: ActiveSubmittedInput): void {
+		if (this.activeSubmittedInput === activeInput) this.activeSubmittedInput = undefined;
+	}
+
+	private requestActiveSubmittedInputWithdrawal(): boolean {
+		const activeInput = this.activeSubmittedInput;
+		if (this.session.requestPromptWithdrawal()) {
+			if (activeInput) activeInput.withdrawalRequested = true;
+			return true;
+		}
+		if (activeInput && !activeInput.preflightComplete) {
+			activeInput.withdrawalRequested = true;
+			return true;
+		}
+		return false;
+	}
+
 	private restoreQueuedInput(input: SubmittedInput): string {
 		let text = input.text;
 		const oldMarkers = input.imageMarkers ?? [];
@@ -4704,64 +4748,33 @@ export class InteractiveMode {
 		return text;
 	}
 
-	private beginSubmittedInputAttempt(input: SubmittedInput): ActiveSubmittedInputAttempt {
-		const attempt: ActiveSubmittedInputAttempt = {
-			input: {
-				...input,
-				...(input.images ? { images: [...input.images] } : {}),
-				...(input.imageMarkers ? { imageMarkers: [...input.imageMarkers] } : {}),
-			},
-			acceptedAt: Date.now(),
-			escapeRestoreRequested: false,
-			hasValidOutput: false,
-			restored: false,
-		};
-		this.activeSubmittedInputAttempt = attempt;
-		return attempt;
-	}
-
-	private endSubmittedInputAttempt(attempt: ActiveSubmittedInputAttempt): void {
-		if (this.activeSubmittedInputAttempt === attempt) this.activeSubmittedInputAttempt = undefined;
-	}
-
-	private markActiveSubmittedInputEscapeAbort(): void {
-		const attempt = this.activeSubmittedInputAttempt;
-		if (!attempt || attempt.restored || attempt.hasValidOutput) return;
-		const elapsed = Date.now() - attempt.acceptedAt;
-		if (elapsed >= 0 && elapsed <= SUBMITTED_INPUT_ESCAPE_RESTORE_WINDOW_MS) {
-			attempt.escapeRestoreRequested = true;
-		}
-	}
-
-	private observeActiveSubmittedInputMessage(message: AssistantMessage, isFinal: boolean): void {
-		const attempt = this.activeSubmittedInputAttempt;
-		if (!attempt) return;
-		if (this.hasValidAssistantOutput(message)) attempt.hasValidOutput = true;
-		if (
-			isFinal &&
-			message.stopReason === "aborted" &&
-			attempt.escapeRestoreRequested &&
-			!attempt.hasValidOutput &&
-			!attempt.restored
-		) {
-			attempt.restored = true;
-			this.restoreSubmittedInputToEditor(attempt.input);
-		}
-	}
-
-	private hasValidAssistantOutput(message: AssistantMessage): boolean {
-		return message.content.some((content) => {
-			if (content.type === "toolCall") return true;
-			if (content.type === "text") return content.text.trim().length > 0;
-			if (content.type === "thinking") return content.thinking.trim().length > 0;
-			return false;
-		});
-	}
-
 	private restoreSubmittedInputToEditor(input: SubmittedInput): void {
 		const restoredText = this.restoreQueuedInput(input);
 		const currentText = this.editor.getText();
 		this.editor.setText([restoredText, currentText].filter((value) => value.trim()).join("\n\n"));
+		this.ui.requestRender();
+	}
+
+	private restoreWithdrawnInputToEditor(input: SubmittedInput): void {
+		this.pendingImageController.clear();
+		this.editor.clearPasteMarkers?.();
+
+		const entries: Array<{ id: number; marker: string; expandedText: string }> = [];
+		let counter = 0;
+		const registered = new Set<string>();
+		for (let index = 0; index < (input.images?.length ?? 0); index++) {
+			const marker = input.imageMarkers?.[index];
+			const match = marker?.match(/^\[paste #(\d+) Image\]$/);
+			if (!marker || !match || !input.text.includes(marker) || registered.has(marker)) continue;
+			const id = Number.parseInt(match[1]!, 10);
+			counter = Math.max(counter, id);
+			entries.push({ id, marker, expandedText: marker });
+			registered.add(marker);
+			this.pendingImageController.add(marker, input.images![index]!);
+		}
+
+		this.editor.setText(input.text);
+		this.editor.restorePasteMarkerSnapshot?.({ counter, entries });
 		this.ui.requestRender();
 	}
 
@@ -5597,6 +5610,10 @@ export class InteractiveMode {
 		if (!this.commandDockShouldRouteInput(data)) {
 			return undefined;
 		}
+		if (matchesKey(data, "enter") && this.commandDockShouldSubmitExactBuiltin()) {
+			this.closeCommandDock();
+			return undefined;
+		}
 		if (matchesKey(data, "escape") || matchesKey(data, "left")) {
 			if (!this.commandDockBody.handleInput(data)) {
 				this.closeCommandDock();
@@ -5607,6 +5624,20 @@ export class InteractiveMode {
 		this.commandDockBody.handleInput(data);
 		this.ui.requestRender();
 		return { consume: true };
+	}
+
+	private commandDockShouldSubmitExactBuiltin(): boolean {
+		const match = this.editor.getText().match(/^\/([^\s/]+)$/);
+		if (!match) return false;
+		const command = match[1]!;
+		if (!BUILTIN_SLASH_COMMANDS.some((candidate) => candidate.name === command)) return false;
+		const selected = this.commandDockBody?.getSelectedItem();
+		return Boolean(
+			selected &&
+				(selected.aliases?.includes(command) ||
+					selected.value === `slash:${command}` ||
+					selected.value === `insert-command:${command}`),
+		);
 	}
 
 	private syncCommandDockFromEditorText(text: string): void {
@@ -5750,9 +5781,16 @@ export class InteractiveMode {
 			{ value: "slash:hotkeys", label: "Hotkeys", aliases: ["hotkeys"], description: "/hotkeys" },
 			{ value: "slash:quit", label: "Quit", aliases: ["quit", "exit"], description: "/quit" },
 		];
+		this.appendMissingBuiltinSlashDockItems(items);
 
 		for (const command of this.session.extensionRunner.getRegisteredCommands()) {
-			if (items.some((item) => item.aliases?.includes(command.name) || item.label === command.name)) continue;
+			if (
+				items.some(
+					(item) => item.aliases?.includes(command.invocationName) || item.label === command.invocationName,
+				)
+			) {
+				continue;
+			}
 			items.push({
 				value: `insert-command:${command.invocationName}`,
 				label: command.invocationName,
@@ -5762,6 +5800,19 @@ export class InteractiveMode {
 		}
 
 		return items;
+	}
+
+	private appendMissingBuiltinSlashDockItems(items: FloatingMenuItem[]): void {
+		const represented = new Set(items.flatMap((item) => item.aliases ?? []));
+		for (const command of BUILTIN_SLASH_COMMANDS) {
+			if (represented.has(command.name)) continue;
+			items.push({
+				value: `insert-command:${command.name}`,
+				label: command.name,
+				aliases: [command.name],
+				description: `/${command.name} · ${command.description}`,
+			});
+		}
 	}
 
 	/**

@@ -178,12 +178,12 @@ function buildOperationalFragment(tools: string[], enabled: boolean): string {
 			lines.push("- Use the regular bash tool for short one-off shell commands.");
 		}
 		lines.push(
-			"- bg_shell intentionally exposes no blocking wait action. After action=start, continue only non-overlapping independent work; do not rerun the command, duplicate its purpose, or poll action=status. When a later step depends on the result, rely on returnToMain=true to deliver the completion receipt and activate a later turn.",
+			"- bg_shell intentionally exposes no blocking wait action. After action=start, continue only non-overlapping independent work; do not rerun the command, duplicate its purpose, or poll action=status. The terminal result returns automatically and activates a later turn.",
 		);
 	}
 	if (hasSubAgent) {
 		lines.push(
-			"- Use sub_agent for independent parallel analysis, review, research, or planning work. A successful dispatch gives its running event a soft lease on that scope: do not duplicate the task; continue only non-overlapping work, coordination, or integration preparation. After the terminal result returns, synthesize it and independently verify it before reporting to the user.",
+			"- Use sub_agent for independent parallel analysis, review, research, or planning work. A successful dispatch gives its running event a soft lease on that scope: do not duplicate the task; continue only non-overlapping work, coordination, or integration preparation. Do not poll status for completion; the terminal result returns through external activation. Then synthesize it and independently verify it before reporting to the user.",
 		);
 	}
 	return lines.join("\n");

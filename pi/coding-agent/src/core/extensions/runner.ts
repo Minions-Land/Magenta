@@ -274,7 +274,6 @@ export class ExtensionRunner {
 	private isIdleFn: () => boolean = () => true;
 	private isProjectTrustedFn: () => boolean = () => true;
 	private getSignalFn: () => AbortSignal | undefined = () => undefined;
-	private waitForIdleFn: () => Promise<void> = async () => {};
 	private abortFn: () => void = () => {};
 	private hasPendingMessagesFn: () => boolean = () => false;
 	private getContextUsageFn: () => ContextUsage | undefined = () => undefined;
@@ -420,7 +419,6 @@ export class ExtensionRunner {
 
 	bindCommandContext(actions?: ExtensionCommandContextActions): void {
 		if (actions) {
-			this.waitForIdleFn = actions.waitForIdle;
 			this.newSessionHandler = actions.newSession;
 			this.forkHandler = actions.fork;
 			this.navigateTreeHandler = actions.navigateTree;
@@ -429,7 +427,6 @@ export class ExtensionRunner {
 			return;
 		}
 
-		this.waitForIdleFn = async () => {};
 		this.newSessionHandler = async () => ({ cancelled: false });
 		this.forkHandler = async () => ({ cancelled: false });
 		this.navigateTreeHandler = async () => ({ cancelled: false });
@@ -750,10 +747,6 @@ export class ExtensionRunner {
 		context.getSystemPromptOptions = () => {
 			this.assertActive();
 			return this.getSystemPromptOptionsFn();
-		};
-		context.waitForIdle = () => {
-			this.assertActive();
-			return this.waitForIdleFn();
 		};
 		context.newSession = (options) => {
 			this.assertActive();

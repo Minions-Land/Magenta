@@ -6,7 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed
+- Model-facing background and multi-agent tools no longer expose blocking wait actions or opt-out terminal delivery: `bg_shell`, `sub_agent`, and `teammate_agent` return terminal results through external activation, while status remains an immediate snapshot and host-only settlement barriers stay outside model and extension surfaces
+- Extension command contexts no longer expose the deadlock-prone `waitForIdle()` API; extensions inspect `isIdle()` and continue deferred work from `agent_end`, and RPC abort requests now acknowledge immediately
+
 ### Fixed
+- Background shell cancellation and timeout now remain nonterminal until the owned process exits (or an adopted execution reports completion), so automatic terminal delivery cannot release a work lease while the command may still be writing
+- Interactive prompts can be withdrawn with Escape or Ctrl+C until the first renderable assistant text, thinking, or tool call; withdrawal restores the submitted draft and removes its user/aborted-assistant turn from agent state, session JSONL, and TUI history without a three-second deadline or `Operation aborted`
 - CLI release commands now version the active product brand, finalize only the coding-agent changelog, use annotated tags and lease-protected pushes, restore pre-commit failures, and reject unrelated file changes without modifying independent Pi package versions or refreshing online model catalogs
 
 ## [0.0.23] - 2026-07-16

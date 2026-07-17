@@ -276,8 +276,8 @@ magenta --no-extensions -e ./my-extension.ts
 | `--system-prompt <text>` | Replace default prompt; context files and skills are still appended |
 | `--append-system-prompt <text>` | Append to system prompt |
 | `--verbose` | Force verbose startup |
-| `--background-policy <cancel\|wait\|error>` | One-shot policy for work still running when the main agent becomes idle |
-| `--background-wait-timeout <seconds>` | Total deadline for the `wait` policy; default 60 seconds |
+| `--background-policy <cancel\|wait\|error>` | One-shot host exit policy for work still running after the main agent becomes idle |
+| `--background-wait-timeout <seconds>` | Host-only settlement deadline for the one-shot `wait` policy; default 60 seconds |
 | `--non-interactive-ui <deny\|error>` | Observable fallback or hard failure for blocking extension UI requests |
 | `-a`, `--approve` | Trust project-local files for this run |
 | `-na`, `--no-approve` | Ignore project-local files for this run |
@@ -353,18 +353,22 @@ magenta --exclude-tools ask_question
 
 Magenta includes first-class `bg_shell`, `sub_agent`, `send_message`, and
 `teammate_agent` tools and can load user MCP tools through the Harness path.
-The model-facing `bg_shell` tool intentionally has no blocking wait action:
-completion is delivered through `returnToMain` and `status` is an immediate
-snapshot that must not be polled. Headless `--background-policy wait` is a
-separate bounded host-settlement policy after the model run; it does not hold an
-interactive tool call open. `sub_agent` workers are sessionless and one-shot.
-Workflows orchestrate those workers and forbid delegation controllers plus
-`send_message` inside each
-workflow worker. Teammates are long-lived child sessions managed by the current
-parent runtime; RPC controls process state, while assignment and structured result
-payloads use the peer mailbox. Editing teammates may use managed Git worktrees;
-worktree isolation prevents ordinary path conflicts but is not a permission
-sandbox. The parent stops child processes at shutdown without deleting
+The model-facing background and multi-agent tools intentionally have no blocking
+wait actions. Every `bg_shell` or `sub_agent` start delivers one automatic
+terminal result through external activation, and `status` is an immediate
+snapshot that must not be polled. Cancellation and timeout remain nonterminal
+until the owned process exits or the adopted execution reports completion.
+Headless `--background-policy wait` is a separate bounded host-settlement policy
+after the model run; it does not hold an interactive tool call open. `sub_agent`
+workers are sessionless and one-shot. Workflows orchestrate those workers and
+forbid delegation controllers plus `send_message` inside each workflow worker.
+Teammates are long-lived child sessions managed by the current parent runtime;
+RPC controls process state, while assignment and structured result payloads use
+the peer mailbox. `stop` acknowledges the shutdown request immediately and a
+later urgent terminal mailbox event confirms process exit. Editing teammates may
+use managed Git worktrees; worktree isolation prevents ordinary path conflicts
+but is not a permission sandbox. Integrate or discard only after the teammate is
+terminal. The parent stops child processes at shutdown without deleting
 unintegrated work. Workflow-specific UI and commands remain extension surfaces.
 
 External activations become durable session entries only when committed to model

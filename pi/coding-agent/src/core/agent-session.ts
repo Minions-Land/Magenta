@@ -210,7 +210,8 @@ export type AgentSessionEvent =
 			activationId: number;
 			sources: Array<"peer" | "bg_shell" | "sub_agent" | "reminder">;
 			messages: AgentMessage[];
-	  };
+	  }
+	| { type: "prompt_withdrawn"; input: SubmittedInput };
 
 /** Listener function for agent session events */
 export type AgentSessionEventListener = (event: AgentSessionEvent) => void;
@@ -298,6 +299,20 @@ export interface PromptOptions {
 	source?: InputSource;
 	/** Internal hook used by RPC mode to observe prompt preflight acceptance or rejection. */
 	preflightResult?: (success: boolean) => void;
+	/** Interactive-only draft to restore when this prompt is withdrawn before visible output. */
+	withdrawable?: SubmittedInput;
+}
+
+interface PromptWithdrawalTransaction {
+	input: SubmittedInput;
+	userMessage: AgentMessage;
+	assistantMessages: Set<AgentMessage>;
+	assistantEntryIds: Set<string>;
+	userEntryId?: string;
+	previousErrorMessage?: string;
+	outputCommitted: boolean;
+	withdrawRequested: boolean;
+	terminalSeen: boolean;
 }
 
 /** Result from cycleModel() */
@@ -366,6 +381,7 @@ export class AgentSession {
 	// Event subscription state
 	private _unsubscribeAgent?: () => void;
 	private _eventListeners: AgentSessionEventListener[] = [];
+	private _activePromptWithdrawal?: PromptWithdrawalTransaction;
 
 	/** Tracks pending steering messages and attachments. Removed when delivered. */
 	private _steeringMessages: SubmittedInput[] = [];
@@ -536,7 +552,6 @@ export class AgentSession {
 					onPersisted: receipt.onPersisted,
 					onInjectionError: receipt.onDropped,
 				}),
-			cancelReturn: (eventIds) => this._externalActivations.cancel(eventIds),
 		});
 		this._subAgents = new SubAgentController(this._backgroundEvents, {
 			registerReturn: (eventIds, message, delivery, receipt) =>
@@ -830,8 +845,82 @@ export class AgentSession {
 	// Track last assistant message for auto-compaction check
 	private _lastAssistantMessage: AssistantMessage | undefined = undefined;
 
+	private _assistantHasRenderableOutput(message: AssistantMessage): boolean {
+		return message.content.some((content) => {
+			if (content.type === "toolCall") return true;
+			if (content.type === "text") return content.text.trim().length > 0;
+			if (content.type === "thinking") return content.thinking.trim().length > 0;
+			return false;
+		});
+	}
+
+	/** Capture output commitment before extension handlers introduce an await boundary. */
+	private _capturePromptWithdrawalEvent(event: AgentEvent): PromptWithdrawalTransaction | undefined {
+		const transaction = this._activePromptWithdrawal;
+		if (!transaction) return undefined;
+
+		if (
+			(event.type === "message_start" || event.type === "message_update" || event.type === "message_end") &&
+			event.message.role === "assistant"
+		) {
+			transaction.assistantMessages.add(event.message);
+			if (this._assistantHasRenderableOutput(event.message) && !transaction.withdrawRequested) {
+				transaction.outputCommitted = true;
+			}
+		} else if (event.type === "tool_execution_start") {
+			if (!transaction.withdrawRequested) transaction.outputCommitted = true;
+		} else if (event.type === "agent_end") {
+			transaction.terminalSeen = true;
+			for (const message of event.messages) {
+				if (message.role !== "assistant") continue;
+				transaction.assistantMessages.add(message);
+				if (this._assistantHasRenderableOutput(message) && !transaction.withdrawRequested) {
+					transaction.outputCommitted = true;
+				}
+			}
+		}
+		return transaction;
+	}
+
+	private _isWithdrawnPromptEvent(event: AgentEvent, transaction: PromptWithdrawalTransaction): boolean {
+		if (
+			event.type === "tool_execution_start" ||
+			event.type === "tool_execution_update" ||
+			event.type === "tool_execution_end"
+		) {
+			return true;
+		}
+		if (event.type !== "message_start" && event.type !== "message_update" && event.type !== "message_end") {
+			return false;
+		}
+		return event.message === transaction.userMessage || transaction.assistantMessages.has(event.message);
+	}
+
+	private _cloneSubmittedInput(input: SubmittedInput): SubmittedInput {
+		return {
+			...input,
+			...(input.images ? { images: [...input.images] } : {}),
+			...(input.imageMarkers ? { imageMarkers: [...input.imageMarkers] } : {}),
+		};
+	}
+
+	private _finalizePromptWithdrawal(transaction: PromptWithdrawalTransaction): void {
+		const removedMessages = new Set<AgentMessage>([transaction.userMessage, ...transaction.assistantMessages]);
+		this.agent.state.messages = this.agent.state.messages.filter((message) => !removedMessages.has(message));
+		Object.assign(this.agent.state, { errorMessage: transaction.previousErrorMessage });
+		if (this._lastAssistantMessage && transaction.assistantMessages.has(this._lastAssistantMessage)) {
+			this._lastAssistantMessage = undefined;
+		}
+		if (transaction.userEntryId) {
+			this.sessionManager.withdrawUserMessage(transaction.userEntryId, transaction.assistantEntryIds);
+		}
+		if (this._activePromptWithdrawal === transaction) this._activePromptWithdrawal = undefined;
+		this._emit({ type: "prompt_withdrawn", input: this._cloneSubmittedInput(transaction.input) });
+	}
+
 	/** Internal handler for agent events - shared by subscribe and reconnect */
 	private _handleAgentEvent = async (event: AgentEvent): Promise<void> => {
+		const promptWithdrawal = this._capturePromptWithdrawalEvent(event);
 		if (event.type === "message_start" && event.message.role === "custom") {
 			const entry = this._externalActivationReceipts.get(event.message);
 			if (entry) this._externalActivations.markCommitted(entry.key);
@@ -860,6 +949,31 @@ export class AgentSession {
 
 		// Emit to extensions first
 		await this._emitExtensionEvent(event);
+
+		if (
+			promptWithdrawal?.withdrawRequested &&
+			this._activePromptWithdrawal === promptWithdrawal &&
+			this._isWithdrawnPromptEvent(event, promptWithdrawal)
+		) {
+			return;
+		}
+
+		if (
+			event.type === "agent_end" &&
+			promptWithdrawal?.withdrawRequested &&
+			this._activePromptWithdrawal === promptWithdrawal
+		) {
+			const messages = event.messages.filter(
+				(message) => message !== promptWithdrawal.userMessage && !promptWithdrawal.assistantMessages.has(message),
+			);
+			this._finalizePromptWithdrawal(promptWithdrawal);
+			const sessionEvent: AgentSessionEvent = { ...event, messages, willRetry: false };
+			this._toolProgressTracker.handleAgentEvent(sessionEvent);
+			this._subAgents.handleAgentEvent(sessionEvent);
+			this._emit(sessionEvent);
+			return;
+		}
+
 		const sessionEvent =
 			event.type === "agent_end" ? { ...event, willRetry: this._willRetryAfterAgentEnd(event) } : event;
 		this._toolProgressTracker.handleAgentEvent(sessionEvent);
@@ -867,6 +981,13 @@ export class AgentSession {
 
 		// Notify all listeners
 		this._emit(sessionEvent);
+		if (
+			promptWithdrawal?.withdrawRequested &&
+			this._activePromptWithdrawal === promptWithdrawal &&
+			this._isWithdrawnPromptEvent(event, promptWithdrawal)
+		) {
+			return;
+		}
 
 		// Handle session persistence
 		if (event.type === "message_end") {
@@ -886,7 +1007,16 @@ export class AgentSession {
 				event.message.role === "toolResult"
 			) {
 				// Regular LLM message - persist as SessionMessageEntry
-				this.sessionManager.appendMessage(event.message);
+				const entryId = this.sessionManager.appendMessage(event.message);
+				if (promptWithdrawal && event.message === promptWithdrawal.userMessage) {
+					promptWithdrawal.userEntryId = entryId;
+				} else if (
+					promptWithdrawal &&
+					event.message.role === "assistant" &&
+					promptWithdrawal.assistantMessages.has(event.message)
+				) {
+					promptWithdrawal.assistantEntryIds.add(entryId);
+				}
 			}
 			// Other message types (bashExecution, compactionSummary, branchSummary) are persisted elsewhere
 
@@ -1249,7 +1379,7 @@ export class AgentSession {
 		return this._backgroundEvents.getEvents();
 	}
 
-	/** Wait for every registered background source to stop reporting running work. */
+	/** Host-only bounded settlement barrier for one-shot runners and shutdown. */
 	waitForBackgroundIdle(options?: { timeoutMs?: number; signal?: AbortSignal }): Promise<boolean> {
 		return this._backgroundEvents.waitForIdle(options);
 	}
@@ -1654,8 +1784,31 @@ export class AgentSession {
 			return;
 		}
 
-		preflightResult?.(true);
-		await this._runAgentPrompt(messages);
+		const userMessage = messages.find((message) => message.role === "user");
+		const promptWithdrawal =
+			options?.withdrawable && userMessage
+				? {
+						input: this._cloneSubmittedInput(options.withdrawable),
+						userMessage,
+						assistantMessages: new Set<AgentMessage>(),
+						assistantEntryIds: new Set<string>(),
+						previousErrorMessage: this.agent.state.errorMessage,
+						outputCommitted: false,
+						withdrawRequested: false,
+						terminalSeen: false,
+					}
+				: undefined;
+		if (promptWithdrawal) this._activePromptWithdrawal = promptWithdrawal;
+		try {
+			preflightResult?.(true);
+			if (promptWithdrawal?.withdrawRequested) {
+				this._finalizePromptWithdrawal(promptWithdrawal);
+				return;
+			}
+			await this._runAgentPrompt(messages);
+		} finally {
+			if (this._activePromptWithdrawal === promptWithdrawal) this._activePromptWithdrawal = undefined;
+		}
 	}
 
 	private async _enqueueHumanSideHandoff(
@@ -2222,11 +2375,32 @@ export class AgentSession {
 	}
 
 	/**
-	 * Abort current operation and wait for agent to become idle.
+	 * Withdraw the active interactive prompt before its first renderable assistant
+	 * output. The latch and abort are synchronous so an output event cannot win in
+	 * between the eligibility check and cancellation.
 	 */
-	async abort(): Promise<void> {
+	requestPromptWithdrawal(): boolean {
+		const transaction = this._activePromptWithdrawal;
+		if (!transaction || transaction.outputCommitted || transaction.withdrawRequested || transaction.terminalSeen) {
+			return false;
+		}
+		transaction.withdrawRequested = true;
+		this.requestAbort();
+		return true;
+	}
+
+	/** Request cancellation and return without waiting for terminal settlement. */
+	requestAbort(): void {
 		this.abortRetry();
 		this.agent.abort();
+	}
+
+	/**
+	 * Host-only settlement barrier. Agent loops, tools, and event listeners must
+	 * use requestAbort() and observe agent_end instead.
+	 */
+	async abort(): Promise<void> {
+		this.requestAbort();
 		await this.agent.waitForIdle();
 	}
 

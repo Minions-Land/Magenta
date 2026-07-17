@@ -871,7 +871,6 @@ describe("ExtensionRunner", () => {
 			const fork = vi.fn(async () => ({ cancelled: false }));
 
 			runner.bindCommandContext({
-				waitForIdle: async () => {},
 				newSession: async () => ({ cancelled: false }),
 				fork,
 				navigateTree: async () => ({ cancelled: false }),
@@ -880,6 +879,7 @@ describe("ExtensionRunner", () => {
 			});
 
 			const commandContext = runner.createCommandContext();
+			expect("waitForIdle" in commandContext).toBe(false);
 			await commandContext.fork("entry-1");
 			expect(fork).toHaveBeenCalledWith("entry-1", undefined);
 

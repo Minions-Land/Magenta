@@ -259,6 +259,10 @@ export class FloatingMenuBody implements FloatingOverlayBody {
 		return this.current().items.some((item) => !item.disabled);
 	}
 
+	getSelectedItem(): FloatingMenuItem | undefined {
+		return this.current().items[this.selectedIndex];
+	}
+
 	selectedItemHasChildren(): boolean {
 		return Boolean(this.current().items[this.selectedIndex]?.children);
 	}

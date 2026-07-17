@@ -340,8 +340,8 @@ ${chalk.bold("Options:")}
   --no-harness-workflows         Disable sub_agent workflow templates independently of thinking level
   --harness-teammates            Enable teammate_agent independently of thinking level
   --no-harness-teammates         Disable teammate_agent independently of thinking level
-  --background-policy <policy>   Headless leftover work policy: cancel (default), wait, or error
-  --background-wait-timeout <s>  Total wait deadline for --background-policy wait (default: 60)
+  --background-policy <policy>   One-shot host exit policy: cancel (default), wait, or error
+  --background-wait-timeout <s>  Host settlement deadline for --background-policy wait (default: 60)
   --non-interactive-ui <policy>  Blocking extension UI policy: deny (default) or error
   --tools, -t <tools>            Comma-separated allowlist of tool names to enable
                                  Applies to every configured tool source

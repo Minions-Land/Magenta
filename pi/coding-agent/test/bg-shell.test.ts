@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type Tool, type ToolCall, validateToolArguments } from "@earendil-works/pi-ai";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BackgroundEventManager } from "../src/core/background-events.ts";
 import type { ExtensionContext } from "../src/core/extensions/types.ts";
 import {
@@ -93,7 +93,6 @@ describe("built-in bg_shell tool", () => {
 					options: { deliverAs: delivery, triggerTurn: delivery !== "nextTurn" },
 				});
 			},
-			cancelReturn: () => {},
 		});
 	});
 
@@ -115,12 +114,15 @@ describe("built-in bg_shell tool", () => {
 		expect(JSON.stringify(parameters.properties.action)).not.toContain('"wait"');
 		expect(parameters.properties).not.toHaveProperty("waitTimeoutSeconds");
 		expect(parameters.properties).not.toHaveProperty("defaultWaitTimeoutSeconds");
+		expect(parameters.properties).not.toHaveProperty("returnToMain");
+		expect(parameters.properties).not.toHaveProperty("defaultReturnToMain");
 		expect(parameters.additionalProperties).toBe(false);
 		expect(tool.description).toContain("no blocking wait action");
 		expect(tool.promptGuidelines).toEqual(
 			expect.arrayContaining([
 				expect.stringContaining("Do not rerun"),
 				expect.stringContaining("or poll action=status"),
+				expect.stringContaining("terminal result returns automatically"),
 			]),
 		);
 
@@ -129,6 +131,8 @@ describe("built-in bg_shell tool", () => {
 			{ action: "wait", eventId: "bg_001" },
 			{ action: "config", waitTimeoutSeconds: 30 },
 			{ action: "config", defaultWaitTimeoutSeconds: 30 },
+			{ action: "start", command: "printf hidden", returnToMain: false },
+			{ action: "config", defaultReturnToMain: false },
 		]) {
 			const toolCall: ToolCall = {
 				type: "toolCall",
@@ -235,12 +239,54 @@ describe("built-in bg_shell tool", () => {
 		);
 		const eventId = start.details?.id as string;
 
-		const cancelled = await tool.execute("call-cancel", { action: "cancel", eventId }, undefined, undefined, ctx);
-		expect(textOf(cancelled)).toContain(`Cancelled background event ${eventId}`);
-		expect(cancelled.details?.status).toBe("cancelled");
+		const cancelling = await tool.execute("call-cancel", { action: "cancel", eventId }, undefined, undefined, ctx);
+		expect(textOf(cancelling)).toContain(`Cancellation requested for background event ${eventId}`);
+		await waitUntil(() => manager.getEvents().find((event) => event.id === eventId)?.status === "cancelled");
 
 		const status = await tool.execute("call-status", { action: "status", eventId }, undefined, undefined, ctx);
 		expect(textOf(status)).toContain("Status: cancelled");
+	});
+
+	it("delays cancellation settlement and terminal delivery until an adopted execution finishes", async () => {
+		const tool = controller.createToolDefinition();
+		const ctx = createContext(tempDir);
+		const cancel = vi.fn();
+		const adopted = controller.adoptExecution(
+			{ command: "adopted", cwd: tempDir, startedAt: Date.now(), cancel },
+			ctx,
+		);
+
+		const cancelling = await tool.execute(
+			"call-cancel-adopted",
+			{ action: "cancel", eventId: adopted.id },
+			undefined,
+			undefined,
+			ctx,
+		);
+		expect(cancelling.details).toMatchObject({ status: "running" });
+		expect(cancel).toHaveBeenCalledOnce();
+		expect(returned).toHaveLength(0);
+		const pending = await tool.execute(
+			"call-status-adopted",
+			{ action: "status", eventId: adopted.id },
+			undefined,
+			undefined,
+			ctx,
+		);
+		expect(textOf(pending)).toContain("Status: running");
+		expect(manager.getEvents().find((event) => event.id === adopted.id)?.activityPhase).toBe("terminating");
+
+		adopted.finish({ status: "exited", exitCode: 0 });
+		await waitUntil(() => returned.length === 1);
+		const terminal = await tool.execute(
+			"call-status-adopted-terminal",
+			{ action: "status", eventId: adopted.id },
+			undefined,
+			undefined,
+			ctx,
+		);
+		expect(textOf(terminal)).toContain("Status: cancelled");
+		expect((returned[0]?.message.details as any).status).toBe("cancelled");
 	});
 
 	it("parses progress from output and reports it while running", async () => {
@@ -391,7 +437,7 @@ describe("built-in bg_shell tool", () => {
 		}
 	});
 
-	it("returns completed output to the main session when requested", async () => {
+	it("returns completed output to the main session automatically", async () => {
 		const tool = controller.createToolDefinition();
 		const ctx = createContext(tempDir);
 
@@ -409,8 +455,6 @@ describe("built-in bg_shell tool", () => {
 		);
 		const eventId = start.details?.id as string;
 
-		// With auto-return, completion alone delivers the result. An id-specific
-		// terminal status would consume it, so here we rely on the scheduled return.
 		await waitUntil(() => returned.length === 1);
 
 		expect(returned[0]?.message.customType).toBe("bg-shell-return");
@@ -496,7 +540,7 @@ describe("built-in bg_shell tool", () => {
 		void eventId;
 	});
 
-	it("suppresses the auto-return when terminal status consumes the result inline", async () => {
+	it("keeps terminal delivery pending after an id-specific status snapshot", async () => {
 		const tool = controller.createToolDefinition();
 		const ctx = createContext(tempDir);
 		const adopted = controller.adoptExecution(
@@ -519,9 +563,8 @@ describe("built-in bg_shell tool", () => {
 		);
 		expect(textOf(status)).toContain("consumed");
 
-		// Give the scheduled auto-return a chance to fire; it must have been consumed.
-		await new Promise((resolvePromise) => setTimeout(resolvePromise, 50));
-		expect(returned.length).toBe(0);
+		await waitUntil(() => returned.length === 1);
+		expect(returned[0]?.message.content).toContain("consumed");
 	});
 
 	it("updates session defaults with config action", async () => {
@@ -533,7 +576,6 @@ describe("built-in bg_shell tool", () => {
 			{
 				action: "config",
 				defaultTimeoutSeconds: 1,
-				defaultReturnToMain: true,
 				defaultReturnDelivery: "nextTurn",
 			},
 			undefined,
@@ -543,7 +585,7 @@ describe("built-in bg_shell tool", () => {
 
 		expect(textOf(result)).toContain("defaultTimeoutSeconds: 1");
 		expect(textOf(result)).not.toContain("defaultWaitTimeoutSeconds");
-		expect(textOf(result)).toContain("defaultReturnToMain: true");
+		expect(textOf(result)).not.toContain("defaultReturnToMain");
 		expect(textOf(result)).toContain("defaultReturnDelivery: nextTurn");
 	});
 
@@ -555,7 +597,6 @@ describe("built-in bg_shell tool", () => {
 			registerReturn: (_ids, message, delivery) => {
 				boundedReturned.push({ message, options: { deliverAs: delivery, triggerTurn: delivery !== "nextTurn" } });
 			},
-			cancelReturn: () => {},
 			maxRetainedFinishedEvents: 2,
 		});
 		try {
@@ -624,7 +665,6 @@ describe("built-in bg_shell tool", () => {
 	it("never evicts a still-running event when pruning", async () => {
 		const bounded = new BackgroundShellController(manager, {
 			registerReturn: () => {},
-			cancelReturn: () => {},
 			maxRetainedFinishedEvents: 1,
 		});
 		try {

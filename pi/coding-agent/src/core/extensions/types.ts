@@ -341,9 +341,6 @@ export interface ExtensionCommandContext extends ExtensionContext {
 	/** Get the current base system-prompt construction options. */
 	getSystemPromptOptions(): BuildSystemPromptOptions;
 
-	/** Wait for the agent to finish streaming */
-	waitForIdle(): Promise<void>;
-
 	/** Start a new session, optionally with initialization. */
 	newSession(options?: {
 		parentSession?: string;
@@ -1571,7 +1568,6 @@ export interface ExtensionContextActions {
  * Only needed for interactive mode where extension commands are invokable.
  */
 export interface ExtensionCommandContextActions {
-	waitForIdle: () => Promise<void>;
 	newSession: (options?: {
 		parentSession?: string;
 		setup?: (sessionManager: SessionManager) => Promise<void>;

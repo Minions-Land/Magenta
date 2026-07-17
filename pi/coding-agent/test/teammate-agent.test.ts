@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough, Writable } from "node:stream";
+import { type Tool, type ToolCall, validateToolArguments } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BackgroundEventManager, type EventSource } from "../src/core/background-events.ts";
 import type { ExtensionContext } from "../src/core/extensions/types.ts";
@@ -270,6 +271,12 @@ describe("built-in teammate_agent tool", () => {
 			);
 	}
 
+	async function waitForTeammateTerminal(teammateId: string): Promise<void> {
+		await vi.waitFor(() => {
+			expect(manager.getEvents().find((event) => event.id === teammateId)?.status).not.toBe("running");
+		});
+	}
+
 	function emitRpcEvent(payload: Record<string, unknown>, record = spawnRecords.at(-1)): void {
 		(record?.child.stdout as PassThrough | undefined)?.write(`${JSON.stringify(payload)}\n`);
 	}
@@ -320,6 +327,14 @@ describe("built-in teammate_agent tool", () => {
 		expect(tool.description).toContain("lifecycle/control plane");
 		expect(JSON.stringify(tool.parameters)).not.toContain("humanHandoff");
 		expect(JSON.stringify(tool.parameters)).not.toContain("Side/BTW");
+		const properties = (tool.parameters as any).properties;
+		expect(JSON.stringify(properties.action)).not.toContain('"wait"');
+		expect(properties.assignmentId).toBeUndefined();
+		expect(properties.waitTimeoutSeconds).toBeUndefined();
+		expect((tool.parameters as any).additionalProperties).toBe(false);
+		expect(tool.promptGuidelines?.join("\n")).toContain("external activation");
+		expect(tool.promptGuidelines?.join("\n")).toContain("do not poll status");
+		expect(tool.promptGuidelines?.join("\n")).not.toContain("action=wait");
 		expect(tool.promptGuidelines).toEqual(
 			expect.arrayContaining([
 				expect.stringContaining("retained context"),
@@ -328,10 +343,25 @@ describe("built-in teammate_agent tool", () => {
 				expect.stringContaining("non-overlapping owned files or globs"),
 				expect.stringContaining("not a security sandbox or runtime lock"),
 				expect.stringContaining("becoming idle does not release"),
-				expect.stringContaining("structured terminal receipt"),
+				expect.stringContaining("terminal receipts"),
 				expect.stringContaining("stops children automatically"),
 			]),
 		);
+
+		const aiTool = tool as unknown as Tool;
+		for (const arguments_ of [
+			{ action: "wait", teammateId: "teammate_001" },
+			{ action: "status", assignmentId: "teammate_001:assignment_1" },
+			{ action: "status", waitTimeoutSeconds: 30 },
+		]) {
+			const toolCall: ToolCall = {
+				type: "toolCall",
+				id: "call-invalid-teammate-agent",
+				name: tool.name,
+				arguments: arguments_,
+			};
+			expect(() => validateToolArguments(aiTool, toolCall)).toThrow("Validation failed");
+		}
 	});
 
 	it("rejects an unconfirmed human Side/BTW handoff before creating any process or mailbox message", async () => {
@@ -648,6 +678,7 @@ describe("built-in teammate_agent tool", () => {
 			.execute("call-stop-telemetry", { action: "stop", teammateId }, undefined, undefined, createContext(tempDir));
 		expect(teammateSource.getUiTelemetry?.(teammateId, onUpdate)?.assistantMessages).toBe(151);
 		expect(spawnRecords[0]?.commands.filter((command) => command === "get_session_stats")).toHaveLength(1);
+		await waitForTeammateTerminal(teammateId);
 
 		await controller
 			.createToolDefinition()
@@ -845,6 +876,7 @@ describe("built-in teammate_agent tool", () => {
 				createContext(tempDir),
 			);
 		const oldChild = spawnRecords[0]?.child;
+		await waitForTeammateTerminal(teammateId);
 
 		unreadPeerMessages = 2;
 		sequence.length = 0;
@@ -892,6 +924,7 @@ describe("built-in teammate_agent tool", () => {
 		await controller
 			.createToolDefinition()
 			.execute("call-stop-node-dist", { action: "stop", teammateId }, undefined, undefined, createContext(tempDir));
+		await waitForTeammateTerminal(teammateId);
 		await controller
 			.createToolDefinition()
 			.execute(
@@ -945,17 +978,23 @@ describe("built-in teammate_agent tool", () => {
 			result: { details: { id: "terminal-worktree", assignmentId, terminalStatus: "completed" } },
 		});
 		await vi.waitFor(async () => {
-			const waited = await controller
+			const status = await controller
 				.createToolDefinition()
 				.execute(
-					"call-wait-worktree",
-					{ action: "wait", teammateId, assignmentId, waitTimeoutSeconds: 0 },
+					"call-status-worktree",
+					{ action: "status", teammateId },
 					undefined,
 					undefined,
 					createContext(repo),
 				);
-			expect(waited.details).toMatchObject({ assignmentStatus: "completed", timedOut: false });
+			expect(status.details).toMatchObject({
+				assignments: [expect.objectContaining({ assignmentId, assignmentStatus: "completed" })],
+			});
 		});
+		await controller
+			.createToolDefinition()
+			.execute("call-stop-worktree", { action: "stop", teammateId }, undefined, undefined, createContext(repo));
+		await waitForTeammateTerminal(teammateId);
 
 		const integrated = await controller
 			.createToolDefinition()
@@ -1013,11 +1052,29 @@ describe("built-in teammate_agent tool", () => {
 		expect(textOf(listed)).toContain("teammate_001\trunning\tidle\tshared\tno-assignment\treviewer");
 
 		sequence.length = 0;
-		const stopped = await controller
+		const stopping = await controller
 			.createToolDefinition()
 			.execute("call-stop", { action: "stop", teammateId }, undefined, undefined, createContext(tempDir));
 		expect(sequence).toEqual(["rpc:abort"]);
+		expect(stopping.details).toMatchObject({
+			id: teammateId,
+			status: "running",
+			activity: "stopping",
+			sessionId: "teammate-session-id",
+		});
+		await waitForTeammateTerminal(teammateId);
+		const stopped = await controller
+			.createToolDefinition()
+			.execute(
+				"call-status-stopped",
+				{ action: "status", teammateId },
+				undefined,
+				undefined,
+				createContext(tempDir),
+			);
 		expect(stopped.details).toMatchObject({ id: teammateId, status: "stopped", sessionId: "teammate-session-id" });
+		expect(peerMessages.at(-1)).toMatchObject({ to: "parent-session-id", urgent: true });
+		expect(peerMessages.at(-1)?.content).toContain("[managed teammate terminal]");
 		expect(existsSync(sessionFile)).toBe(true);
 		expect(readFileSync(sessionFile, "utf8")).toContain("magenta-teammate-identity");
 		await expect(

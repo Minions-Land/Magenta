@@ -71,6 +71,51 @@ describe("SideChatOverlay", () => {
 		expect(results).toEqual([{ action: "close", draft: "" }]);
 	});
 
+	it("scrolls long transcripts with page keys and terminal-safe fallbacks", () => {
+		const tui = fakeTui();
+		const done = vi.fn();
+		const overlay = new SideChatOverlay(tui as never, theme, done, async () => "answer", {
+			initialMessages: Array.from({ length: 22 }, (_, index) => ({
+				role: "system" as const,
+				text: `line ${index + 1}`,
+			})),
+		});
+
+		let rendered = stripAnsi(overlay.render(100).join("\n"));
+		expect(overlay.lastBodyLength).toBe(44);
+		expect(overlay.bodyViewportLines()).toBe(20);
+		expect(overlay.scrollTop).toBe(24);
+		expect(overlay.followBottom).toBe(true);
+		expect(rendered).toContain("25-44/44");
+		expect(rendered).toContain("ctrl+u/d or pgup/pgdn transcript");
+
+		overlay.handleInput("\x1b[5~");
+		expect(overlay.scrollTop).toBe(16);
+		expect(overlay.followBottom).toBe(false);
+		rendered = stripAnsi(overlay.render(100).join("\n"));
+		expect(rendered).toContain("17-36/44");
+
+		overlay.handleInput("\x1b[57421u");
+		expect(overlay.scrollTop).toBe(8);
+		overlay.handleInput("\x15");
+		expect(overlay.scrollTop).toBe(0);
+		overlay.handleInput("\x15");
+		expect(overlay.scrollTop).toBe(0);
+
+		overlay.handleInput("\x04");
+		expect(overlay.scrollTop).toBe(8);
+		overlay.handleInput("\x1b[57422u");
+		expect(overlay.scrollTop).toBe(16);
+		overlay.handleInput("\x1b[6~");
+		expect(overlay.scrollTop).toBe(24);
+		expect(overlay.followBottom).toBe(true);
+		overlay.handleInput("\x04");
+		expect(overlay.scrollTop).toBe(24);
+
+		expect(done).not.toHaveBeenCalled();
+		expect(tui.requestRender).toHaveBeenCalledTimes(8);
+	});
+
 	it("emits a fixed human enqueue action without turning transcript text into a command", () => {
 		const results: SideChatOverlayResult[] = [];
 		const overlay = new SideChatOverlay(

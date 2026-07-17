@@ -1,0 +1,721 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Magenta Multiagent Workflow Node-Edge Atlas</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f4f6f8;
+      --surface: #ffffff;
+      --ink: #17202a;
+      --muted: #5d6875;
+      --line: #c8d0d9;
+      --line-strong: #728092;
+      --input-fill: #eef1f4;
+      --input-stroke: #6f7b88;
+      --agent-fill: #eaf3ff;
+      --agent-stroke: #2673c9;
+      --control-fill: #fff3d8;
+      --control-stroke: #b57600;
+      --merge-fill: #f2edff;
+      --merge-stroke: #7654b5;
+      --output-fill: #e9f7ef;
+      --output-stroke: #258250;
+      --danger-fill: #fff0f0;
+      --danger-stroke: #b74545;
+      --shadow: 0 1px 2px rgba(23, 32, 42, 0.08), 0 8px 24px rgba(23, 32, 42, 0.05);
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--ink); }
+
+    body {
+      font-family: "PingFang SC", "Heiti SC", "Microsoft YaHei", system-ui, sans-serif;
+      font-size: 15px;
+      letter-spacing: 0;
+    }
+
+    button, svg text { font-family: inherit; letter-spacing: 0; }
+
+    .topbar {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 24px;
+      padding: 22px 28px 18px;
+      background: var(--surface);
+      border-bottom: 1px solid #dce1e6;
+    }
+
+    .title-block { min-width: 0; }
+
+    h1 {
+      margin: 0;
+      font-size: 22px;
+      line-height: 1.25;
+      font-weight: 700;
+    }
+
+    .subtitle {
+      margin: 7px 0 0;
+      color: var(--muted);
+      line-height: 1.45;
+    }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 12px 16px;
+      color: var(--muted);
+      font-size: 13px;
+      white-space: nowrap;
+    }
+
+    .legend-item { display: inline-flex; align-items: center; gap: 6px; }
+    .legend-dot { width: 11px; height: 11px; border: 2px solid; border-radius: 50%; }
+    .legend-dot.input { background: var(--input-fill); border-color: var(--input-stroke); }
+    .legend-dot.agent { background: var(--agent-fill); border-color: var(--agent-stroke); }
+    .legend-dot.control { background: var(--control-fill); border-color: var(--control-stroke); }
+    .legend-dot.output { background: var(--output-fill); border-color: var(--output-stroke); }
+
+    .tabs-band {
+      padding: 12px 28px;
+      background: #edf0f3;
+      border-bottom: 1px solid #d6dce2;
+      overflow-x: auto;
+      scrollbar-width: thin;
+    }
+
+    .tabs {
+      display: inline-flex;
+      min-width: max-content;
+      border: 1px solid #cbd2da;
+      border-radius: 6px;
+      overflow: hidden;
+      background: var(--surface);
+    }
+
+    .tab {
+      height: 38px;
+      padding: 0 14px;
+      border: 0;
+      border-right: 1px solid #d6dce2;
+      background: transparent;
+      color: #4d5966;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .tab:last-child { border-right: 0; }
+    .tab:hover { background: #f5f7f9; color: var(--ink); }
+    .tab[aria-selected="true"] { background: #17202a; color: #ffffff; }
+    .tab:focus-visible { outline: 3px solid rgba(38, 115, 201, 0.35); outline-offset: -3px; }
+
+    main { width: 100%; }
+
+    .diagram-band {
+      padding: 20px 28px 0;
+      background: var(--surface);
+    }
+
+    .diagram-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      margin-bottom: 12px;
+    }
+
+    .diagram-title-wrap { min-width: 0; }
+
+    .eyebrow {
+      margin: 0 0 4px;
+      color: #2673c9;
+      font-size: 12px;
+      line-height: 1.2;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+
+    h2 {
+      margin: 0;
+      font-size: 18px;
+      line-height: 1.3;
+    }
+
+    .diagram-summary {
+      margin: 5px 0 0;
+      color: var(--muted);
+      line-height: 1.45;
+    }
+
+    .toolbar {
+      display: flex;
+      flex: 0 0 auto;
+      gap: 6px;
+    }
+
+    .icon-button {
+      width: 36px;
+      height: 36px;
+      padding: 0;
+      display: inline-grid;
+      place-items: center;
+      border: 1px solid #cbd2da;
+      border-radius: 5px;
+      background: #ffffff;
+      color: #34404c;
+      cursor: pointer;
+      font-size: 20px;
+      line-height: 1;
+    }
+
+    .icon-button:hover { background: #f1f4f7; }
+    .icon-button:focus-visible { outline: 3px solid rgba(38, 115, 201, 0.3); }
+
+    .canvas-shell {
+      width: 100%;
+      overflow: auto;
+      border: 1px solid #cfd6dd;
+      border-radius: 7px;
+      background-color: #fbfcfd;
+      background-image:
+        linear-gradient(#e9edf1 1px, transparent 1px),
+        linear-gradient(90deg, #e9edf1 1px, transparent 1px);
+      background-size: 24px 24px;
+      box-shadow: var(--shadow);
+      scrollbar-width: thin;
+    }
+
+    #diagram {
+      display: block;
+      height: auto;
+      min-height: 500px;
+      background: rgba(255, 255, 255, 0.76);
+      transition: width 140ms ease;
+    }
+
+    .edge {
+      fill: none;
+      stroke: var(--line-strong);
+      stroke-width: 2;
+      vector-effect: non-scaling-stroke;
+    }
+
+    .edge.loop { stroke: #7654b5; stroke-width: 2.4; }
+    .edge.positive { stroke: #258250; }
+    .edge.negative { stroke: #b74545; }
+
+    .edge-label rect { fill: #ffffff; stroke: #d3d9df; stroke-width: 1; rx: 3; }
+    .edge-label text { fill: #4e5b68; font-size: 13px; font-weight: 600; }
+
+    .node rect, .node polygon, .node circle {
+      vector-effect: non-scaling-stroke;
+      stroke-width: 2;
+    }
+
+    .node.input rect { fill: var(--input-fill); stroke: var(--input-stroke); }
+    .node.agent rect { fill: var(--agent-fill); stroke: var(--agent-stroke); }
+    .node.control rect, .node.control polygon { fill: var(--control-fill); stroke: var(--control-stroke); }
+    .node.merge rect { fill: var(--merge-fill); stroke: var(--merge-stroke); }
+    .node.output rect { fill: var(--output-fill); stroke: var(--output-stroke); }
+    .node.danger rect { fill: var(--danger-fill); stroke: var(--danger-stroke); }
+    .node .avatar { fill: #2673c9; stroke: #ffffff; stroke-width: 2; }
+    .node .avatar-text { fill: #ffffff; font-size: 14px; font-weight: 800; text-anchor: middle; }
+    .node .tag { font-size: 11px; font-weight: 800; fill: #64707c; }
+    .node.agent .tag { fill: #1f64ad; }
+    .node.control .tag { fill: #8d5b00; }
+    .node.merge .tag { fill: #6946a8; }
+    .node.output .tag { fill: #207343; }
+    .node .label { fill: #17202a; font-size: 16px; font-weight: 750; text-anchor: middle; }
+    .node .detail { fill: #5d6875; font-size: 12px; text-anchor: middle; }
+
+    .readout {
+      display: grid;
+      grid-template-columns: minmax(0, 0.9fr) minmax(360px, 1.1fr);
+      gap: 34px;
+      padding: 22px 28px 30px;
+      background: var(--surface);
+    }
+
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      border-top: 1px solid #dce1e6;
+      border-bottom: 1px solid #dce1e6;
+    }
+
+    .metric { padding: 16px 14px; border-right: 1px solid #dce1e6; }
+    .metric:first-child { padding-left: 0; }
+    .metric:last-child { border-right: 0; }
+    .metric-label { color: var(--muted); font-size: 12px; font-weight: 700; }
+    .metric-value { margin-top: 7px; font-size: 16px; line-height: 1.3; font-weight: 700; }
+
+    .flow-notes h3 { margin: 0 0 10px; font-size: 15px; }
+    .flow-notes ol { margin: 0; padding-left: 22px; color: #3e4a56; }
+    .flow-notes li { margin: 0 0 7px; padding-left: 4px; line-height: 1.5; }
+    .flow-notes li:last-child { margin-bottom: 0; }
+
+    @media (max-width: 900px) {
+      .topbar { align-items: flex-start; flex-direction: column; }
+      .legend { justify-content: flex-start; }
+      .readout { grid-template-columns: 1fr; gap: 22px; }
+    }
+
+    @media (max-width: 640px) {
+      .topbar { padding: 18px 16px 14px; gap: 14px; }
+      h1 { font-size: 19px; }
+      .legend { gap: 9px 12px; white-space: normal; }
+      .tabs-band { padding: 10px 16px; }
+      .diagram-band { padding: 16px 16px 0; }
+      .diagram-header { align-items: flex-start; }
+      .diagram-summary { font-size: 14px; }
+      .readout { padding: 18px 16px 24px; }
+      .metrics { grid-template-columns: 1fr; }
+      .metric, .metric:first-child { padding: 11px 0; border-right: 0; border-bottom: 1px solid #dce1e6; }
+      .metric:last-child { border-bottom: 0; }
+      #diagram { min-height: 420px; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="title-block">
+      <h1>Multiagent Workflow：Node / Edge 图谱</h1>
+      <p class="subtitle">同一个示例：让多个 Agent 审查一个代码仓库。蓝色节点是真实 Agent，箭头是它们之间传递的数据。</p>
+    </div>
+    <div class="legend" aria-label="节点图例">
+      <span class="legend-item"><span class="legend-dot input"></span>输入</span>
+      <span class="legend-item"><span class="legend-dot agent"></span>Agent 执行</span>
+      <span class="legend-item"><span class="legend-dot control"></span>Runtime 判断</span>
+      <span class="legend-item"><span class="legend-dot output"></span>输出</span>
+    </div>
+  </header>
+
+  <div class="tabs-band">
+    <div class="tabs" role="tablist" aria-label="Workflow 模板">
+      <button class="tab" role="tab" data-key="subagent" aria-selected="true">1 · subagent</button>
+      <button class="tab" role="tab" data-key="classify" aria-selected="false">2 · classify_and_act</button>
+      <button class="tab" role="tab" data-key="fanout" aria-selected="false">3 · fan_out_synthesize</button>
+      <button class="tab" role="tab" data-key="verify" aria-selected="false">4 · adversarial_verify</button>
+      <button class="tab" role="tab" data-key="filter" aria-selected="false">5 · generate_and_filter</button>
+      <button class="tab" role="tab" data-key="tournament" aria-selected="false">6 · tournament</button>
+      <button class="tab" role="tab" data-key="loop" aria-selected="false">7 · loop_until_done</button>
+    </div>
+  </div>
+
+  <main>
+    <section class="diagram-band">
+      <div class="diagram-header">
+        <div class="diagram-title-wrap">
+          <p class="eyebrow" id="kind-label">单节点静态 Workflow</p>
+          <h2 id="workflow-title">subagent</h2>
+          <p class="diagram-summary" id="workflow-summary"></p>
+        </div>
+        <div class="toolbar" aria-label="缩放控制">
+          <button class="icon-button" id="zoom-out" type="button" title="缩小" aria-label="缩小">−</button>
+          <button class="icon-button" id="zoom-reset" type="button" title="适合宽度" aria-label="适合宽度">↺</button>
+          <button class="icon-button" id="zoom-in" type="button" title="放大" aria-label="放大">+</button>
+        </div>
+      </div>
+
+      <div class="canvas-shell" id="canvas-shell">
+        <svg id="diagram" viewBox="0 0 1240 560" role="img" aria-labelledby="workflow-title workflow-summary">
+          <defs>
+            <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="#728092"></path>
+            </marker>
+            <marker id="arrow-positive" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="#258250"></path>
+            </marker>
+            <marker id="arrow-negative" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="#b74545"></path>
+            </marker>
+            <marker id="arrow-loop" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="#7654b5"></path>
+            </marker>
+          </defs>
+          <g id="edge-layer"></g>
+          <g id="node-layer"></g>
+        </svg>
+      </div>
+    </section>
+
+    <section class="readout">
+      <div class="metrics" aria-label="Workflow 指标">
+        <div class="metric"><div class="metric-label">AGENT 调用</div><div class="metric-value" id="metric-calls"></div></div>
+        <div class="metric"><div class="metric-label">并行结构</div><div class="metric-value" id="metric-parallel"></div></div>
+        <div class="metric"><div class="metric-label">结束条件</div><div class="metric-value" id="metric-stop"></div></div>
+      </div>
+      <div class="flow-notes">
+        <h3>数据实际怎么走</h3>
+        <ol id="flow-steps"></ol>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const NS = "http://www.w3.org/2000/svg";
+    const W = 1240;
+    const H = 560;
+
+    const workflows = {
+      subagent: {
+        kind: "单节点静态 Workflow",
+        title: "subagent",
+        summary: "一份完整任务交给一个 no-session Agent；角色由调用时的 Worker 配置决定，它的结果就是 Workflow 的最终输出。",
+        metrics: ["1", "无", "唯一 Agent 结束"],
+        steps: [
+          "Runtime 将任务、角色、模型和工具权限交给一个 Worker Agent。",
+          "Worker Agent 在自己的临时上下文中完成任意类型的单项任务。",
+          "Worker Agent 的最终文本或 JSON 直接成为 Workflow Output。"
+        ],
+        nodes: [
+          { id: "in", type: "input", x: 55, y: 220, w: 220, h: 116, tag: "INPUT", label: ["任意单项任务"], detail: ["任务、角色、工具权限"] },
+          { id: "worker", type: "agent", x: 500, y: 205, w: 250, h: 146, tag: "AGENT 1", label: ["Worker Agent"], detail: ["no-session · one-shot", "角色由输入配置决定"] },
+          { id: "out", type: "output", x: 990, y: 220, w: 205, h: 116, tag: "OUTPUT", label: ["任务结果"], detail: ["文本或结构化 JSON"] }
+        ],
+        edges: [
+          { points: [[275, 278], [500, 278]], label: "任务 + 配置", lx: 386, ly: 250 },
+          { points: [[750, 278], [990, 278]], label: "最终输出", lx: 870, ly: 250 }
+        ]
+      },
+
+      classify: {
+        kind: "路由型静态 Workflow",
+        title: "classify_and_act",
+        summary: "先让一个 Agent 判断输入类别，Runtime 只启动匹配的处理 Agent。",
+        metrics: ["2", "只走一个分支", "Handler 结束"],
+        steps: [
+          "Classifier 读取 Issue，并且只能返回 bug、feature 或 docs 标签。",
+          "Runtime 根据标签选择一个 Handler；其他 Handler 不会启动。",
+          "被选中 Handler 的结果直接成为最终输出。"
+        ],
+        nodes: [
+          { id: "in", type: "input", x: 20, y: 220, w: 180, h: 110, tag: "INPUT", label: ["Issue #418"], detail: ["一条待处理请求"] },
+          { id: "classifier", type: "agent", x: 260, y: 210, w: 210, h: 130, tag: "AGENT 1", label: ["Classifier"], detail: ["只返回一个类别"] },
+          { id: "bug", type: "agent", x: 610, y: 35, w: 220, h: 120, tag: "AGENT 2A", label: ["Bug Handler"], detail: ["定位缺陷与修复方案"] },
+          { id: "feature", type: "agent", x: 610, y: 220, w: 220, h: 120, tag: "AGENT 2B", label: ["Feature Handler"], detail: ["拆解功能与验收标准"] },
+          { id: "docs", type: "agent", x: 610, y: 405, w: 220, h: 120, tag: "AGENT 2C", label: ["Docs Handler"], detail: ["确定文档修改范围"] },
+          { id: "out", type: "output", x: 1010, y: 220, w: 205, h: 120, tag: "OUTPUT", label: ["处理结果"], detail: ["来自唯一命中分支"] }
+        ],
+        edges: [
+          { points: [[200, 275], [260, 275]], label: "Issue", lx: 230, ly: 248 },
+          { points: [[470, 275], [535, 275], [535, 95], [610, 95]], label: "bug", lx: 548, ly: 84 },
+          { points: [[470, 275], [610, 280]], label: "feature", lx: 540, ly: 250 },
+          { points: [[470, 275], [535, 275], [535, 465], [610, 465]], label: "docs", lx: 550, ly: 454 },
+          { points: [[830, 95], [920, 95], [920, 280], [1010, 280]] },
+          { points: [[830, 280], [1010, 280]], label: "仅此分支运行", lx: 920, ly: 252 },
+          { points: [[830, 465], [920, 465], [920, 280], [1010, 280]] }
+        ]
+      },
+
+      fanout: {
+        kind: "并行汇总型静态 Workflow",
+        title: "fan_out_synthesize",
+        summary: "多个 Agent 同时检查不同方面，Synthesizer 收到全部结果后合成一份报告。",
+        metrics: ["N + 1", "第一阶段并行", "Synthesizer 结束"],
+        steps: [
+          "同一个仓库目标被拆成安全、测试和 API 三个独立检查任务。",
+          "三个 Reviewer 并行运行，彼此不等待、也不直接通信。",
+          "Synthesizer 收到三份完整结果并合并为统一审查报告。"
+        ],
+        nodes: [
+          { id: "in", type: "input", x: 20, y: 220, w: 190, h: 115, tag: "INPUT", label: ["审查整个仓库"], detail: ["三个明确检查维度"] },
+          { id: "security", type: "agent", x: 300, y: 35, w: 220, h: 120, tag: "AGENT A", label: ["Security Reviewer"], detail: ["认证、注入、权限"] },
+          { id: "tests", type: "agent", x: 300, y: 220, w: 220, h: 120, tag: "AGENT B", label: ["Test Reviewer"], detail: ["覆盖率与失败路径"] },
+          { id: "api", type: "agent", x: 300, y: 405, w: 220, h: 120, tag: "AGENT C", label: ["API Reviewer"], detail: ["接口与兼容性"] },
+          { id: "synth", type: "merge", x: 720, y: 205, w: 245, h: 145, tag: "AGENT D · SYNTH", label: ["Synthesizer"], detail: ["读取全部三份结果", "去重、排序、合并"] },
+          { id: "out", type: "output", x: 1040, y: 220, w: 180, h: 115, tag: "OUTPUT", label: ["统一审查报告"], detail: ["覆盖全部维度"] }
+        ],
+        edges: [
+          { points: [[210, 278], [250, 278], [250, 95], [300, 95]], label: "安全任务", lx: 260, ly: 84 },
+          { points: [[210, 278], [300, 280]], label: "测试任务", lx: 255, ly: 250 },
+          { points: [[210, 278], [250, 278], [250, 465], [300, 465]], label: "API 任务", lx: 260, ly: 454 },
+          { points: [[520, 95], [620, 95], [620, 278], [720, 278]], label: "安全发现", lx: 626, ly: 84 },
+          { points: [[520, 280], [720, 278]], label: "测试发现", lx: 620, ly: 250 },
+          { points: [[520, 465], [620, 465], [620, 278], [720, 278]], label: "API 发现", lx: 626, ly: 454 },
+          { points: [[965, 278], [1040, 278]], label: "合并", lx: 1002, ly: 250 }
+        ]
+      },
+
+      verify: {
+        kind: "独立复核型静态 Workflow",
+        title: "adversarial_verify",
+        summary: "一个 Agent 提出候选问题，多个独立 Verifier 对同一候选分别投票，Runtime 计算可信度。",
+        metrics: ["1 + V", "Verifier 并行", "达到阈值或拒绝"],
+        steps: [
+          "Generator 广泛搜索并提出一个候选漏洞，例如 SQL 注入。",
+          "三个 Verifier 在隔离上下文中独立核实同一个候选，只返回 true 或 false。",
+          "Runtime 计算 passed / verifierCount，达到阈值才确认该发现。"
+        ],
+        nodes: [
+          { id: "gen", type: "agent", x: 20, y: 215, w: 210, h: 130, tag: "AGENT 1", label: ["Generator"], detail: ["提出候选漏洞"] },
+          { id: "candidate", type: "input", x: 285, y: 225, w: 190, h: 110, tag: "CANDIDATE", label: ["可能存在 SQL 注入"], detail: ["待独立核实"] },
+          { id: "v1", type: "agent", x: 540, y: 35, w: 205, h: 120, tag: "AGENT 2", label: ["Verifier 1"], detail: ["verdict: true/false"] },
+          { id: "v2", type: "agent", x: 540, y: 220, w: 205, h: 120, tag: "AGENT 3", label: ["Verifier 2"], detail: ["verdict: true/false"] },
+          { id: "v3", type: "agent", x: 540, y: 405, w: 205, h: 120, tag: "AGENT 4", label: ["Verifier 3"], detail: ["verdict: true/false"] },
+          { id: "score", type: "control", x: 830, y: 205, w: 210, h: 145, tag: "RUNTIME", label: ["Confidence"], detail: ["passed ÷ 3", "例如 3/3 = 1.0"] },
+          { id: "out", type: "output", x: 1085, y: 220, w: 135, h: 115, tag: "RESULT", label: ["确认 / 拒绝"], detail: ["按阈值决定"] }
+        ],
+        edges: [
+          { points: [[230, 280], [285, 280]], label: "候选", lx: 258, ly: 252 },
+          { points: [[475, 280], [505, 280], [505, 95], [540, 95]] },
+          { points: [[475, 280], [540, 280]] },
+          { points: [[475, 280], [505, 280], [505, 465], [540, 465]] },
+          { points: [[745, 95], [785, 95], [785, 278], [830, 278]], label: "true/false", lx: 790, ly: 84 },
+          { points: [[745, 280], [830, 278]], label: "true/false", lx: 788, ly: 250 },
+          { points: [[745, 465], [785, 465], [785, 278], [830, 278]], label: "true/false", lx: 790, ly: 454 },
+          { points: [[1040, 278], [1085, 278]], label: "≥ 0.8?", lx: 1062, ly: 250, className: "positive" }
+        ]
+      },
+
+      filter: {
+        kind: "量化筛选型静态 Workflow",
+        title: "generate_and_filter",
+        summary: "多个 Generator 独立提出方案，每份方案由独立 Evaluator 打分，Runtime 排序并保留 Top-K。",
+        metrics: ["2N", "生成与评分各并行", "排序完成"],
+        steps: [
+          "三个 Generator 根据同一设计目标独立生成三套 API 方案。",
+          "每套方案分别交给一个 Evaluator，按固定标准返回数值 score。",
+          "Runtime 对分数排序，输出最高分方案或 Top-K finalists。"
+        ],
+        nodes: [
+          { id: "in", type: "input", x: 15, y: 220, w: 175, h: 115, tag: "INPUT", label: ["设计新 API"], detail: ["相同目标与约束"] },
+          { id: "g1", type: "agent", x: 245, y: 35, w: 190, h: 120, tag: "GENERATOR A", label: ["方案 A"], detail: ["独立生成"] },
+          { id: "g2", type: "agent", x: 245, y: 220, w: 190, h: 120, tag: "GENERATOR B", label: ["方案 B"], detail: ["独立生成"] },
+          { id: "g3", type: "agent", x: 245, y: 405, w: 190, h: 120, tag: "GENERATOR C", label: ["方案 C"], detail: ["独立生成"] },
+          { id: "e1", type: "agent", x: 535, y: 35, w: 195, h: 120, tag: "EVALUATOR A", label: ["评分 A"], detail: ["score + reason"] },
+          { id: "e2", type: "agent", x: 535, y: 220, w: 195, h: 120, tag: "EVALUATOR B", label: ["评分 B"], detail: ["score + reason"] },
+          { id: "e3", type: "agent", x: 535, y: 405, w: 195, h: 120, tag: "EVALUATOR C", label: ["评分 C"], detail: ["score + reason"] },
+          { id: "rank", type: "control", x: 820, y: 210, w: 200, h: 140, tag: "RUNTIME", label: ["Rank"], detail: ["按 score 降序", "截取 Top-K"] },
+          { id: "out", type: "output", x: 1080, y: 220, w: 145, h: 120, tag: "OUTPUT", label: ["Winner"], detail: ["或 Top-K"] }
+        ],
+        edges: [
+          { points: [[190, 278], [215, 278], [215, 95], [245, 95]] },
+          { points: [[190, 278], [245, 280]] },
+          { points: [[190, 278], [215, 278], [215, 465], [245, 465]] },
+          { points: [[435, 95], [535, 95]], label: "方案 A", lx: 485, ly: 68 },
+          { points: [[435, 280], [535, 280]], label: "方案 B", lx: 485, ly: 253 },
+          { points: [[435, 465], [535, 465]], label: "方案 C", lx: 485, ly: 438 },
+          { points: [[730, 95], [775, 95], [775, 280], [820, 280]], label: "score A", lx: 780, ly: 84 },
+          { points: [[730, 280], [820, 280]], label: "score B", lx: 775, ly: 252 },
+          { points: [[730, 465], [775, 465], [775, 280], [820, 280]], label: "score C", lx: 780, ly: 454 },
+          { points: [[1020, 280], [1080, 280]], label: "Top-K", lx: 1050, ly: 252 }
+        ]
+      },
+
+      tournament: {
+        kind: "两两淘汰型静态 Workflow",
+        title: "tournament",
+        summary: "候选方案两两交给 Judge 比较；每场只选一个胜者，持续晋级直到剩下一份方案。",
+        metrics: ["N + (N − 1)", "候选并行，轮次推进", "只剩一个候选"],
+        steps: [
+          "四个 Candidate Agent 独立产出四套方案。",
+          "Judge 1 比较 A/B，Judge 2 比较 C/D；每场只选 0 或 1。",
+          "Final Judge 比较两个晋级方案，输出最终 Winner。"
+        ],
+        nodes: [
+          { id: "a", type: "agent", x: 15, y: 20, w: 170, h: 105, tag: "CANDIDATE A", label: ["方案 A"], detail: ["独立生成"] },
+          { id: "b", type: "agent", x: 15, y: 155, w: 170, h: 105, tag: "CANDIDATE B", label: ["方案 B"], detail: ["独立生成"] },
+          { id: "c", type: "agent", x: 15, y: 300, w: 170, h: 105, tag: "CANDIDATE C", label: ["方案 C"], detail: ["独立生成"] },
+          { id: "d", type: "agent", x: 15, y: 435, w: 170, h: 105, tag: "CANDIDATE D", label: ["方案 D"], detail: ["独立生成"] },
+          { id: "j1", type: "control", x: 305, y: 85, w: 190, h: 115, tag: "JUDGE 1", label: ["A vs B"], detail: ["winner: 0 或 1"] },
+          { id: "j2", type: "control", x: 305, y: 365, w: 190, h: 115, tag: "JUDGE 2", label: ["C vs D"], detail: ["winner: 0 或 1"] },
+          { id: "w1", type: "merge", x: 590, y: 90, w: 180, h: 105, tag: "ADVANCE", label: ["胜者 1"], detail: ["A 或 B"] },
+          { id: "w2", type: "merge", x: 590, y: 370, w: 180, h: 105, tag: "ADVANCE", label: ["胜者 2"], detail: ["C 或 D"] },
+          { id: "final", type: "control", x: 850, y: 225, w: 190, h: 120, tag: "FINAL JUDGE", label: ["胜者 1 vs 胜者 2"], detail: ["最后一次二选一"] },
+          { id: "out", type: "output", x: 1090, y: 230, w: 135, h: 110, tag: "OUTPUT", label: ["Winner"], detail: ["最终方案"] }
+        ],
+        edges: [
+          { points: [[185, 72], [245, 72], [245, 142], [305, 142]], label: "A", lx: 242, ly: 61 },
+          { points: [[185, 207], [245, 207], [245, 142], [305, 142]], label: "B", lx: 242, ly: 222 },
+          { points: [[185, 352], [245, 352], [245, 422], [305, 422]], label: "C", lx: 242, ly: 341 },
+          { points: [[185, 487], [245, 487], [245, 422], [305, 422]], label: "D", lx: 242, ly: 502 },
+          { points: [[495, 142], [590, 142]], label: "晋级", lx: 542, ly: 115 },
+          { points: [[495, 422], [590, 422]], label: "晋级", lx: 542, ly: 395 },
+          { points: [[770, 142], [805, 142], [805, 285], [850, 285]] },
+          { points: [[770, 422], [805, 422], [805, 285], [850, 285]] },
+          { points: [[1040, 285], [1090, 285]], label: "胜出", lx: 1065, ly: 258 }
+        ]
+      },
+
+      loop: {
+        kind: "迭代搜索型静态 Workflow",
+        title: "loop_until_done",
+        summary: "每轮启动一个新的 one-shot Agent，只让它寻找尚未出现的发现；Runtime 决定继续或停止。",
+        metrics: ["最多 maxIterations", "逐轮串行", "无新增或达到上限"],
+        steps: [
+          "第 1 轮 Refine Agent 扫描仓库并返回新发现。",
+          "Runtime 把发现加入排除清单，再启动一个新的 Refine Agent。",
+          "某一轮没有返回新内容，或达到最大轮数时，Workflow 结束。"
+        ],
+        nodes: [
+          { id: "in", type: "input", x: 25, y: 220, w: 185, h: 115, tag: "INPUT", label: ["仓库 + 初始目标"], detail: ["例如寻找遗漏测试"] },
+          { id: "refine", type: "agent", x: 300, y: 205, w: 225, h: 145, tag: "AGENT · ROUND N", label: ["Refine Worker"], detail: ["寻找尚未报告的发现", "每轮都是新 one-shot Agent"] },
+          { id: "decide", type: "control", shape: "diamond", x: 650, y: 185, w: 220, h: 180, tag: "RUNTIME", label: ["有新发现？"], detail: ["并且未达轮次上限"] },
+          { id: "acc", type: "merge", x: 945, y: 55, w: 240, h: 120, tag: "SHARED RUN STATE", label: ["追加到已有发现"], detail: ["下一轮必须排除这些项"] },
+          { id: "out", type: "output", x: 955, y: 390, w: 220, h: 120, tag: "OUTPUT", label: ["停止迭代"], detail: ["无新增或达到上限"] }
+        ],
+        edges: [
+          { points: [[210, 278], [300, 278]], label: "初始内容", lx: 255, ly: 250 },
+          { points: [[525, 278], [650, 275]], label: "本轮结果", lx: 588, ly: 248 },
+          { points: [[870, 245], [905, 245], [905, 115], [945, 115]], label: "有", lx: 902, ly: 104, className: "positive" },
+          { points: [[1065, 55], [1065, 25], [410, 25], [410, 205]], label: "带排除清单进入下一轮", lx: 742, ly: 14, className: "loop" },
+          { points: [[870, 315], [910, 315], [910, 450], [955, 450]], label: "没有 / 达上限", lx: 913, ly: 468, className: "negative" }
+        ]
+      }
+    };
+
+    const svg = document.getElementById("diagram");
+    const nodeLayer = document.getElementById("node-layer");
+    const edgeLayer = document.getElementById("edge-layer");
+    const canvasShell = document.getElementById("canvas-shell");
+    let activeKey = "subagent";
+    let zoom = 1;
+
+    function el(name, attrs = {}) {
+      const node = document.createElementNS(NS, name);
+      for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, String(value));
+      return node;
+    }
+
+    function addText(group, x, y, lines, className, lineHeight) {
+      const text = el("text", { x, y, class: className });
+      lines.forEach((line, index) => {
+        const span = el("tspan", { x, dy: index === 0 ? 0 : lineHeight });
+        span.textContent = line;
+        text.appendChild(span);
+      });
+      group.appendChild(text);
+    }
+
+    function drawNode(spec) {
+      const g = el("g", { class: `node ${spec.type}`, "data-node-id": spec.id });
+      const cx = spec.x + spec.w / 2;
+      const cy = spec.y + spec.h / 2;
+
+      if (spec.shape === "diamond") {
+        const points = `${cx},${spec.y} ${spec.x + spec.w},${cy} ${cx},${spec.y + spec.h} ${spec.x},${cy}`;
+        g.appendChild(el("polygon", { points }));
+      } else {
+        g.appendChild(el("rect", { x: spec.x, y: spec.y, width: spec.w, height: spec.h, rx: 7 }));
+      }
+
+      if (spec.type === "agent") {
+        const avatarX = spec.x + 25;
+        const avatarY = spec.y + 23;
+        g.appendChild(el("circle", { cx: avatarX, cy: avatarY, r: 14, class: "avatar" }));
+        const avatarText = el("text", { x: avatarX, y: avatarY + 5, class: "avatar-text" });
+        avatarText.textContent = "A";
+        g.appendChild(avatarText);
+        const tag = el("text", { x: spec.x + 47, y: spec.y + 27, class: "tag" });
+        tag.textContent = spec.tag;
+        g.appendChild(tag);
+      } else {
+        const tag = el("text", { x: cx, y: spec.y + 25, class: "tag", "text-anchor": "middle" });
+        tag.textContent = spec.tag;
+        g.appendChild(tag);
+      }
+
+      const labelStart = spec.shape === "diamond" ? cy - 10 : spec.y + (spec.h >= 140 ? 70 : 61);
+      addText(g, cx, labelStart, spec.label, "label", 20);
+      const detailStart = labelStart + (spec.label.length - 1) * 20 + 25;
+      addText(g, cx, detailStart, spec.detail, "detail", 17);
+      nodeLayer.appendChild(g);
+    }
+
+    function drawEdge(spec) {
+      const cls = spec.className ? `edge ${spec.className}` : "edge";
+      const marker = spec.className === "positive"
+        ? "url(#arrow-positive)"
+        : spec.className === "negative"
+          ? "url(#arrow-negative)"
+          : spec.className === "loop"
+            ? "url(#arrow-loop)"
+            : "url(#arrow)";
+      const d = spec.points.map((point, index) => `${index === 0 ? "M" : "L"} ${point[0]} ${point[1]}`).join(" ");
+      edgeLayer.appendChild(el("path", { d, class: cls, "marker-end": marker }));
+
+      if (spec.label) {
+        const width = Math.max(42, Array.from(spec.label).length * 13 + 16);
+        const group = el("g", { class: "edge-label" });
+        group.appendChild(el("rect", { x: spec.lx - width / 2, y: spec.ly - 16, width, height: 24 }));
+        const text = el("text", { x: spec.lx, y: spec.ly + 1, "text-anchor": "middle" });
+        text.textContent = spec.label;
+        group.appendChild(text);
+        edgeLayer.appendChild(group);
+      }
+    }
+
+    function render(key) {
+      activeKey = key;
+      const data = workflows[key];
+      edgeLayer.replaceChildren();
+      nodeLayer.replaceChildren();
+      data.edges.forEach(drawEdge);
+      data.nodes.forEach(drawNode);
+
+      document.getElementById("kind-label").textContent = data.kind;
+      document.getElementById("workflow-title").textContent = data.title;
+      document.getElementById("workflow-summary").textContent = data.summary;
+      document.getElementById("metric-calls").textContent = data.metrics[0];
+      document.getElementById("metric-parallel").textContent = data.metrics[1];
+      document.getElementById("metric-stop").textContent = data.metrics[2];
+
+      const list = document.getElementById("flow-steps");
+      list.replaceChildren(...data.steps.map((step) => {
+        const item = document.createElement("li");
+        item.textContent = step;
+        return item;
+      }));
+
+      document.querySelectorAll(".tab").forEach((button) => {
+        button.setAttribute("aria-selected", String(button.dataset.key === key));
+      });
+      svg.setAttribute("aria-label", `${data.title}: ${data.summary}`);
+      canvasShell.scrollTo({ left: 0, top: 0 });
+    }
+
+    function fitZoom() {
+      const available = Math.max(320, canvasShell.clientWidth - 2);
+      zoom = available >= 900 ? Math.min(1, available / W) : 0.78;
+      applyZoom();
+    }
+
+    function applyZoom() {
+      const actualWidth = Math.round(W * zoom);
+      svg.style.width = `${actualWidth}px`;
+      svg.style.minWidth = `${actualWidth}px`;
+    }
+
+    document.querySelectorAll(".tab").forEach((button) => {
+      button.addEventListener("click", () => render(button.dataset.key));
+    });
+
+    document.getElementById("zoom-in").addEventListener("click", () => {
+      zoom = Math.min(1.5, zoom + 0.1);
+      applyZoom();
+    });
+
+    document.getElementById("zoom-out").addEventListener("click", () => {
+      zoom = Math.max(0.6, zoom - 0.1);
+      applyZoom();
+    });
+
+    document.getElementById("zoom-reset").addEventListener("click", fitZoom);
+
+    window.addEventListener("resize", () => {
+      if (Math.abs(zoom - 1) < 0.01 || canvasShell.clientWidth < 900) fitZoom();
+    });
+
+    render(activeKey);
+    requestAnimationFrame(fitZoom);
+  </script>
+</body>
+</html>

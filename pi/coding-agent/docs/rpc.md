@@ -127,7 +127,7 @@ See [set_follow_up_mode](#set_follow_up_mode) for controlling how follow-up mess
 
 #### abort
 
-Abort the current agent operation.
+Request cancellation of the current agent operation. The success response acknowledges the request immediately; it does not wait for the active run to settle. Observe the later `agent_end` event for terminal settlement.
 
 ```json
 {"type": "abort"}

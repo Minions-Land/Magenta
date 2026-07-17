@@ -142,7 +142,7 @@ describe("buildSystemPrompt", () => {
 		expect(shellOnly).toContain("continue only non-overlapping independent work");
 		expect(shellOnly).toContain("intentionally exposes no blocking wait action");
 		expect(shellOnly).toContain("do not rerun the command, duplicate its purpose, or poll action=status");
-		expect(shellOnly).toContain("activate a later turn");
+		expect(shellOnly).toContain("activates a later turn");
 		expect(shellOnly).not.toContain("action=wait");
 		expect(shellOnly).not.toContain("regular bash tool");
 		expect(shellOnly).not.toContain("sub_agent");
@@ -152,6 +152,8 @@ describe("buildSystemPrompt", () => {
 		expect(agentOnly).toContain("Use sub_agent for independent parallel analysis");
 		expect(agentOnly).toContain("running event a soft lease");
 		expect(agentOnly).toContain("do not duplicate the task");
+		expect(agentOnly).toContain("Do not poll status for completion");
+		expect(agentOnly).toContain("terminal result returns through external activation");
 		expect(agentOnly).toContain("synthesize it and independently verify it");
 		expect(agentOnly).not.toContain("bg_shell");
 		expect(agentOnly).not.toContain("regular bash tool");

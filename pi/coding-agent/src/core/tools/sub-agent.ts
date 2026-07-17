@@ -53,14 +53,12 @@ type TerminationRequest = {
 	error: string;
 	signal: NodeJS.Signals | null;
 };
-type Action = "start" | "status" | "wait" | "cancel" | "config";
+type Action = "start" | "status" | "cancel" | "config";
 type ThinkingLevel = (typeof THINKING_LEVELS)[number];
 type ReturnDelivery = "steer" | "followUp" | "nextTurn";
 
 type SubAgentConfig = {
 	defaultTimeoutSeconds?: number;
-	defaultWaitTimeoutSeconds?: number;
-	defaultReturnToMain: boolean;
 	defaultReturnDelivery: ReturnDelivery;
 	defaultThinking: ThinkingLevel;
 };
@@ -133,12 +131,7 @@ type SubAgentEvent = {
 	graceKillTimer?: NodeJS.Timeout;
 	terminationRequest?: TerminationRequest;
 	waiters: Array<() => void>;
-	/**
-	 * True while a returnToMain auto-delivery is still pending for this event.
-	 * Cleared when the model synchronously consumes the result inline (via
-	 * action=wait, or action=status showing the finished result) so the deferred
-	 * auto-return does not redundantly re-deliver and trigger an extra turn.
-	 */
+	/** True while terminal delivery to the parent is pending. */
 	autoReturnPending?: boolean;
 };
 
@@ -176,7 +169,7 @@ export type SubAgentRegisterReturn = (
 	receipt: ExternalActivationReceipt,
 ) => void;
 
-/** Drop still-pending returns from the coordinator (terminal wait/status consumption). */
+/** Drop a pending return during shutdown or internal compatibility handling. */
 export type SubAgentCancelReturn = (eventIds: string[]) => void;
 
 const TaskSchema = Type.Object({
@@ -284,91 +277,79 @@ const WorkflowSchema = Type.Object({
 	maxIterations: Type.Optional(Type.Number({ description: "Hard iteration cap for loop_until_done." })),
 });
 
-const subAgentSchema = Type.Object({
-	action: StringEnum(["start", "status", "wait", "cancel", "config"] as const),
-	workflow: Type.Optional(WorkflowSchema),
-	task: Type.Optional(Type.String({ description: "Single task for action=start. Mutually exclusive with tasks." })),
-	role: Type.Optional(Type.String({ description: "Optional role for action=start." })),
-	label: Type.Optional(Type.String({ description: "Optional label for action=start." })),
-	cwd: Type.Optional(Type.String({ description: "Working directory for action=start." })),
-	tools: Type.Optional(
-		Type.Array(Type.String(), { description: `Allowed tools. Defaults to ${DEFAULT_TOOLS.join(",")}.` }),
-	),
-	packages: Type.Optional(
-		Type.Array(Type.String(), {
-			description: "Harness package selectors to load for the sub-agent(s) started by this call.",
-		}),
-	),
-	model: Type.Optional(
-		Type.String({
-			description: 'Optional model for action=start. Omit or use "default" to inherit the parent model.',
-		}),
-	),
-	provider: Type.Optional(Type.String({ description: "Optional provider for action=start." })),
-	thinking: Type.Optional(StringEnum(THINKING_LEVELS)),
-	timeoutSeconds: Type.Optional(Type.Number({ description: "Maximum runtime for action=start." })),
-	tasks: Type.Optional(
-		Type.Array(TaskSchema, {
-			description: `Parallel tasks for action=start. Mutually exclusive with task. Maximum ${MAX_START_MANY}.`,
-		}),
-	),
-	returnToMain: Type.Optional(
-		Type.Boolean({
-			description:
-				"For action=start, automatically send completed sub-agent results back to the main agent and trigger continuation. Default: true.",
-		}),
-	),
-	returnDelivery: Type.Optional(
-		StringEnum(["steer", "followUp", "nextTurn"] as const, {
-			description: "Delivery mode when returnToMain=true. Default: followUp.",
-		}),
-	),
-	returnInstruction: Type.Optional(
-		Type.String({
-			description: "Optional instruction prepended to the automatic return message for the parent agent.",
-		}),
-	),
-	eventId: Type.Optional(
-		Type.String({
-			description: "Sub-agent identifier for status/wait/cancel. Parameter name is 'eventId' (not 'id').",
-		}),
-	),
-	eventIds: Type.Optional(
-		Type.Array(Type.String(), {
-			description: "Multiple sub-agent ids for status/wait/cancel. Omit eventId/eventIds to target all events.",
-		}),
-	),
-	waitTimeoutSeconds: Type.Optional(
-		Type.Number({
-			description: "Maximum time to wait for action=wait. If it expires, running sub-agents continue.",
-		}),
-	),
-	defaultTimeoutSeconds: Type.Optional(
-		Type.Number({
-			description: "For action=config: set default maximum runtime for future sub-agents. Use <=0 to clear.",
-		}),
-	),
-	defaultWaitTimeoutSeconds: Type.Optional(
-		Type.Number({
-			description: "For action=config: set default maximum wait time for future wait calls. Use <=0 to clear.",
-		}),
-	),
-	defaultReturnToMain: Type.Optional(
-		Type.Boolean({ description: "For action=config: default returnToMain for future start calls." }),
-	),
-	defaultReturnDelivery: Type.Optional(
-		StringEnum(["steer", "followUp", "nextTurn"] as const, {
-			description: "For action=config: default delivery mode when automatic return is enabled.",
-		}),
-	),
-	defaultThinking: Type.Optional(
-		StringEnum(THINKING_LEVELS, {
-			description: "For action=config: default sub-agent thinking level.",
-		}),
-	),
-});
+const subAgentSchema = Type.Object(
+	{
+		action: StringEnum(["start", "status", "cancel", "config"] as const),
+		workflow: Type.Optional(WorkflowSchema),
+		task: Type.Optional(Type.String({ description: "Single task for action=start. Mutually exclusive with tasks." })),
+		role: Type.Optional(Type.String({ description: "Optional role for action=start." })),
+		label: Type.Optional(Type.String({ description: "Optional label for action=start." })),
+		cwd: Type.Optional(Type.String({ description: "Working directory for action=start." })),
+		tools: Type.Optional(
+			Type.Array(Type.String(), { description: `Allowed tools. Defaults to ${DEFAULT_TOOLS.join(",")}.` }),
+		),
+		packages: Type.Optional(
+			Type.Array(Type.String(), {
+				description: "Harness package selectors to load for the sub-agent(s) started by this call.",
+			}),
+		),
+		model: Type.Optional(
+			Type.String({
+				description: 'Optional model for action=start. Omit or use "default" to inherit the parent model.',
+			}),
+		),
+		provider: Type.Optional(Type.String({ description: "Optional provider for action=start." })),
+		thinking: Type.Optional(StringEnum(THINKING_LEVELS)),
+		timeoutSeconds: Type.Optional(Type.Number({ description: "Maximum runtime for action=start." })),
+		tasks: Type.Optional(
+			Type.Array(TaskSchema, {
+				description: `Parallel tasks for action=start. Mutually exclusive with task. Maximum ${MAX_START_MANY}.`,
+			}),
+		),
+		returnDelivery: Type.Optional(
+			StringEnum(["steer", "followUp", "nextTurn"] as const, {
+				description: "Delivery mode for the automatic terminal event. Default: followUp.",
+			}),
+		),
+		returnInstruction: Type.Optional(
+			Type.String({
+				description: "Optional instruction prepended to the automatic return message for the parent agent.",
+			}),
+		),
+		eventId: Type.Optional(
+			Type.String({
+				description: "Sub-agent identifier for status/cancel. Parameter name is 'eventId' (not 'id').",
+			}),
+		),
+		eventIds: Type.Optional(
+			Type.Array(Type.String(), {
+				description: "Multiple sub-agent ids for status/cancel. Omit eventId/eventIds to target all events.",
+			}),
+		),
+		defaultTimeoutSeconds: Type.Optional(
+			Type.Number({
+				description: "For action=config: set default maximum runtime for future sub-agents. Use <=0 to clear.",
+			}),
+		),
+		defaultReturnDelivery: Type.Optional(
+			StringEnum(["steer", "followUp", "nextTurn"] as const, {
+				description: "For action=config: default automatic terminal delivery mode.",
+			}),
+		),
+		defaultThinking: Type.Optional(
+			StringEnum(THINKING_LEVELS, {
+				description: "For action=config: default sub-agent thinking level.",
+			}),
+		),
+	},
+	{ additionalProperties: false },
+);
 
 export type SubAgentInput = Static<typeof subAgentSchema>;
+type InternalSubAgentInput = SubAgentInput & {
+	returnToMain?: boolean;
+	waitTimeoutSeconds?: number;
+};
 export type SubAgentDetails = Record<string, unknown>;
 
 function positiveNumber(value: unknown): number | undefined {
@@ -426,8 +407,6 @@ function formatConfig(config: SubAgentConfig): string {
 	return [
 		"Sub-agent configuration:",
 		`defaultTimeoutSeconds: ${config.defaultTimeoutSeconds ?? "none"}`,
-		`defaultWaitTimeoutSeconds: ${config.defaultWaitTimeoutSeconds ?? "none"}`,
-		`defaultReturnToMain: ${config.defaultReturnToMain}`,
 		`defaultReturnDelivery: ${config.defaultReturnDelivery}`,
 		`defaultThinking: ${config.defaultThinking}`,
 	].join("\n");
@@ -876,9 +855,7 @@ export class SubAgentController {
 	private readonly mainProgressPath: string;
 	private progressWriteChain: Promise<void> = Promise.resolve();
 	private config: SubAgentConfig = {
-		defaultReturnToMain: true,
 		defaultReturnDelivery: "followUp",
-		defaultWaitTimeoutSeconds: 30,
 		defaultThinking: DEFAULT_THINKING,
 	};
 	private monitor: { update: (ctx?: ExtensionContext) => void };
@@ -983,8 +960,8 @@ export class SubAgentController {
 			name: "sub_agent",
 			label: "Sub Agent",
 			description: workflowsEnabled
-				? `Start, inspect, wait for, or cancel sessionless, one-shot ${APP_NAME} workers whose results return to the parent. Use teammate_agent instead when retained context, iterative follow-up, or explicit ownership requires a long-lived managed child session. action=start accepts one task, a parallel tasks array, or a workflow object. A workflow orchestrates the same sessionless workers through one of six named presets (classify_and_act, fan_out_synthesize, adversarial_verify, generate_and_filter, tournament, loop_until_done) with fixed runtime-owned control flow. Set returnToMain=true to return completed results automatically. Workers are read-only by default, inherit the parent model unless overridden, run with --no-session --no-extensions, and receive parent progress.`
-				: `Start, inspect, wait for, or cancel sessionless, one-shot ${APP_NAME} workers whose results return to the parent. Use teammate_agent instead when retained context, iterative follow-up, or explicit ownership requires a long-lived managed child session. action=start accepts one task or a parallel tasks array. Set returnToMain=true to return completed results automatically. Workers are read-only by default, inherit the parent model unless overridden, run with --no-session --no-extensions, and receive parent progress.`,
+				? `Start, inspect, or cancel sessionless, one-shot ${APP_NAME} workers whose terminal results return to the parent automatically. Use teammate_agent instead when retained context, iterative follow-up, or explicit ownership requires a long-lived managed child session. action=start accepts one task, a parallel tasks array, or a workflow object. A workflow orchestrates the same sessionless workers through one of six named presets (classify_and_act, fan_out_synthesize, adversarial_verify, generate_and_filter, tournament, loop_until_done) with fixed runtime-owned control flow. Workers are read-only by default, inherit the parent model unless overridden, run with --no-session --no-extensions, and receive parent progress.`
+				: `Start, inspect, or cancel sessionless, one-shot ${APP_NAME} workers whose terminal results return to the parent automatically. Use teammate_agent instead when retained context, iterative follow-up, or explicit ownership requires a long-lived managed child session. action=start accepts one task or a parallel tasks array. Workers are read-only by default, inherit the parent model unless overridden, run with --no-session --no-extensions, and receive parent progress.`,
 			promptSnippet: `Run one or more sessionless, one-shot ${APP_NAME} workers for bounded delegation`,
 			promptGuidelines: [
 				"Use sub_agent for bounded one-shot work. Choose teammate_agent when the collaborator needs retained context, iterative assignments, or explicit file ownership.",
@@ -995,7 +972,7 @@ export class SubAgentController {
 				"Prefer default read-only workers. The parent agent should synthesize results and perform final edits.",
 				`Do not start more than ${MAX_START_MANY} sub-agents at once unless the user explicitly requests a different approach; this tool enforces a hard limit of ${MAX_START_MANY} running sub-agents.`,
 				"Sub-agents receive parent tool progress as situational awareness; if they need the freshest state and have read access, they can read the provided progress file.",
-				"After sub_agent action=start, either call sub_agent action=wait before relying on results, or set returnToMain=true so results are automatically returned as a follow-up to the main agent — use one or the other, not both. If you wait (or view a finished agent via action=status) the pending automatic return is cancelled, so you will not get a duplicate return.",
+				"After action=start, continue only non-overlapping work. Terminal success, failure, timeout, and cancellation return through an automatic external activation; do not poll status for completion.",
 				"Workers run with --no-session and --no-extensions, so they retain no session context and cannot recursively create more sub-agents.",
 				...(workflowsEnabled
 					? [
@@ -1107,7 +1084,7 @@ export class SubAgentController {
 		const occupied = running + this.reservedStarts;
 		if (occupied + count > MAX_START_MANY) {
 			throw new Error(
-				`Cannot start ${count} sub-agent(s): ${running} running, ${this.reservedStarts} starting, and the limit is ${MAX_START_MANY}. Wait or cancel some before starting more.`,
+				`Cannot start ${count} sub-agent(s): ${running} running, ${this.reservedStarts} starting, and the limit is ${MAX_START_MANY}. Continue other work until terminal results arrive, or cancel some before starting more.`,
 			);
 		}
 		this.reservedStarts += count;
@@ -1127,18 +1104,17 @@ export class SubAgentController {
 	}
 
 	private async execute(params: SubAgentInput, signal: AbortSignal | undefined, ctx: ExtensionContext) {
-		const action = params.action as Action;
-		const returnToMain = params.returnToMain ?? this.config.defaultReturnToMain;
+		const internalParams = params as InternalSubAgentInput;
+		const requestedAction = String(params.action);
+		if (requestedAction === "wait") return this.wait(internalParams, signal);
+		const action = requestedAction as Action;
+		const returnToMain = internalParams.returnToMain ?? true;
 		const returnDelivery = (params.returnDelivery ?? this.config.defaultReturnDelivery) as ReturnDelivery;
 		const returnInstruction = params.returnInstruction as string | undefined;
 
 		if (action === "config") {
 			if ("defaultTimeoutSeconds" in params)
 				this.config.defaultTimeoutSeconds = positiveNumber(params.defaultTimeoutSeconds);
-			if ("defaultWaitTimeoutSeconds" in params)
-				this.config.defaultWaitTimeoutSeconds = positiveNumber(params.defaultWaitTimeoutSeconds);
-			if (typeof params.defaultReturnToMain === "boolean")
-				this.config.defaultReturnToMain = params.defaultReturnToMain;
 			if (params.defaultReturnDelivery) this.config.defaultReturnDelivery = params.defaultReturnDelivery;
 			if (params.defaultThinking) this.config.defaultThinking = params.defaultThinking;
 			return { content: [{ type: "text" as const, text: formatConfig(this.config) }], details: { ...this.config } };
@@ -1150,9 +1126,6 @@ export class SubAgentController {
 		if (action === "status") {
 			return this.status(params);
 		}
-		if (action === "wait") {
-			return this.wait(params, signal);
-		}
 		if (action === "cancel") {
 			return this.cancel(params, ctx);
 		}
@@ -1161,7 +1134,7 @@ export class SubAgentController {
 	}
 
 	private async start(
-		params: SubAgentInput,
+		params: InternalSubAgentInput,
 		signal: AbortSignal | undefined,
 		ctx: ExtensionContext,
 		returnToMain: boolean,
@@ -1195,7 +1168,7 @@ export class SubAgentController {
 	}
 
 	private async startReserved(
-		params: SubAgentInput,
+		params: InternalSubAgentInput,
 		signal: AbortSignal | undefined,
 		ctx: ExtensionContext,
 		returnToMain: boolean,
@@ -1213,7 +1186,7 @@ export class SubAgentController {
 			const running = [...this.events.values()].filter(isEventActive).length;
 			if (running + 1 > MAX_START_MANY) {
 				throw new Error(
-					`Cannot start a workflow: ${running} already running and the limit is ${MAX_START_MANY}. Wait or cancel some before starting more.`,
+					`Cannot start a workflow: ${running} already running and the limit is ${MAX_START_MANY}. Continue other work until terminal results arrive, or cancel some before starting more.`,
 				);
 			}
 			const workflowPackages = normalizePackageSelectors(params.workflow.packages ?? params.packages);
@@ -1268,7 +1241,7 @@ export class SubAgentController {
 		const running = [...this.events.values()].filter(isEventActive).length;
 		if (running + tasks.length > MAX_START_MANY) {
 			throw new Error(
-				`Cannot start ${tasks.length} sub-agent(s): ${running} already running and the limit is ${MAX_START_MANY}. Wait or cancel some before starting more.`,
+				`Cannot start ${tasks.length} sub-agent(s): ${running} already running and the limit is ${MAX_START_MANY}. Continue other work until terminal results arrive, or cancel some before starting more.`,
 			);
 		}
 
@@ -1345,20 +1318,14 @@ export class SubAgentController {
 		const summaries = ids.map((id) => {
 			const event = this.events.get(id);
 			if (!event) return `Unknown sub-agent: ${id}`;
-			// If the model is shown a finished event's full result inline here, a
-			// pending returnToMain auto-delivery for it would be redundant — cancel
-			// it. Polling a still-running agent must not cancel.
-			if (includeOutput && !isEventActive(event) && event.autoReturnPending) {
-				event.autoReturnPending = false;
-				this.cancelReturn([event.id]);
-			}
 			return includeOutput ? summarizeSubAgentForModel(event) : summarizeEvent(event, false);
 		});
 		const content = truncateModelText(summaries.join("\n\n---\n\n"), MODEL_RESULT_TOTAL_LIMIT_BYTES).text;
 		return { content: [{ type: "text" as const, text: content }], details: { ids } };
 	}
 
-	private async wait(params: SubAgentInput, signal: AbortSignal | undefined) {
+	/** Internal compatibility helper; intentionally absent from the public tool schema. */
+	private async wait(params: InternalSubAgentInput, signal: AbortSignal | undefined) {
 		const ids = this.resolveEventIds(params.eventId, params.eventIds);
 		if (!ids.length) {
 			return { content: [{ type: "text" as const, text: "No sub-agents to wait for." }], details: { events: 0 } };
@@ -1371,7 +1338,7 @@ export class SubAgentController {
 				truncateModelText(`No known sub-agents found: ${ids.join(", ")}`, MODEL_RESULT_LIMIT_BYTES).text,
 			);
 
-		const waitTimeoutSeconds = positiveNumber(params.waitTimeoutSeconds) ?? this.config.defaultWaitTimeoutSeconds;
+		const waitTimeoutSeconds = positiveNumber(params.waitTimeoutSeconds) ?? 30;
 		const deadline = waitTimeoutSeconds ? Date.now() + waitTimeoutSeconds * 1000 : undefined;
 		for (const event of knownEvents) {
 			const remaining = deadline ? Math.max(0.001, (deadline - Date.now()) / 1000) : undefined;
@@ -1777,7 +1744,7 @@ export class SubAgentController {
 			event.autoReturnPending = true;
 			void (async () => {
 				await waitForEvent(event, undefined, undefined);
-				// Let an inline wait/status consumer clear this event's record first.
+				// Let an internal compatibility consumer clear this event's record first.
 				await Promise.resolve();
 				this.returnSubAgentResultToMain(event, delivery, instruction);
 			})().catch(() => undefined);

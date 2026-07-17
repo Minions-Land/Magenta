@@ -99,7 +99,7 @@ Use distributed execution when work units are independent or benefit from specia
 
 - `sub_agent` starts sessionless, one-shot workers. Use it for bounded research, review, test analysis, planning, or parallel tasks whose results return to the parent. A worker does not retain a session for another assignment.
 - A `workflow` orchestrates those same sessionless, one-shot workers through named presets with fixed runtime-owned control flow. The public `sub_agent` facade does not execute model-authored inline JavaScript; trusted programmatic workflow modules remain an internal Harness capability.
-- `teammate_agent` is the parent-managed control plane for long-lived child sessions. Use it when retained context or multiple follow-up assignments matter. For editing, request `workspace="worktree"`, wait for the structured assignment receipt, then explicitly integrate or discard the captured Git changes. Parent shutdown stops children but preserves unintegrated work.
+- `teammate_agent` is the parent-managed control plane for long-lived child sessions. Use it when retained context or multiple follow-up assignments matter. For editing, request `workspace="worktree"`; its structured terminal receipt returns through `send_message` and external activation, after which the parent explicitly integrates or discards the captured Git changes. Parent shutdown stops children but preserves unintegrated work.
 - `send_message` is the urgent mailbox data plane for any known peer session id. It does not create or manage a teammate; use `teammate_agent` for child lifecycle.
 - Ultra selects the model's highest native reasoning level and enables workflow and managed-teammate capabilities by default. Its coalesced, rate-limited background stall reminder may wake the main loop after a real silent or overdue epoch. It never dispatches work automatically; the main agent still decides whether and how to delegate.
 
@@ -114,13 +114,13 @@ Acquire and honor leases as follows:
 - A successful `sub_agent` or workflow dispatch leases its delegated analysis scope while its event is running. Read-only workers do not own files.
 - A delivered teammate assignment leases its stated scope. For editing work, the assignment must name owned files or globs and should use `workspace="worktree"`. The linked checkout isolates ordinary Git paths, but it is not a security sandbox and does not intercept absolute-path writes.
 - While a lease is active, do not redo the same task. The main agent may advance only non-overlapping Todo work, coordination, and integration preparation.
-- A teammate becoming idle does not release its assignment lease. Use `teammate_agent action=wait` for the matching structured terminal receipt.
+- A teammate becoming idle does not release its assignment lease. The matching structured terminal receipt arrives through `send_message` and external activation; do not poll status for completion.
 
 Release and reclaim leases as follows:
 
 - Release a normal worker lease only after its terminal result returns; then synthesize the result and independently verify it before integrating or reporting.
-- On failure, timeout, cancellation, or teammate stop, confirm terminal state before reclaiming the scope. An interrupt followed by a replacement assignment transfers the lease only after the interrupted turn is confirmed aborted.
-- A structured teammate terminal receipt releases that assignment scope. For worktree edits, stop/integrate only after every relevant assignment is terminal, then independently verify the unstaged parent changes. Do not infer release from silence or idle status.
+- On failure, timeout, cancellation, or teammate stop, reclaim the scope only after its terminal event or receipt arrives. An interrupt followed by a replacement assignment transfers the lease only after the interrupted turn is confirmed aborted.
+- A structured teammate terminal receipt releases that assignment scope. For worktree edits, first let every relevant assignment become terminal, then request teammate stop and continue non-overlapping work. Integrate only after its automatic process-terminal event arrives, and independently verify the unstaged parent changes. Do not infer release from silence or idle status.
 
 Use named workflow presets when their fixed control flow fits the problem:
 

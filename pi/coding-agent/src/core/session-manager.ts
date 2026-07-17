@@ -975,6 +975,64 @@ export class SessionManager {
 		return entry.id;
 	}
 
+	/**
+	 * Remove one exact user-message entry admitted for a prompt withdrawn before
+	 * visible output, plus exact assistant entries persisted by that transaction.
+	 * Other descendants are retained and reparented to the nearest surviving parent.
+	 */
+	withdrawUserMessage(entryId: string, assistantEntryIds: Iterable<string> = []): boolean {
+		const target = this.byId.get(entryId);
+		if (target?.type !== "message" || target.message.role !== "user") return false;
+
+		const removalIds = new Set<string>([entryId]);
+		for (const assistantEntryId of assistantEntryIds) {
+			const candidate = this.byId.get(assistantEntryId);
+			if (candidate?.type !== "message" || candidate.message.role !== "assistant") continue;
+			let parentId = candidate.parentId;
+			const seen = new Set<string>();
+			while (parentId && !seen.has(parentId)) {
+				if (parentId === entryId) {
+					removalIds.add(assistantEntryId);
+					break;
+				}
+				seen.add(parentId);
+				parentId = this.byId.get(parentId)?.parentId ?? null;
+			}
+		}
+
+		const previousLeafId = this.leafId;
+		const parentById = new Map(
+			this.fileEntries
+				.filter((entry): entry is SessionEntry => entry.type !== "session")
+				.map((entry) => [entry.id, entry.parentId]),
+		);
+		for (const entry of this.fileEntries) {
+			if (entry.type === "session" || removalIds.has(entry.id)) continue;
+			let parentId = entry.parentId;
+			const seen = new Set<string>();
+			while (parentId && removalIds.has(parentId) && !seen.has(parentId)) {
+				seen.add(parentId);
+				parentId = parentById.get(parentId) ?? null;
+			}
+			entry.parentId = parentId;
+		}
+		this.fileEntries = this.fileEntries.filter((entry) => entry.type === "session" || !removalIds.has(entry.id));
+
+		let nextLeafId = previousLeafId;
+		const seenLeafIds = new Set<string>();
+		while (nextLeafId && removalIds.has(nextLeafId) && !seenLeafIds.has(nextLeafId)) {
+			seenLeafIds.add(nextLeafId);
+			nextLeafId = parentById.get(nextLeafId) ?? null;
+		}
+		this._buildIndex();
+		if (nextLeafId === null || (nextLeafId && this.byId.has(nextLeafId))) this.leafId = nextLeafId;
+
+		// A new interactive session has no file until an assistant response. Do not
+		// turn a withdrawn first prompt into a header-only session file.
+		if (this.flushed) this._rewriteFile();
+		return true;
+	}
+
 	/** Append a thinking level change as child of current leaf, then advance leaf. Returns entry id. */
 	appendThinkingLevelChange(thinkingLevel: string): string {
 		const entry: ThinkingLevelChangeEntry = {
@@ -1194,8 +1252,8 @@ export class SessionManager {
 
 	/**
 	 * Get all session entries (excludes header). Returns a shallow copy.
-	 * The session is append-only: use appendXXX() to add entries, branch() to
-	 * change the leaf pointer. Entries cannot be modified or deleted.
+	 * The session is append-only except for the narrow pre-commit prompt-withdrawal
+	 * rollback. Use appendXXX() to add entries and branch() to change the leaf pointer.
 	 */
 	getEntries(): SessionEntry[] {
 		return this.fileEntries.filter((e): e is SessionEntry => e.type !== "session");

@@ -13,7 +13,7 @@ const variant = {
 		activeToolsExclude: ["ask_question"],
 		successfulToolsInclude: ["sub_agent", "teammate_agent"],
 		requireWorkflowSubAgent: true,
-		teammateActionsInclude: ["start", "wait", "stop"],
+		teammateActionsInclude: ["start", "stop"],
 	},
 };
 
@@ -49,7 +49,7 @@ function toolTrace() {
 	return [
 		{ type: "tool_execution_start", toolCallId: "sub-1", toolName: "sub_agent", args: { workflow: { pattern: "fan_out_synthesize" } } },
 		{ type: "tool_execution_end", toolCallId: "sub-1", toolName: "sub_agent", isError: false, result: {} },
-		...(["start", "wait", "stop"].flatMap((action, index) => [
+		...(["start", "stop"].flatMap((action, index) => [
 			{ type: "tool_execution_start", toolCallId: `team-${index}`, toolName: "teammate_agent", args: { action } },
 			{ type: "tool_execution_end", toolCallId: `team-${index}`, toolName: "teammate_agent", isError: false, result: {} },
 		])),
@@ -78,10 +78,10 @@ test("accepts and normalizes one complete headless terminal contract", () => {
 	assert.deepEqual(summary.eventCounts, {
 		run_end: 1,
 		runtime_manifest: 1,
-		tool_execution_end: 4,
-		tool_execution_start: 4,
+		tool_execution_end: 3,
+		tool_execution_start: 3,
 	});
-	assert.equal(summary.toolEvidence.length, 4);
+	assert.equal(summary.toolEvidence.length, 3);
 });
 
 test("rejects malformed, missing, and duplicate terminal events", () => {
@@ -121,7 +121,7 @@ test("rejects missing orchestration tool evidence", () => {
 	const errors = summary.errors.join("\n");
 	assert.match(errors, /expected successful tool 'sub_agent'/);
 	assert.match(errors, /workflow-based sub_agent/);
-	assert.match(errors, /teammate_agent action 'wait'/);
+	assert.match(errors, /teammate_agent action 'stop'/);
 });
 
 test("rejects Ultra when the profile or native thinking resolution is wrong", () => {

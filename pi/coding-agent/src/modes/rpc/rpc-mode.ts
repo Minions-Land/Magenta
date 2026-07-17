@@ -369,7 +369,6 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 				uiContext: createExtensionUIContext(),
 				mode: "rpc",
 				commandContextActions: {
-					waitForIdle: () => session.agent.waitForIdle(),
 					newSession: async (options) => runtimeHost.newSession(options),
 					fork: async (entryId, forkOptions) => {
 						const result = await runtimeHost.fork(entryId, forkOptions);
@@ -471,7 +470,7 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 			}
 
 			case "abort": {
-				await session.abort();
+				session.requestAbort();
 				return success(id, "abort");
 			}
 

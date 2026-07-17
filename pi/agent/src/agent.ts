@@ -344,9 +344,10 @@ export class Agent {
 	}
 
 	/**
-	 * Resolve when the current run and all awaited event listeners have finished.
-	 *
-	 * This resolves after `agent_end` listeners settle.
+	 * Host-only settlement barrier for shutdown and tests. Never call this from
+	 * an agent listener, model-facing tool, or active AgentLoop: those callers
+	 * must observe `agent_end` without waiting on the run they are settling.
+	 * Resolves immediately when no run is active.
 	 */
 	waitForIdle(): Promise<void> {
 		return this.activeRun?.promise ?? Promise.resolve();

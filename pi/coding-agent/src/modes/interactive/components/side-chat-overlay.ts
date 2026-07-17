@@ -150,12 +150,20 @@ export class SideChatOverlay implements Component, Focusable {
 			this.requestEnqueue();
 			return;
 		}
-		if (matchesKey(data, "pageUp") || matchesKey(data, "ctrl+up")) {
-			this.scrollBy(matchesKey(data, "pageUp") ? -8 : -1);
+		if (matchesKey(data, "pageUp") || matchesKey(data, "ctrl+u")) {
+			this.scrollBy(-8);
 			return;
 		}
-		if (matchesKey(data, "pageDown") || matchesKey(data, "ctrl+down")) {
-			this.scrollBy(matchesKey(data, "pageDown") ? 8 : 1);
+		if (matchesKey(data, "pageDown") || matchesKey(data, "ctrl+d")) {
+			this.scrollBy(8);
+			return;
+		}
+		if (matchesKey(data, "ctrl+up")) {
+			this.scrollBy(-1);
+			return;
+		}
+		if (matchesKey(data, "ctrl+down")) {
+			this.scrollBy(1);
 			return;
 		}
 		if (this.busy) return;
@@ -218,7 +226,7 @@ export class SideChatOverlay implements Component, Focusable {
 			: this.editor.render(contentWidth);
 		const hintLines = [
 			this.theme.fg("dim", "enter send · shift+enter newline · ctrl+c copy · ctrl+t enqueue"),
-			this.theme.fg("dim", "pgup/pgdn transcript · esc close"),
+			this.theme.fg("dim", "ctrl+u/d or pgup/pgdn transcript · esc close"),
 		];
 		const footer = [...editorLines, ...hintLines];
 		const maxWindowLines = Math.max(12, Math.floor(this.tui.terminal.rows * 0.82));

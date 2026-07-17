@@ -109,7 +109,10 @@ interface AgentSession {
   compact(customInstructions?: string): Promise<CompactionResult>;
   abortCompaction(): void;
 
-  // Abort current operation
+  // Signal cancellation immediately; observe agent_end for terminal settlement
+  requestAbort(): void;
+
+  // Host-only shutdown/test barrier: signal cancellation and await settlement
   abort(): Promise<void>;
 
   // Cleanup
@@ -261,8 +264,8 @@ session.agent.state.messages = messages; // copies the top-level array
 // Replace tools
 session.agent.state.tools = tools; // copies the top-level array
 
-// Wait for agent to finish processing
-await session.agent.waitForIdle();
+// `await session.prompt(...)` already settles the submitted run.
+// Long-lived hosts should observe session events instead of adding an idle wait.
 ```
 
 ### Events
@@ -307,6 +310,9 @@ session.subscribe((event) => {
       break;
     case "agent_end":
       // Agent finished (event.messages contains new messages)
+      break;
+    case "prompt_withdrawn":
+      // Interactive pre-output cancellation rolled back its prompt turn
       break;
     
     // Turn lifecycle (one LLM response + tool calls)

@@ -192,6 +192,7 @@ async function createRuntimeHost(options: RuntimeOptions): Promise<{
 
 async function startRpcMode(options: RuntimeOptions): Promise<{
 	lineHandler: (line: string) => void;
+	runtimeHost: AgentSessionRuntime;
 	cleanup: () => Promise<void>;
 }> {
 	rpcIo.outputLines = [];
@@ -201,7 +202,7 @@ async function startRpcMode(options: RuntimeOptions): Promise<{
 	void runRpcMode(runtimeHost);
 	await vi.waitFor(() => expect(rpcIo.lineHandler).toBeDefined());
 
-	return { lineHandler: rpcIo.lineHandler!, cleanup };
+	return { lineHandler: rpcIo.lineHandler!, runtimeHost, cleanup };
 }
 
 describe("RPC prompt response semantics", () => {
@@ -248,6 +249,28 @@ describe("RPC prompt response semantics", () => {
 				);
 			});
 		} finally {
+			await cleanup();
+		}
+	});
+
+	it("acknowledges abort without waiting for agent settlement", async () => {
+		const { lineHandler, runtimeHost, cleanup } = await startRpcMode({ withAuth: false, responseDelayMs: 0 });
+		const blockingAbort = vi
+			.spyOn(runtimeHost.session, "abort")
+			.mockImplementation(() => new Promise<void>(() => undefined));
+		const requestAbort = vi.spyOn(runtimeHost.session, "requestAbort");
+		try {
+			lineHandler(JSON.stringify({ id: "abort-now", type: "abort" }));
+			await vi.waitFor(() => {
+				expect(parseOutputLines(rpcIo.outputLines)).toContainEqual(
+					expect.objectContaining({ id: "abort-now", command: "abort", success: true }),
+				);
+			});
+			expect(requestAbort).toHaveBeenCalledOnce();
+			expect(blockingAbort).not.toHaveBeenCalled();
+		} finally {
+			blockingAbort.mockRestore();
+			requestAbort.mockRestore();
 			await cleanup();
 		}
 	});

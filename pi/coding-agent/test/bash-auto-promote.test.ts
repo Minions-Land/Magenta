@@ -92,7 +92,6 @@ describe("bash auto-promotion", () => {
 					options: { deliverAs: delivery, triggerTurn: delivery !== "nextTurn" },
 				});
 			},
-			cancelReturn: () => {},
 		});
 	});
 
@@ -173,8 +172,8 @@ describe("bash auto-promotion", () => {
 		controller.shutdown();
 
 		expect(fake.abortCount()).toBe(1);
-		expect(manager.getEvents()[0]?.status).toBe("cancelled");
-		await new Promise((resolve) => setTimeout(resolve, 20));
+		expect(manager.getEvents()[0]).toMatchObject({ status: "running", activityPhase: "terminating" });
+		await waitUntil(() => manager.getEvents()[0]?.status === "cancelled");
 		expect(returned).toHaveLength(0);
 	});
 

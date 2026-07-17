@@ -1046,16 +1046,27 @@ This has the same shape and mutability as `before_agent_start` `event.systemProm
 
 This reports the current base prompt inputs. It does not include per-turn `before_agent_start` chained system-prompt changes, later `context` event message mutations, or `before_provider_request` payload rewrites.
 
-### ctx.waitForIdle()
+### Run settlement
 
-Wait for the agent to finish streaming:
+Command and event handlers must not wait for the active agent run to become idle. Extension handlers are part of that run's awaited event chain, so waiting for the same run would deadlock settlement. Inspect `ctx.isIdle()` for an immediate snapshot, request cancellation with `ctx.abort()`, and continue terminal bookkeeping from an `agent_end` event instead. `agent_end` is the final emitted run event, but its handlers still participate in settlement and must not call an idle barrier.
 
 ```typescript
+let finishBookkeepingAtAgentEnd = false;
+
 pi.registerCommand("my-cmd", {
-  handler: async (args, ctx) => {
-    await ctx.waitForIdle();
-    // Agent is now idle, safe to modify session
+  handler: async (_args, ctx) => {
+    if (ctx.isIdle()) {
+      finishRunBookkeeping();
+      return;
+    }
+    finishBookkeepingAtAgentEnd = true;
   },
+});
+
+pi.on("agent_end", () => {
+  if (!finishBookkeepingAtAgentEnd) return;
+  finishBookkeepingAtAgentEnd = false;
+  finishRunBookkeeping();
 });
 ```
 

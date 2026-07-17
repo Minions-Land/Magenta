@@ -10,7 +10,6 @@ export {
 	createLocalBashOperations,
 } from "./bash.ts";
 export {
-	type BackgroundShellCancelReturn,
 	BackgroundShellController,
 	type BackgroundShellRegisterReturn,
 	type BackgroundShellReturnMessage,

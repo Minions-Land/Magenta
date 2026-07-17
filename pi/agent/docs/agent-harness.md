@@ -17,7 +17,7 @@ The intended rule is:
 - runtime config setters update future snapshots without mutating the current provider request
 - session writes made while busy are durably queued and flushed in deterministic order
 - getters return latest harness config, not in-flight snapshots
-- listeners/hooks currently receive no facade; if they close over the raw harness and call settlement APIs such as `waitForIdle()` during the active run, they can deadlock. A future facade should expose `runWhenIdle()` instead.
+- listeners/hooks currently receive no facade; if they close over the raw harness and call settlement APIs such as `waitForIdle()` during the active run, they can deadlock. A future facade should expose non-blocking scheduling that returns immediately and delivers work from a later idle event.
 
 `AssistantMessageStream` already decouples provider transport streaming, such as SSE or websocket reads, from downstream event consumption. The harness can therefore await listeners, extension hooks, persistence, and save-point work without blocking the provider transport reader or reintroducing ad hoc event queues. Lifecycle code should prefer explicit awaited sequencing at harness boundaries over fire-and-forget hook/event settlement.
 

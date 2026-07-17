@@ -61,7 +61,7 @@ export const HUMAN_SIDE_HANDOFF_CUSTOM_TYPE = "magenta-human-side-handoff.v1";
 
 type TeammateProcessStatus = "running" | "stopped" | "failed";
 type TeammateActivity = "starting" | "idle" | "active" | "interrupting" | "stopping";
-type TeammateAction = "start" | "status" | "send" | "interrupt" | "wait" | "stop" | "resume" | "integrate" | "discard";
+type TeammateAction = "start" | "status" | "send" | "interrupt" | "stop" | "resume" | "integrate" | "discard";
 type TeammateAssignmentStatus = "active" | "completed" | "failed" | "blocked" | "cancelled";
 
 type TeammateAssignment = {
@@ -126,6 +126,7 @@ type TeammateEvent = {
 	assignments: Map<string, TeammateAssignment>;
 	currentAssignmentId?: string;
 	nextAssignmentNumber: number;
+	terminalNotificationSent?: boolean;
 	humanHandoff?: PreparedHumanSideHandoff & { bootstrapMessageId?: string };
 };
 
@@ -183,78 +184,66 @@ function humanHandoffDetails(
 	};
 }
 
-const teammateAgentSchema = Type.Object({
-	action: StringEnum([
-		"start",
-		"status",
-		"send",
-		"interrupt",
-		"wait",
-		"stop",
-		"resume",
-		"integrate",
-		"discard",
-	] as const),
-	teammateId: Type.Optional(
-		Type.String({
-			description:
-				"Managed teammate identifier for status/send/interrupt/stop. Omit for action=status to list all teammates.",
-		}),
-	),
-	label: Type.Optional(Type.String({ description: "Human-readable teammate name for action=start." })),
-	cwd: Type.Optional(
-		Type.String({
-			description: "Working directory for action=start. Relative paths resolve from the main session cwd.",
-		}),
-	),
-	workspace: Type.Optional(
-		StringEnum(["shared", "worktree"] as const, {
-			description:
-				"Workspace mode for action=start. Use worktree for isolated editing and explicit integrate/discard; shared is intended for read-only collaboration. Defaults to shared.",
-		}),
-	),
-	tools: Type.Optional(
-		Type.Array(Type.String(), {
-			description:
-				"Tool allowlist for the managed child session. send_message is always added; teammate_agent, sub_agent, and bg_shell are always removed.",
-		}),
-	),
-	model: Type.Optional(
-		Type.String({
-			description: `Optional ${APP_NAME} model pattern or provider/model id. Omit or use "default" to inherit the parent model when provider is omitted.`,
-		}),
-	),
-	provider: Type.Optional(Type.String({ description: `Optional ${APP_NAME} provider name.` })),
-	thinking: Type.Optional(StringEnum(THINKING_LEVELS)),
-	message: Type.Optional(
-		Type.String({
-			description:
-				"Optional first assignment for action=start, work assignment for action=send, or replacement instruction for interrupt.",
-		}),
-	),
-	urgent: Type.Optional(
-		Type.Boolean({
-			description:
-				"For action=send, wake an idle teammate and steer an active teammate. Defaults to true. Interrupt is always urgent.",
-		}),
-	),
-	assignmentId: Type.Optional(
-		Type.String({
-			description: "Assignment identifier for action=wait. Defaults to the teammate's current assignment.",
-		}),
-	),
-	waitTimeoutSeconds: Type.Optional(
-		Type.Number({
-			description: "Maximum time for action=wait to await a structured terminal assignment receipt.",
-			minimum: 0,
-		}),
-	),
-	confirm: Type.Optional(
-		Type.Boolean({ description: "Required as true for action=discard because it permanently removes the worktree." }),
-	),
-});
+const teammateAgentSchema = Type.Object(
+	{
+		action: StringEnum(["start", "status", "send", "interrupt", "stop", "resume", "integrate", "discard"] as const),
+		teammateId: Type.Optional(
+			Type.String({
+				description:
+					"Managed teammate identifier for status/send/interrupt/stop. Omit for action=status to list all teammates.",
+			}),
+		),
+		label: Type.Optional(Type.String({ description: "Human-readable teammate name for action=start." })),
+		cwd: Type.Optional(
+			Type.String({
+				description: "Working directory for action=start. Relative paths resolve from the main session cwd.",
+			}),
+		),
+		workspace: Type.Optional(
+			StringEnum(["shared", "worktree"] as const, {
+				description:
+					"Workspace mode for action=start. Use worktree for isolated editing and explicit integrate/discard; shared is intended for read-only collaboration. Defaults to shared.",
+			}),
+		),
+		tools: Type.Optional(
+			Type.Array(Type.String(), {
+				description:
+					"Tool allowlist for the managed child session. send_message is always added; teammate_agent, sub_agent, and bg_shell are always removed.",
+			}),
+		),
+		model: Type.Optional(
+			Type.String({
+				description: `Optional ${APP_NAME} model pattern or provider/model id. Omit or use "default" to inherit the parent model when provider is omitted.`,
+			}),
+		),
+		provider: Type.Optional(Type.String({ description: `Optional ${APP_NAME} provider name.` })),
+		thinking: Type.Optional(StringEnum(THINKING_LEVELS)),
+		message: Type.Optional(
+			Type.String({
+				description:
+					"Optional first assignment for action=start, work assignment for action=send, or replacement instruction for interrupt.",
+			}),
+		),
+		urgent: Type.Optional(
+			Type.Boolean({
+				description:
+					"For action=send, wake an idle teammate and steer an active teammate. Defaults to true. Interrupt is always urgent.",
+			}),
+		),
+		confirm: Type.Optional(
+			Type.Boolean({
+				description: "Required as true for action=discard because it permanently removes the worktree.",
+			}),
+		),
+	},
+	{ additionalProperties: false },
+);
 
 export type TeammateAgentInput = Static<typeof teammateAgentSchema>;
+type InternalTeammateAgentInput = TeammateAgentInput & {
+	assignmentId?: string;
+	waitTimeoutSeconds?: number;
+};
 export type TeammateAgentDetails = Record<string, unknown>;
 
 function sanitizeTools(requested: string[] | undefined): string[] {
@@ -481,14 +470,14 @@ export class TeammateAgentController {
 			name: "teammate_agent",
 			label: "Teammate Agent",
 			description: `Create and control parent-managed, long-lived hidden ${APP_NAME} child sessions during the current parent runtime. teammate_agent is the lifecycle/control plane; editing teammates can use a parent-session-scoped Git worktree, produce an immutable change receipt, and integrate or discard it explicitly. Assignment/result payloads travel through send_message with structured terminal receipts.`,
-			promptSnippet: `Create, assign, wait for, integrate, discard, resume, or stop parent-managed ${APP_NAME} child sessions`,
+			promptSnippet: `Create, assign, integrate, discard, resume, or stop parent-managed ${APP_NAME} child sessions`,
 			promptGuidelines: [
 				"Use teammate_agent when collaboration needs retained context, multiple assignments, iterative follow-up, or explicit file ownership. Use sessionless sub_agent workers for bounded one-shot delegation.",
 				"teammate_agent creates and manages child-session lifecycle. All assignment and result payloads travel through send_message; the RPC channel controls state, interrupt, resume, and shutdown.",
 				"Successful assignment delivery creates a soft lease on its stated scope. Do not duplicate that work; continue only non-overlapping Todo work, coordination, or integration preparation, then synthesize and independently verify after the result returns.",
 				"Editing assignments must still name non-overlapping owned files or globs. Use workspace=worktree to isolate ordinary Git paths and enable explicit integrate/discard; it is not a security sandbox or runtime lock and does not intercept absolute-path writes. Use workspace=shared only for intentional read-only or manually coordinated work.",
-				"A teammate becoming idle does not release its assignment lease. Use action=wait for its structured terminal receipt; use action=interrupt when active work must be cancelled and replaced. An urgent send alone does not preempt a running tool.",
-				"For worktree teammates, integrate only after assignments are terminal; parent verification remains independent. discard requires confirm=true. The parent stops children automatically when its runtime shuts down but preserves every unintegrated worktree and receipt.",
+				"A teammate becoming idle does not release its assignment lease. Structured terminal receipts arrive through send_message and external activation; do not poll status for completion. Use action=interrupt when active work must be cancelled and replaced. An urgent send alone does not preempt a running tool.",
+				"For worktree teammates, integrate only after the assignment and teammate process are terminal; request stop and let its terminal event arrive first. Parent verification remains independent. discard requires confirm=true. The parent stops children automatically when its runtime shuts down but preserves every unintegrated worktree and receipt.",
 			],
 			parameters: teammateAgentSchema,
 			execute: (_toolCallId, params, signal, _onUpdate, ctx) => this.execute(params, signal, ctx),
@@ -555,12 +544,14 @@ export class TeammateAgentController {
 		if (!this.isEnabled()) {
 			throw new Error("teammate_agent is disabled for the current execution profile");
 		}
-		const action = params.action as TeammateAction;
+		const internalParams = params as InternalTeammateAgentInput;
+		const requestedAction = String(params.action);
+		if (requestedAction === "wait") return this.wait(internalParams, signal);
+		const action = requestedAction as TeammateAction;
 		if (action === "start") return this.start(params, signal, ctx);
 		if (action === "status") return this.status(params);
 		if (action === "send") return this.send(params, false);
 		if (action === "interrupt") return this.interrupt(params, signal);
-		if (action === "wait") return this.wait(params, signal);
 		if (action === "stop") return this.stop(params, ctx);
 		if (action === "resume") return this.resume(params, signal, ctx);
 		if (action === "integrate") return this.integrate(params, ctx);
@@ -813,7 +804,6 @@ export class TeammateAgentController {
 			};
 		}
 		const event = this.requireEvent(params.teammateId);
-		if (event.status !== "running") await this.captureWorktreeReceipt(event);
 		return {
 			content: [{ type: "text" as const, text: summarizeEvent(event) }],
 			details: this.eventDetails(event),
@@ -899,7 +889,8 @@ export class TeammateAgentController {
 		}
 	}
 
-	private async wait(params: TeammateAgentInput, signal: AbortSignal | undefined) {
+	/** Internal compatibility helper; intentionally absent from the public tool schema. */
+	private async wait(params: InternalTeammateAgentInput, signal: AbortSignal | undefined) {
 		const event = this.requireEvent(params.teammateId);
 		const assignmentId = params.assignmentId ?? event.currentAssignmentId;
 		if (!assignmentId) throw new Error(`Teammate ${event.id} has no assignment to wait for`);
@@ -934,6 +925,11 @@ export class TeammateAgentController {
 		if (signal?.aborted) throw new Error("teammate_agent resume cancelled before launch");
 		const event = this.requireEvent(params.teammateId);
 		if (event.status === "running") {
+			if (event.stopping) {
+				throw new Error(
+					`Cannot resume teammate ${event.id} while shutdown is still in progress; resume after its terminal event.`,
+				);
+			}
 			return {
 				content: [{ type: "text" as const, text: `Teammate ${event.id} is already running (${event.activity}).` }],
 				details: this.eventDetails(event),
@@ -1004,6 +1000,7 @@ export class TeammateAgentController {
 		event.lastOutput = undefined;
 		event.pendingRequests = new Map();
 		event.waiters = [];
+		event.terminalNotificationSent = false;
 		log.write(`$ ${invocation.command} ${invocation.args.map((arg) => JSON.stringify(arg)).join(" ")}\n\n`);
 		this.attachProcess(event, ctx);
 		this.monitor.update(ctx);
@@ -1043,23 +1040,24 @@ export class TeammateAgentController {
 		};
 	}
 
-	private async stop(params: TeammateAgentInput, ctx: ExtensionContext) {
+	private stop(params: TeammateAgentInput, ctx: ExtensionContext) {
 		if (!params.teammateId) throw new Error("teammate_agent action=stop requires teammateId");
 		const event = this.requireEvent(params.teammateId);
 		if (event.status !== "running") {
-			await this.captureWorktreeReceipt(event);
 			return {
 				content: [{ type: "text" as const, text: `Teammate ${event.id} is already ${event.status}.` }],
 				details: this.eventDetails(event),
 			};
 		}
-		await this.stopEvent(event, ctx);
-		await this.captureWorktreeReceipt(event);
+		void this.stopEvent(event, ctx).catch((error) => {
+			event.error = error instanceof Error ? error.message : String(error);
+			this.monitor.update(ctx);
+		});
 		return {
 			content: [
 				{
 					type: "text" as const,
-					text: `Stopped teammate ${event.id} (${event.label}).\nSession ${event.sessionId} remains saved at ${event.sessionFile}.${event.worktree ? `\nWorktree changes are preserved for action=integrate or action=discard.` : ""}`,
+					text: `Stop requested for teammate ${event.id} (${event.label}). Its terminal process event will arrive asynchronously; the saved session and any worktree changes are preserved.`,
 				},
 			],
 			details: this.eventDetails(event),
@@ -1075,7 +1073,11 @@ export class TeammateAgentController {
 				`Cannot integrate while ${activeAssignments.length} assignment(s) remain active: ${activeAssignments.map((assignment) => assignment.id).join(", ")}`,
 			);
 		}
-		if (event.status === "running") await this.stopEvent(event, ctx);
+		if (event.status === "running") {
+			throw new Error(
+				`Cannot integrate running teammate ${event.id}; request action=stop and integrate after its terminal event.`,
+			);
+		}
 		await this.captureWorktreeReceipt(event);
 		const result = await this.worktrees.integrate(event.worktree);
 		this.monitor.update(ctx);
@@ -1093,7 +1095,11 @@ export class TeammateAgentController {
 	private async discard(params: TeammateAgentInput, ctx: ExtensionContext) {
 		const event = this.requireEvent(params.teammateId);
 		if (!event.worktree) throw new Error(`Teammate ${event.id} does not use workspace=worktree`);
-		if (event.status === "running") await this.stopEvent(event, ctx);
+		if (event.status === "running") {
+			throw new Error(
+				`Cannot discard running teammate ${event.id}; request action=stop and discard after its terminal event.`,
+			);
+		}
 		await this.captureWorktreeReceipt(event);
 		await this.worktrees.discard(event.worktree, params.confirm === true);
 		this.monitor.update(ctx);
@@ -1398,6 +1404,25 @@ export class TeammateAgentController {
 			if (assignment.status === "active") this.setAssignmentTerminal(assignment, status);
 		}
 		void this.captureWorktreeReceipt(event).catch(() => undefined);
+		if (this.shuttingDown || event.terminalNotificationSent) return;
+		event.terminalNotificationSent = true;
+		const assignments = [...event.assignments.values()]
+			.map((assignment) => `${assignment.id}:${assignment.status}`)
+			.join(", ");
+		try {
+			this.sendPeerMessage({
+				to: event.parentSessionId,
+				content: `[managed teammate terminal]\n${event.id} (${event.label}) is ${event.status}. Process status: ${status}.${assignments ? ` Assignments: ${assignments}.` : ""} Session remains saved at ${event.sessionFile}.`,
+				urgent: true,
+			});
+		} catch (error) {
+			event.error = [
+				event.error,
+				`Failed to deliver terminal notification: ${error instanceof Error ? error.message : String(error)}`,
+			]
+				.filter(Boolean)
+				.join("; ");
+		}
 	}
 
 	private async captureWorktreeReceipt(event: TeammateEvent): Promise<TeammateChangeReceipt | undefined> {

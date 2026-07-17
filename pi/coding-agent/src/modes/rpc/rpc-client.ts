@@ -268,8 +268,8 @@ export class RpcClient {
 
 	/**
 	 * Send a prompt to the agent.
-	 * Returns immediately after sending; use onEvent() to receive streaming events.
-	 * Use waitForIdle() to wait for completion.
+	 * Returns immediately after sending; use onEvent() to receive streaming and
+	 * terminal events without blocking the child AgentLoop.
 	 */
 	async prompt(message: string, images?: ImageContent[]): Promise<void> {
 		await this.send({ type: "prompt", message, images });
@@ -524,8 +524,8 @@ export class RpcClient {
 	// =========================================================================
 
 	/**
-	 * Wait for agent to become idle (no streaming).
-	 * Resolves when agent_end event is received.
+	 * Host-only event barrier. This waits in the external client process, not in
+	 * the child AgentLoop. Agent orchestration should subscribe to events instead.
 	 */
 	waitForIdle(timeout = 60000): Promise<void> {
 		return new Promise((resolve, reject) => {
@@ -544,9 +544,7 @@ export class RpcClient {
 		});
 	}
 
-	/**
-	 * Collect events until agent becomes idle.
-	 */
+	/** Host-only event collection helper for scripts and tests. */
 	collectEvents(timeout = 60000): Promise<RpcEvent[]> {
 		return new Promise((resolve, reject) => {
 			const events: RpcEvent[] = [];
@@ -566,9 +564,7 @@ export class RpcClient {
 		});
 	}
 
-	/**
-	 * Send prompt and wait for completion, returning all events.
-	 */
+	/** Host-only one-shot helper for scripts and tests. */
 	async promptAndWait(message: string, images?: ImageContent[], timeout = 60000): Promise<RpcEvent[]> {
 		const eventsPromise = this.collectEvents(timeout);
 		await this.prompt(message, images);

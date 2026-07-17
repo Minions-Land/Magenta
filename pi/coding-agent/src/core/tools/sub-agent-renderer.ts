@@ -3,7 +3,7 @@
  * Shows header + tail when collapsed, full output when expanded (Ctrl+O).
  *
  * For action=start with multiple agents: displays using the existing tool-call-gallery.
- * For action=wait/status: displays collapsible detailed output.
+ * For action=status: displays collapsible detailed output.
  */
 
 import { Container, Spacer, Text } from "@earendil-works/pi-tui";
@@ -144,7 +144,7 @@ export const subAgentRenderer: ToolRenderer = {
 			return container;
 		}
 
-		// Otherwise, render as detailed sub-agent output (wait/status results)
+		// Otherwise, render as detailed sub-agent status output
 		const { header, outputLabel, outputContent } = parseSubAgentOutput(textContent.text);
 
 		// Always show header info (status, role, cwd, etc.)
