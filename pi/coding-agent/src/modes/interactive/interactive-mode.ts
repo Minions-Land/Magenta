@@ -73,6 +73,13 @@ import {
 	type SubmittedInput,
 } from "../../core/agent-session.ts";
 import { type AgentSessionRuntime, SessionImportFileNotFoundError } from "../../core/agent-session-runtime.ts";
+import {
+	CACHE_TTL_MS,
+	type CacheMiss,
+	collectCacheMisses,
+	computeCacheWaste,
+	detectCacheMiss,
+} from "../../core/cache-stats.ts";
 import { applyCommandAlias } from "../../core/command-aliases.ts";
 import type {
 	AutocompleteProviderFactory,
@@ -168,7 +175,7 @@ import {
 	FloatingOverlayContainer,
 } from "./components/floating-menu.ts";
 import { CENTER_FLOATING_OVERLAY } from "./components/floating-window.ts";
-import { FooterComponent } from "./components/footer.ts";
+import { FooterComponent, formatTokens } from "./components/footer.ts";
 import { formatKeyText, keyDisplayText, keyHint, keyText, rawKeyHint } from "./components/keybinding-hints.ts";
 import { LoginDialogComponent } from "./components/login-dialog.ts";
 import { ModelSelectorComponent } from "./components/model-selector.ts";
@@ -3343,6 +3350,9 @@ export class InteractiveMode {
 								component.setArgsComplete();
 							}
 						}
+						if (this.streamingMessage) {
+							this.maybeShowCacheMissNotice(this.streamingMessage);
+						}
 					}
 					this.stopStreamingAnimation();
 					this.streamingComponent = undefined;
@@ -3740,6 +3750,11 @@ export class InteractiveMode {
 		this.clearPendingToolDisplays();
 		const renderedPendingTools = new Map<string, ToolExecutionComponent>();
 		const renderedPendingGroups = new Map<string, ToolExecutionGroupComponent>();
+		// Cache-miss notices are not persisted; re-derive them from the full entry
+		// list and re-inject after the assistant messages that paid for them.
+		const cacheMisses = this.settingsManager.getShowCacheMissNotices()
+			? collectCacheMisses(this.sessionManager.getEntries(), this.session.modelRegistry)
+			: new Map<AssistantMessage, CacheMiss>();
 
 		if (options.updateFooter) {
 			this.footer.invalidate();
@@ -3786,6 +3801,10 @@ export class InteractiveMode {
 							renderedPendingGroups.set(content.id, group);
 						}
 					}
+				}
+				if (message.stopReason !== "aborted" && message.stopReason !== "error") {
+					const miss = cacheMisses.get(message);
+					if (miss) this.addCacheMissNotice(miss);
 				}
 			} else if (message.role === "toolResult") {
 				// Match tool results to pending tool components
@@ -3850,6 +3869,35 @@ export class InteractiveMode {
 				0,
 			),
 		);
+	}
+
+	/**
+	 * Show a transcript notice when a completed assistant message paid for a
+	 * significant cache miss. Only states observable facts: the miss itself,
+	 * a model switch, or an idle gap past the cache TTL. Display-only; not persisted.
+	 */
+	private maybeShowCacheMissNotice(message: AssistantMessage): void {
+		if (!this.settingsManager.getShowCacheMissNotices()) return;
+
+		// Entries don't contain `message` yet: message_end fires before persistence.
+		const miss = detectCacheMiss(this.sessionManager.getEntries(), message, this.session.modelRegistry);
+		if (miss) this.addCacheMissNotice(miss);
+	}
+
+	private addCacheMissNotice(miss: CacheMiss): void {
+		if (miss.missedTokens < 20_000 && miss.missedCost < 0.1) return;
+
+		const cost = miss.missedCost >= 0.01 ? ` (~$${miss.missedCost.toFixed(2)})` : "";
+		const reBilled = `${formatTokens(miss.missedTokens)} tokens re-billed${cost}`;
+		let label = "Cache miss";
+		if (miss.modelChanged) {
+			label = "Cache miss after model switch";
+		} else if (miss.idleMs >= CACHE_TTL_MS) {
+			label = `Cache miss after ${Math.round(miss.idleMs / 60_000)}m idle`;
+		}
+		const text = theme.fg("warning", `${label}: ${reBilled}`);
+		this.chatContainer.addChild(new Spacer(1));
+		this.chatContainer.addChild(new Text(text, 1, 0));
 	}
 
 	async getUserInput(): Promise<string> {
@@ -6737,6 +6785,7 @@ export class InteractiveMode {
 					terminalTheme: this.themeController.getTerminalTheme(),
 					availableThemes: getAvailableThemes(),
 					hideThinkingBlock: this.hideThinkingBlock,
+					showCacheMissNotices: this.settingsManager.getShowCacheMissNotices(),
 					collapseChangelog: this.settingsManager.getCollapseChangelog(),
 					enableInstallTelemetry: this.settingsManager.getEnableInstallTelemetry(),
 					doubleEscapeAction: this.settingsManager.getDoubleEscapeAction(),
@@ -6821,6 +6870,11 @@ export class InteractiveMode {
 								child.setHideThinkingBlock(hidden);
 							}
 						}
+						this.chatContainer.clear();
+						this.rebuildChatFromMessages();
+					},
+					onShowCacheMissNoticesChange: (shown) => {
+						this.settingsManager.setShowCacheMissNotices(shown);
 						this.chatContainer.clear();
 						this.rebuildChatFromMessages();
 					},
@@ -8318,6 +8372,7 @@ export class InteractiveMode {
 	private handleSessionCommand(): void {
 		const stats = this.session.getSessionStats();
 		const sessionName = this.sessionManager.getSessionName();
+		const cacheWaste = computeCacheWaste(this.sessionManager.getEntries(), this.session.modelRegistry);
 
 		let info = `${theme.bold("Session Info")}\n\n`;
 		if (sessionName) {
@@ -8345,9 +8400,17 @@ export class InteractiveMode {
 		if (stats.costUnknown) {
 			info += `\n${theme.bold("Cost")}\n`;
 			info += `${theme.fg("dim", "Total:")} unknown (provider did not report a concrete price)`;
-		} else if (stats.cost > 0) {
+		} else if (stats.cost > 0 || cacheWaste.missedTokens > 0) {
 			info += `\n${theme.bold("Cost")}\n`;
 			info += `${theme.fg("dim", "Total:")} ${stats.cost.toFixed(4)}`;
+			if (cacheWaste.missedTokens > 0) {
+				const missLabel = cacheWaste.missCount === 1 ? "1 miss" : `${cacheWaste.missCount} misses`;
+				const detail = `${cacheWaste.missedTokens.toLocaleString()} tokens, ${missLabel}`;
+				info +=
+					cacheWaste.missedCost >= 0.0001
+						? `\n${theme.fg("dim", "Cache Re-billed:")} $${cacheWaste.missedCost.toFixed(3)} ${theme.fg("dim", `(${detail})`)}`
+						: `\n${theme.fg("dim", "Cache Re-billed:")} ${detail}`;
+			}
 		}
 
 		this.chatContainer.addChild(new Spacer(1));
