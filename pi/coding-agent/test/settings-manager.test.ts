@@ -453,4 +453,52 @@ describe("SettingsManager", () => {
 			expect(manager.getSessionDir()).toBe(join(homedir(), "sessions"));
 		});
 	});
+
+	describe("externalEditor", () => {
+		const originalVisual = process.env.VISUAL;
+		const originalEditor = process.env.EDITOR;
+		const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform");
+
+		function setEditorEnv(visual?: string, editor?: string): void {
+			if (visual === undefined) delete process.env.VISUAL;
+			else process.env.VISUAL = visual;
+			if (editor === undefined) delete process.env.EDITOR;
+			else process.env.EDITOR = editor;
+		}
+
+		afterEach(() => {
+			setEditorEnv(originalVisual, originalEditor);
+			if (originalPlatform) {
+				Object.defineProperty(process, "platform", originalPlatform);
+			}
+		});
+
+		it("should resolve editor commands by precedence", () => {
+			setEditorEnv("vim", "nano");
+			expect(SettingsManager.inMemory({ externalEditor: "code --wait" }).getExternalEditorCommand()).toBe(
+				"code --wait",
+			);
+			expect(SettingsManager.inMemory().getExternalEditorCommand()).toBe("vim");
+
+			setEditorEnv(undefined, "emacs");
+			expect(SettingsManager.inMemory().getExternalEditorCommand()).toBe("emacs");
+		});
+
+		it("should treat a blank externalEditor as unset", () => {
+			setEditorEnv("vim", undefined);
+			expect(SettingsManager.inMemory({ externalEditor: "   " }).getExternalEditorCommand()).toBe("vim");
+		});
+
+		it("should fall back to platform defaults", () => {
+			setEditorEnv();
+			Object.defineProperty(process, "platform", { value: "win32" });
+			expect(SettingsManager.inMemory().getExternalEditorCommand()).toBe("notepad");
+
+			Object.defineProperty(process, "platform", { value: "darwin" });
+			expect(SettingsManager.inMemory().getExternalEditorCommand()).toBe("nano");
+
+			Object.defineProperty(process, "platform", { value: "linux" });
+			expect(SettingsManager.inMemory().getExternalEditorCommand()).toBe("nano");
+		});
+	});
 });
