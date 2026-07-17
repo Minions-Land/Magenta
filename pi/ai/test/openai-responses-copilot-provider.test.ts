@@ -277,6 +277,31 @@ describe("openai-responses provider defaults", () => {
 		expect(captured).toEqual({ sessionId: null, clientRequestId: null });
 	});
 
+	it("clamps max_output_tokens to the provider minimum", async () => {
+		const model = getModel("openai", "gpt-5.4");
+		let capturedPayload: unknown;
+		vi.spyOn(globalThis, "fetch").mockResolvedValue(
+			new Response("data: [DONE]\n\n", {
+				status: 200,
+				headers: { "content-type": "text/event-stream" },
+			}),
+		);
+
+		await streamOpenAIResponses(
+			model,
+			{ messages: [{ role: "user", content: "hi", timestamp: Date.now() }] },
+			{
+				apiKey: "test-key",
+				maxTokens: 1,
+				onPayload: (payload) => {
+					capturedPayload = payload;
+				},
+			},
+		).result();
+
+		expect(capturedPayload).toMatchObject({ max_output_tokens: 16 });
+	});
+
 	it.each([
 		["gpt-5.4", "priority", 2],
 		["gpt-5.5", "priority", 2.5],

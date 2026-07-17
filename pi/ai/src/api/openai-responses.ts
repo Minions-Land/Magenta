@@ -25,6 +25,8 @@ import { convertResponsesMessages, convertResponsesTools, processResponsesStream
 import { buildBaseOptions } from "./simple-options.ts";
 
 const OPENAI_TOOL_CALL_PROVIDERS = new Set(["openai", "openai-codex", "opencode"]);
+// OpenAI Responses rejects max_output_tokens below 16.
+const OPENAI_RESPONSES_MIN_OUTPUT_TOKENS = 16;
 const OPENAI_PROMPT_CACHE_MODE_ENV = "PI_OPENAI_PROMPT_CACHE_MODE";
 
 type OpenAIPromptCacheMode = "implicit" | "explicit";
@@ -350,7 +352,7 @@ function buildParams(model: Model<"openai-responses">, context: Context, options
 	};
 
 	if (options?.maxTokens) {
-		params.max_output_tokens = options.maxTokens;
+		params.max_output_tokens = Math.max(options.maxTokens, OPENAI_RESPONSES_MIN_OUTPUT_TOKENS);
 	}
 
 	if (options?.temperature !== undefined) {
