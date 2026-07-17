@@ -2034,8 +2034,9 @@ export class InteractiveMode {
 	 * Set extension status text in the footer.
 	 */
 	private setExtensionStatus(key: string, text: string | undefined): void {
-		this.footerDataProvider.setExtensionStatus(key, text);
-		this.ui.requestRender();
+		if (this.footerDataProvider.setExtensionStatus(key, text)) {
+			this.ui.requestRender();
+		}
 	}
 
 	private setMagentaUpdateStatus(text: string | undefined): void {

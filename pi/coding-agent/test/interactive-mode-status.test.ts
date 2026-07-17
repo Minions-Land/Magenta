@@ -119,6 +119,31 @@ describe("InteractiveMode.showStatus", () => {
 });
 
 describe("InteractiveMode footer invalidation", () => {
+	test("requests a render only when an extension status changes", () => {
+		const setExtensionStatus = vi
+			.fn()
+			.mockReturnValueOnce(true)
+			.mockReturnValueOnce(false)
+			.mockReturnValueOnce(true)
+			.mockReturnValueOnce(true)
+			.mockReturnValueOnce(false);
+		const fakeThis: any = {
+			footerDataProvider: { setExtensionStatus },
+			ui: { requestRender: vi.fn() },
+		};
+
+		const updateStatus = (text: string | undefined) =>
+			(InteractiveMode as any).prototype.setExtensionStatus.call(fakeThis, "background", text);
+		updateStatus("1 running");
+		updateStatus("1 running");
+		updateStatus("2 running");
+		updateStatus(undefined);
+		updateStatus(undefined);
+
+		expect(setExtensionStatus).toHaveBeenCalledTimes(5);
+		expect(fakeThis.ui.requestRender).toHaveBeenCalledTimes(3);
+	});
+
 	test("does not invalidate cumulative usage for a streaming message update", async () => {
 		const fakeThis: any = {
 			isInitialized: true,

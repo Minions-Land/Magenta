@@ -215,13 +215,7 @@ export class BackgroundEventManager {
 		);
 		this.updateOverlay();
 
-		if (running.length > 0 && !this.statusTimer) {
-			// Elapsed/time-based progress is presentation-only. Do not publish this
-			// one-second refresh as real source activity to reminder observers.
-			this.statusTimer = setInterval(() => this.update(undefined, false), 1000);
-			this.statusTimer.unref?.();
-		}
-		if (running.length === 0) this.stopTimer();
+		this.syncStatusTimer(running);
 	}
 
 	async handleCommand(args: string, ctx: ExtensionContext): Promise<void> {
@@ -366,6 +360,26 @@ export class BackgroundEventManager {
 		this.overlayTui?.requestRender();
 	}
 
+	private syncStatusTimer(running: EventEntry[]): void {
+		const needsClockRefresh =
+			running.length > 0 &&
+			(this.overlayVisible ||
+				running.some(
+					({ event }) =>
+						event.status === "running" && (event.progress?.source === "time" || event.reminderEligible === true),
+				));
+		if (!needsClockRefresh) {
+			this.stopTimer();
+			return;
+		}
+		if (this.statusTimer) return;
+
+		// Elapsed/time-based progress and stall labels are presentation-only. Do
+		// not publish this one-second refresh as real activity to reminder observers.
+		this.statusTimer = setInterval(() => this.update(undefined, false), 1000);
+		this.statusTimer.unref?.();
+	}
+
 	private stopTimer(): void {
 		if (!this.statusTimer) return;
 		clearInterval(this.statusTimer);
@@ -398,6 +412,7 @@ export class BackgroundEventManager {
 		}
 
 		this.overlayVisible = true;
+		this.syncStatusTimer(this.runningEvents());
 		try {
 			await ctx.ui.custom<void>(
 				(tui, theme, _keybindings, done) => {
@@ -427,6 +442,7 @@ export class BackgroundEventManager {
 			this.overlayVisible = false;
 			this.overlayDone = undefined;
 			this.overlayTui = undefined;
+			this.syncStatusTimer(this.runningEvents());
 		}
 	}
 
@@ -435,5 +451,6 @@ export class BackgroundEventManager {
 		this.overlayVisible = false;
 		this.overlayTui = undefined;
 		this.overlayDone = undefined;
+		this.syncStatusTimer(this.runningEvents());
 	}
 }

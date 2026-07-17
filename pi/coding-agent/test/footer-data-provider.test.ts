@@ -87,6 +87,25 @@ async function waitFor(condition: () => boolean, timeoutMs = 3000): Promise<void
 	}
 }
 
+describe("FooterDataProvider extension statuses", () => {
+	it("reports only visible status changes", () => {
+		const tempDir = mkdtempSync(join(tmpdir(), "footer-status-"));
+		const provider = new FooterDataProvider(tempDir);
+		try {
+			expect(provider.setExtensionStatus("background", undefined)).toBe(false);
+			expect(provider.setExtensionStatus("background", "1 running")).toBe(true);
+			expect(provider.setExtensionStatus("background", "1 running")).toBe(false);
+			expect(provider.setExtensionStatus("background", "2 running")).toBe(true);
+			expect(provider.setExtensionStatus("background", undefined)).toBe(true);
+			expect(provider.setExtensionStatus("background", undefined)).toBe(false);
+			expect(provider.getExtensionStatuses().size).toBe(0);
+		} finally {
+			provider.dispose();
+			rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+});
+
 describe("FooterDataProvider reftable branch detection", () => {
 	let originalCwd: string;
 	let tempDir: string;
