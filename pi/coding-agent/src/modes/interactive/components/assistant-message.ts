@@ -318,18 +318,28 @@ export class AssistantMessageComponent extends Container {
 			}
 		}
 
-		// Show error/abort messages if no tool calls
-		if (!this.hasToolCalls) {
+		// Show incomplete/failed messages after partial content.
+		// For aborted/error tool calls, tool execution components show the error.
+		// Length stops can happen before a tool call is complete, so surface them here too.
+		if (this.lastMessage.stopReason === "length") {
+			this.contentContainer.addChild(new Spacer(1));
+			this.contentContainer.addChild(
+				new Text(
+					theme.fg(
+						"error",
+						"Error: Model stopped because it reached the maximum output token limit. The response may be incomplete.",
+					),
+					1,
+					0,
+				),
+			);
+		} else if (!this.hasToolCalls) {
 			if (this.lastMessage.stopReason === "aborted") {
 				const abortMessage =
 					this.lastMessage.errorMessage && this.lastMessage.errorMessage !== "Request was aborted"
 						? this.lastMessage.errorMessage
 						: "Operation aborted";
-				if (hasVisibleContent) {
-					this.contentContainer.addChild(new Spacer(1));
-				} else {
-					this.contentContainer.addChild(new Spacer(1));
-				}
+				this.contentContainer.addChild(new Spacer(1));
 				this.contentContainer.addChild(new Text(theme.fg("error", abortMessage), 1, 0));
 			} else if (this.lastMessage.stopReason === "error") {
 				const errorMsg = this.lastMessage.errorMessage || "Unknown error";
