@@ -21,7 +21,8 @@ function buildLabelsById(entries: SessionTreeEntry[]): Map<string, string> {
 
 function generateEntryId(byId: { has(id: string): boolean }): string {
 	for (let i = 0; i < 100; i++) {
-		const id = uuidv7().slice(0, 8);
+		// The UUIDv7 prefix is timestamp-derived, so short IDs must use its random tail.
+		const id = uuidv7().slice(-8);
 		if (!byId.has(id)) return id;
 	}
 	return uuidv7();

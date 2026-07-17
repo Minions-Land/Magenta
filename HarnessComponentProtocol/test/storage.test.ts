@@ -1,11 +1,61 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { NodeExecutionEnv } from "../_magenta/env/pi/nodejs.ts";
 import { JsonlSessionStorage, loadJsonlSessionMetadata } from "../_magenta/session/pi/jsonl-storage.ts";
 import { InMemorySessionStorage } from "../_magenta/session/pi/memory-storage.ts";
 import { type MessageEntry, ok, type SessionMetadata } from "../_magenta/types/types.ts";
 import { createAssistantMessage, createTempDir, createUserMessage } from "./session-test-utils.ts";
+
+const UUID_V7_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+type EntryIdStorage = { createEntryId(): Promise<string> };
+
+function stubUuidTails(...configuredTails: string[]) {
+	const tails = [...configuredTails];
+	const fallbackTail = tails.at(-1) ?? "00000000";
+	const getRandomValues = vi.fn((bytes: Uint8Array) => {
+		bytes.fill(0);
+		const tail = tails.shift() ?? fallbackTail;
+		bytes.set(Buffer.from(tail, "hex"), bytes.length - 4);
+		return bytes;
+	});
+	vi.stubGlobal("crypto", { getRandomValues });
+	return getRandomValues;
+}
+
+function entryWithId(id: string): MessageEntry {
+	return {
+		type: "message",
+		id,
+		parentId: null,
+		timestamp: "2026-01-01T00:00:00.000Z",
+		message: createUserMessage(id),
+	};
+}
+
+async function createEntryIdStorage(kind: "memory" | "jsonl", existingIds: string[]): Promise<EntryIdStorage> {
+	const entries = existingIds.map(entryWithId);
+	if (kind === "memory") {
+		return new InMemorySessionStorage({
+			entries,
+			metadata: { id: "session-1", createdAt: "2026-01-01T00:00:00.000Z" },
+		});
+	}
+
+	const dir = createTempDir();
+	const env = new NodeExecutionEnv({ cwd: dir });
+	const storage = await JsonlSessionStorage.create(env, join(dir, "session.jsonl"), {
+		cwd: dir,
+		sessionId: "session-1",
+	});
+	for (const entry of entries) await storage.appendEntry(entry);
+	return storage;
+}
+
+afterEach(() => {
+	vi.unstubAllGlobals();
+});
 
 describe("InMemorySessionStorage", () => {
 	it("returns configured session metadata", async () => {
@@ -295,5 +345,34 @@ describe("JsonlSessionStorage", () => {
 			path: filePath,
 			parentSessionPath: undefined,
 		});
+	});
+});
+
+describe.each(["memory", "jsonl"] as const)("%s session entry IDs", (kind) => {
+	it("uses the UUIDv7 random tail for short IDs", async () => {
+		const getRandomValues = stubUuidTails("11223344");
+		const storage = await createEntryIdStorage(kind, []);
+
+		expect(await storage.createEntryId()).toBe("11223344");
+		expect(getRandomValues).toHaveBeenCalledTimes(1);
+	});
+
+	it("retries short-ID collisions", async () => {
+		const getRandomValues = stubUuidTails("deadbeef", "cafebabe");
+		const storage = await createEntryIdStorage(kind, ["deadbeef"]);
+
+		expect(await storage.createEntryId()).toBe("cafebabe");
+		expect(getRandomValues).toHaveBeenCalledTimes(2);
+	});
+
+	it("falls back to a full UUID after 100 collisions", async () => {
+		const getRandomValues = stubUuidTails("deadbeef");
+		const storage = await createEntryIdStorage(kind, ["deadbeef"]);
+
+		const id = await storage.createEntryId();
+		expect(id).toMatch(UUID_V7_RE);
+		expect(id).toHaveLength(36);
+		expect(id.endsWith("deadbeef")).toBe(true);
+		expect(getRandomValues).toHaveBeenCalledTimes(101);
 	});
 });
