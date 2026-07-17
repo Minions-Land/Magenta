@@ -195,7 +195,7 @@ export function loadCodexAuth(): ExternalCredential[] {
 			provider: "openai",
 			apiKey: auth.tokens.access_token,
 			baseUrl: undefined, // Force official API for OAuth
-			model: undefined,   // Let Magenta choose default model
+			model: undefined, // Let Magenta choose default model
 			source: "codex",
 		});
 	}
