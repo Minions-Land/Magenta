@@ -21,6 +21,7 @@ const DEFAULT_ENTRIES = [
 ];
 
 const PRODUCT_DOC = /^(?:README\.md|docs\/)/u;
+const VERSIONED_RESEARCH_DOC = /^docs\/research\//u;
 const DELETED_DOCUMENTS = [
 	".magenta-renderkind-migration.md",
 	"COMPLETE_SUMMARY.md",
@@ -212,7 +213,9 @@ function contentChecks(relativePath, content) {
 	addMatches(FORBIDDEN_REPOSITORIES, "obsolete-repository");
 
 	if (PRODUCT_DOC.test(relativePath)) {
-		const version = content.match(/\bv?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?\b/u);
+		const version = VERSIONED_RESEARCH_DOC.test(relativePath)
+			? undefined
+			: content.match(/(?<!\d\.)\bv?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?\b(?!\.\d)/u);
 		if (version) {
 			errors.push({
 				line: lineNumberAt(content, version.index),

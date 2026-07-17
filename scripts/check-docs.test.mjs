@@ -100,6 +100,19 @@ test("reports an unterminated Mermaid fence but ignores links inside code", asyn
 	}
 });
 
+test("allows fixed versions in research evidence and does not treat IPv4 addresses as versions", async () => {
+	const env = await fixture({
+		"docs/guide.md": "# Proxy\n\nUse http://127.0.0.1:7897.\n",
+		"docs/research/history.md": "# Upstream history from v0.80.2 to v0.80.8\n",
+	});
+	try {
+		const result = await checkDocs(env.root, { entries: ["docs"] });
+		assert.deepEqual(result.errors, []);
+	} finally {
+		await env.cleanup();
+	}
+});
+
 test("rejects deleted docs, placeholders, old assets, versions, sizes, and unknown npm scripts", async () => {
 	const env = await fixture({
 		"docs/README.md": [
