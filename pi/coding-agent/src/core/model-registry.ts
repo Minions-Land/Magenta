@@ -105,6 +105,13 @@ const ChatTemplateKwargVariableSchema = Type.Object({
 });
 const ChatTemplateKwargSchema = Type.Union([ChatTemplateKwargScalarSchema, ChatTemplateKwargVariableSchema]);
 
+// Session affinity format mirrors pi-ai SessionAffinityFormat (CC-042/AI-032).
+const SessionAffinityFormatSchema = Type.Union([
+	Type.Literal("openai"),
+	Type.Literal("openai-nosession"),
+	Type.Literal("openrouter"),
+]);
+
 const OpenAICompletionsCompatSchema = Type.Object({
 	supportsStore: Type.Optional(Type.Boolean()),
 	supportsDeveloperRole: Type.Optional(Type.Boolean()),
@@ -134,12 +141,16 @@ const OpenAICompletionsCompatSchema = Type.Object({
 	openRouterRouting: Type.Optional(OpenRouterRoutingSchema),
 	vercelGatewayRouting: Type.Optional(VercelGatewayRoutingSchema),
 	supportsStrictMode: Type.Optional(Type.Boolean()),
+	sendSessionAffinityHeaders: Type.Optional(Type.Boolean()),
+	sessionAffinityFormat: Type.Optional(SessionAffinityFormatSchema),
 	supportsLongCacheRetention: Type.Optional(Type.Boolean()),
 });
 
 const OpenAIResponsesCompatSchema = Type.Object({
 	supportsDeveloperRole: Type.Optional(Type.Boolean()),
+	/** @deprecated Use sessionAffinityFormat instead. Kept as a backward-compat shim (CC-042). */
 	sendSessionIdHeader: Type.Optional(Type.Boolean()),
+	sessionAffinityFormat: Type.Optional(SessionAffinityFormatSchema),
 	supportsLongCacheRetention: Type.Optional(Type.Boolean()),
 });
 
