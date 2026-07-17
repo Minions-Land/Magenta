@@ -4160,5 +4160,49 @@ describe("Editor component", () => {
 
 			assert.strictEqual(submitted, pastedText);
 		});
+
+		it("decrements the counter and renumbers higher markers when one is deleted", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			// Register three markers: #1 #2 #3, separated by spaces.
+			editor.insertPasteMarker("Alpha");
+			editor.handleInput(" ");
+			editor.insertPasteMarker("Beta");
+			editor.handleInput(" ");
+			editor.insertPasteMarker("Gamma");
+			assert.strictEqual(editor.getText(), "[paste #1 Alpha] [paste #2 Beta] [paste #3 Gamma]");
+
+			// Move cursor to just after the second marker and backspace to delete it.
+			editor.handleInput("\x01"); // Ctrl+A -> start of line
+			editor.handleInput("\x1b[C"); // past marker #1
+			editor.handleInput("\x1b[C"); // past the space
+			editor.handleInput("\x1b[C"); // past marker #2
+			editor.handleInput("\x7f"); // delete marker #2 atomically
+
+			// The old #3 marker renumbers to #2; only its expanded payload survives.
+			assert.strictEqual(editor.getText(), "[paste #1 Alpha]  [paste #2 Gamma]");
+			const snapshot = editor.getPasteMarkerSnapshot();
+			assert.deepStrictEqual(
+				snapshot.entries.map((e) => [e.id, e.marker]),
+				[
+					[1, "[paste #1 Alpha]"],
+					[2, "[paste #2 Gamma]"],
+				],
+			);
+
+			// A new marker reuses the freed id without colliding with the renumbered one.
+			assert.deepStrictEqual(editor.insertPasteMarker("Delta"), { id: 3, marker: "[paste #3 Delta]" });
+		});
+
+		it("clears marker registrations and counter on setText", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			editor.insertPasteMarker("Image");
+			editor.insertPasteMarker("Image");
+			assert.strictEqual(editor.getPasteMarkerSnapshot().entries.length, 2);
+
+			editor.setText("fresh draft");
+			assert.deepStrictEqual(editor.getPasteMarkerSnapshot().entries, []);
+			// Numbering restarts from #1 after the draft boundary reset.
+			assert.deepStrictEqual(editor.insertPasteMarker("Image"), { id: 1, marker: "[paste #1 Image]" });
+		});
 	});
 });

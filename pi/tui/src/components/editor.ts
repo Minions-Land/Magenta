@@ -20,7 +20,14 @@ const graphemeSegmenter = getGraphemeSegmenter();
 const wordSegmenter = getWordSegmenter();
 
 /** Matches registered markers such as `[paste #1 +123 lines]` or `[paste #2 Image]`. */
-const PASTE_MARKER_SINGLE = /^\[paste #\d+(?: .+)?\]$/;
+const PASTE_MARKER_SINGLE = /^\[paste #(\d+)( [^\][\r\n]+)?\]$/;
+
+/**
+ * Global variant used to renumber all paste markers after one is deleted.
+ * The label suffix excludes brackets/newlines (see createPasteMarker validation)
+ * so the match cannot greedily span multiple markers on the same line.
+ */
+const PASTE_MARKER_REGEX = /\[paste #(\d+)( [^\][\r\n]+)?\]/g;
 
 /** Check if a segment is a paste marker (i.e. was merged by segmentWithMarkers). */
 function isPasteMarker(segment: string): boolean {
@@ -1018,6 +1025,10 @@ export class Editor implements Component, Focusable {
 		// Push undo snapshot if content differs (makes programmatic changes undoable)
 		if (this.getText() !== normalized) {
 			this.pushUndoSnapshot();
+			// Reset paste registrations at the draft boundary. The undo snapshot above
+			// preserves the previous draft's markers so undo can restore them.
+			this.state.pastes.clear();
+			this.pasteCounter = 0;
 		}
 		this.setTextInternal(normalized);
 	}
@@ -1328,13 +1339,51 @@ export class Editor implements Component, Focusable {
 			this.pushUndoSnapshot();
 
 			// Delete grapheme before cursor (handles emojis, combining characters, etc.)
-			const line = this.state.lines[this.state.cursorLine] || "";
+			let line = this.state.lines[this.state.cursorLine] || "";
 			const beforeCursor = line.slice(0, this.state.cursorCol);
 
 			// Find the last grapheme in the text before cursor
 			const graphemes = [...this.segment(beforeCursor, "grapheme")];
 			const lastGrapheme = graphemes[graphemes.length - 1];
 			const graphemeLength = lastGrapheme ? lastGrapheme.segment.length : 1;
+			const pasteMatch = lastGrapheme ? PASTE_MARKER_SINGLE.exec(lastGrapheme.segment) : null;
+
+			if (pasteMatch) {
+				// Deleting an atomic paste marker: drop its registration, decrement the
+				// counter, and renumber the remaining higher markers so ids stay dense.
+				const targetId = Number(pasteMatch[1]);
+				if (this.pasteCounter > 0) {
+					this.pasteCounter--;
+				}
+
+				// Snapshot the pre-delete registrations, then rebuild the map while
+				// rewriting the visible markers in every line.
+				const previousEntries = new Map(this.state.pastes);
+				this.state.pastes.clear();
+				this.state.lines = this.state.lines.map((ln) =>
+					ln.replace(PASTE_MARKER_REGEX, (fullMatch, idGroup, suffixGroup) => {
+						const id = Number(idGroup);
+						if (id === targetId) {
+							// The marker being deleted; leave it in place for the grapheme
+							// removal below and drop its registration.
+							return fullMatch;
+						}
+						if (id < targetId) {
+							const entry = previousEntries.get(id);
+							if (entry) this.state.pastes.set(id, entry);
+							return fullMatch;
+						}
+						// id > targetId: shift down by one to keep numbering dense.
+						const newId = id - 1;
+						const newMarker = `[paste #${newId}${suffixGroup ?? ""}]`;
+						const entry = previousEntries.get(id);
+						if (entry) this.state.pastes.set(newId, { ...entry, id: newId, marker: newMarker });
+						return newMarker;
+					}),
+				);
+				// Re-read the current line after the rewrite before slicing it.
+				line = this.state.lines[this.state.cursorLine] || "";
+			}
 
 			const before = line.slice(0, this.state.cursorCol - graphemeLength);
 			const after = line.slice(this.state.cursorCol);
