@@ -92,7 +92,7 @@ describe("openai-completions empty tools handling", () => {
 		expect("tools" in (params as object)).toBe(false);
 	});
 
-	it("does not send default max token fields", async () => {
+	it("sends context-aware default max tokens when no explicit cap is given (AI-007)", async () => {
 		const { compat: _compat, ...baseModel } = getModel("openai", "gpt-4o-mini")!;
 		const model = { ...baseModel, api: "openai-completions" } as const;
 
@@ -105,8 +105,9 @@ describe("openai-completions empty tools handling", () => {
 		).result();
 
 		const params = mockState.lastParams as { max_tokens?: number; max_completion_tokens?: number };
+		// AI-007: estimateMaxOutputTokens now computes a model-driven default from contextWindow.
 		expect(params.max_tokens).toBeUndefined();
-		expect(params.max_completion_tokens).toBeUndefined();
+		expect(params.max_completion_tokens).toBeGreaterThan(0);
 	});
 
 	it("sends explicit maxTokens", async () => {
