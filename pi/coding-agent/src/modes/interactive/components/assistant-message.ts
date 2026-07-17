@@ -48,6 +48,52 @@ export function normalizeThinkingTags(content: AssistantMessage["content"]): Ass
 }
 
 /**
+ * A logical, animated block after coalescing adjacent thinking blocks.
+ * Each logical block owns exactly one animation slot (targetTexts/displayedTexts/displayedBlocks index),
+ * so a run of consecutive `thinking` blocks renders as a single section/hidden label while still
+ * animating character-by-character.
+ */
+export interface LogicalBlock {
+	type: "text" | "thinking";
+	text: string;
+}
+
+/**
+ * Collapse normalized assistant content into logical blocks. Consecutive thinking blocks are merged
+ * into one block (joined with a blank line), and empty text/thinking blocks are dropped. The result
+ * drives both the animation state arrays and the rendered components so their indices stay aligned.
+ */
+export function toLogicalBlocks(content: AssistantMessage["content"]): LogicalBlock[] {
+	const blocks: LogicalBlock[] = [];
+	for (let i = 0; i < content.length; i++) {
+		const item = content[i];
+		if (item.type === "text") {
+			const text = item.text.trim();
+			if (text) {
+				blocks.push({ type: "text", text });
+			}
+		} else if (item.type === "thinking") {
+			const thinkingBlocks: string[] = [];
+			for (; i < content.length; i++) {
+				const thinkingContent = content[i];
+				if (thinkingContent.type !== "thinking") {
+					break;
+				}
+				const thinking = thinkingContent.thinking.trim();
+				if (thinking) {
+					thinkingBlocks.push(thinking);
+				}
+			}
+			i--;
+			if (thinkingBlocks.length > 0) {
+				blocks.push({ type: "thinking", text: thinkingBlocks.join("\n\n") });
+			}
+		}
+	}
+	return blocks;
+}
+
+/**
  * Component that renders a complete assistant message
  */
 export class AssistantMessageComponent extends Container {
@@ -64,6 +110,7 @@ export class AssistantMessageComponent extends Container {
 	private targetTexts: string[] = []; // Target text for each content block
 	private displayedTexts: string[] = []; // Currently displayed text for each block
 	private displayedBlocks: (Markdown | Text | undefined)[] = []; // Component aligned with each animated block
+	private logicalBlocks: LogicalBlock[] = []; // Coalesced logical blocks (adjacent thinking runs merged into one)
 
 	constructor(
 		message?: AssistantMessage,
@@ -132,16 +179,11 @@ export class AssistantMessageComponent extends Container {
 	updateContent(message: AssistantMessage): void {
 		this.lastMessage = message;
 		this.normalizedContent = normalizeThinkingTags(message.content);
+		// Coalesce adjacent thinking blocks so each animation slot maps to one rendered section.
+		this.logicalBlocks = toLogicalBlocks(this.normalizedContent);
 
-		// Extract target texts from message content
-		const newTargetTexts: string[] = [];
-		for (const content of this.normalizedContent) {
-			if (content.type === "text" && content.text.trim()) {
-				newTargetTexts.push(content.text.trim());
-			} else if (content.type === "thinking" && content.thinking.trim()) {
-				newTargetTexts.push(content.thinking.trim());
-			}
-		}
+		// Extract target texts from logical blocks (one slot per rendered block)
+		const newTargetTexts: string[] = this.logicalBlocks.map((block) => block.text);
 
 		// Initialize displayedTexts if needed
 		while (this.displayedTexts.length < newTargetTexts.length) {
@@ -240,23 +282,20 @@ export class AssistantMessageComponent extends Container {
 			this.contentContainer.addChild(new Spacer(1));
 		}
 
-		// Render displayed content
-		let blockIndex = 0;
-		for (let i = 0; i < this.normalizedContent.length; i++) {
-			const content = this.normalizedContent[i];
-			if (content.type === "text" && content.text.trim()) {
+		// Render displayed content. Each logical block owns one animation slot (blockIndex),
+		// so a coalesced run of thinking blocks renders as a single section.
+		for (let blockIndex = 0; blockIndex < this.logicalBlocks.length; blockIndex++) {
+			const block = this.logicalBlocks[blockIndex];
+			if (block.type === "text") {
 				const displayedText = this.displayedTexts[blockIndex] || "";
 				if (displayedText) {
 					const md = new Markdown(displayedText, this.outputPad, 0, this.markdownTheme);
 					this.contentContainer.addChild(md);
 					this.displayedBlocks[blockIndex] = md;
 				}
-				blockIndex++;
-			} else if (content.type === "thinking" && content.thinking.trim()) {
+			} else {
 				const displayedText = this.displayedTexts[blockIndex] || "";
-				const hasVisibleContentAfter = this.normalizedContent
-					.slice(i + 1)
-					.some((c) => (c.type === "text" && c.text.trim()) || (c.type === "thinking" && c.thinking.trim()));
+				const hasVisibleContentAfter = this.logicalBlocks.slice(blockIndex + 1).some((b) => b.text.trim());
 
 				if (this.hideThinkingBlock) {
 					const label = new Text(theme.italic(theme.fg("thinkingText", this.hiddenThinkingLabel)), 1, 0);
@@ -276,7 +315,6 @@ export class AssistantMessageComponent extends Container {
 						this.contentContainer.addChild(new Spacer(1));
 					}
 				}
-				blockIndex++;
 			}
 		}
 

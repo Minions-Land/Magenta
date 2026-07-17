@@ -131,6 +131,40 @@ describe("AssistantMessageComponent", () => {
 		expect(component.advance()).toBe(false);
 	});
 
+	test("coalesces adjacent thinking blocks into one hidden thinking label", () => {
+		initTheme("dark");
+
+		const component = new AssistantMessageComponent(
+			createAssistantMessage([
+				{ type: "thinking", thinking: "first thought" },
+				{ type: "thinking", thinking: "" },
+				{ type: "thinking", thinking: "second thought" },
+				{ type: "text", text: "answer" },
+			]),
+			true,
+		);
+		const rendered = stripAnsi(component.render(80).join("\n"));
+
+		expect(rendered.match(/Thinking\.\.\./g)).toHaveLength(1);
+		expect(rendered).toContain("answer");
+	});
+
+	test("coalesces adjacent thinking blocks into one visible section", () => {
+		initTheme("dark");
+
+		const component = new AssistantMessageComponent(
+			createAssistantMessage([
+				{ type: "thinking", thinking: "first thought" },
+				{ type: "thinking", thinking: "second thought" },
+			]),
+			false,
+		);
+		const rendered = stripAnsi(component.render(80).join("\n"));
+
+		expect(rendered).toContain("first thought");
+		expect(rendered).toContain("second thought");
+	});
+
 	test("uses configured output padding for text and thinking", () => {
 		initTheme("dark");
 
