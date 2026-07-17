@@ -11,8 +11,8 @@ import type { SessionStats } from "../../core/agent-session.ts";
 import type { BackgroundEventSnapshot } from "../../core/background-events.ts";
 import type { BashResult } from "../../core/bash-executor.ts";
 import type { CompactionResult } from "../../core/compaction/index.ts";
-import type { SessionEntry, SessionTreeNode } from "../../core/session-manager.ts";
 import type { ExecutionProfile } from "../../core/execution-profile.ts";
+import type { SessionEntry, SessionTreeNode } from "../../core/session-manager.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.ts";
 import type {
 	RpcCommand,
