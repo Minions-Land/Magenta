@@ -76,6 +76,26 @@ type SpawnRecord = {
 
 type SessionStatsResponseMode = "success" | "failure" | "timeout";
 
+type TeammateAgentTool = ReturnType<TeammateAgentController["createToolDefinition"]>;
+type InternalWaitTeammateAgentInputForTest = {
+	action: "wait";
+	teammateId: string;
+	assignmentId?: string;
+	waitTimeoutSeconds?: number;
+};
+type InternalWaitTeammateAgentExecutorForTest = (
+	toolCallId: string,
+	params: InternalWaitTeammateAgentInputForTest,
+	signal: Parameters<TeammateAgentTool["execute"]>[2],
+	onUpdate: Parameters<TeammateAgentTool["execute"]>[3],
+	ctx: Parameters<TeammateAgentTool["execute"]>[4],
+) => ReturnType<TeammateAgentTool["execute"]>;
+
+// The runtime keeps wait for internal callers, while the model-visible schema intentionally excludes it.
+function internalWaitExecutorForTest(tool: TeammateAgentTool): InternalWaitTeammateAgentExecutorForTest {
+	return tool.execute as unknown as InternalWaitTeammateAgentExecutorForTest;
+}
+
 function createRpcSpawn(
 	records: SpawnRecord[],
 	sequence: string[],
@@ -790,26 +810,24 @@ describe("built-in teammate_agent tool", () => {
 	});
 
 	it("waits for a structured terminal assignment receipt instead of treating idle as completion", async () => {
-		const started = await controller
-			.createToolDefinition()
-			.execute(
-				"call-start-assignment",
-				{ action: "start", label: "editor", message: "Edit owned file src/a.ts" },
-				undefined,
-				undefined,
-				createContext(tempDir),
-			);
+		const tool = controller.createToolDefinition();
+		const executeInternalWait = internalWaitExecutorForTest(tool);
+		const started = await tool.execute(
+			"call-start-assignment",
+			{ action: "start", label: "editor", message: "Edit owned file src/a.ts" },
+			undefined,
+			undefined,
+			createContext(tempDir),
+		);
 		const teammateId = started.details?.id as string;
 		const assignmentId = started.details?.assignmentId as string;
-		const timedOut = await controller
-			.createToolDefinition()
-			.execute(
-				"call-wait-now",
-				{ action: "wait", teammateId, assignmentId, waitTimeoutSeconds: 0 },
-				undefined,
-				undefined,
-				createContext(tempDir),
-			);
+		const timedOut = await executeInternalWait(
+			"call-wait-now",
+			{ action: "wait", teammateId, assignmentId, waitTimeoutSeconds: 0 },
+			undefined,
+			undefined,
+			createContext(tempDir),
+		);
 		expect(timedOut.details).toMatchObject({ assignmentStatus: "active", timedOut: true });
 
 		emitRpcEvent({
@@ -824,15 +842,13 @@ describe("built-in teammate_agent tool", () => {
 			},
 		});
 		await vi.waitFor(async () => {
-			const result = await controller
-				.createToolDefinition()
-				.execute(
-					"call-wait-terminal",
-					{ action: "wait", teammateId, assignmentId, waitTimeoutSeconds: 0 },
-					undefined,
-					undefined,
-					createContext(tempDir),
-				);
+			const result = await executeInternalWait(
+				"call-wait-terminal",
+				{ action: "wait", teammateId, assignmentId, waitTimeoutSeconds: 0 },
+				undefined,
+				undefined,
+				createContext(tempDir),
+			);
 			expect(result.details).toMatchObject({
 				assignmentStatus: "completed",
 				terminalMessageId: "terminal-message",
