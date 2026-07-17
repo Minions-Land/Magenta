@@ -65,9 +65,10 @@ const RETRYABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([
 
 	// Premature stream endings from SDKs and transports. Anthropic can throw
 	// "stream ended without ..." and "Anthropic stream ended before message_stop"
-	// (#4433); Bedrock/Smithy can throw an HTTP/2 no-response error (#3594).
+	// (#4433); OpenAI Responses can end before its terminal response event;
+	// Bedrock/Smithy can throw an HTTP/2 no-response error (#3594).
 	"ended without",
-	"stream ended before message_stop",
+	"stream ended before (?:message_stop|a terminal response event)",
 	"http2 request did not get a response",
 
 	// Provider-requested retry delay cap failures should flow through the outer

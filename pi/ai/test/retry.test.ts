@@ -56,4 +56,20 @@ describe("provider retry classification", () => {
 		).toBe(true);
 		expect(isRetryableAssistantError(fauxAssistantMessage("not an error"))).toBe(false);
 	});
+
+	it("matches premature stream endings from Anthropic and OpenAI Responses", () => {
+		expect(
+			isRetryableAssistantError(
+				fauxAssistantMessage("", { stopReason: "error", errorMessage: "Anthropic stream ended before message_stop" }),
+			),
+		).toBe(true);
+		expect(
+			isRetryableAssistantError(
+				fauxAssistantMessage("", {
+					stopReason: "error",
+					errorMessage: "OpenAI Responses stream ended before a terminal response event",
+				}),
+			),
+		).toBe(true);
+	});
 });
