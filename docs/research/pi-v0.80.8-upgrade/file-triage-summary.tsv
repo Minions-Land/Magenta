@@ -1,0 +1,14 @@
+agent	deleted_or_absent	10
+agent	diverged	11
+agent	exact_base	1
+ai	diverged	44
+ai	exact_base	61
+ai	exact_target	11
+ai	missing_target_addition	30
+coding-agent	diverged	104
+coding-agent	exact_base	58
+coding-agent	exact_target	1
+coding-agent	missing_target_addition	36
+orchestrator	missing_target_addition	17
+tui	diverged	7
+tui	exact_base	2

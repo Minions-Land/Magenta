@@ -1,0 +1,74 @@
+{
+  "fixedSnapshots": {
+    "base": "0201806adfa825ab3d7957a4267d46e5030fd357",
+    "imported": "f1da4c98bd3b8df522a0e80e2f6e6bfcdb064328",
+    "current": "e7a6e770385e2c6ca16888f7ed5a97bd38bdb39e",
+    "target": "fae7176cb9f7c4725a40d9d481d8d70b80f18086"
+  },
+  "commits": 243,
+  "commitCoverage": {
+    "EVIDENCE_LINKED": 237,
+    "MECHANICAL_OR_NA": 6
+  },
+  "versionCounts": {
+    "v0.80.3": 93,
+    "v0.80.4": 82,
+    "v0.80.5": 3,
+    "v0.80.6": 14,
+    "v0.80.7": 31,
+    "v0.80.8": 20
+  },
+  "allCommitFileChangeRecords": 1257,
+  "packageCommitFileChangeRecords": 1194,
+  "pathEndpoints": 1265,
+  "semanticItems": 178,
+  "semanticStatusCounts": {
+    "CONDITIONAL": 1,
+    "CONFLICT": 60,
+    "MISSING": 71,
+    "N/A": 12,
+    "PARTIAL": 21,
+    "PRESENT": 8,
+    "SUPERSEDED": 5
+  },
+  "semanticIdsWithDirectCommitEdge": 178,
+  "files": 393,
+  "fileRelationCounts": {
+    "deleted_or_absent": 10,
+    "diverged": 166,
+    "exact_base": 122,
+    "exact_target": 12,
+    "missing_target_addition": 83
+  },
+  "waveAssignments": {
+    "CROSSWALK": 14,
+    "EXCLUDED": 13,
+    "VERIFY": 7,
+    "W0": 1,
+    "W1": 18,
+    "W2": 11,
+    "W3": 12,
+    "W4": 41,
+    "W5": 6,
+    "W6": 18,
+    "W7": 15,
+    "W8": 5,
+    "W9": 17
+  },
+  "implementationRoles": {
+    "CANONICAL": 135,
+    "CROSSWALK": 14,
+    "EXCLUDED": 13,
+    "GOVERNANCE": 9,
+    "VERIFY": 7
+  },
+  "verifiedRenameCoordinates": [
+    "packages/ai/src/auth/oauth/anthropic.ts",
+    "packages/ai/src/auth/oauth/device-code.ts",
+    "packages/ai/src/auth/oauth/github-copilot.ts",
+    "packages/ai/src/auth/oauth/oauth-page.ts",
+    "packages/ai/src/auth/oauth/openai-codex.ts",
+    "packages/ai/src/auth/oauth/pkce.ts"
+  ],
+  "brokenReadmeLinks": 0
+}

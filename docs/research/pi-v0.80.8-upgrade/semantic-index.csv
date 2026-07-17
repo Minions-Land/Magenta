@@ -1,0 +1,179 @@
+id,domain,title,status,sourceStatus,source,line
+AG-001,agent,`Agent.prepareNextTurnWithContext`,MISSING,MISSING,agent.md,25
+AG-002,agent,legacy `Agent.prepareNextTurn` abort signal,PRESENT,PRESENT,agent.md,37
+AG-003,agent,session context entry transforms and custom projectors,MISSING,MISSING,agent.md,49
+AG-004,agent,custom JSONL session header metadata,MISSING,MISSING,agent.md,61
+AG-005,agent,root exports for storage implementations,MISSING,MISSING,agent.md,73
+AG-006,agent,serialize split-turn compaction summaries,CONFLICT,CONFLICT,agent.md,85
+AG-007,agent,reject tool calls from length-truncated assistant messages,MISSING,MISSING,agent.md,97
+AG-008,agent,normalize null message content at ingestion,MISSING,MISSING,agent.md,109
+AG-009,agent,reject non-positive and oversized shell timeouts,MISSING,MISSING,agent.md,121
+AG-010,agent,random-tail short session entry IDs,MISSING,MISSING,agent.md,133
+AG-011,agent,`max` thinking level,PRESENT,PRESENT,agent.md,145
+AG-012,agent,message-anchored dynamic tools via `addedToolNames`,MISSING,MISSING,agent.md,157
+AG-013,agent,`Usage.reasoning` propagation (cross-package dependency),MISSING,MISSING,agent.md,169
+AG-014,agent,ignore stale pre-compaction usage (cross-package dependency),PRESENT,PRESENT/DEPENDENCY,agent.md,181
+AG-015,agent,`Models` / `ModelRuntime` adaptation (cross-package architectural dependency),PARTIAL,PARTIAL,agent.md,193
+AI-001,ai,“Added Azure OpenAI Responses support for modern Microsoft Foundry endpoint URLs”,PRESENT,PRESENT,ai.md,19
+AI-002,ai,“Fixed retry classification for provider errors that explicitly tell callers to retry”,MISSING,MISSING,ai.md,21
+AI-003,ai,“Added an optional reasoning field to Usage ... subset of output”,MISSING,MISSING,ai.md,23
+AI-004,ai,“Fixed OpenAI Responses streams to preserve reasoning replay state when output items finish out of order”,MISSING,MISSING,ai.md,25
+AI-005,ai,official 曾记录 MiniMax shared-budget clamp，最终同版本已 revert,N/A,N/A,ai.md,27
+AI-006,ai,“Fixed provider HTTP errors to include response bodies instead of opaque SDK messages”,MISSING,MISSING,ai.md,29
+AI-007,ai,“Fixed streamSimple() to send a context-aware max-token cap”,MISSING,MISSING,ai.md,31
+AI-008,ai,“Codex Responses SSE response-header waits [use] configured HTTP timeout”,MISSING,MISSING,ai.md,33
+AI-009,ai,“Fixed Z.AI preserved thinking ... send thinking.clear_thinking: false”,MISSING,MISSING,ai.md,35
+AI-010,ai,Sonnet 5 metadata、Xiaomi pricing/adaptive-thinking fixes及 catalog refresh,SUPERSEDED,SUPERSEDED,ai.md,37
+AI-011,ai,Codex Node/Bun UA race、zstd SSE compression、60-minute-before rotation fixes,MISSING,MISSING,ai.md,39
+AI-012,ai,“wait before the first token poll” + “honor server-provided slow_down interval”,MISSING,MISSING,ai.md,41
+AI-013,ai,“Fixed Amazon Bedrock prompt-cache points/pricing for Claude 5”,SUPERSEDED,SUPERSEDED,ai.md,43
+AI-014,ai,“Fixed DS4 server context overflow detection for Prompt has ... tokens ...”,MISSING,MISSING,ai.md,45
+AI-015,ai,retry Cloudflare 524、Bun socket drops、gRPC ResourceExhausted,MISSING,MISSING,ai.md,47
+AI-016,ai,official 未单列；commit “remove redundant record guards”,N/A,N/A,ai.md,49
+AI-017,ai,“normalize null message content at ingestion boundaries”,MISSING,MISSING,ai.md,51
+AI-018,ai,empty tool result without image uses “(no tool output)”,MISSING,MISSING,ai.md,53
+AI-019,ai,Responses “avoid sending max_output_tokens below provider minimum”,MISSING,MISSING,ai.md,55
+AI-020,ai,GPT-5.6 metadata、Copilot Sonnet 5、Fireworks GLM、Xiaomi catalogs、Copilot 1M context、models.dev refresh,CONFLICT,PARTIAL/CONFLICT,ai.md,57
+AI-021,ai,“post-compaction output-token budgeting [ignores] stale assistant usage”,MISSING,MISSING,ai.md,59
+AI-022,ai,"“separate opt-in max ... adaptive Claude max; native xhigh only Opus 4.7/4.8, Sonnet 5, Fable 5”",CONFLICT,CONFLICT,ai.md,61
+AI-023,ai,“request-wide input-token pricing tiers ... usage cost calculation”,MISSING,MISSING,ai.md,63
+AI-024,ai,GPT-5.4/5.5 long-context pricing；GPT-5.6 direct 272K vs Codex 372K、删除 bare alias,CONFLICT,CONFLICT,ai.md,65
+AI-025,ai,“preserve thinking blocks with empty thinking text but a valid signature”,MISSING,MISSING,ai.md,67
+AI-026,ai,OpenRouter top-provider context；Fable 5 all catalogs xhigh/max,CONFLICT,PARTIAL/CONFLICT,ai.md,69
+AI-027,ai,Bedrock generic apiKey bearer；ambient AWS credentials preserved；compat filters ambient auth markers,PARTIAL,PARTIAL,ai.md,71
+AI-028,ai,“cache-friendly dynamic tool loading ... ToolResultMessage.addedToolNames ... native deferred loading”,MISSING,MISSING,ai.md,73
+AI-029,ai,Cloudflare key-only stored credential falls back to ambient account/gateway IDs,MISSING,MISSING,ai.md,75
+AI-030,ai,"“toolChoice support to OpenAI and Codex Responses, including required and named”",MISSING,MISSING,ai.md,77
+AI-031,ai,Copilot mai-code-1-flash-picker routes /responses,MISSING,MISSING,ai.md,79
+AI-032,ai,official BREAKING: remove `sendSessionIdHeader`; use `compat.sessionAffinityFormat`=`openai/openai-nosession/openrouter`; OpenRouter uses `x-session-id`; OpenCode omits session-id,CONFLICT,MISSING/CONFLICT,ai.md,81
+AI-033,ai,Bedrock reports unhandled provider stop reasons,MISSING,MISSING,ai.md,83
+AI-034,ai,Azure reasoning replay backfills encrypted_content from terminal response,MISSING,MISSING,ai.md,85
+AI-035,ai,Anthropic-compatible proxies may omit usage in message_delta,MISSING,MISSING,ai.md,87
+AI-036,ai,dynamic Radius pi-messages gateway（v0.80.8 changelog归纳为 provider-owned OAuth/catalog refresh）,MISSING,MISSING,ai.md,89
+AI-037,ai,official未单列；“type Anthropic probes by catalog providers”,N/A,N/A,ai.md,91
+AI-038,ai,official BREAKING: provider-scoped `Models.checkAuth/getAuth/login/logout`；移除 global OAuth registry/low-level flows；`AuthLoginCallbacks` -> `AuthInteraction`；provider-owned auth/availability,CONFLICT,CONFLICT,ai.md,93
+AI-039,ai,“Codex session IDs longer than 64 characters [clamped]”,MISSING,MISSING,ai.md,95
+AI-040,ai,"official BREAKING/Added: `Models.refresh(options)` all providers, errors/cancellation；`ModelsStore`；`Provider.refreshModels(context)` receives credential/store/network/signal；`force`",MISSING,MISSING,ai.md,97
+AI-041,ai,“xAI device-code OAuth login and routed Grok 4.5 through OpenAI Responses”,CONFLICT,CONFLICT,ai.md,99
+AI-042,ai,official未在 package changelog单列；commit “publish generated model catalogs to R2”,PARTIAL,PARTIAL/MISSING,ai.md,101
+AI-043,ai,Models.refresh({ force: true }) bypass freshness,MISSING,MISSING,ai.md,103
+AI-044,ai,official修复项体现在 coding-agent binary；commit “bundle OAuth flows in Bun binaries”,MISSING,MISSING,ai.md,105
+AI-045,ai,official release/changelog/version/test reporter维护,N/A,N/A,ai.md,107
+AI-046,ai,official多次 “refresh generated model catalogs” 及 release-time regeneration,CONFLICT,PARTIAL/CONFLICT,ai.md,109
+CC-001,coding-core,benchmark timing shutdown ordering,MISSING,PORT,coding-core.md,27
+CC-002,coding-core,explicit provider retry errors,MISSING,PORT,coding-core.md,31
+CC-003,coding-core,BMP disk images,MISSING,PORT,coding-core.md,35
+CC-004,coding-core,deterministic no-session IDs,PARTIAL,PARTIAL,coding-core.md,39
+CC-005,coding-core,reject invalid session files,CONFLICT,CONFLICT,coding-core.md,43
+CC-006,coding-core,default OpenAI model,PARTIAL,PARTIAL/DEPENDENCY,coding-core.md,47
+CC-007,coding-core,pre-prompt compaction stops,CONFLICT,CONFLICT,coding-core.md,51
+CC-008,coding-core,RPC tree access and package export,CONFLICT,CONFLICT/PORT,coding-core.md,55
+CC-009,coding-core,external editor setting,MISSING,PORT,coding-core.md,59
+CC-010,coding-core,extension session-name event,PARTIAL,PARTIAL/PORT,coding-core.md,63
+CC-011,coding-core,output padding,MISSING,PORT,coding-core.md,67
+CC-012,coding-core,extension tool refresh before next request,CONFLICT,CONFLICT,coding-core.md,71
+CC-013,coding-core,undici mid-stream termination,CONFLICT,CONFLICT,coding-core.md,75
+CC-014,coding-core,bash timeout validation,CONFLICT,CONFLICT,coding-core.md,81
+CC-015,coding-core,public model resolution helpers,CONFLICT,CONFLICT,coding-core.md,85
+CC-016,coding-core,persisted entry renderers,CONFLICT,CONFLICT,coding-core.md,89
+CC-017,coding-core,serialize split-turn summaries,CONFLICT,CONFLICT,coding-core.md,93
+CC-018,coding-core,auth persistence errors,PARTIAL,PARTIAL,coding-core.md,97
+CC-019,coding-core,skip unauthenticated saved default,CONFLICT,PARTIAL/CONFLICT,coding-core.md,101
+CC-020,coding-core,remove Vercel attribution headers,CONFLICT,CONFLICT,coding-core.md,105
+CC-021,coding-core,permissive edit replacement fields,CONFLICT,CONFLICT,coding-core.md,109
+CC-022,coding-core,keybinding guard cleanup,N/A,NO-OP,coding-core.md,113
+CC-023,coding-core,clear label timestamp cache,PARTIAL,PARTIAL,coding-core.md,117
+CC-024,coding-core,normalize null message content,CONFLICT,CONFLICT,coding-core.md,121
+CC-025,coding-core,project-local resource configuration,PARTIAL,PARTIAL/ADOPTED,coding-core.md,125
+CC-026,coding-core,named InlineExtension,CONFLICT,CONFLICT,coding-core.md,129
+CC-027,coding-core,before_provider_headers,CONFLICT,CONFLICT,coding-core.md,133
+CC-028,coding-core,`/login <provider>` arguments,MISSING,SUPERSEDED/PORT,coding-core.md,137
+CC-029,coding-core,modelOverrides on extension providers,CONFLICT,CONFLICT,coding-core.md,141
+CC-030,coding-core,stable Windows context traversal,CONFLICT,CONFLICT,coding-core.md,145
+CC-031,coding-core,session-id creation warning,PARTIAL,PARTIAL,coding-core.md,149
+CC-032,coding-core,reload descriptions,CONFLICT,CONFLICT,coding-core.md,153
+CC-033,coding-core,settled agent lifecycle,CONFLICT,CONFLICT,coding-core.md,157
+CC-034,coding-core,context-visible custom messages in compaction,CONFLICT,CONFLICT,coding-core.md,161
+CC-035,coding-core,prompt cache miss notices,CONFLICT,CONFLICT,coding-core.md,165
+CC-036,coding-core,`max` thinking level,PRESENT,ADOPTED,coding-core.md,171
+CC-037,coding-core,input-based pricing tiers,MISSING,PORT/DEPENDENCY,coding-core.md,175
+CC-038,coding-core,`~` expansion for shellPath,MISSING,PORT,coding-core.md,179
+CC-039,coding-core,post-compaction output budget,CONFLICT,CONFLICT/DEPENDENCY,coding-core.md,183
+CC-040,coding-core,message copy and clipboard fallback,MISSING,PORT,coding-core.md,189
+CC-041,coding-core,cache-friendly message-anchored dynamic tools,CONFLICT,CONFLICT,coding-core.md,193
+CC-042,coding-core,session affinity format,MISSING,PORT/DEPENDENCY,coding-core.md,197
+CC-043,coding-core,branch summaries with ambient auth,CONFLICT,CONFLICT,coding-core.md,201
+CC-044,coding-core,npm removal with peer conflicts,PARTIAL,PARTIAL/ADOPTED,coding-core.md,205
+CC-045,coding-core,Radius gateway,CONFLICT,CONFLICT/PORT,coding-core.md,209
+CC-046,coding-core,stable system prompt cache across dates,CONFLICT,PARTIAL/CONFLICT,coding-core.md,213
+CC-047,coding-core,Bedrock API-key login,MISSING,DEPENDENCY,coding-core.md,217
+CC-048,coding-core,async ModelRuntime SDK boundary,CONFLICT,CONFLICT,coding-core.md,223
+CC-049,coding-core,provider-owned auth and `/login` discovery,CONFLICT,CONFLICT,coding-core.md,227
+CC-050,coding-core,final request auth/header assembly,CONFLICT,CONFLICT,coding-core.md,231
+CC-051,coding-core,model composition and async refresh contract,CONFLICT,CONFLICT,coding-core.md,235
+CC-052,coding-core,"models-store, remote catalogs, Radius migration",CONFLICT,CONFLICT/PORT,coding-core.md,239
+CC-053,coding-core,extension refreshModels and legacy modifyModels,CONFLICT,CONFLICT,coding-core.md,243
+CC-054,coding-core,live selector refresh,CONFLICT,CONFLICT,coding-core.md,247
+CC-055,coding-core,`pi update --models`,CONFLICT,CONFLICT/PORT,coding-core.md,251
+CC-056,coding-core,xAI device OAuth/Grok 4.5,MISSING,DEPENDENCY,coding-core.md,255
+CC-057,coding-core,Bun binary OAuth resources,CONFLICT,CONFLICT,coding-core.md,259
+CC-058,coding-core,catalog refresh hardening,MISSING,PORT,coding-core.md,263
+CC-059,coding-core,removed redundant runtime projections,CONFLICT,CONFLICT,coding-core.md,267
+CU-001,coding-ui,`outputPad` 全 transcript 输出间距,MISSING,MISSING,coding-ui.md,23
+CU-002,coding-ui,`externalEditor` setting 与跨平台 fallback,PARTIAL,PARTIAL,coding-ui.md,32
+CU-003,coding-ui,RPC `get_entries` / `get_tree`,MISSING,PRESENT/MISSING,coding-ui.md,41
+CU-004,coding-ui,package `./rpc-entry`,MISSING,MISSING,coding-ui.md,50
+CU-005,coding-ui,fully-settled lifecycle: `agent_settled`,MISSING,MISSING,coding-ui.md,59
+CU-006,coding-ui,prompt cache miss notices,PARTIAL,PARTIAL,coding-ui.md,68
+CU-007,coding-ui,project-local resource configuration,PARTIAL,PRESENT/PARTIAL,coding-ui.md,77
+CU-008,coding-ui,Ctrl+X copy last/selected message,MISSING,MISSING,coding-ui.md,86
+CU-009,coding-ui,Ctrl+V image-first、text fallback,MISSING,MISSING,coding-ui.md,95
+CU-010,coding-ui,从默认 prompt 移除 current date,CONFLICT,CONFLICT,coding-ui.md,104
+CU-011,coding-ui,ModelRuntime / auth / SDK breaking migration,CONFLICT,MISSING/CONFLICT,coding-ui.md,113
+CU-012,coding-ui,live model catalog refresh 与 `update --models`,MISSING,MISSING,coding-ui.md,122
+CU-013,coding-ui,`max` thinking 与 `thinkingMax` theme,PARTIAL,PARTIAL,coding-ui.md,131
+CU-014,coding-ui,相邻 thinking blocks 合并,MISSING,MISSING,coding-ui.md,140
+CU-015,coding-ui,login/auth UI 与 provider 参数,PARTIAL,PARTIAL,coding-ui.md,149
+CU-016,coding-ui,`shellPath` 的 `~` 展开,MISSING,MISSING,coding-ui.md,158
+CU-017,coding-ui,bash timeout 输入验证,MISSING,MISSING,coding-ui.md,167
+CU-018,coding-ui,edit replacement 允许额外字段,CONFLICT,CONFLICT,coding-ui.md,176
+CU-019,coding-ui,persisted custom entry renderer,MISSING,MISSING,coding-ui.md,185
+CU-020,coding-ui,TUI status indicators、输出顺序与 stop-reason UX,PARTIAL,PARTIAL,coding-ui.md,194
+CU-021,coding-ui,session/CLI 安全与自动化修复,PARTIAL,PARTIAL,coding-ui.md,203
+CU-022,coding-ui,prompt/tool refresh 与 settled queue正确性,CONFLICT,CONFLICT,coding-ui.md,212
+CU-023,coding-ui,extension/SDK 新接口,PARTIAL,PARTIAL,coding-ui.md,221
+CU-024,coding-ui,model overrides/default selection/刷新辅助修复,PARTIAL,PARTIAL,coding-ui.md,229
+CU-025,coding-ui,BMP disk images,MISSING,MISSING,coding-ui.md,237
+CU-026,coding-ui,bash/edit 当前 Magenta UX 保护项,SUPERSEDED,SUPERSEDED,coding-ui.md,246
+HC-001,hcp,ModelRuntime/auth/provider composition,CONFLICT,GO，整簇迁移；旧 registry 降为 facade，不并存,hcp-conflicts.md,45
+HC-002,hcp,before_provider_headers 与请求 header transform,CONFLICT,GO，保留在 Pi 请求路径；HCP 不进 hot path,hcp-conflicts.md,46
+HC-003,hcp,message-anchored deferred tools + same-run active tool refresh,CONFLICT,GO，Pi 语义移植；禁止动态重装 HCP,hcp-conflicts.md,47
+HC-004,hcp,session context projectors、header metadata、short UUID fix,CONFLICT,GO，先更新 `_magenta/session`；host facade 只适配，不复制 owner,hcp-conflicts.md,48
+HC-005,hcp,compaction custom-message accounting、split-turn serialization、pre-prompt no-continue,CONFLICT,GO，语义移植至 HCP；保留 Magenta mid-loop barrier,hcp-conflicts.md,49
+HC-006,hcp,experimental persistent orchestrator package,SUPERSEDED,STOP 默认导入；可在主升级后独立 Pi pilot,hcp-conflicts.md,50
+HC-007,hcp,TUI normalization/key parsing/status/message rendering,CONFLICT,GO，按行为/测试 cherry-pick；拒绝整文件覆盖,hcp-conflicts.md,51
+HC-008,hcp,OAuth binary bundling、catalog refresh、install lock、Bun/build changes,CONFLICT,GO 部分；保留 Magenta toolchain，移植 bundle/catalog 能力,hcp-conflicts.md,52
+HC-009,hcp,HCP assembly compatibility across all batches,CONFLICT,硬门：默认 assembly 无新增角色/表/hot-path middleware,hcp-conflicts.md,53
+MX-001,misc,Question extension executes multiple questions sequentially,MISSING,MISSING,parent-review,
+MX-002,misc,pnpm self-update cache prune hint,MISSING,MISSING,parent-review,
+MX-003,misc,Fork selector rejects duplicate selection,MISSING,MISSING,parent-review,
+MX-004,misc,Restore Windows terminal title after package update check,MISSING,MISSING,parent-review,
+TR-001,tui-repo,Preserve source backslash escapes in rendered user messages,CONFLICT,CONFLICT/PORT,tui-repo.md,34
+TR-002,tui-repo,Clean paste-marker state on deletion and editor reset,CONFLICT,ADAPT,tui-repo.md,45
+TR-003,tui-repo,Parse legacy Alt-prefixed printable symbols,CONFLICT,CONFLICT/PORT,tui-repo.md,59
+TR-004,tui-repo,Normalize visible tabs before terminal differential output,MISSING,PORT,tui-repo.md,70
+TR-005,tui-repo,Quiet dot reporters for package tests,N/A,N/A,tui-repo.md,81
+TR-006,tui-repo,Experimental `@earendil-works/pi-orchestrator`,SUPERSEDED,SUPERSEDED/N/A,tui-repo.md,94
+TR-007,tui-repo,Visible release asset directory and relaxed generated-diff assertion,PRESENT,ALREADY,tui-repo.md,125
+TR-008,tui-repo,Remove OpenClaw gate,N/A,N/A,tui-repo.md,134
+TR-009,tui-repo,Generated installer lock release artifacts,N/A,N/A/ALREADY,tui-repo.md,141
+TR-010,tui-repo,Restrict CI bot gate bypasses,N/A,N/A,tui-repo.md,149
+TR-011,tui-repo,Automated issue-analysis workflow and session import repro,N/A,N/A,tui-repo.md,158
+TR-012,tui-repo,Include native clipboard binary at the path expected by Bun release,MISSING,PORT,tui-repo.md,167
+TR-013,tui-repo,Gate local/source release on full tests,MISSING,PORT,tui-repo.md,177
+TR-014,tui-repo,Bun 1.3.14 for release binaries,PRESENT,ALREADY,tui-repo.md,186
+TR-015,tui-repo,Publish generated model catalogs to R2,CONDITIONAL,CONDITIONAL,tui-repo.md,193
+TR-016,tui-repo,`undici` vulnerability refresh in Gondolin example dependency,PRESENT,ALREADY,tui-repo.md,202
+TR-017,tui-repo,"Mechanical versions, lock drift, changelog cycle and release metadata",N/A,N/A,tui-repo.md,209
+TR-018,tui-repo,Isolate Radius/gateway/experimental environment during tests,PARTIAL,PARTIAL/N/A/PORT,tui-repo.md,218
+TR-019,tui-repo,Contributor approval metadata,N/A,N/A,tui-repo.md,226
