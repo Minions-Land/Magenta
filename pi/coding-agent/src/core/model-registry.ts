@@ -157,6 +157,30 @@ const ProviderCompatSchema = Type.Union([
 	AnthropicMessagesCompatSchema,
 ]);
 
+// ModelCostRates mirrors pi-ai for tiered pricing (AI-023/CC-037)
+const ModelCostRatesSchema = Type.Object({
+	input: Type.Number(),
+	output: Type.Number(),
+	cacheRead: Type.Number(),
+	cacheWrite: Type.Number(),
+});
+
+// ModelCost union: flat (backward compat) or tiered volume-based (AI-023/CC-037)
+const ModelCostSchema = Type.Union([
+	Type.Object({
+		input: Type.Number(),
+		output: Type.Number(),
+		cacheRead: Type.Number(),
+		cacheWrite: Type.Number(),
+	}),
+	Type.Object({
+		tiers: Type.Object({
+			default: ModelCostRatesSchema,
+			scale: ModelCostRatesSchema,
+		}),
+	}),
+]);
+
 // Schema for custom model definition
 // Most fields are optional with sensible defaults for local models (Ollama, LM Studio, etc.)
 const ModelDefinitionSchema = Type.Object({
@@ -167,14 +191,7 @@ const ModelDefinitionSchema = Type.Object({
 	reasoning: Type.Optional(Type.Boolean()),
 	thinkingLevelMap: Type.Optional(ThinkingLevelMapSchema),
 	input: Type.Optional(Type.Array(Type.Union([Type.Literal("text"), Type.Literal("image")]))),
-	cost: Type.Optional(
-		Type.Object({
-			input: Type.Number(),
-			output: Type.Number(),
-			cacheRead: Type.Number(),
-			cacheWrite: Type.Number(),
-		}),
-	),
+	cost: Type.Optional(ModelCostSchema),
 	contextWindow: Type.Optional(Type.Number()),
 	maxTokens: Type.Optional(Type.Number()),
 	headers: Type.Optional(Type.Record(Type.String(), Type.String())),
@@ -187,13 +204,22 @@ const ModelOverrideSchema = Type.Object({
 	reasoning: Type.Optional(Type.Boolean()),
 	thinkingLevelMap: Type.Optional(ThinkingLevelMapSchema),
 	input: Type.Optional(Type.Array(Type.Union([Type.Literal("text"), Type.Literal("image")]))),
+	// Override cost: partial flat (merged per-field) or full tiered (replaces) (AI-023/CC-037)
 	cost: Type.Optional(
-		Type.Object({
-			input: Type.Optional(Type.Number()),
-			output: Type.Optional(Type.Number()),
-			cacheRead: Type.Optional(Type.Number()),
-			cacheWrite: Type.Optional(Type.Number()),
-		}),
+		Type.Union([
+			Type.Object({
+				input: Type.Optional(Type.Number()),
+				output: Type.Optional(Type.Number()),
+				cacheRead: Type.Optional(Type.Number()),
+				cacheWrite: Type.Optional(Type.Number()),
+			}),
+			Type.Object({
+				tiers: Type.Object({
+					default: ModelCostRatesSchema,
+					scale: ModelCostRatesSchema,
+				}),
+			}),
+		]),
 	),
 	contextWindow: Type.Optional(Type.Number()),
 	maxTokens: Type.Optional(Type.Number()),
@@ -315,8 +341,9 @@ function mergeCompat(
 /**
  * Deep merge a model override into a model.
  * Handles nested objects (cost, compat) by merging rather than replacing.
+ * Exported for testing.
  */
-function applyModelOverride(model: Model<Api>, override: ModelOverride): Model<Api> {
+export function applyModelOverride(model: Model<Api>, override: ModelOverride): Model<Api> {
 	const result = { ...model };
 
 	// Simple field overrides
@@ -329,14 +356,32 @@ function applyModelOverride(model: Model<Api>, override: ModelOverride): Model<A
 	if (override.contextWindow !== undefined) result.contextWindow = override.contextWindow;
 	if (override.maxTokens !== undefined) result.maxTokens = override.maxTokens;
 
-	// Merge cost (partial override)
+	// Merge cost: tiered replaces, partial flat merges per-field (AI-023/CC-037)
 	if (override.cost) {
-		result.cost = {
-			input: override.cost.input ?? model.cost.input,
-			output: override.cost.output ?? model.cost.output,
-			cacheRead: override.cost.cacheRead ?? model.cost.cacheRead,
-			cacheWrite: override.cost.cacheWrite ?? model.cost.cacheWrite,
-		};
+		if ("tiers" in override.cost) {
+			// Override supplies full tiered: replace entirely
+			result.cost = override.cost;
+		} else {
+			// Override supplies partial flat: merge fields
+			if ("tiers" in model.cost) {
+				// Base is tiered, override is flat: treat flat as partial update to default tier
+				const defaultRates = model.cost.tiers.default;
+				result.cost = {
+					input: override.cost.input ?? defaultRates.input,
+					output: override.cost.output ?? defaultRates.output,
+					cacheRead: override.cost.cacheRead ?? defaultRates.cacheRead,
+					cacheWrite: override.cost.cacheWrite ?? defaultRates.cacheWrite,
+				};
+			} else {
+				// Base is flat, override is flat: merge per-field
+				result.cost = {
+					input: override.cost.input ?? model.cost.input,
+					output: override.cost.output ?? model.cost.output,
+					cacheRead: override.cost.cacheRead ?? model.cost.cacheRead,
+					cacheWrite: override.cost.cacheWrite ?? model.cost.cacheWrite,
+				};
+			}
+		}
 	}
 
 	// Deep merge compat
