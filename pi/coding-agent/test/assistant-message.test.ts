@@ -5,7 +5,9 @@ import {
 	AssistantMessageComponent,
 	normalizeThinkingTags,
 } from "../src/modes/interactive/components/assistant-message.ts";
+import { UserMessageComponent } from "../src/modes/interactive/components/user-message.ts";
 import { getMarkdownTheme, initTheme } from "../src/modes/interactive/theme/theme.ts";
+import { stripAnsi } from "../src/utils/ansi.ts";
 
 const OSC133_ZONE_START = "\x1b]133;A\x07";
 const OSC133_ZONE_END = "\x1b]133;B\x07";
@@ -127,6 +129,64 @@ describe("AssistantMessageComponent", () => {
 			activeBlock = currentBlock;
 		}
 		expect(component.advance()).toBe(false);
+	});
+
+	test("uses configured output padding for text and thinking", () => {
+		initTheme("dark");
+
+		const component = new AssistantMessageComponent(
+			createAssistantMessage([
+				{ type: "text", text: "hello" },
+				{ type: "thinking", thinking: "reasoning" },
+			]),
+			false,
+			undefined,
+			"Thinking...",
+			1,
+		);
+		const lines = component.render(80).map((line) => stripAnsi(line));
+
+		expect(lines.some((line) => line.includes(" hello"))).toBe(true);
+		expect(lines.some((line) => line.includes(" reasoning"))).toBe(true);
+
+		component.setOutputPad(0);
+		const updatedLines = component.render(80).map((line) => stripAnsi(line));
+		expect(updatedLines.some((line) => line.startsWith("hello"))).toBe(true);
+		expect(updatedLines.some((line) => line.startsWith("reasoning"))).toBe(true);
+	});
+});
+
+describe("UserMessageComponent output padding", () => {
+	test("uses configured output padding", () => {
+		initTheme("dark");
+
+		const paddedComponent = new UserMessageComponent("hello", undefined, 1);
+		const paddedLines = paddedComponent.render(40).map((line) => stripAnsi(line));
+		expect(paddedLines.some((line) => line.startsWith(" hello"))).toBe(true);
+
+		const unpaddedComponent = new UserMessageComponent("hello", undefined, 0);
+		const unpaddedLines = unpaddedComponent.render(40).map((line) => stripAnsi(line));
+		expect(unpaddedLines.some((line) => line.startsWith("hello"))).toBe(true);
+	});
+
+	test("setOutputPad rebuilds with new padding", () => {
+		initTheme("dark");
+
+		const component = new UserMessageComponent("hello", undefined, 1);
+		expect(
+			component
+				.render(40)
+				.map((line) => stripAnsi(line))
+				.some((line) => line.startsWith(" hello")),
+		).toBe(true);
+
+		component.setOutputPad(0);
+		expect(
+			component
+				.render(40)
+				.map((line) => stripAnsi(line))
+				.some((line) => line.startsWith("hello")),
+		).toBe(true);
 	});
 });
 

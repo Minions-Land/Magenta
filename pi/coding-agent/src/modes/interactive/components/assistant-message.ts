@@ -55,6 +55,7 @@ export class AssistantMessageComponent extends Container {
 	private hideThinkingBlock: boolean;
 	private markdownTheme: MarkdownTheme;
 	private hiddenThinkingLabel: string;
+	private outputPad: number;
 	private lastMessage?: AssistantMessage;
 	private normalizedContent: AssistantMessage["content"] = [];
 	private hasToolCalls = false;
@@ -69,12 +70,14 @@ export class AssistantMessageComponent extends Container {
 		hideThinkingBlock = false,
 		markdownTheme: MarkdownTheme = getMarkdownTheme(),
 		hiddenThinkingLabel = "Thinking...",
+		outputPad = 1,
 	) {
 		super();
 
 		this.hideThinkingBlock = hideThinkingBlock;
 		this.markdownTheme = markdownTheme;
 		this.hiddenThinkingLabel = hiddenThinkingLabel;
+		this.outputPad = outputPad;
 
 		// Container for text/thinking content
 		this.contentContainer = new Container();
@@ -103,6 +106,13 @@ export class AssistantMessageComponent extends Container {
 
 	setHiddenThinkingLabel(label: string): void {
 		this.hiddenThinkingLabel = label;
+		if (this.lastMessage) {
+			this.updateContent(this.lastMessage);
+		}
+	}
+
+	setOutputPad(padding: number): void {
+		this.outputPad = padding;
 		if (this.lastMessage) {
 			this.updateContent(this.lastMessage);
 		}
@@ -237,7 +247,7 @@ export class AssistantMessageComponent extends Container {
 			if (content.type === "text" && content.text.trim()) {
 				const displayedText = this.displayedTexts[blockIndex] || "";
 				if (displayedText) {
-					const md = new Markdown(displayedText, 1, 0, this.markdownTheme);
+					const md = new Markdown(displayedText, this.outputPad, 0, this.markdownTheme);
 					this.contentContainer.addChild(md);
 					this.displayedBlocks[blockIndex] = md;
 				}
@@ -256,7 +266,7 @@ export class AssistantMessageComponent extends Container {
 						this.contentContainer.addChild(new Spacer(1));
 					}
 				} else if (displayedText) {
-					const md = new Markdown(displayedText, 1, 0, this.markdownTheme, {
+					const md = new Markdown(displayedText, this.outputPad, 0, this.markdownTheme, {
 						color: (text: string) => theme.fg("thinkingText", text),
 						italic: true,
 					});
