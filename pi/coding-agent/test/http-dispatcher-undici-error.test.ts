@@ -11,28 +11,31 @@ const undiciState = vi.hoisted(() => ({
 vi.mock("undici", async () => {
 	const { EventEmitter: NodeEventEmitter } = await import("node:events");
 	class MockDispatcher extends NodeEventEmitter {
-		constructor(public options: Record<string, unknown> = {}) {
+		options: Record<string, unknown>;
+
+		constructor(options: Record<string, unknown> = {}) {
 			super();
+			this.options = options;
 		}
 		request = vi.fn(async () => {
 			throw new Error("request failed");
 		});
 	}
 	class Client extends MockDispatcher {
-		constructor(
-			public origin: string | URL,
-			options: Record<string, unknown>,
-		) {
+		origin: string | URL;
+
+		constructor(origin: string | URL, options: Record<string, unknown>) {
 			super(options);
+			this.origin = origin;
 			undiciState.clients.push(this);
 		}
 	}
 	class Pool extends MockDispatcher {
-		constructor(
-			public origin: string | URL,
-			options: Record<string, unknown>,
-		) {
+		origin: string | URL;
+
+		constructor(origin: string | URL, options: Record<string, unknown>) {
 			super(options);
+			this.origin = origin;
 			undiciState.pools.push(this);
 		}
 	}
