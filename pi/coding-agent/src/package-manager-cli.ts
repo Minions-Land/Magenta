@@ -2,7 +2,7 @@ import chalk from "chalk";
 import { selectConfig } from "./cli/config-selector.ts";
 import { createProjectTrustContext } from "./cli/project-trust.ts";
 import { APP_BINARY_NAME, APP_NAME, CONFIG_DIR_NAME, getAgentDir } from "./config.ts";
-import type { ExtensionFactory } from "./core/extensions/types.ts";
+import type { InlineExtension } from "./core/extensions/types.ts";
 import { DefaultPackageManager } from "./core/package-manager.ts";
 import { type AppMode, resolveProjectTrusted } from "./core/project-trust.ts";
 import { DefaultResourceLoader } from "./core/resource-loader.ts";
@@ -340,7 +340,7 @@ function parseProjectTrustOverride(args: readonly string[]): boolean | undefined
 }
 
 export interface PackageCommandRuntimeOptions {
-	extensionFactories?: ExtensionFactory[];
+	extensionFactories?: InlineExtension[];
 }
 
 interface CommandSettingsResult {
@@ -363,7 +363,7 @@ async function createCommandSettingsManager(options: {
 	agentDir: string;
 	projectTrustOverride?: boolean;
 	useSavedProjectTrustOnly?: boolean;
-	extensionFactories?: ExtensionFactory[];
+	extensionFactories?: InlineExtension[];
 }): Promise<CommandSettingsResult> {
 	const settingsManager = SettingsManager.create(options.cwd, options.agentDir, { projectTrusted: false });
 	const projectTrustWarnings: string[] = [];

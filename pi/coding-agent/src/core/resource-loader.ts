@@ -35,7 +35,7 @@ import {
 	loadExtensionFromFactory,
 	loadExtensionsCached,
 } from "./extensions/loader.ts";
-import type { Extension, ExtensionFactory, ExtensionRuntime, LoadExtensionsResult } from "./extensions/types.ts";
+import type { Extension, ExtensionRuntime, InlineExtension, LoadExtensionsResult } from "./extensions/types.ts";
 import { loadSkills } from "./harness-skills-adapter.ts";
 import { DefaultPackageManager, type PathMetadata, type ResolvedResource } from "./package-manager.ts";
 import type { PromptTemplate } from "./prompt-templates.ts";
@@ -286,7 +286,7 @@ export interface DefaultResourceLoaderOptions {
 	harnessPackages?: string[];
 	/** Root containing Harness Package directories. Default: `<cwd>/packages`. */
 	harnessPackagesRoot?: string;
-	extensionFactories?: ExtensionFactory[];
+	extensionFactories?: InlineExtension[];
 	noExtensions?: boolean;
 	noSkills?: boolean;
 	noPromptTemplates?: boolean;
@@ -333,7 +333,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 	private additionalThemePaths: string[];
 	private harnessPackages: string[];
 	private harnessPackagesRoot: string;
-	private extensionFactories: ExtensionFactory[];
+	private extensionFactories: InlineExtension[];
 	private noExtensions: boolean;
 	private noSkills: boolean;
 	private noPromptTemplates: boolean;
@@ -1644,8 +1644,10 @@ export class DefaultResourceLoader implements ResourceLoader {
 		const extensions: Extension[] = [];
 		const errors: Array<{ path: string; error: string }> = [];
 
-		for (const [index, factory] of this.extensionFactories.entries()) {
-			const extensionPath = `<inline:${index + 1}>`;
+		for (const [index, input] of this.extensionFactories.entries()) {
+			const isNamed = typeof input !== "function";
+			const factory = isNamed ? input.factory : input;
+			const extensionPath = `<inline:${isNamed ? input.name : index + 1}>`;
 			try {
 				const extension = await loadExtensionFromFactory(factory, this.cwd, this.eventBus, runtime, extensionPath);
 				extensions.push(extension);
