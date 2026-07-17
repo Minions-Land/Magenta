@@ -175,7 +175,6 @@ export function loadProjectContextFiles(options: {
 	const ancestorContextFiles: Array<{ path: string; content: string }> = [];
 
 	let currentDir = resolvedCwd;
-	const root = resolve("/");
 
 	while (true) {
 		const contextFile = loadContextFileFromDir(currentDir);
@@ -184,9 +183,10 @@ export function loadProjectContextFiles(options: {
 			seenPaths.add(contextFile.path);
 		}
 
-		if (currentDir === root) break;
-
-		const parentDir = resolve(currentDir, "..");
+		// dirname() terminates at the filesystem/drive/UNC root on every platform
+		// (dirname(root) === root), avoiding the Windows hang caused by comparing
+		// against a resolve("/") root that never matched a drive-qualified path.
+		const parentDir = dirname(currentDir);
 		if (parentDir === currentDir) break;
 		currentDir = parentDir;
 	}
