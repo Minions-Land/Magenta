@@ -1605,6 +1605,13 @@ async function loadModelsDevData(): Promise<ModelsDevLoadResult> {
 					}
 				}
 
+				// OpenCode's OpenAI Responses zen endpoint rejects the `session_id`
+				// affinity header. Omit it while still sending `x-client-request-id`.
+				// See upstream #6625 / #6645.
+				if (variant.provider === "opencode" && api === "openai-responses") {
+					compat = { ...(compat ?? {}), sessionAffinityFormat: "openai-nosession" };
+				}
+
 				models.push({
 					id: modelId,
 					name: m.name || modelId,

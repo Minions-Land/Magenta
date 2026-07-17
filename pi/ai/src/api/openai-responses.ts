@@ -10,6 +10,7 @@ import type {
 	OpenAIResponsesCompat,
 	ProviderEnv,
 	ProviderHeaders,
+	SessionAffinityFormat,
 	SimpleStreamOptions,
 	StreamFunction,
 	StreamOptions,
@@ -56,6 +57,24 @@ function getClientApiKey(provider: string, apiKey: string | undefined, headers: 
 	throw new Error(`No API key for provider: ${provider}`);
 }
 
+function detectSessionAffinityFormat(
+	model: Pick<Model<"openai-responses">, "provider" | "baseUrl">,
+): SessionAffinityFormat {
+	return model.provider === "openrouter" || model.baseUrl.includes("openrouter.ai") ? "openrouter" : "openai";
+}
+
+// Resolve the effective session-affinity format, honoring the deprecated
+// sendSessionIdHeader shim until the W9 catalog regen removes it: an explicit
+// sessionAffinityFormat wins; otherwise a legacy sendSessionIdHeader:false maps
+// to "openai-nosession" and true maps to "openai"; absent both, auto-detect.
+function resolveSessionAffinityFormat(model: Model<"openai-responses">): SessionAffinityFormat {
+	if (model.compat?.sessionAffinityFormat) return model.compat.sessionAffinityFormat;
+	if (model.compat?.sendSessionIdHeader !== undefined) {
+		return model.compat.sendSessionIdHeader ? "openai" : "openai-nosession";
+	}
+	return detectSessionAffinityFormat(model);
+}
+
 /**
  * Resolve cache retention preference.
  * Defaults to "short" and uses PI_CACHE_RETENTION for backward compatibility.
@@ -71,9 +90,12 @@ function resolveCacheRetention(cacheRetention?: CacheRetention, env?: ProviderEn
 }
 
 function getCompat(model: Model<"openai-responses">): Required<OpenAIResponsesCompat> {
+	const sessionAffinityFormat = resolveSessionAffinityFormat(model);
 	return {
 		supportsDeveloperRole: model.compat?.supportsDeveloperRole ?? true,
-		sendSessionIdHeader: model.compat?.sendSessionIdHeader ?? true,
+		// Deprecated shim, kept in sync with the resolved format for backward compat.
+		sendSessionIdHeader: model.compat?.sendSessionIdHeader ?? sessionAffinityFormat === "openai",
+		sessionAffinityFormat,
 		supportsLongCacheRetention: model.compat?.supportsLongCacheRetention ?? true,
 	};
 }
@@ -193,6 +215,7 @@ export interface OpenAIResponsesOptions extends StreamOptions {
 	reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 	reasoningSummary?: "auto" | "detailed" | "concise" | null;
 	serviceTier?: ResponseCreateParamsStreaming["service_tier"];
+	toolChoice?: ResponseCreateParamsStreaming["tool_choice"];
 }
 
 /**
@@ -316,10 +339,14 @@ function createClient(
 	}
 
 	if (sessionId) {
-		if (compat.sendSessionIdHeader) {
-			headers.session_id = sessionId;
+		if (compat.sessionAffinityFormat === "openrouter") {
+			headers["x-session-id"] = sessionId;
+		} else {
+			if (compat.sessionAffinityFormat === "openai") {
+				headers.session_id = sessionId;
+			}
+			headers["x-client-request-id"] = sessionId;
 		}
-		headers["x-client-request-id"] = sessionId;
 	}
 
 	// Merge options headers last so they can override defaults
@@ -366,6 +393,10 @@ function buildParams(model: Model<"openai-responses">, context: Context, options
 
 	if (context.tools && context.tools.length > 0) {
 		params.tools = convertResponsesTools(context.tools);
+	}
+
+	if (options?.toolChoice !== undefined) {
+		params.tool_choice = options.toolChoice;
 	}
 
 	if (model.reasoning) {
