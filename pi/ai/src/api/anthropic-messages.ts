@@ -1330,20 +1330,30 @@ function convertTools(
 	if (!tools) return [];
 
 	return tools.map((tool, index) => {
-		const schema = tool.parameters as { properties?: unknown; required?: string[] };
+		// Anthropic accepts JSON Schema directly. Preserve every string-keyed schema
+		// keyword and nested definition while removing TypeBox's runtime symbol keys.
+		const inputSchema = stripSchemaSymbolKeys(tool.parameters) as Anthropic.Messages.Tool.InputSchema;
 
 		return {
 			name: isOAuthToken ? toClaudeCodeName(tool.name) : tool.name,
 			description: tool.description,
 			...(supportsEagerToolInputStreaming ? { eager_input_streaming: true } : {}),
-			input_schema: {
-				type: "object",
-				properties: schema.properties ?? {},
-				required: schema.required ?? [],
-			},
+			input_schema: inputSchema,
 			...(cacheControl && index === tools.length - 1 ? { cache_control: cacheControl } : {}),
 		};
 	});
+}
+
+function stripSchemaSymbolKeys(value: unknown): unknown {
+	if (Array.isArray(value)) return value.map((item) => stripSchemaSymbolKeys(item));
+	if (value && typeof value === "object") {
+		const result: Record<string, unknown> = {};
+		for (const [key, entry] of Object.entries(value)) {
+			result[key] = stripSchemaSymbolKeys(entry);
+		}
+		return result;
+	}
+	return value;
 }
 
 function mapStopReason(
