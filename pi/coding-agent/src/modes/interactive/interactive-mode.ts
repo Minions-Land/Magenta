@@ -664,6 +664,7 @@ export class InteractiveMode {
 		const slashCommands: SlashCommand[] = BUILTIN_SLASH_COMMANDS.map((command) => ({
 			name: command.name,
 			description: command.description,
+			...(command.argumentHint && { argumentHint: command.argumentHint }),
 		}));
 
 		const modelCommand = slashCommands.find((command) => command.name === "model");
@@ -694,6 +695,35 @@ export class InteractiveMode {
 					value: item.label,
 					label: item.id,
 					description: item.provider,
+				}));
+			};
+		}
+
+		// CC-028: /login <provider> autocomplete against provider-owned discovery.
+		const loginCommand = slashCommands.find((command) => command.name === "login");
+		if (loginCommand) {
+			loginCommand.getArgumentCompletions = (prefix: string): AutocompleteItem[] | null => {
+				// De-duplicate providers that support both oauth and api_key so the
+				// completion list shows one entry per provider id.
+				const byId = new Map<string, { id: string; name: string; authTypes: Set<string> }>();
+				for (const option of this.getLoginProviderOptions()) {
+					const existing = byId.get(option.id);
+					if (existing) {
+						existing.authTypes.add(option.authType);
+					} else {
+						byId.set(option.id, { id: option.id, name: option.name, authTypes: new Set([option.authType]) });
+					}
+				}
+				const providers = [...byId.values()];
+				if (providers.length === 0) return null;
+
+				const filtered = fuzzyFilter(providers, prefix, (p) => `${p.id} ${p.name}`);
+				if (filtered.length === 0) return null;
+
+				return filtered.map((provider) => ({
+					value: provider.id,
+					label: provider.id,
+					description: provider.name,
 				}));
 			};
 		}
@@ -3072,9 +3102,10 @@ export class InteractiveMode {
 				this.editor.setText("");
 				return;
 			}
-			if (text === "/login") {
-				this.showOAuthSelector("login");
+			if (text === "/login" || text.startsWith("/login ")) {
+				const providerRef = text.startsWith("/login ") ? text.slice(7).trim() : undefined;
 				this.editor.setText("");
+				await this.handleLoginCommand(providerRef || undefined);
 				return;
 			}
 			if (text === "/logout") {
@@ -7803,6 +7834,74 @@ export class InteractiveMode {
 			);
 			return { component: selector, focus: selector };
 		});
+	}
+
+	/**
+	 * CC-028: Handle /login <provider> with provider-owned auth discovery.
+	 * Fuzzy-matches the providerRef against available providers (OAuth + API key).
+	 */
+	private async handleLoginCommand(providerRef?: string): Promise<void> {
+		if (!providerRef) {
+			this.showLoginAuthTypeSelector();
+			return;
+		}
+
+		const providerOptions = this.findLoginProviderOptions(providerRef);
+		if (providerOptions.length === 0) {
+			this.showStatus(`Provider "${providerRef}" not found. Try /login to see available providers.`);
+			return;
+		}
+
+		if (providerOptions.length === 1) {
+			await this.startProviderLogin(providerOptions[0]!);
+			return;
+		}
+
+		// Multiple matches (e.g., "anthropic" returns both oauth + api_key).
+		// If they all have the same id, show auth-type selector for that provider.
+		const providerIds = new Set(providerOptions.map((provider) => provider.id));
+		if (providerIds.size === 1) {
+			this.showLoginAuthTypeSelector();
+			return;
+		}
+
+		// Multiple distinct providers matched; show ambiguous error.
+		const providerNames = providerOptions.map((p) => p.id).join(", ");
+		this.showStatus(`Ambiguous provider "${providerRef}". Matches: ${providerNames}`);
+	}
+
+	/**
+	 * Fuzzy-match providerRef against available login providers.
+	 * Searches both id and name fields.
+	 */
+	private findLoginProviderOptions(providerRef: string): AuthSelectorProvider[] {
+		const allOptions = this.getLoginProviderOptions();
+		const lowerRef = providerRef.toLowerCase();
+
+		// Exact id match (case-insensitive).
+		const exactId = allOptions.filter((option) => option.id.toLowerCase() === lowerRef);
+		if (exactId.length > 0) return exactId;
+
+		// Partial id match (case-insensitive).
+		const partialId = allOptions.filter((option) => option.id.toLowerCase().includes(lowerRef));
+		if (partialId.length > 0) return partialId;
+
+		// Partial name match (case-insensitive).
+		const partialName = allOptions.filter((option) => option.name.toLowerCase().includes(lowerRef));
+		return partialName;
+	}
+
+	/**
+	 * Launch the login flow for a specific provider option.
+	 */
+	private async startProviderLogin(providerOption: AuthSelectorProvider): Promise<void> {
+		if (providerOption.authType === "oauth") {
+			await this.showLoginDialog(providerOption.id, providerOption.name);
+		} else if (providerOption.id === BEDROCK_PROVIDER_ID) {
+			this.showBedrockSetupDialog(providerOption.id, providerOption.name);
+		} else {
+			await this.showApiKeyLoginDialog(providerOption.id, providerOption.name);
+		}
 	}
 
 	private async completeProviderAuthentication(
