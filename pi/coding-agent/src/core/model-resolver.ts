@@ -599,10 +599,13 @@ export async function findInitialModel(options: {
 		};
 	}
 
-	// 3. Try saved default from settings
+	// 3. Try saved default from settings if auth is configured.
+	//     CC-019: skip an unauthenticated saved default so startup falls through to
+	//     the first available (authenticated) model instead of selecting a model
+	//     the user cannot actually use.
 	if (defaultProvider && defaultModelId) {
 		const found = modelRegistry.find(defaultProvider, defaultModelId);
-		if (found) {
+		if (found && modelRegistry.hasConfiguredAuth(found)) {
 			model = found;
 			if (defaultThinkingLevel) {
 				thinkingLevel = defaultThinkingLevel;
