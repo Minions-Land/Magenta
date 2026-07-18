@@ -353,14 +353,29 @@ Required behavior:
 - Arrival of the teammate-authored Mailbox message, not teammate turn completion, is what may wake or externally activate Main.
 - `send_message` is a mandatory, non-removable Tool grant for every persistent teammate. If the SendMessage support module cannot be assembled, `multiagent start` fails validation rather than creating a teammate that cannot communicate.
 - The Multiagent runtime appends a trusted managed-teammate system prompt containing the teammate's own Session ID, its owning Main Session ID, and the communication contract. Caller prompts cannot override or suppress this suffix.
-- That system prompt states at minimum: final assistant text is not visible to Main; all cross-Session communication uses `send_message`; the teammate must report material progress, questions, blockers, and results to Main; and it must not address the human user directly.
+- That system prompt states at minimum: final assistant text is not visible to Main; all active cross-Session messaging uses `send_message`; the teammate must report material progress, questions, blockers, and results to Main; Main Todo is visible but read-only; all proposed Todo mutations must be messaged to Main; and the teammate must not address the human user directly.
 - The prompt may tell a teammate to send a concise report before becoming idle after a work turn, but the runtime does not manufacture, parse, validate, deduplicate, or retry a report on the model's behalf.
 - The atomic SendMessage contract contains no assignment terminal status or result envelope. Correlation needed for Mailbox delivery remains message-level metadata, not an Assignment entity.
 - This rule applies to persistent teammates. Finite `sub_agent` and Workflow Events retain their separate runtime-owned terminal-result return defined by Decision 4.
 
+### Decision 23: Main Todo Is Shared Read-Only with Teammates
+
+**Accepted.** The Main Session's Todo is the only authoritative team board and the Main Session is its only writer. Every directly owned persistent teammate can inspect the current Main Todo through a live read-only view, but it cannot mutate that Todo directly.
+
+Required behavior:
+
+- A teammate reads the same authoritative Main Todo state, not a copied teammate Todo, cached task list, or second planning ledger. Runtime lineage binds the view to the owning Main Session; the teammate cannot select or inspect an arbitrary Session's Todo.
+- The teammate-facing model Tool remains named `todo`, but its presented schema permits only `action: "get"`. Mutation actions such as add, update, move, status/current changes, summary/title changes, remove, and reset are absent from that schema and are rejected again at the service authorization boundary.
+- Read-only Todo access is a mandatory teammate facility, like `send_message`; caller Tool filtering cannot remove it while still creating a conforming persistent teammate.
+- A Todo read is an explicit pull of the latest committed Main Todo state. Main Todo changes do not inject a message, wake an idle teammate, steer an active turn, or synthesize a prompt.
+- The read-only view is a shared coordination resource, not an additional teammate output or messaging channel. Every teammate-authored request to add, edit, reorder, complete, block, remove, reset, or otherwise change Todo state must be sent to the Main Session through `send_message`.
+- Main alone reconciles teammate reports and decides whether and how to mutate Todo. A teammate cannot mark its own work complete, claim authority by knowing the Main Session ID, or delegate Todo write authority to another Session.
+- The trusted managed-teammate system prompt identifies the Todo as the authoritative team board, instructs the teammate to read it when coordination context is needed, and requires all proposed changes to be messaged to Main.
+- This decision does not change finite-worker progress injection or grant finite workers direct Main Todo access.
+
 ## Current Candidate Design
 
-**Status: Discussion only - not accepted beyond Decisions 1, 4-6, 13-22.**
+**Status: Discussion only - not accepted beyond Decisions 1, 4-6, 13-23.**
 
 The current candidate has three public Tool products and no parallel Capability products:
 
@@ -382,12 +397,11 @@ The runtime keeps finite Event receipts separate from persistent Session IDs. Ba
 
 Current open decisions:
 
-1. Whether teammates can directly mutate the Main Todo or only report proposed updates.
-2. The retention period and TUI presentation of transient finite Event receipts after terminal settlement.
-3. How stopped teammate Sessions are indexed, rediscovered, authorized, and resumed after the Main runtime itself restarts.
-4. The stable response, validation-error, acknowledgement, worktree-receipt, and terminal-event JSON contracts for the three stateful Tools.
-5. The exact host-adapter boundary for stateful Tool construction, lifecycle hooks, turn-boundary Mailbox injection, and disposal.
-6. The final atomic `send_message` public schema after removing managed-assignment metadata.
+1. The retention period and TUI presentation of transient finite Event receipts after terminal settlement.
+2. How stopped teammate Sessions are indexed, rediscovered, authorized, and resumed after the Main runtime itself restarts.
+3. The stable response, validation-error, acknowledgement, worktree-receipt, and terminal-event JSON contracts for the three stateful Tools.
+4. The exact host-adapter boundary for stateful Tool construction, lifecycle hooks, turn-boundary Mailbox injection, read-only Main Todo projection, and disposal.
+5. The final atomic `send_message` public schema after removing managed-assignment metadata.
 
 ## Superseded Unified-Protocol Candidate
 
