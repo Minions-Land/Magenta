@@ -173,6 +173,14 @@ export type { LoadSkillsOptions, LoadSkillsResult } from "./core/harness-skills-
 export { loadSkills } from "./core/harness-skills-adapter.ts";
 export { convertToLlm } from "./core/messages.ts";
 export { ModelRegistry } from "./core/model-registry.ts";
+export {
+	type ModelScopeDiagnostic,
+	resolveCliModel,
+	type ResolveCliModelResult,
+	resolveModelScopeWithDiagnostics,
+	type ResolveModelScopeResult,
+	type ScopedModel,
+} from "./core/model-resolver.ts";
 export type {
 	PackageManager,
 	PathMetadata,

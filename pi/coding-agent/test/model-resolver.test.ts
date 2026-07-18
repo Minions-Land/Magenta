@@ -5,7 +5,9 @@ import {
 	findInitialModel,
 	parseModelPattern,
 	resolveCliModel,
+	resolveModelScopeWithDiagnostics,
 } from "../src/core/model-resolver.ts";
+import type { ModelRegistry } from "../src/core/model-registry.ts";
 
 // Mock models for testing
 const mockModels: Model<"anthropic-messages">[] = [
@@ -596,5 +598,48 @@ describe("default model selection", () => {
 
 		expect(result.model?.provider).toBe("vercel-ai-gateway");
 		expect(result.model?.id).toBe("anthropic/claude-opus-4-6");
+	});
+});
+
+describe("resolveModelScopeWithDiagnostics (CC-015)", () => {
+	function registryWith(models: Model<"anthropic-messages">[]): ModelRegistry {
+		return { getAvailable: () => models } as unknown as ModelRegistry;
+	}
+
+	test("resolves exact model references without diagnostics", async () => {
+		const { scopedModels, diagnostics } = await resolveModelScopeWithDiagnostics(
+			["anthropic/claude-sonnet-4-5"],
+			registryWith(mockModels),
+		);
+		expect(scopedModels.map((s) => s.model.id)).toEqual(["claude-sonnet-4-5"]);
+		expect(diagnostics).toEqual([]);
+	});
+
+	test("expands glob patterns and preserves thinking-level suffix", async () => {
+		const { scopedModels, diagnostics } = await resolveModelScopeWithDiagnostics(
+			["*:high"],
+			registryWith(mockModels),
+		);
+		expect(scopedModels.length).toBe(2);
+		expect(scopedModels.every((s) => s.thinkingLevel === "high")).toBe(true);
+		expect(diagnostics).toEqual([]);
+	});
+
+	test("collects a warning diagnostic for a non-matching pattern instead of logging", async () => {
+		const { scopedModels, diagnostics } = await resolveModelScopeWithDiagnostics(
+			["no-such-model"],
+			registryWith(mockModels),
+		);
+		expect(scopedModels).toEqual([]);
+		expect(diagnostics).toHaveLength(1);
+		expect(diagnostics[0]).toMatchObject({ type: "warning", pattern: "no-such-model" });
+	});
+
+	test("deduplicates models matched by multiple patterns", async () => {
+		const { scopedModels } = await resolveModelScopeWithDiagnostics(
+			["anthropic/claude-sonnet-4-5", "*sonnet*"],
+			registryWith(mockModels),
+		);
+		expect(scopedModels.filter((s) => s.model.id === "claude-sonnet-4-5")).toHaveLength(1);
 	});
 });
