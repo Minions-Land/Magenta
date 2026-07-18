@@ -109,6 +109,7 @@ import { type SessionContext, SessionManager } from "../../core/session-manager.
 import { BUILTIN_SLASH_COMMANDS } from "../../core/slash-commands.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
 import { isInstallTelemetryEnabled } from "../../core/telemetry.ts";
+import { getMessageRenderer } from "../../core/tools/renderer-registry.ts";
 import type { TruncationResult } from "../../core/tools/truncate.ts";
 import {
 	getProjectTrustOptions,
@@ -3618,7 +3619,11 @@ export class InteractiveMode {
 			}
 			case "custom": {
 				if (message.display) {
-					const renderer = this.session.extensionRunner.getMessageRenderer(message.customType);
+					// Central renderer-registry first; fall back to per-extension lookup so
+					// dynamically loaded extensions that never touched the registry still work.
+					const renderer =
+						getMessageRenderer(message.customType) ??
+						this.session.extensionRunner.getMessageRenderer(message.customType);
 					const component = new CustomMessageComponent(message, renderer, this.getMarkdownThemeWithSettings());
 					component.setExpanded(false);
 					this.chatContainer.addChild(component);
