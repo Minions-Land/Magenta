@@ -58,10 +58,10 @@ Required behavior:
 - The main session is the root authority. It may create and manage teammates and may start workflows directly.
 - A teammate is a persistent, stateful child session owned by the main session.
 - A teammate may start workflows, but it may not create or manage another teammate or team.
-- A finite Subagent or Workflow is the leaf execution layer. Its workers may not start another finite job or create or manage teammates or teams.
+- A finite Subagent or Workflow Event is the leaf execution layer. Its workers may not start another finite Event or create or manage teammates or teams.
 - Finite work launched directly by the Main Session and finite work launched by a teammate use the same background execution rules and leaf-level capability restrictions.
 - Runtime-owned spawning of predefined workers inside a deterministic Workflow is part of that Workflow's execution and is not recursive model-visible delegation.
-- The Main Session retains supervisory visibility and control over teammate-owned descendant finite jobs.
+- The Main Session retains supervisory visibility and control over teammate-owned descendant finite Events.
 
 ### Decision 5: No First-Class Team Resource
 
@@ -184,11 +184,11 @@ Required behavior:
 
 **Accepted.** Each public limit expresses one enforceable runtime budget. Node cardinality, concurrency, iteration count, retained-output count, confidence threshold, whole-run timeout, and per-attempt timeout remain distinct concepts with no compatibility aliases.
 
-The canonical finite-run and Workflow fields are `maxConcurrent`, `maxIterations`, `minConfidence`, `maxOutputs`, and `runTimeoutSeconds`. Per-worker or per-job `attemptTimeoutSeconds` remains a distinct execution preference.
+The canonical finite-run and Workflow fields are `maxConcurrent`, `maxIterations`, `minConfidence`, `maxOutputs`, and `runTimeoutSeconds`. Per-worker or per-Event `attemptTimeoutSeconds` remains a distinct execution preference.
 
 Required behavior:
 
-- Node quantities are expressed only by the owning `sub_agent` job or Workflow slot/cardinality schema; there are no duplicate `workerCount`, `verifyCount`, `candidateCount`, or `approachCount` limits.
+- Independent plain Subagents are expressed by independent start calls; Workflow node quantities are expressed only by the owning slot/cardinality schema. There are no duplicate `workerCount`, `verifyCount`, `candidateCount`, or `approachCount` limits.
 - `threshold`, `topK`, and ambiguous `timeoutSeconds` aliases are not exposed. Their unambiguous concepts are `minConfidence`, `maxOutputs`, `runTimeoutSeconds`, and `attemptTimeoutSeconds`.
 - Omitted `runTimeoutSeconds` and `attemptTimeoutSeconds` mean no Tool-owned semantic deadline and create no hidden timer. A deadline exists only when a caller, Host/Session policy, or trusted Workflow/Tool policy explicitly injects one.
 - Every injected or policy-tightened deadline is visible in acknowledgement and status data through requested/effective values and provenance; timeout injection or clamping is never silent.
@@ -207,9 +207,9 @@ Decision 14 re-scopes these limit rules to the Tool that owns each operation. It
 
 Required behavior:
 
-- `sub_agent` starts one or more finite background jobs. A job is either one ordinary clean-context Subagent or a trusted deterministic Workflow composed from sessionless workers.
-- Ordinary Subagents and Workflows share transient event identity, status/cancel control, non-blocking registration, background execution, automatic terminal return through external activation, and no resumable Session.
-- One call may launch multiple ordinary Subagents, multiple Workflows, or a supported mixture in parallel. The exact batch schema remains an open decision.
+- Each `sub_agent action=start` call registers exactly one finite background Event: either one ordinary clean-context Subagent or one trusted deterministic Workflow composed from sessionless workers.
+- Ordinary Subagent and Workflow Events share transient `eventId` identity, status/cancel control, non-blocking registration, background execution, automatic terminal return through external activation, and no resumable Session.
+- Independent parallelism is outside the Tool input contract. Magenta may execute any number of independent `sub_agent` calls concurrently; the Tool accepts the same singular call whether invocations are parallel, sequential, model-authored, or trusted-host-authored.
 - Workflow branch, barrier, ranking, verifier, reducer, loop, and termination behavior remains runtime-owned. Generic mailbox chat cannot replace deterministic Workflow control.
 - `multiagent` creates and manages persistent teammates with retained Session history, stable Session identity, reentrant assignments, explicit interrupt/stop/resume, and optional worktree integration/discard.
 - Managed work dispatch uses a lifecycle command such as `assign`; it creates correlation and ownership semantics and is not ordinary chat.
@@ -233,7 +233,7 @@ HarnessComponentProtocol/tools/multiagent
 Required behavior:
 
 - Each Module owns a real `HcpServer.ts`; each selected Source owns one `HcpMagnet.ts`; each Magnet exposes exactly `toTool()` as its single HCP Product.
-- `tools/sub-agent` owns ordinary finite workers, parallel job control, the deterministic Workflow engine and presets, finite event supervision, cancellation, and automatic terminal delivery.
+- `tools/sub-agent` owns ordinary finite workers, a shared capacity controller for independent Events, the deterministic Workflow engine and presets, Event supervision, cancellation, and automatic terminal delivery.
 - `tools/send-message` owns the model Tool, durable Mailbox store, presence, wake transport, bounded injection, peer routes, outbox, deduplication, and SSH federation support.
 - `tools/multiagent` owns persistent teammate Session hosting, assignments, supervision, stop/resume, restart recovery, worktree receipts, integration, and discard.
 - Capability-like classes inside these directories are ordinary Tool-owned runtime/services. Their Magnets do not expose `toCapability()`, and assembly publishes no `capability:workflow`, `capability:mailbox`, or `capability:multiagent` address.
@@ -262,15 +262,31 @@ Required behavior:
 - Pi retains only generic Tool resolution, active-Tool selection, external-activation machinery, and presentation/rendering integration. SendMessage-specific unit and transport tests move to HCP; Pi tests cover only the generic host integration boundary.
 - There is no compatibility fallback to the former Pi implementation. Missing or failed `tool:send_message` assembly is reported explicitly rather than silently constructing the old Tool.
 
+### Decision 17: One SubAgent Start Call, One Event
+
+**Accepted.** `Event` is the finite-execution domain entity and `eventId` is its address. One `sub_agent action=start` call registers exactly one Event, containing either one ordinary Subagent task or one deterministic Workflow; input-level batching is not part of the Tool contract.
+
+Required behavior:
+
+- A start request contains exactly one of singular `task` or singular `workflow`. Supplying both or neither is a validation error.
+- The public schema has no `jobs`, `tasks`, `workflows`, batch ID, group ID, or plural event-target field. Independent starts, status requests, and cancellations use independent Tool calls.
+- Parallelism is supplied by Magenta's existing concurrent Tool-call execution and is not represented in `sub_agent` input. The controller remains agnostic to whether calls arrive concurrently or sequentially.
+- Every accepted start returns one transient `eventId`; that Event independently owns status, cancellation, failure, optional explicit timeout, terminal output, and external activation.
+- A Workflow's internal workers are observable implementation children of its one top-level Event. They do not receive separate public event IDs or terminal activations.
+- Simultaneous Event completions may be coalesced by the external-activation coordinator into one parent turn without creating batch identity or shared settlement.
+- All starts share one atomic capacity/reservation controller, so concurrent Tool calls and nested Workflow workers cannot bypass Session/Host hard limits.
+- The current Subagent controller, event monitor, process supervision, cancellation settlement, logs, usage accounting, parent-progress support, automatic return path, Workflow drivers, and focused tests are the migration baseline. They are ported rather than rewritten unless they conflict with Decisions 1, 4, 13-17 or HCP ownership.
+- Internal implementation unification is optional. Refactoring must remove demonstrated duplication or satisfy an accepted invariant; it is not a goal by itself.
+
 ## Current Candidate Design
 
-**Status: Discussion only - not accepted beyond Decisions 1, 4-6, 13-16.**
+**Status: Discussion only - not accepted beyond Decisions 1, 4-6, 13-17.**
 
 The current candidate has three public Tool products and no parallel Capability products:
 
 ```text
 tool:sub_agent
-    -> finite job controller
+    -> finite Event controller
        -> plain clean-context worker
        -> deterministic workflow runner
 
@@ -286,15 +302,14 @@ The runtime keeps finite event receipts separate from persistent Session IDs. Ba
 
 Current open decisions:
 
-1. The exact `sub_agent` batch shape for tasks, Workflows, and heterogeneous parallel jobs.
-2. The exact `multiagent` action and target schema, including `assign` and stable status snapshots.
-3. Whether teammates can directly mutate the Main Todo or only report proposed updates.
-4. The retention period and TUI presentation of transient finite event receipts after terminal settlement.
-5. How stopped teammate Sessions are indexed, rediscovered, authorized, and resumed after the Main runtime itself restarts.
-6. Whether persistent teammate assignment completion is inferred from final output, uses internal structured receipts, or supports both.
-7. The stable response, validation-error, acknowledgement, worktree-receipt, and terminal-event JSON contracts for both stateful Tools.
-8. The exact host-adapter boundary for stateful Tool construction, lifecycle hooks, turn-boundary mailbox injection, and disposal.
-9. Which assignment metadata, if any, remains model-visible on the otherwise atomic `send_message` Tool.
+1. The exact `multiagent` action and target schema, including `assign` and stable status snapshots.
+2. Whether teammates can directly mutate the Main Todo or only report proposed updates.
+3. The retention period and TUI presentation of transient finite Event receipts after terminal settlement.
+4. How stopped teammate Sessions are indexed, rediscovered, authorized, and resumed after the Main runtime itself restarts.
+5. Whether persistent teammate assignment completion is inferred from final output, uses internal structured receipts, or supports both.
+6. The stable response, validation-error, acknowledgement, worktree-receipt, and terminal-event JSON contracts for both stateful Tools.
+7. The exact host-adapter boundary for stateful Tool construction, lifecycle hooks, turn-boundary mailbox injection, and disposal.
+8. Which assignment metadata, if any, remains model-visible on the otherwise atomic `send_message` Tool.
 
 ## Superseded Unified-Protocol Candidate
 
