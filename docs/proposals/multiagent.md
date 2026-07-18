@@ -295,9 +295,24 @@ Required behavior:
 - Status and TUI snapshots expose queued state and, when cheaply available, an advisory queue position. Queue position is not a stable identity or scheduling promise.
 - The queue may be memory-efficient or durably represented in the session's Event state, but it may not introduce a model-visible batch/group identity, blocking wait, hidden timeout, or second scheduler per Workflow.
 
+### Decision 19: Session ID Is the Teammate Identity
+
+**Accepted.** A persistent teammate's Session ID is its only public identity. The model-visible API does not expose a separate `teammateId`, controller handle, Event ID, or universal Multiagent ID for that teammate.
+
+Required behavior:
+
+- `multiagent start` allocates and returns `sessionId` as soon as the persistent teammate Session is durably registered. Process readiness or initial-assignment completion remains asynchronous.
+- Every targeted `multiagent` lifecycle or assignment action uses `sessionId`. `status` without a target lists all teammates owned by the current Main; targeted status uses exactly one `sessionId`.
+- `send_message.to` uses the same Session ID for ordinary mailbox chat, while `multiagent` applies managed assignment and lifecycle semantics. Sharing an address does not merge the two Tools.
+- A human-readable `label` is presentation metadata and may be non-unique or mutable. It is never accepted as an authority-bearing target.
+- Process IDs, controller records, RPC request IDs, assignment IDs, worktree IDs, message IDs, and finite Event IDs remain internal or subordinate identities. None substitutes for the teammate Session ID.
+- Stop, resume, Main-runtime restart recovery, mailbox delivery, assignment history, and worktree receipts preserve the same Session ID.
+- Possession or discovery of a Session ID grants no management authority. Runtime-owned lineage must prove that the target is a persistent teammate directly owned by the calling Main Session before any `multiagent` control action is admitted.
+- A teammate uses its known parent Session ID for ordinary `send_message` replies, but it cannot use the parent's Session ID to obtain Main-level `multiagent` authority.
+
 ## Current Candidate Design
 
-**Status: Discussion only - not accepted beyond Decisions 1, 4-6, 13-18.**
+**Status: Discussion only - not accepted beyond Decisions 1, 4-6, 13-19.**
 
 The current candidate has three public Tool products and no parallel Capability products:
 
@@ -319,7 +334,7 @@ The runtime keeps finite event receipts separate from persistent Session IDs. Ba
 
 Current open decisions:
 
-1. The exact `multiagent` action and target schema, including `assign` and stable status snapshots.
+1. The exact `multiagent` action set and state-transition semantics, including `assign` and stable status snapshots.
 2. Whether teammates can directly mutate the Main Todo or only report proposed updates.
 3. The retention period and TUI presentation of transient finite Event receipts after terminal settlement.
 4. How stopped teammate Sessions are indexed, rediscovered, authorized, and resumed after the Main runtime itself restarts.
