@@ -143,7 +143,19 @@ Required behavior:
 - `protocol` describes the complete execution semantics, not merely the allowed message edges. Topology is derived from the selected descriptor and may be returned as status metadata.
 - Non-start actions identify an existing finite event or persistent Session and do not require the model to repeat `protocol`; the runtime resolves the existing ProtocolInstance from that target.
 - The provider-facing root schema may keep `protocol` structurally optional to remain flat, but conditional action validation must reject a start request without it or with an unsupported value.
-- The public protocol namespace spans both finite workflows and persistent collaboration. `subagent` is the single-node finite protocol; the six deterministic presets are finite protocols; the persistent protocol name remains a separate open decision.
+- The public protocol namespace spans both finite workflows and persistent collaboration. `subagent` is the single-node finite protocol; the six deterministic presets are finite protocols; the persistent protocol is named `teammate`.
+
+### Decision 11: Persistent Protocol Is Named Teammate
+
+**Accepted.** The public persistent collaboration protocol is named `teammate`. It represents one Main-owned, retained-context, reentrant Agent endpoint; it does not introduce a Team resource or imply an unrestricted peer-to-peer conversation network.
+
+Required behavior:
+
+- `action=start` with `protocol: "teammate"` creates exactly one persistent peer endpoint under the calling Main Session.
+- The teammate retains its Session history, accepts reentrant assignments through its mailbox, and has explicit stop/resume lifecycle control.
+- Only the Main Session may create or manage its direct teammates. A teammate may start finite protocols but may not create another teammate or Team.
+- The name `teammate` identifies a protocol and owned endpoint, not a `TeamHandle`, `teamId`, Team Todo, or independently addressable Team aggregate.
+- `open_conversation` is not a current model-visible protocol. It remains available only as a possible future protocol name if Magenta later supports ownerless or federated peer sessions with separately accepted identity and authorization semantics.
 
 ## Integrated Candidate Design
 
@@ -760,12 +772,11 @@ Before removing existing tools, the candidate must prove:
 
 The following remain candidates and must be discussed one at a time:
 
-1. Whether the open persistent protocol is publicly named `teammate` or `open_conversation`.
-2. The exact `NodeBinding` fields and slot/cardinality rules.
-3. The exact `limits` vocabulary and which limits are protocol-specific.
-4. Whether the standalone model-visible `send_message` tool is removed in favor of `multiagent action=send`.
-5. Whether teammates can directly mutate the Main Todo or only report proposed updates.
-6. The retention period and TUI presentation of transient finite event receipts after terminal settlement.
-7. How stopped teammate Sessions are indexed, rediscovered, authorized, and resumed after the Main runtime itself restarts.
-8. Whether persistent teammate assignment completion is always inferred from a turn's final output or may also use explicit terminal receipts.
-9. The stable provider-facing response, validation-error, status-snapshot, control-acknowledgement, worktree-receipt, and terminal-event JSON contracts.
+1. The exact `NodeBinding` fields and slot/cardinality rules.
+2. The exact `limits` vocabulary and which limits are protocol-specific.
+3. Whether the standalone model-visible `send_message` tool is removed in favor of `multiagent action=send`.
+4. Whether teammates can directly mutate the Main Todo or only report proposed updates.
+5. The retention period and TUI presentation of transient finite event receipts after terminal settlement.
+6. How stopped teammate Sessions are indexed, rediscovered, authorized, and resumed after the Main runtime itself restarts.
+7. Whether persistent teammate assignment completion is always inferred from a turn's final output or may also use explicit terminal receipts.
+8. The stable provider-facing response, validation-error, status-snapshot, control-acknowledgement, worktree-receipt, and terminal-event JSON contracts.
