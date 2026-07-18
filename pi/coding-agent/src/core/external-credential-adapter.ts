@@ -38,6 +38,11 @@ export class AuthStorageCredentialAdapter implements CredentialStore {
 	}
 
 	async read(providerId: string): Promise<Credential | undefined> {
+		// Runtime overrides (--api-key) set directly on the shared AuthStorage win,
+		// matching the legacy AuthStorage runtime-override precedence.
+		const runtimeKey = this.authStorage.getRuntimeApiKey(providerId);
+		if (runtimeKey) return { type: "api_key", key: runtimeKey };
+
 		const cred = this.authStorage.get(providerId);
 		if (!cred) return undefined;
 
@@ -53,14 +58,16 @@ export class AuthStorageCredentialAdapter implements CredentialStore {
 	}
 
 	async list(): Promise<readonly CredentialInfo[]> {
-		const providers = this.authStorage.list();
-		return providers.map((providerId) => {
+		const entries = new Map<string, CredentialInfo>();
+		for (const providerId of this.authStorage.list()) {
 			const cred = this.authStorage.get(providerId);
-			return {
-				providerId,
-				type: cred?.type ?? "api_key",
-			};
-		});
+			entries.set(providerId, { providerId, type: cred?.type ?? "api_key" });
+		}
+		// Surface runtime overrides set directly on AuthStorage as available api_key providers.
+		for (const providerId of this.authStorage.listRuntimeApiKeyProviders()) {
+			if (!entries.has(providerId)) entries.set(providerId, { providerId, type: "api_key" });
+		}
+		return [...entries.values()];
 	}
 
 	async modify(

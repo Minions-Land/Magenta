@@ -243,6 +243,21 @@ export class AuthStorage {
 	}
 
 	/**
+	 * Read a runtime API key override without consulting stored/ambient sources.
+	 * Exposes the in-memory --api-key overrides to credential-store adapters.
+	 */
+	getRuntimeApiKey(provider: string): string | undefined {
+		return this.runtimeOverrides.get(provider);
+	}
+
+	/**
+	 * List providers that currently have a runtime API key override.
+	 */
+	listRuntimeApiKeyProviders(): string[] {
+		return [...this.runtimeOverrides.keys()];
+	}
+
+	/**
 	 * Serialized read-modify-write for a single provider credential, matching
 	 * the pi-ai CredentialStore.modify() contract. `fn` sees the current stored
 	 * credential (re-read under the lock) and returns the new credential, or

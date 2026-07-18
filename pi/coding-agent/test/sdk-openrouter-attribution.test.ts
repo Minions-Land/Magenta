@@ -12,6 +12,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { ModelRegistry } from "../src/core/model-registry.ts";
+import { createTestModelRegistry } from "./utilities.ts";
 import { createAgentSession } from "../src/core/sdk.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
@@ -97,7 +98,7 @@ describe("createAgentSession provider attribution headers", () => {
 
 		const authStorage = AuthStorage.create(join(agentDir, "auth.json"));
 		authStorage.setRuntimeApiKey(model.provider, "test-api-key");
-		const modelRegistry = ModelRegistry.create(authStorage, join(agentDir, "models.json"));
+		const modelRegistry = await createTestModelRegistry(authStorage, join(agentDir, "models.json"));
 		const registeredProviders = ["capture-provider"];
 		let capturedOptions: SimpleStreamOptions | undefined;
 

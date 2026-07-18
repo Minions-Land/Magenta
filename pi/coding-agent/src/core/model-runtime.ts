@@ -43,6 +43,7 @@ import {
 	type StreamOptions,
 } from "@earendil-works/pi-ai";
 import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
+import { registerApiProvider, unregisterApiProviders } from "@earendil-works/pi-ai/compat";
 import { getAgentDir } from "../config.ts";
 import { AuthStorage } from "./auth-storage.ts";
 import { createMagentaCredentialStore } from "./external-credential-adapter.ts";
@@ -532,6 +533,21 @@ export class ModelRuntime implements Models {
 			if (value !== undefined) (effective as Record<string, unknown>)[key] = value;
 		}
 		this.extensionProviders.set(providerId, effective);
+
+		// When a provider registers with streamSimple + api, register it globally
+		// as an API provider override so models using that API route through it.
+		if (effective.streamSimple && effective.api) {
+			const { streamSimple, api } = effective;
+			registerApiProvider(
+				{
+					api,
+					stream: (model, context, options) => streamSimple(model, context, options as SimpleStreamOptions),
+					streamSimple,
+				},
+				`provider:${providerId}`,
+			);
+		}
+
 		this.recomposeProvider(providerId);
 		this.updateModelSnapshot();
 		if (
@@ -559,6 +575,8 @@ export class ModelRuntime implements Models {
 
 	unregisterProvider(providerId: string): void {
 		this.extensionProviders.delete(providerId);
+		// Remove any global API provider override registered for this provider.
+		unregisterApiProviders(`provider:${providerId}`);
 		this.recomposeProvider(providerId);
 		this.updateModelSnapshot();
 		void this.refresh({ allowNetwork: false });

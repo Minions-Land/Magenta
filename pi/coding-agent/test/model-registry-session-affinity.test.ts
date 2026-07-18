@@ -4,6 +4,7 @@ import { join } from "path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { clearApiKeyCache, ModelRegistry } from "../src/core/model-registry.ts";
+import { createTestModelRegistry } from "./utilities.ts";
 
 /**
  * CC-042 / AI-032: models.json compat migrated from the removed
@@ -36,7 +37,7 @@ describe("ModelRegistry session affinity format (CC-042)", () => {
 		return registry.getAll().find((m) => m.id === id);
 	}
 
-	test("parses sessionAffinityFormat on a responses-api custom model", () => {
+	test("parses sessionAffinityFormat on a responses-api custom model", async () => {
 		writeRawModelsJson({
 			"custom-openrouter": {
 				baseUrl: "https://openrouter.ai/api/v1",
@@ -57,13 +58,13 @@ describe("ModelRegistry session affinity format (CC-042)", () => {
 			},
 		});
 
-		const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+		const registry = await createTestModelRegistry(authStorage, modelsJsonPath);
 		const model = findModel(registry, "affinity-model");
 		expect(model).toBeDefined();
 		expect((model?.compat as { sessionAffinityFormat?: string })?.sessionAffinityFormat).toBe("openrouter");
 	});
 
-	test("parses sessionAffinityFormat on a completions-api custom model", () => {
+	test("parses sessionAffinityFormat on a completions-api custom model", async () => {
 		writeRawModelsJson({
 			"custom-completions": {
 				baseUrl: "https://example.com/v1",
@@ -84,13 +85,13 @@ describe("ModelRegistry session affinity format (CC-042)", () => {
 			},
 		});
 
-		const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+		const registry = await createTestModelRegistry(authStorage, modelsJsonPath);
 		const model = findModel(registry, "completions-affinity");
 		expect(model).toBeDefined();
 		expect((model?.compat as { sessionAffinityFormat?: string })?.sessionAffinityFormat).toBe("openai-nosession");
 	});
 
-	test("still accepts the deprecated sendSessionIdHeader shim", () => {
+	test("still accepts the deprecated sendSessionIdHeader shim", async () => {
 		writeRawModelsJson({
 			"custom-legacy": {
 				baseUrl: "https://example.com/v1",
@@ -111,13 +112,13 @@ describe("ModelRegistry session affinity format (CC-042)", () => {
 			},
 		});
 
-		const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+		const registry = await createTestModelRegistry(authStorage, modelsJsonPath);
 		const model = findModel(registry, "legacy-affinity");
 		expect(model).toBeDefined();
 		expect((model?.compat as { sendSessionIdHeader?: boolean })?.sendSessionIdHeader).toBe(false);
 	});
 
-	test("does not crash on an unknown sessionAffinityFormat value (permissive compat union)", () => {
+	test("does not crash on an unknown sessionAffinityFormat value (permissive compat union)", async () => {
 		writeRawModelsJson({
 			"custom-bad": {
 				baseUrl: "https://example.com/v1",
@@ -142,7 +143,7 @@ describe("ModelRegistry session affinity format (CC-042)", () => {
 		// properties), so an unknown affinity value is tolerated, not rejected. This
 		// pre-existing looseness is out of CC-042 scope; assert loading does not crash
 		// and the raw value is carried through unchanged.
-		const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+		const registry = await createTestModelRegistry(authStorage, modelsJsonPath);
 		const model = findModel(registry, "bad-affinity");
 		expect(model).toBeDefined();
 		expect((model?.compat as { sessionAffinityFormat?: string })?.sessionAffinityFormat).toBe("not-a-format");

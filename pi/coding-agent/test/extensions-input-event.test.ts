@@ -6,6 +6,7 @@ import { AuthStorage } from "../src/core/auth-storage.ts";
 import { discoverAndLoadExtensions } from "../src/core/extensions/loader.ts";
 import { ExtensionRunner } from "../src/core/extensions/runner.ts";
 import { ModelRegistry } from "../src/core/model-registry.ts";
+import { createTestModelRegistry } from "./utilities.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 
 describe("Input Event", () => {
@@ -29,7 +30,7 @@ describe("Input Event", () => {
 		for (let i = 0; i < extensions.length; i++) fs.writeFileSync(path.join(extensionsDir, `e${i}.ts`), extensions[i]);
 		const result = await discoverAndLoadExtensions([], tempDir, tempDir);
 		const sm = SessionManager.inMemory();
-		const mr = ModelRegistry.create(AuthStorage.create(path.join(tempDir, "auth.json")));
+		const mr = await createTestModelRegistry(AuthStorage.create(path.join(tempDir, "auth.json")));
 		return new ExtensionRunner(result.extensions, result.runtime, tempDir, sm, mr);
 	}
 

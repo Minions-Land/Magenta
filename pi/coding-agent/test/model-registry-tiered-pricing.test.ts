@@ -6,6 +6,7 @@ import { join } from "path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { applyModelOverride, clearApiKeyCache, ModelRegistry } from "../src/core/model-registry.ts";
+import { createTestModelRegistry } from "./utilities.ts";
 
 /**
  * CC-037: coding-agent consumes AI-023 volume-based tiered pricing through
@@ -59,7 +60,7 @@ describe("ModelRegistry tiered pricing (CC-037)", () => {
 		return registry.getAll().filter((m) => m.provider === provider) as Model<"anthropic-messages">[];
 	}
 
-	test("parses a custom model with tiered cost from models.json", () => {
+	test("parses a custom model with tiered cost from models.json", async () => {
 		writeRawModelsJson({
 			"custom-tiered": {
 				baseUrl: "https://example.com",
@@ -79,7 +80,7 @@ describe("ModelRegistry tiered pricing (CC-037)", () => {
 			},
 		});
 
-		const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+		const registry = await createTestModelRegistry(authStorage, modelsJsonPath);
 		const model = getModelsForProvider(registry, "custom-tiered").find((m) => m.id === "tiered-model");
 
 		expect(model).toBeDefined();
@@ -90,7 +91,7 @@ describe("ModelRegistry tiered pricing (CC-037)", () => {
 		}
 	});
 
-	test("selects the correct tier at the 128k request-wide input boundary", () => {
+	test("selects the correct tier at the 128k request-wide input boundary", async () => {
 		writeRawModelsJson({
 			"custom-tiered": {
 				baseUrl: "https://example.com",
@@ -110,7 +111,7 @@ describe("ModelRegistry tiered pricing (CC-037)", () => {
 			},
 		});
 
-		const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+		const registry = await createTestModelRegistry(authStorage, modelsJsonPath);
 		const model = getModelsForProvider(registry, "custom-tiered").find((m) => m.id === "tiered-model")!;
 
 		// Below the 128k threshold -> default tier (input rate 1/M)
@@ -124,7 +125,7 @@ describe("ModelRegistry tiered pricing (CC-037)", () => {
 		expect(atBoundary.input / 128_000).toBeGreaterThan(below.input / 127_999);
 	});
 
-	test("applyModelOverride: tiered override replaces a flat base cost entirely", () => {
+	test("applyModelOverride: tiered override replaces a flat base cost entirely", async () => {
 		const flatBase: Model<"anthropic-messages"> = {
 			id: "flat-model",
 			name: "Flat Model",
@@ -147,7 +148,7 @@ describe("ModelRegistry tiered pricing (CC-037)", () => {
 		}
 	});
 
-	test("applyModelOverride: partial flat override applied to tiered base collapses to flat with default-tier fallback", () => {
+	test("applyModelOverride: partial flat override applied to tiered base collapses to flat with default-tier fallback", async () => {
 		const tieredBase: Model<"anthropic-messages"> = {
 			id: "tiered-model",
 			name: "Tiered Model",
@@ -173,7 +174,7 @@ describe("ModelRegistry tiered pricing (CC-037)", () => {
 		}
 	});
 
-	test("modelOverrides with tiered cost replaces a built-in flat model through config", () => {
+	test("modelOverrides with tiered cost replaces a built-in flat model through config", async () => {
 		writeRawModelsJson({
 			openrouter: {
 				modelOverrides: {
@@ -184,7 +185,7 @@ describe("ModelRegistry tiered pricing (CC-037)", () => {
 			},
 		});
 
-		const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+		const registry = await createTestModelRegistry(authStorage, modelsJsonPath);
 		const sonnet = registry.getAll().find((m) => m.id === "anthropic/claude-sonnet-4");
 
 		expect(sonnet).toBeDefined();
@@ -195,7 +196,7 @@ describe("ModelRegistry tiered pricing (CC-037)", () => {
 		}
 	});
 
-	test("rejects malformed tiered cost missing a required tier", () => {
+	test("rejects malformed tiered cost missing a required tier", async () => {
 		writeRawModelsJson({
 			"custom-bad": {
 				baseUrl: "https://example.com",
@@ -216,7 +217,7 @@ describe("ModelRegistry tiered pricing (CC-037)", () => {
 		});
 
 		// Invalid config must not crash the registry; the malformed provider is dropped/ignored.
-		const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+		const registry = await createTestModelRegistry(authStorage, modelsJsonPath);
 		const model = registry.getAll().find((m) => m.id === "bad-model");
 		expect(model).toBeUndefined();
 	});

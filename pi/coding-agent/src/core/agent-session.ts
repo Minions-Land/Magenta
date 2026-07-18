@@ -115,6 +115,8 @@ import { HcpClientpackageloadcontroller } from "./HcpClientpackageloadcontroller
 import { HcpClientassembletools } from "./HcpClienttools.ts";
 import type { BashExecutionMessage, CustomMessage } from "./messages.ts";
 import type { ModelRegistry } from "./model-registry.ts";
+import type { ModelRuntime } from "./model-runtime.ts";
+import type { AuthStorage } from "./auth-storage.ts";
 import { expandPromptTemplate, type PromptTemplate } from "./prompt-templates.ts";
 import { RemoteMailboxController } from "./remote-mailbox.ts";
 import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.ts";
@@ -247,6 +249,10 @@ export interface AgentSessionConfig {
 	sshTarget?: SshTarget;
 	/** Model registry for API key resolution and model discovery */
 	modelRegistry: ModelRegistry;
+	/** Model runtime (single owner of models and credentials). Defaults to the registry's runtime. */
+	modelRuntime?: ModelRuntime;
+	/** Credential storage backing the model runtime; used by interactive OAuth/API-key UI. */
+	authStorage?: AuthStorage;
 	/** Initial active built-in tool names. Default: [read, bash, edit, write] */
 	initialActiveToolNames?: string[];
 	/** Auto-activate newly loaded Package and user MCP tools. */
@@ -483,8 +489,12 @@ export class AgentSession {
 	private _sshTarget?: SshTarget;
 	private _sshOperations?: SshToolOperations;
 
-	// Model registry for API key resolution
+	// Model runtime (single owner of models and credentials)
+	private _modelRuntime: ModelRuntime;
+	// Model registry facade for extension compatibility
 	private _modelRegistry: ModelRegistry;
+	// Credential storage backing the runtime (interactive OAuth/API-key UI)
+	private _authStorage: AuthStorage | undefined;
 
 	// Tool registry for extension getTools/setTools
 	private _toolRegistry: Map<string, AgentTool> = new Map();
@@ -508,7 +518,9 @@ export class AgentSession {
 		this._cwd = config.cwd;
 		this._sshTarget = config.sshTarget;
 		this._sshOperations = this._sshTarget ? createSshToolOperations(this._sshTarget, this._cwd) : undefined;
+		this._modelRuntime = config.modelRuntime ?? config.modelRegistry.modelRuntime;
 		this._modelRegistry = config.modelRegistry;
+		this._authStorage = config.authStorage;
 		this._extensionRunnerRef = config.extensionRunnerRef;
 		this._initialActiveToolNames = config.initialActiveToolNames;
 		this._autoActivateLoadedTools = config.autoActivateLoadedTools ?? config.initialActiveToolNames === undefined;
@@ -637,9 +649,22 @@ export class AgentSession {
 		});
 	}
 
-	/** Model registry for API key resolution and model discovery */
+	/** Model registry facade for extension compatibility */
 	get modelRegistry(): ModelRegistry {
 		return this._modelRegistry;
+	}
+
+	/** Model runtime (single owner of models and credentials) */
+	get modelRuntime(): ModelRuntime {
+		return this._modelRuntime;
+	}
+
+	/** Credential storage backing the model runtime. */
+	get authStorage(): AuthStorage {
+		if (!this._authStorage) {
+			throw new Error("authStorage is not available on this session");
+		}
+		return this._authStorage;
 	}
 
 	private async _getRequiredRequestAuth(model: Model<any>): Promise<{

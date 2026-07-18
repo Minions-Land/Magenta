@@ -97,7 +97,7 @@ function mergeCompat(
 	return merged;
 }
 
-function applyModelOverride(model: Model<Api>, override: ModelsJsonModelOverride): Model<Api> {
+export function applyModelOverride(model: Model<Api>, override: ModelsJsonModelOverride): Model<Api> {
 	const result: Model<Api> = {
 		...model,
 		name: override.name ?? model.name,
@@ -138,6 +138,62 @@ function applyModelOverride(model: Model<Api>, override: ModelsJsonModelOverride
 	return result;
 }
 
+function inferThinkingLevelMap(
+	modelId: string,
+	api: Api,
+	reasoning: boolean,
+): Model<Api>["thinkingLevelMap"] | undefined {
+	if (!reasoning) return undefined;
+
+	const id = modelId.toLowerCase();
+
+	// Anthropic models
+	if (api === "anthropic-messages") {
+		// Opus 4.x, Sonnet 5, Fable 5 support both 'xhigh' and 'max'
+		if (id.includes("opus-4") || id.includes("sonnet-5") || id.includes("fable-5")) {
+			return { off: null, minimal: "low", low: "low", medium: "medium", high: "high", xhigh: "xhigh", max: "max" };
+		}
+		// Other extended thinking models: Sonnet 3.7, 4.x (except 5), Haiku 4.5
+		if (
+			id.includes("3-7-sonnet") ||
+			id.includes("3.7-sonnet") ||
+			id.includes("sonnet-3-7") ||
+			id.includes("sonnet-3.7") ||
+			id.includes("sonnet-4") ||
+			id.includes("haiku-4-5") ||
+			id.includes("haiku-4.5") ||
+			id.includes("4-5-haiku")
+		) {
+			return { off: null, minimal: "low", low: "low", medium: "medium", high: "high", xhigh: "xhigh" };
+		}
+	}
+
+	// OpenAI models
+	if (api === "openai-completions" || api === "openai-responses") {
+		if (id.includes("gpt-5.6")) {
+			return {
+				off: "none",
+				minimal: null,
+				low: "low",
+				medium: "medium",
+				high: "high",
+				xhigh: "xhigh",
+				max: "max",
+			};
+		}
+		// GPT-5.2+ supports xhigh
+		if (id.includes("gpt-5.2") || id.includes("gpt-5.3") || id.includes("gpt-5.4") || id.includes("gpt-5.5")) {
+			return { off: null, minimal: "low", low: "low", medium: "medium", high: "high", xhigh: "xhigh" };
+		}
+		// Standard reasoning models (o1, o3, o4, gpt-5.1, etc.)
+		if (id.startsWith("o1") || id.startsWith("o3") || id.startsWith("o4") || id.includes("gpt-5")) {
+			return { off: null, minimal: "low", low: "low", medium: "medium", high: "high" };
+		}
+	}
+
+	return undefined;
+}
+
 function modelFromJson(
 	providerId: string,
 	definition: ModelsJsonModel,
@@ -165,7 +221,7 @@ function modelFromJson(
 		provider: providerId,
 		baseUrl,
 		reasoning: definition.reasoning ?? false,
-		thinkingLevelMap: definition.thinkingLevelMap,
+		thinkingLevelMap: definition.thinkingLevelMap ?? inferThinkingLevelMap(definition.id, api as Api, definition.reasoning ?? false),
 		input: (definition.input ?? ["text"]) as ("text" | "image")[],
 		cost: definition.cost ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 		contextWindow: definition.contextWindow ?? 128000,

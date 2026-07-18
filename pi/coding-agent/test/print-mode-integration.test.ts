@@ -17,7 +17,7 @@ import { ModelRegistry } from "../src/core/model-registry.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 import { runPrintMode } from "../src/modes/print-mode.ts";
-import { createTestExtensionsResult, createTestResourceLoader } from "./utilities.ts";
+import { createTestExtensionsResult, createTestModelRegistry, createTestResourceLoader } from "./utilities.ts";
 
 const TEST_MODEL: Model<any> = {
 	id: "print-integration-model",
@@ -102,7 +102,7 @@ async function createRuntimeHost(extensionFactory: ExtensionFactory): Promise<{
 	const sessionManager = SessionManager.inMemory();
 	const settingsManager = SettingsManager.create(tempDir, tempDir);
 	const authStorage = AuthStorage.create(join(tempDir, "auth.json"));
-	const modelRegistry = ModelRegistry.create(authStorage, tempDir);
+	const modelRegistry = await createTestModelRegistry(authStorage, tempDir);
 	authStorage.setRuntimeApiKey("anthropic", "test-key");
 
 	const extensionsResult = await createTestExtensionsResult([extensionFactory], tempDir);

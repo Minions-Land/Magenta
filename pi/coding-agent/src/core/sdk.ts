@@ -8,7 +8,6 @@ import { AgentSession } from "./agent-session.ts";
 import { formatNoModelsAvailableMessage } from "./auth-guidance.ts";
 import { AuthStorage } from "./auth-storage.ts";
 import { CacheTelemetryRecorder } from "./cache-telemetry.ts";
-import { DEFAULT_NATIVE_ACTIVE_TOOLS, DEFAULT_THINKING_LEVEL } from "./defaults.ts";
 import {
 	type ExecutionProfile,
 	type HarnessCapabilitySettings,
@@ -20,7 +19,10 @@ import type { ExtensionRunner, LoadExtensionsResult, SessionStartEvent, ToolDefi
 import { HcpClientassembletools } from "./HcpClienttools.ts";
 import { configureHttpDispatcher } from "./http-dispatcher.ts";
 import { convertToLlm } from "./messages.ts";
+import { createMagentaCredentialStore } from "./external-credential-adapter.ts";
+import { DEFAULT_NATIVE_ACTIVE_TOOLS, DEFAULT_THINKING_LEVEL } from "./defaults.ts";
 import { ModelRegistry } from "./model-registry.ts";
+import { ModelRuntime } from "./model-runtime.ts";
 import { findInitialModel } from "./model-resolver.ts";
 import { mergeProviderAttributionHeaders } from "./provider-attribution.ts";
 import type { ResourceLoader } from "./resource-loader.ts";
@@ -52,7 +54,10 @@ export interface CreateAgentSessionOptions {
 	/** Auth storage for credentials. Default: AuthStorage.create(agentDir/auth.json) */
 	authStorage?: AuthStorage;
 	/** Model registry. Default: ModelRegistry.create(authStorage, agentDir/models.json) */
+	/** Model registry (compat facade). Default: derived from ModelRuntime.create(authStorage, agentDir/models.json) */
 	modelRegistry?: ModelRegistry;
+	/** Model runtime. Default: ModelRuntime.create(authStorage, agentDir/models.json) */
+	modelRuntime?: ModelRuntime;
 
 	/** Model to use. Default: from settings, else first available */
 	model?: Model<any>;
@@ -193,7 +198,17 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	const authPath = options.agentDir ? join(agentDir, "auth.json") : undefined;
 	const modelsPath = options.agentDir ? join(agentDir, "models.json") : undefined;
 	const authStorage = options.authStorage ?? AuthStorage.create(authPath);
-	const modelRegistry = options.modelRegistry ?? ModelRegistry.create(authStorage, modelsPath);
+	// When a registry is supplied without a runtime, reuse the registry's own
+	// runtime so provider registrations made on that registry stay in effect.
+	const modelRuntime =
+		options.modelRuntime ??
+		options.modelRegistry?.modelRuntime ??
+		(await ModelRuntime.create({
+			credentials: createMagentaCredentialStore(authStorage),
+			modelsPath: modelsPath ?? null,
+			allowModelNetwork: true,
+		}));
+	const modelRegistry = options.modelRegistry ?? new ModelRegistry(modelRuntime);
 
 	const settingsManager = options.settingsManager ?? SettingsManager.create(cwd, agentDir);
 	configureHttpDispatcher(settingsManager.getHttpIdleTimeoutMs());
@@ -485,6 +500,8 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		customTools: options.customTools,
 		sshTarget: options.sshTarget,
 		modelRegistry,
+		modelRuntime,
+		authStorage,
 		initialActiveToolNames,
 		autoActivateLoadedTools: options.tools === undefined && options.noTools !== "all",
 		autoActivateDefaultTools: options.tools === undefined && options.noTools === undefined,

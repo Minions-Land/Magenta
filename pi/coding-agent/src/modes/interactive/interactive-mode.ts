@@ -7086,7 +7086,7 @@ export class InteractiveMode {
 			return;
 		}
 
-		const storedCredential = this.session.modelRegistry.authStorage.get("anthropic");
+		const storedCredential = this.session.authStorage.get("anthropic");
 		if (storedCredential?.type === "oauth") {
 			this.anthropicSubscriptionWarningShown = true;
 			this.showWarning(ANTHROPIC_SUBSCRIPTION_AUTH_WARNING);
@@ -7654,7 +7654,7 @@ export class InteractiveMode {
 	}
 
 	private getLoginProviderOptions(authType?: "oauth" | "api_key"): AuthSelectorProvider[] {
-		const authStorage = this.session.modelRegistry.authStorage;
+		const authStorage = this.session.authStorage;
 		const oauthProviders = authStorage.getOAuthProviders();
 		const oauthProviderIds = new Set(oauthProviders.map((provider) => provider.id));
 		const options: AuthSelectorProvider[] = oauthProviders.map((provider) => ({
@@ -7680,7 +7680,7 @@ export class InteractiveMode {
 	}
 
 	private getLogoutProviderOptions(): AuthSelectorProvider[] {
-		const authStorage = this.session.modelRegistry.authStorage;
+		const authStorage = this.session.authStorage;
 		const options: AuthSelectorProvider[] = [];
 
 		for (const providerId of authStorage.list()) {
@@ -7773,7 +7773,7 @@ export class InteractiveMode {
 		this.showSelector((done) => {
 			const selector = new OAuthSelectorComponent(
 				mode,
-				this.session.modelRegistry.authStorage,
+				this.session.authStorage,
 				providerOptions,
 				async (providerId: string) => {
 					done();
@@ -7784,7 +7784,7 @@ export class InteractiveMode {
 					}
 
 					try {
-						this.session.modelRegistry.authStorage.logout(providerOption.id);
+						this.session.authStorage.logout(providerOption.id);
 						this.session.modelRegistry.refresh();
 						await this.updateAvailableProviderCount();
 						const message =
@@ -7916,7 +7916,7 @@ export class InteractiveMode {
 				throw new Error("API key cannot be empty.");
 			}
 
-			this.session.modelRegistry.authStorage.set(providerId, { type: "api_key", key: apiKey });
+			this.session.authStorage.set(providerId, { type: "api_key", key: apiKey });
 
 			restoreEditor();
 			await this.completeProviderAuthentication(providerId, providerName, "api_key", previousModel);
@@ -7958,7 +7958,7 @@ export class InteractiveMode {
 	}
 
 	private async showLoginDialog(providerId: string, providerName: string): Promise<void> {
-		const providerInfo = this.session.modelRegistry.authStorage
+		const providerInfo = this.session.authStorage
 			.getOAuthProviders()
 			.find((provider) => provider.id === providerId);
 		const previousModel = this.session.model;
@@ -7999,7 +7999,7 @@ export class InteractiveMode {
 		};
 
 		try {
-			await this.session.modelRegistry.authStorage.login(providerId as OAuthProviderId, {
+			await this.session.authStorage.login(providerId as OAuthProviderId, {
 				onAuth: (info: { url: string; instructions?: string }) => {
 					dialog.showAuth(info.url, info.instructions);
 

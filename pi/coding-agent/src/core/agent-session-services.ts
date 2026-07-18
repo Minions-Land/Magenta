@@ -6,8 +6,10 @@ import { getAgentDir } from "../config.ts";
 import { resolvePath } from "../utils/paths.ts";
 import { AuthStorage } from "./auth-storage.ts";
 import type { ExecutionProfile, HarnessCapabilitySettings } from "./execution-profile.ts";
+import { createMagentaCredentialStore } from "./external-credential-adapter.ts";
 import type { SessionStartEvent, ToolDefinition } from "./extensions/index.ts";
 import { ModelRegistry } from "./model-registry.ts";
+import { ModelRuntime } from "./model-runtime.ts";
 import {
 	DefaultResourceLoader,
 	type DefaultResourceLoaderOptions,
@@ -43,6 +45,7 @@ export interface CreateAgentSessionServicesOptions {
 	authStorage?: AuthStorage;
 	settingsManager?: SettingsManager;
 	modelRegistry?: ModelRegistry;
+	modelRuntime?: ModelRuntime;
 	extensionFlagValues?: Map<string, boolean | string>;
 	resourceLoaderOptions?: Omit<DefaultResourceLoaderOptions, "cwd" | "agentDir" | "settingsManager">;
 	resourceLoaderReloadOptions?: ResourceLoaderReloadOptions;
@@ -82,6 +85,7 @@ export interface AgentSessionServices {
 	authStorage: AuthStorage;
 	settingsManager: SettingsManager;
 	modelRegistry: ModelRegistry;
+	modelRuntime: ModelRuntime;
 	resourceLoader: ResourceLoader;
 	diagnostics: AgentSessionRuntimeDiagnostic[];
 }
@@ -146,7 +150,15 @@ export async function createAgentSessionServices(
 	const agentDir = options.agentDir ? resolvePath(options.agentDir) : getAgentDir();
 	const authStorage = options.authStorage ?? AuthStorage.create(join(agentDir, "auth.json"));
 	const settingsManager = options.settingsManager ?? SettingsManager.create(cwd, agentDir);
-	const modelRegistry = options.modelRegistry ?? ModelRegistry.create(authStorage, join(agentDir, "models.json"));
+	const modelRuntime =
+		options.modelRuntime ??
+		(await ModelRuntime.create({
+			credentials: createMagentaCredentialStore(authStorage),
+			modelsPath: join(agentDir, "models.json"),
+			modelsStorePath: join(agentDir, "models-store.json"),
+			allowModelNetwork: true,
+		}));
+	const modelRegistry = new ModelRegistry(modelRuntime);
 	const resourceLoader = new DefaultResourceLoader({
 		...(options.resourceLoaderOptions ?? {}),
 		cwd,
@@ -177,6 +189,7 @@ export async function createAgentSessionServices(
 		authStorage,
 		settingsManager,
 		modelRegistry,
+		modelRuntime,
 		resourceLoader,
 		diagnostics,
 	};
@@ -198,6 +211,7 @@ export async function createAgentSessionFromServices(
 		authStorage: options.services.authStorage,
 		settingsManager: options.services.settingsManager,
 		modelRegistry: options.services.modelRegistry,
+		modelRuntime: options.services.modelRuntime,
 		resourceLoader: options.services.resourceLoader,
 		sessionManager: options.sessionManager,
 		model: options.model,
