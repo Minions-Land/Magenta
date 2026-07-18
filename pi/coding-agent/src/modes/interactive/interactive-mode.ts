@@ -38,6 +38,7 @@ import {
 	Markdown,
 	matchesKey,
 	ProcessTerminal,
+	probeAndCacheCapabilities,
 	Spacer,
 	StaticPrefixContainer,
 	setKeybindings,
@@ -815,6 +816,11 @@ export class InteractiveMode {
 
 		this.setupKeyHandlers();
 		this.setupEditorSubmitHandler();
+
+		// Opt-in runtime truecolor detection for unknown terminals. No-op unless
+		// MAGENTA_PROBE_TRUECOLOR=1 is set; when enabled it probes (with a 100ms
+		// timeout) before first render so color quantization uses the real result.
+		await probeAndCacheCapabilities();
 
 		// Start the UI before initializing extensions so session_start handlers can use interactive dialogs
 		this.ui.start();

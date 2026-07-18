@@ -329,13 +329,19 @@ function applyModelOverride(model: Model<Api>, override: ModelOverride): Model<A
 	if (override.contextWindow !== undefined) result.contextWindow = override.contextWindow;
 	if (override.maxTokens !== undefined) result.maxTokens = override.maxTokens;
 
-	// Merge cost (partial override)
+	// Merge cost (partial override). model.cost may be flat { input, output, ... } or
+	// tiered { tiers: { default, scale } }. Normalize to flat base rates before overlaying
+	// the override's optional fields. For tiered models, use the default tier (volume < 128k).
 	if (override.cost) {
+		const baseRates =
+			"tiers" in model.cost
+				? model.cost.tiers.default // volume 0 → default tier
+				: model.cost; // already flat
 		result.cost = {
-			input: override.cost.input ?? model.cost.input,
-			output: override.cost.output ?? model.cost.output,
-			cacheRead: override.cost.cacheRead ?? model.cost.cacheRead,
-			cacheWrite: override.cost.cacheWrite ?? model.cost.cacheWrite,
+			input: override.cost.input ?? baseRates.input,
+			output: override.cost.output ?? baseRates.output,
+			cacheRead: override.cost.cacheRead ?? baseRates.cacheRead,
+			cacheWrite: override.cost.cacheWrite ?? baseRates.cacheWrite,
 		};
 	}
 
