@@ -69,6 +69,19 @@ describe("builtin providers", () => {
 		expect(await unconfigured.getAuth(model)).toBeUndefined();
 	});
 
+	it("prompts for and stores a Bedrock API key", async () => {
+		const provider = amazonBedrockProvider();
+		const credential = await provider.auth.apiKey?.login?.({
+			prompt: async (prompt) => {
+				expect(prompt).toEqual({ type: "secret", message: "Enter Bedrock API key" });
+				return "bedrock-api-key";
+			},
+			notify: () => {},
+		});
+
+		expect(credential).toEqual({ type: "api_key", key: "bedrock-api-key" });
+	});
+
 	it("requires Cloudflare Workers AI account config and returns scoped env", async () => {
 		const missingAccount = createModels({ authContext: fakeAuthContext({ CLOUDFLARE_API_KEY: "cf-key" }) });
 		missingAccount.setProvider(cloudflareWorkersAIProvider());
