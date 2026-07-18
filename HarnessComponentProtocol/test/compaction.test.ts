@@ -752,6 +752,131 @@ describe("harness compaction", () => {
 		expect(result.firstKeptEntryId).toBeTruthy();
 		expect(result.details).toBeDefined();
 	});
+
+	it("serializes split-turn summaries to avoid concurrent provider requests (AG-006/CC-017)", async () => {
+		const messages: AgentMessage[] = [createUserMessage("Summarize this.")];
+		const callOrder: string[] = [];
+		let activeCalls = 0;
+		let maxActiveCalls = 0;
+		const { faux, model } = createFauxModel(false);
+		faux.setResponses([
+			// History summary
+			async () => {
+				activeCalls++;
+				maxActiveCalls = Math.max(maxActiveCalls, activeCalls);
+				callOrder.push("history-start");
+				await new Promise((resolve) => setTimeout(resolve, 10));
+				callOrder.push("history-end");
+				activeCalls--;
+				return fauxAssistantMessage("## Goal\nHistory summary");
+			},
+			// Turn prefix summary
+			async () => {
+				activeCalls++;
+				maxActiveCalls = Math.max(maxActiveCalls, activeCalls);
+				callOrder.push("turnPrefix-start");
+				await new Promise((resolve) => setTimeout(resolve, 10));
+				callOrder.push("turnPrefix-end");
+				activeCalls--;
+				return fauxAssistantMessage("## Original Request\nTurn prefix summary");
+			},
+		]);
+		const preparation: CompactionPreparation = {
+			firstKeptEntryId: "entry-keep",
+			messagesToSummarize: messages,
+			turnPrefixMessages: messages,
+			isSplitTurn: true,
+			tokensBefore: 100,
+			fileOps: { read: new Set(), written: new Set(), edited: new Set() },
+			settings: { enabled: true, reserveTokens: 2000, keepRecentTokens: 20 },
+		};
+
+		const result = getOrThrow(await compact(preparation, models, model));
+
+		// Verify serialization: history must complete before turnPrefix starts
+		expect(callOrder).toEqual(["history-start", "history-end", "turnPrefix-start", "turnPrefix-end"]);
+		// Verify at most one active call at any time (no concurrent requests)
+		expect(maxActiveCalls).toBe(1);
+		expect(result.summary).toContain("History summary");
+		expect(result.summary).toContain("Turn prefix summary");
+	});
+
+	it("short-circuits split-turn compaction when history summarization fails (AG-006)", async () => {
+		const messages: AgentMessage[] = [createUserMessage("Summarize this.")];
+		const callOrder: string[] = [];
+		const { faux, model } = createFauxModel(false);
+		faux.setResponses([
+			// History summary fails
+			() => {
+				callOrder.push("history-fail");
+				return fauxAssistantMessage("", { stopReason: "error", errorMessage: "history boom" });
+			},
+			// Turn prefix should never be called
+			() => {
+				callOrder.push("turnPrefix-should-not-run");
+				return fauxAssistantMessage("## Original Request\nShould not happen");
+			},
+		]);
+		const preparation: CompactionPreparation = {
+			firstKeptEntryId: "entry-keep",
+			messagesToSummarize: messages,
+			turnPrefixMessages: messages,
+			isSplitTurn: true,
+			tokensBefore: 100,
+			fileOps: { read: new Set(), written: new Set(), edited: new Set() },
+			settings: { enabled: true, reserveTokens: 2000, keepRecentTokens: 20 },
+		};
+
+		const result = await compact(preparation, models, model);
+
+		// Verify history failed
+		expect(result).toMatchObject({
+			ok: false,
+			error: { code: "summarization_failed", message: "Summarization failed: history boom" },
+		});
+		// Verify turnPrefix was never called (short-circuit)
+		expect(callOrder).toEqual(["history-fail"]);
+	});
+
+	it("counts custom messages in token estimation equivalently to other messages (AG-006/a6f720e6)", () => {
+		const customMessage: AgentMessage = {
+			role: "custom",
+			customType: "note",
+			content: "x".repeat(400),
+			display: true,
+			timestamp: Date.now(),
+		};
+		const userMessage: AgentMessage = {
+			role: "user",
+			content: "x".repeat(400),
+			timestamp: Date.now(),
+		};
+		const assistantMessage: AssistantMessage = {
+			role: "assistant",
+			content: [{ type: "text", text: "x".repeat(400) }],
+			api: "anthropic-messages",
+			provider: "anthropic",
+			model: "claude-sonnet-4-5",
+			usage: createMockUsage(0, 0),
+			stopReason: "stop",
+			timestamp: Date.now(),
+		};
+
+		// Custom messages should be counted the same as user/assistant text content
+		const customTokens = estimateTokens(customMessage);
+		const userTokens = estimateTokens(userMessage);
+		const assistantTokens = estimateTokens(assistantMessage);
+
+		expect(customTokens).toBe(100); // 400 chars / 4
+		expect(userTokens).toBe(100);
+		expect(assistantTokens).toBe(100);
+		expect(customTokens).toBe(userTokens);
+		expect(customTokens).toBe(assistantTokens);
+
+		// Verify custom messages contribute to context token estimates
+		const estimate = estimateContextTokens([userMessage, customMessage, assistantMessage]);
+		expect(estimate.tokens).toBe(300);
+	});
 });
 
 function convertMessages(messages: Message[]): Message[] {

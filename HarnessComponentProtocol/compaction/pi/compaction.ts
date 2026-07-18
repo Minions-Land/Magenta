@@ -883,9 +883,13 @@ export async function compact(
 		if (messagesToSummarize.length === 0) {
 			summaryProgress.set("history", { processedBytes: 0, totalBytes: 0, completedChunks: 0 });
 		}
-		const [historyResult, turnPrefixResult] = await Promise.all([
+		// Serialize split-turn summaries: await history fully, then turn prefix.
+		// Upstream AG-006/CC-017 (f58c1156) replaced Promise.all so single-
+		// concurrency providers never run overlapping generations. History
+		// failure short-circuits before the prefix stream starts.
+		const historyResult =
 			messagesToSummarize.length > 0
-				? generateSummary(
+				? await generateSummary(
 						messagesToSummarize,
 						models,
 						model,
@@ -897,19 +901,18 @@ export async function compact(
 						streamFn,
 						(progress) => reportProgress("history", progress),
 					)
-				: Promise.resolve(ok<string, CompactionError>("No prior history.")),
-			generateTurnPrefixSummary(
-				turnPrefixMessages,
-				models,
-				model,
-				settings.reserveTokens,
-				signal,
-				thinkingLevel,
-				streamFn,
-				(progress) => reportProgress("turnPrefix", progress),
-			),
-		]);
+				: ok<string, CompactionError>("No prior history.");
 		if (!historyResult.ok) return err(historyResult.error);
+		const turnPrefixResult = await generateTurnPrefixSummary(
+			turnPrefixMessages,
+			models,
+			model,
+			settings.reserveTokens,
+			signal,
+			thinkingLevel,
+			streamFn,
+			(progress) => reportProgress("turnPrefix", progress),
+		);
 		if (!turnPrefixResult.ok) return err(turnPrefixResult.error);
 		summary = `${historyResult.value}\n\n---\n\n**Turn Context (split turn):**\n\n${turnPrefixResult.value}`;
 	} else {
