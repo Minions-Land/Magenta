@@ -56,3 +56,17 @@ Required behavior:
 - A workflow launched directly by the main session and one launched by a teammate use the same workflow runtime and leaf-level capability restrictions.
 - Runtime-owned spawning of the predefined worker nodes inside a static workflow is part of that workflow's execution and is not recursive model-visible delegation.
 - The main session retains supervisory visibility and control over teammate-owned descendant workflow runs.
+
+## Decision 5: No First-Class Team Resource
+
+**Accepted.** The unified multi-agent surface does not introduce a public Team resource. The main session directly owns and manages its persistent teammates; a "team" is only the implicit collaboration formed by those main-owned teammates, not an independently addressable aggregate.
+
+Required behavior:
+
+- The model-visible API has no `TeamHandle`, `teamId`, `team_create`, or independent Team lifecycle operations.
+- The main session creates, addresses, and manages teammates directly through the unified `multiagent` tool.
+- Each teammate belongs directly to one main session and retains its own persistent session state.
+- Teammates may start leaf workflows under the delegation restrictions in Decision 4.
+- `subagent` remains a single-node workflow template; unification covers workflow execution and persistent teammate collaboration without adding a new Team orchestration domain.
+- Shared task coordination, if added, is scoped to the main session and its teammates rather than owned by a separate Team resource. Its concrete semantics remain a later decision.
+- Internal indexing or grouping metadata may exist, but it must not create a separately addressable public Team identity or lifecycle.
