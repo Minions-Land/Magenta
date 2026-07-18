@@ -205,7 +205,7 @@ describe("context entry transforms and custom projectors (AG-003)", () => {
 		await session.appendMessage(createUserMessage("five"));
 		// Transform sees post-compaction entries: compaction marker + kept + appended.
 		const seen: string[] = [];
-		const transform = (entries: SessionTreeEntry[]): SessionTreeEntry[] => {
+		const transform = (entries: readonly SessionTreeEntry[]): readonly SessionTreeEntry[] => {
 			for (const entry of entries) seen.push(entry.type);
 			return entries.filter((entry) => entry.type !== "compaction");
 		};
@@ -216,11 +216,11 @@ describe("context entry transforms and custom projectors (AG-003)", () => {
 
 	it("stacks constructor and per-call transforms in order", async () => {
 		const order: string[] = [];
-		const ctorTransform = (entries: SessionTreeEntry[]): SessionTreeEntry[] => {
+		const ctorTransform = (entries: readonly SessionTreeEntry[]): readonly SessionTreeEntry[] => {
 			order.push("ctor");
 			return entries;
 		};
-		const callTransform = (entries: SessionTreeEntry[]): SessionTreeEntry[] => {
+		const callTransform = (entries: readonly SessionTreeEntry[]): readonly SessionTreeEntry[] => {
 			order.push("call");
 			return entries;
 		};
