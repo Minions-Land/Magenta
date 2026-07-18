@@ -9,12 +9,15 @@ import type {
 	ActiveToolsChangeEntry,
 	BranchSummaryEntry,
 	CompactionEntry,
+	ContextEntryTransform,
 	CustomEntry,
+	CustomEntryContextMessageProjector,
 	CustomMessageEntry,
 	LabelEntry,
 	MessageEntry,
 	ModelChangeEntry,
 	SessionContext,
+	SessionContextBuildOptions,
 	SessionInfoEntry,
 	SessionMetadata,
 	SessionStorage,
@@ -23,11 +26,92 @@ import type {
 } from "../../types/types.ts";
 import { SessionError } from "../../types/types.ts";
 
-export function buildSessionContext(pathEntries: SessionTreeEntry[]): SessionContext {
+/**
+ * Default context entry transform: from the full active branch, select the latest compaction and
+ * keep the compaction marker followed by entries from its `firstKeptEntryId` onward, then any
+ * entries appended after the compaction. Without a compaction the sequence is returned unchanged.
+ */
+export function defaultContextEntryTransform(pathEntries: SessionTreeEntry[]): SessionTreeEntry[] {
+	let compaction: CompactionEntry | null = null;
+	for (const entry of pathEntries) {
+		if (entry.type === "compaction") compaction = entry;
+	}
+	if (!compaction) return [...pathEntries];
+	const compactionIdx = pathEntries.findIndex((e) => e.type === "compaction" && e.id === compaction.id);
+	const selected: SessionTreeEntry[] = [compaction];
+	let foundFirstKept = false;
+	for (let i = 0; i < compactionIdx; i++) {
+		const entry = pathEntries[i]!;
+		if (entry.id === compaction.firstKeptEntryId) foundFirstKept = true;
+		if (foundFirstKept) selected.push(entry);
+	}
+	for (let i = compactionIdx + 1; i < pathEntries.length; i++) {
+		selected.push(pathEntries[i]!);
+	}
+	return selected;
+}
+
+/**
+ * Project a single session entry into model messages. `custom` entries produce no messages unless a
+ * keyed projector for their `customType` returns messages; state-only entries produce nothing.
+ */
+export function sessionEntryToContextMessages(
+	entry: SessionTreeEntry,
+	projectors?: Record<string, CustomEntryContextMessageProjector>,
+): AgentMessage[] {
+	switch (entry.type) {
+		case "message":
+			return [entry.message as AgentMessage];
+		case "custom_message":
+			return [
+				createCustomMessage(
+					entry.customType,
+					entry.content as string | (TextContent | ImageContent)[],
+					entry.display,
+					entry.details,
+					entry.timestamp,
+				) as AgentMessage,
+			];
+		case "branch_summary":
+			return entry.summary
+				? [createBranchSummaryMessage(entry.summary, entry.fromId, entry.timestamp) as AgentMessage]
+				: [];
+		case "compaction":
+			return [
+				createCompactionSummaryMessage(entry.summary, entry.tokensBefore, entry.timestamp) as AgentMessage,
+			];
+		case "custom": {
+			const projector = projectors?.[entry.customType];
+			return projector ? projector(entry) : [];
+		}
+		default:
+			return [];
+	}
+}
+
+/**
+ * Build the context entry sequence for the active branch: apply the default latest-compaction
+ * selection, then run stacked custom transforms in order. Operates on entries, not messages.
+ */
+export function buildContextEntries(
+	pathEntries: SessionTreeEntry[],
+	options?: SessionContextBuildOptions,
+): SessionTreeEntry[] {
+	let entries = defaultContextEntryTransform(pathEntries);
+	for (const transform of options?.entryTransforms ?? []) {
+		entries = transform(entries);
+	}
+	return entries;
+}
+
+export function buildSessionContext(
+	pathEntries: SessionTreeEntry[],
+	options?: SessionContextBuildOptions,
+): SessionContext {
+	// Runtime state derives from the full active branch, before compaction selection.
 	let thinkingLevel = "off";
 	let model: { provider: string; modelId: string } | null = null;
 	let activeToolNames: string[] | null = null;
-	let compaction: CompactionEntry | null = null;
 
 	for (const entry of pathEntries) {
 		if (entry.type === "thinking_level_change") {
@@ -38,56 +122,40 @@ export function buildSessionContext(pathEntries: SessionTreeEntry[]): SessionCon
 			model = { provider: entry.message.provider, modelId: entry.message.model };
 		} else if (entry.type === "active_tools_change") {
 			activeToolNames = [...entry.activeToolNames];
-		} else if (entry.type === "compaction") {
-			compaction = entry;
 		}
 	}
 
+	const entries = buildContextEntries(pathEntries, options);
 	const messages: AgentMessage[] = [];
-	const appendMessage = (entry: SessionTreeEntry) => {
-		if (entry.type === "message") {
-			messages.push(entry.message as AgentMessage);
-		} else if (entry.type === "custom_message") {
-			messages.push(
-				createCustomMessage(
-					entry.customType,
-					entry.content as string | (TextContent | ImageContent)[],
-					entry.display,
-					entry.details,
-					entry.timestamp,
-				),
-			);
-		} else if (entry.type === "branch_summary" && entry.summary) {
-			messages.push(createBranchSummaryMessage(entry.summary, entry.fromId, entry.timestamp));
-		}
-	};
-
-	if (compaction) {
-		messages.push(createCompactionSummaryMessage(compaction.summary, compaction.tokensBefore, compaction.timestamp));
-		const compactionIdx = pathEntries.findIndex((e) => e.type === "compaction" && e.id === compaction.id);
-		let foundFirstKept = false;
-		for (let i = 0; i < compactionIdx; i++) {
-			const entry = pathEntries[i]!;
-			if (entry.id === compaction.firstKeptEntryId) foundFirstKept = true;
-			if (foundFirstKept) appendMessage(entry);
-		}
-		for (let i = compactionIdx + 1; i < pathEntries.length; i++) {
-			appendMessage(pathEntries[i]!);
-		}
-	} else {
-		for (const entry of pathEntries) {
-			appendMessage(entry);
+	for (const entry of entries) {
+		for (const message of sessionEntryToContextMessages(entry, options?.entryProjectors)) {
+			messages.push(message);
 		}
 	}
 
 	return { messages, thinkingLevel, model, activeToolNames };
 }
 
+/** Merge constructor-level and per-call build options: stack transforms, override projectors by key. */
+function mergeContextBuildOptions(
+	base?: SessionContextBuildOptions,
+	override?: SessionContextBuildOptions,
+): SessionContextBuildOptions | undefined {
+	if (!base) return override;
+	if (!override) return base;
+	return {
+		entryTransforms: [...(base.entryTransforms ?? []), ...(override.entryTransforms ?? [])],
+		entryProjectors: { ...(base.entryProjectors ?? {}), ...(override.entryProjectors ?? {}) },
+	};
+}
+
 export class Session<TMetadata extends SessionMetadata = SessionMetadata> {
 	private storage: SessionStorage<TMetadata>;
+	private readonly buildOptions?: SessionContextBuildOptions;
 
-	constructor(storage: SessionStorage<TMetadata>) {
+	constructor(storage: SessionStorage<TMetadata>, buildOptions?: SessionContextBuildOptions) {
 		this.storage = storage;
+		this.buildOptions = buildOptions;
 	}
 
 	getMetadata(): Promise<TMetadata> {
@@ -115,8 +183,16 @@ export class Session<TMetadata extends SessionMetadata = SessionMetadata> {
 		return this.storage.getPathToRoot(leafId);
 	}
 
-	async buildContext(): Promise<SessionContext> {
-		return buildSessionContext(await this.getBranch());
+	async buildContext(options?: SessionContextBuildOptions): Promise<SessionContext> {
+		return buildSessionContext(await this.getBranch(), mergeContextBuildOptions(this.buildOptions, options));
+	}
+
+	/**
+	 * Build the context entry sequence for the active branch (default compaction selection plus
+	 * stacked transforms), without projecting to messages. Constructor and per-call options stack.
+	 */
+	async buildContextEntries(options?: SessionContextBuildOptions): Promise<SessionTreeEntry[]> {
+		return buildContextEntries(await this.getBranch(), mergeContextBuildOptions(this.buildOptions, options));
 	}
 
 	getLabel(id: string): Promise<string | undefined> {
