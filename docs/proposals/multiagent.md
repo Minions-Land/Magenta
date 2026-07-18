@@ -42,3 +42,17 @@ Required behavior:
 - The `subagent` template contains exactly one sessionless, one-shot worker node.
 - Its final workflow output is that worker node's result, with no synthesizer or additional orchestration step.
 - It runs through the same workflow execution, timeout, cancellation, observability, and background terminal-event path as every other static workflow.
+
+## Decision 4: Strict Delegation Hierarchy
+
+**Accepted.** Multi-agent delegation follows a strict three-tier hierarchy: main session, stateful teammate session, then sessionless workflow execution. Delegation may move only downward; same-level recursion and upward creation are prohibited.
+
+Required behavior:
+
+- The main session is the root authority. It may create and manage teammates and may start workflows directly.
+- A teammate is a persistent, stateful child session owned by the main session.
+- A teammate may start workflows, but it may not create or manage another teammate or team.
+- A workflow is the leaf execution layer. Its workers may not start another workflow or create or manage teammates or teams.
+- A workflow launched directly by the main session and one launched by a teammate use the same workflow runtime and leaf-level capability restrictions.
+- Runtime-owned spawning of the predefined worker nodes inside a static workflow is part of that workflow's execution and is not recursive model-visible delegation.
+- The main session retains supervisory visibility and control over teammate-owned descendant workflow runs.
