@@ -7,8 +7,9 @@
  */
 
 import type { Credential, CredentialInfo, CredentialStore } from "@earendil-works/pi-ai";
+import { hasRuntimeApiKeyProbe, type RuntimeApiKeyProbe } from "./external-credential-adapter.ts";
 
-export class RuntimeCredentials implements CredentialStore {
+export class RuntimeCredentials implements CredentialStore, RuntimeApiKeyProbe {
 	private readonly store: CredentialStore;
 	private readonly overrides = new Map<string, string>();
 
@@ -24,8 +25,15 @@ export class RuntimeCredentials implements CredentialStore {
 		this.overrides.delete(providerId);
 	}
 
+	/**
+	 * Live sync check for runtime API key overrides. Covers overrides set on this
+	 * wrapper (ModelRuntime.setRuntimeApiKey) and those set directly on the shared
+	 * AuthStorage further down the chain (authStorage.setRuntimeApiKey), so a
+	 * synchronous auth check sees them without an async availability refresh.
+	 */
 	hasRuntimeApiKey(providerId: string): boolean {
-		return this.overrides.has(providerId);
+		if (this.overrides.has(providerId)) return true;
+		return hasRuntimeApiKeyProbe(this.store) && this.store.hasRuntimeApiKey(providerId);
 	}
 
 	async read(providerId: string): Promise<Credential | undefined> {

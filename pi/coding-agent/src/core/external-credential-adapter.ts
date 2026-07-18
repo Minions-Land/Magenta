@@ -26,15 +26,37 @@ import {
 } from "./external-auth-loader.ts";
 
 /**
+ * Sync probe for non-persistent runtime API key overrides (--api-key set on the
+ * shared AuthStorage). Layered credential stores delegate this downward so a
+ * synchronous auth check (ModelRuntime.hasConfiguredAuth) can observe overrides
+ * set after the availability snapshot was built, without an async refresh.
+ */
+export interface RuntimeApiKeyProbe {
+	hasRuntimeApiKey(providerId: string): boolean;
+}
+
+/**
+ * Type guard for credential stores that can synchronously report runtime API
+ * key overrides. Used to traverse layered stores without an async refresh.
+ */
+export function hasRuntimeApiKeyProbe(store: unknown): store is RuntimeApiKeyProbe {
+	return typeof (store as Partial<RuntimeApiKeyProbe>)?.hasRuntimeApiKey === "function";
+}
+
+/**
  * Adapt Magenta's AuthStorage to pi-ai CredentialStore.
  * AuthStorage has a sync API with OAuth refresh; pi-ai expects async with
  * OAuth refresh delegated to Models. We bridge the gap here.
  */
-export class AuthStorageCredentialAdapter implements CredentialStore {
+export class AuthStorageCredentialAdapter implements CredentialStore, RuntimeApiKeyProbe {
 	private readonly authStorage: AuthStorage;
 
 	constructor(authStorage: AuthStorage) {
 		this.authStorage = authStorage;
+	}
+
+	hasRuntimeApiKey(providerId: string): boolean {
+		return this.authStorage.getRuntimeApiKey(providerId) !== undefined;
 	}
 
 	async read(providerId: string): Promise<Credential | undefined> {
@@ -93,13 +115,17 @@ export class AuthStorageCredentialAdapter implements CredentialStore {
  * External sources (Claude Code, Codex) are consulted only when the base store
  * has no credential for a provider.
  */
-export class ExternalCredentialStore implements CredentialStore {
+export class ExternalCredentialStore implements CredentialStore, RuntimeApiKeyProbe {
 	private readonly store: CredentialStore;
 	private externalCache: Map<string, ExternalCredential> | undefined;
 	private externalCacheTime = 0;
 
 	constructor(store: CredentialStore) {
 		this.store = store;
+	}
+
+	hasRuntimeApiKey(providerId: string): boolean {
+		return hasRuntimeApiKeyProbe(this.store) && this.store.hasRuntimeApiKey(providerId);
 	}
 
 	/**

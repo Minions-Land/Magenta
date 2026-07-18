@@ -349,7 +349,12 @@ export class ModelRuntime implements Models {
 	hasConfiguredAuth(providerId: string): boolean {
 		// A provider is "configured" if it has models and auth, OR if there's a
 		// stored/runtime credential (matching the old authStorage.hasCredential precedent).
-		return this.snapshot.configuredProviders.has(providerId) || this.snapshot.storedProviders.has(providerId);
+		// Snapshot-based check for configured providers (those with models + auth).
+		if (this.snapshot.configuredProviders.has(providerId)) return true;
+		// Live check for stored credentials (can change after snapshot via login/logout).
+		if (this.snapshot.storedProviders.has(providerId)) return true;
+		// Live check for runtime API key overrides (set after snapshot via setRuntimeApiKey).
+		return this.credentials.hasRuntimeApiKey(providerId);
 	}
 
 	getAuth(providerId: string, overrides?: ModelRuntimeAuthOverrides): Promise<AuthResult | undefined>;
