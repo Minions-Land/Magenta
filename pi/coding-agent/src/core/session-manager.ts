@@ -1,6 +1,12 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ImageContent, Message, TextContent } from "@earendil-works/pi-ai";
-import { uuidv7 } from "@magenta/harness";
+import {
+	buildContextEntries as hcpBuildContextEntries,
+	buildSessionContext as hcpBuildSessionContext,
+	sessionEntryToContextMessages as hcpSessionEntryToContextMessages,
+	type SessionTreeEntry,
+	uuidv7,
+} from "@magenta/harness";
 import { randomUUID } from "crypto";
 import {
 	appendFileSync,
@@ -20,13 +26,7 @@ import { createInterface } from "readline";
 import { StringDecoder } from "string_decoder";
 import { getAgentDir as getDefaultAgentDir, getSessionsDir } from "../config.ts";
 import { normalizePath, resolvePath } from "../utils/paths.ts";
-import {
-	type BashExecutionMessage,
-	type CustomMessage,
-	createBranchSummaryMessage,
-	createCompactionSummaryMessage,
-	createCustomMessage,
-} from "./messages.ts";
+import { type BashExecutionMessage, type CustomMessage } from "./messages.ts";
 
 export const CURRENT_SESSION_VERSION = 3;
 
@@ -387,30 +387,27 @@ function getSessionContextSettings(path: SessionEntry[]): Pick<SessionContext, "
 /**
  * Project one selected session entry into LLM/runtime messages.
  * Plain custom entries are display/state entries and do not participate in context.
+ *
+ * Delegates to HCP's sessionEntryToContextMessages for core projection logic,
+ * with Pi-specific null-content normalization for lax provider tolerance.
  */
 export function sessionEntryToContextMessages(entry: SessionEntry): AgentMessage[] {
-	if (entry.type === "message") {
-		const message = entry.message;
+	// Delegate to HCP for projection logic. Pi's SessionEntry is a structural subset of HCP's SessionTreeEntry.
+	const messages = hcpSessionEntryToContextMessages(entry as SessionTreeEntry, 0, [entry as SessionTreeEntry], {});
+
+	// Apply Pi-specific null-content normalization (lax-message-content.test.ts requirement)
+	return messages.map((msg) => {
 		if (
-			(message.role === "user" || message.role === "assistant" || message.role === "toolResult") &&
-			message.content == null
+			(msg.role === "user" || msg.role === "assistant" || msg.role === "toolResult") &&
+			msg.content == null
 		) {
-			return [{ ...message, content: [] }];
+			return { ...msg, content: [] };
 		}
-		return [message];
-	}
-	if (entry.type === "custom_message") {
-		return [
-			createCustomMessage(entry.customType, entry.content ?? [], entry.display, entry.details, entry.timestamp),
-		];
-	}
-	if (entry.type === "branch_summary" && entry.summary) {
-		return [createBranchSummaryMessage(entry.summary, entry.fromId, entry.timestamp)];
-	}
-	if (entry.type === "compaction") {
-		return [createCompactionSummaryMessage(entry.summary, entry.tokensBefore, entry.timestamp)];
-	}
-	return [];
+		if (msg.role === "custom" && msg.content == null) {
+			return { ...msg, content: [] };
+		}
+		return msg;
+	});
 }
 
 /**
@@ -420,49 +417,27 @@ export function sessionEntryToContextMessages(entry: SessionEntry): AgentMessage
  * the latest compaction is represented by the compaction entry itself, followed
  * by the kept entries starting at firstKeptEntryId and all entries after the
  * compaction entry. Older summarized entries are omitted.
+ *
+ * Delegates to HCP's buildContextEntries for compaction-selection logic.
  */
 export function buildContextEntries(
 	entries: SessionEntry[],
 	leafId?: string | null,
 	byId?: Map<string, SessionEntry>,
 ): SessionEntry[] {
+	// Build path using Pi's storage traversal
 	const path = buildSessionPath(entries, leafId, byId);
-	let compaction: CompactionEntry | null = null;
-
-	for (const entry of path) {
-		if (entry.type === "compaction") {
-			compaction = entry;
-		}
-	}
-
-	if (!compaction) {
-		return path;
-	}
-
-	const compactionIdx = path.findIndex((entry) => entry.id === compaction.id);
-	if (compactionIdx < 0) {
-		return path;
-	}
-
-	const contextEntries: SessionEntry[] = [compaction];
-	let foundFirstKept = false;
-	for (let i = 0; i < compactionIdx; i++) {
-		const entry = path[i];
-		if (entry.id === compaction.firstKeptEntryId) {
-			foundFirstKept = true;
-		}
-		if (foundFirstKept) {
-			contextEntries.push(entry);
-		}
-	}
-	contextEntries.push(...path.slice(compactionIdx + 1));
-	return contextEntries;
+	// Delegate compaction selection to HCP (eliminates duplicate defaultContextEntryTransform logic)
+	return hcpBuildContextEntries(path as SessionTreeEntry[], {}) as SessionEntry[];
 }
 
 /**
  * Build the session context from entries using tree traversal.
  * If leafId is provided, walks from that entry to root.
  * Handles compaction and branch summaries along the path.
+ *
+ * Delegates to HCP for compaction selection, then projects using Pi's
+ * sessionEntryToContextMessages (which includes null-content normalization).
  */
 export function buildSessionContext(
 	entries: SessionEntry[],
@@ -471,6 +446,7 @@ export function buildSessionContext(
 ): SessionContext {
 	const path = buildSessionPath(entries, leafId, byId);
 	const { thinkingLevel, model } = getSessionContextSettings(path);
+	// Use HCP for compaction selection, then Pi's projection for null-content tolerance
 	const messages = buildContextEntries(entries, leafId, byId).flatMap(sessionEntryToContextMessages);
 	return { messages, thinkingLevel, model };
 }
