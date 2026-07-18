@@ -274,13 +274,30 @@ Required behavior:
 - Every accepted start returns one transient `eventId`; that Event independently owns status, cancellation, failure, optional explicit timeout, terminal output, and external activation.
 - A Workflow's internal workers are observable implementation children of its one top-level Event. They do not receive separate public event IDs or terminal activations.
 - Simultaneous Event completions may be coalesced by the external-activation coordinator into one parent turn without creating batch identity or shared settlement.
-- All starts share one atomic capacity/reservation controller, so concurrent Tool calls and nested Workflow workers cannot bypass Session/Host hard limits.
+- All starts share one atomic capacity and queue controller, so concurrent Tool calls and nested Workflow workers cannot bypass Session/Host hard limits. Capacity saturation queues valid Events under Decision 18 rather than rejecting them.
 - The current Subagent controller, event monitor, process supervision, cancellation settlement, logs, usage accounting, parent-progress support, automatic return path, Workflow drivers, and focused tests are the migration baseline. They are ported rather than rewritten unless they conflict with Decisions 1, 4, 13-17 or HCP ownership.
 - Internal implementation unification is optional. Refactoring must remove demonstrated duplication or satisfy an accepted invariant; it is not a goal by itself.
 
+### Decision 18: Capacity Saturation Queues Events
+
+**Accepted.** A valid authorized `sub_agent start` is never rejected merely because execution capacity is currently full. The Tool registers one Event immediately and leaves it in `queued` state until the shared scheduler can admit it.
+
+Required behavior:
+
+- Validation, caller authorization, workspace policy, and static resource checks happen before registration and may reject invalid requests. Capacity saturation after those checks is not an error.
+- The finite scheduler owns separate effective limits for simultaneously running top-level Events and concurrently active worker attempts. Queued Events and waiting Workflow children consume no worker permit.
+- Event admission is deterministic FIFO by registration sequence. Workflow-internal worker attempts enter the same shared permit system so multiple Workflows cannot each claim an independent full concurrency budget.
+- The canonical Event state path is `registered -> queued -> starting -> running -> terminating -> terminal`, with protocol-specific phases allowed inside `running`. Scheduling may skip unobservable intermediate states only when their timestamps and settlement semantics remain unambiguous.
+- `start` returns after durable in-session Event registration and never waits for a worker permit, process spawn, readiness, or completion. The acknowledgement includes `eventId`, `state: "queued"`, `queuedAt`, and effective capacity information.
+- With no explicitly injected `runTimeoutSeconds`, an Event may remain queued indefinitely. An explicit run timeout starts at registration, includes queued time, and can settle the Event as `timed_out` before any worker starts.
+- Cancelling a queued Event removes it atomically from the scheduler and settles it `cancelled` without spawning a process. Session shutdown also settles queued finite Events without starting them.
+- Spawn or provider failure after admission settles only that Event as `failed`; it does not reject or cancel unrelated queued/running Events.
+- Status and TUI snapshots expose queued state and, when cheaply available, an advisory queue position. Queue position is not a stable identity or scheduling promise.
+- The queue may be memory-efficient or durably represented in the session's Event state, but it may not introduce a model-visible batch/group identity, blocking wait, hidden timeout, or second scheduler per Workflow.
+
 ## Current Candidate Design
 
-**Status: Discussion only - not accepted beyond Decisions 1, 4-6, 13-17.**
+**Status: Discussion only - not accepted beyond Decisions 1, 4-6, 13-18.**
 
 The current candidate has three public Tool products and no parallel Capability products:
 
