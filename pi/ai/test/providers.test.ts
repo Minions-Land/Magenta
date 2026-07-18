@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { envApiKeyAuth } from "../src/auth/helpers.ts";
 import type { AuthContext } from "../src/auth/types.ts";
 import { createModels, createProvider } from "../src/models.ts";
+import { InMemoryModelsStore, type ModelsStoreEntry } from "../src/models-store.ts";
 import { builtinModels, builtinProviders } from "../src/providers/all.ts";
 import { amazonBedrockProvider } from "../src/providers/amazon-bedrock.ts";
 import { anthropicProvider } from "../src/providers/anthropic.ts";
@@ -274,7 +275,7 @@ describe("createProvider", () => {
 			id: "dynamic",
 			auth: { apiKey: { name: "Test", resolve: async () => ({ auth: {} }) } },
 			models: [],
-			refreshModels: async () => {
+			fetchModels: async () => {
 				fetches++;
 				await new Promise((resolve) => setTimeout(resolve, 5));
 				return [testModel("api-a", "listed")];
@@ -282,13 +283,23 @@ describe("createProvider", () => {
 			api: recordingStreams("a", []),
 		});
 
+		const store = new InMemoryModelsStore();
+		const refreshContext = {
+			credential: { type: "api_key" as const },
+			store: {
+				read: () => store.read("dynamic"),
+				write: (entry: ModelsStoreEntry) => store.write("dynamic", entry),
+				delete: () => store.delete("dynamic"),
+			},
+			allowNetwork: true,
+		};
 		expect(provider.getModels()).toEqual([]);
-		await Promise.all([provider.refreshModels?.(), provider.refreshModels?.()]);
+		await Promise.all([provider.refreshModels?.(refreshContext), provider.refreshModels?.(refreshContext)]);
 		expect(fetches).toBe(1);
 		expect(provider.getModels().map((m) => m.id)).toEqual(["listed"]);
 
 		// a later refresh fetches again
-		await provider.refreshModels?.();
+		await provider.refreshModels?.(refreshContext);
 		expect(fetches).toBe(2);
 	});
 });
