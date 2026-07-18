@@ -928,6 +928,85 @@ describe("ModelRegistry", () => {
 			)?.name;
 			expect(restoredName).not.toBe("Custom Name");
 		});
+
+		test("modelOverrides apply to extension-registered provider models (CC-029)", async () => {
+			// models.json declares an override for a provider that only exists once an
+			// extension registers it. The override must apply after extension model
+			// replacement (composer ordering: built-in -> models.json custom ->
+			// extension replacement -> credential projection -> modelOverrides last).
+			writeRawModelsJson({
+				"ext-provider": {
+					modelOverrides: {
+						"ext-model": {
+							name: "Overridden Ext Model",
+							contextWindow: 12345,
+						},
+					},
+				},
+			});
+
+			const registry = await makeRegistry();
+			registry.registerProvider("ext-provider", {
+				baseUrl: "https://ext.test/v1",
+				apiKey: "ext-key",
+				api: "openai-completions",
+				models: [
+					{
+						id: "ext-model",
+						name: "Original Ext Model",
+						reasoning: false,
+						input: ["text"],
+						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+						contextWindow: 100000,
+						maxTokens: 4096,
+					},
+				],
+			});
+
+			const model = registry.find("ext-provider", "ext-model");
+			expect(model?.name).toBe("Overridden Ext Model");
+			expect(model?.contextWindow).toBe(12345);
+			// non-overridden field from extension registration is preserved
+			expect(model?.maxTokens).toBe(4096);
+		});
+
+		test("modelOverrides survive extension provider re-registration (CC-029)", async () => {
+			writeRawModelsJson({
+				"ext-provider": {
+					modelOverrides: {
+						"ext-model": { name: "Overridden Ext Model" },
+					},
+				},
+			});
+
+			const registry = await makeRegistry();
+			const register = (contextWindow: number) =>
+				registry.registerProvider("ext-provider", {
+					baseUrl: "https://ext.test/v1",
+					apiKey: "ext-key",
+					api: "openai-completions",
+					models: [
+						{
+							id: "ext-model",
+							name: "Original Ext Model",
+							reasoning: false,
+							input: ["text"],
+							cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+							contextWindow,
+							maxTokens: 4096,
+						},
+					],
+				});
+
+			register(100000);
+			expect(registry.find("ext-provider", "ext-model")?.name).toBe("Overridden Ext Model");
+
+			// Re-registration with a new model list must still get the override applied last.
+			register(200000);
+			const model = registry.find("ext-provider", "ext-model");
+			expect(model?.name).toBe("Overridden Ext Model");
+			expect(model?.contextWindow).toBe(200000);
+		});
 	});
 
 	describe("dynamic provider lifecycle", () => {
