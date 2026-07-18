@@ -157,6 +157,28 @@ Required behavior:
 - The name `teammate` identifies a protocol and owned endpoint, not a `TeamHandle`, `teamId`, Team Todo, or independently addressable Team aggregate.
 - `open_conversation` is not a current model-visible protocol. It remains available only as a possible future protocol name if Magenta later supports ownerless or federated peer sessions with separately accepted identity and authorization semantics.
 
+### Decision 12: Model Input Is Not a Trusted Node Binding
+
+**Accepted.** The provider-facing node object describes only a protocol slot, task content, and constrained execution preferences. The runtime converts that input into a separate trusted node binding; identity, authority, routing, grants, output contracts, correlation, lifecycle, and terminal semantics are never model-authored fields.
+
+The model-visible node fields are:
+
+- required `slot` and `instruction`;
+- optional `key` and protocol-authorized `count`;
+- optional `role` and `focus` prompt metadata;
+- optional `model` and `thinking` execution preferences;
+- optional `tools`, `packages`, `cwd`, `workspace`, and `attemptTimeoutSeconds` constrained resource preferences.
+
+Required behavior:
+
+- The public node input has no `id` and no separate `provider` field. A host-defined `model` reference may encode a model pattern or provider/model pair without exposing HCP Source selection.
+- Requested tools, packages, workspace, cwd, model, thinking, and timeout values are not grants. The runtime validates or intersects them with caller authority, protocol policy, host policy, workspace roots, and hard limits.
+- Runtime-generated fields include node/run/protocol identity, ownership lineage, authority, routes, resolved grants, trusted guards, output schema, correlation, lifecycle, and terminal behavior.
+- Slot names and cardinality are protocol-owned: `subagent` requires `worker = 1`; `classify_and_act` requires `classifier = 1` and keyed `handler >= 1` with optional `fallback = 0..1`; `fan_out_synthesize` requires `worker = 1..N` and `synthesizer = 1`; `adversarial_verify` requires `generator = 1` and `verifier = 1..N`; `generate_and_filter` requires `generator = 1..N` and one logical `evaluator`; `tournament` requires `approach = 2..N` and one logical `judge`; `loop_until_done` requires `refiner = 1`; `teammate` requires `peer = 1`.
+- `count` creates independent instances only where that slot permits it. It cannot encode loops, tournament comparisons, dynamic branches, evaluator attempts, or other protocol control.
+- Unknown slots, missing required slots, duplicate singleton slots, duplicate keyed-slot keys, unsupported `count`, and invalid cardinality are validation errors and are never silently ignored.
+- Prompt assembly order is fixed: trusted protocol guard, node-local `instruction`, then shared protocol `message.content`.
+
 ## Integrated Candidate Design
 
 **Status: Discussion only - not accepted.**
@@ -284,24 +306,22 @@ Duplicate singleton slots, duplicate keyed-handler keys, unknown slots, and `cou
 Every protocol binds content to the same node shape:
 
 ```ts
-type NodeBinding = {
-  id?: string;
-
+type NodeBindingInput = {
   // Runtime-defined named position in the selected protocol.
   slot: string;
 
   // Optional binding key, for example a classifier handler label.
   key?: string;
 
-  // Number of identical clean-context instances requested for this slot.
+  // Number of identical clean-context instances requested for an authorized slot.
   count?: number;
 
   instruction: string;
   role?: string;
   focus?: string;
 
+  // Host-resolved preferences, not grants or HCP Source selectors.
   model?: string;
-  provider?: string;
   thinking?: string;
   tools?: string[];
   packages?: string[];
@@ -312,11 +332,11 @@ type NodeBinding = {
 };
 ```
 
-The model supplies task content and resource preferences. The protocol owns output schemas, guards, routing edges, correlation, reducers, and termination.
+The model supplies task content and constrained resource preferences. The runtime produces a separate trusted binding containing generated identity, ownership, authority, resolved grants, routes, guards, output schema, correlation, lifecycle, and terminal semantics.
 
-`message.content` is the protocol-level input or initial assignment. `NodeBinding.instruction` is that slot's local responsibility. When both are present, the runtime constructs the node prompt in a fixed order: trusted protocol guard, node instruction, then shared message input. Neither silently overrides the other.
+`message.content` is the protocol-level input or initial assignment. `NodeBindingInput.instruction` is that slot's local responsibility. When both are present, the runtime constructs the node prompt in a fixed order: trusted protocol guard, node instruction, then shared message input. Neither silently overrides the other.
 
-`count` may instantiate identical independent nodes. It must not be used to represent feedback loops, tournament rounds, or dynamic branching; those remain protocol-driver logic.
+`count` may instantiate identical independent nodes only on protocol-authorized slots. It must not represent feedback loops, tournament comparisons, evaluator attempts, or dynamic branching; those remain protocol-driver logic.
 
 ### 6. Typed Message Data Plane
 
@@ -444,7 +464,7 @@ type MultiagentInput = {
 
   // action=start
   protocol?: ProtocolName;
-  nodes?: NodeBinding[];
+  nodes?: NodeBindingInput[];
   message?: {
     content: string;
     urgent?: boolean;
@@ -494,7 +514,7 @@ The limits matrix is:
 | `minConfidence` | `adversarial_verify` | minimum runtime-computed verifier pass ratio |
 | `maxOutputs` | `generate_and_filter` | number of ranked candidates retained |
 | `runTimeoutSeconds` | all finite protocols | wall-clock deadline for the complete protocol run |
-| `attemptTimeoutSeconds` | any NodeBinding | wall-clock deadline for one node attempt |
+| `attemptTimeoutSeconds` | any node binding | wall-clock deadline for one node attempt |
 
 Unsupported limits, non-finite values, invalid ranges, and a node attempt timeout greater than the finite run timeout are validation errors. `teammate` has no whole-session run timeout; each assignment/turn may later receive a separately defined deadline policy.
 
@@ -772,11 +792,10 @@ Before removing existing tools, the candidate must prove:
 
 The following remain candidates and must be discussed one at a time:
 
-1. The exact `NodeBinding` fields and slot/cardinality rules.
-2. The exact `limits` vocabulary and which limits are protocol-specific.
-3. Whether the standalone model-visible `send_message` tool is removed in favor of `multiagent action=send`.
-4. Whether teammates can directly mutate the Main Todo or only report proposed updates.
-5. The retention period and TUI presentation of transient finite event receipts after terminal settlement.
-6. How stopped teammate Sessions are indexed, rediscovered, authorized, and resumed after the Main runtime itself restarts.
-7. Whether persistent teammate assignment completion is always inferred from a turn's final output or may also use explicit terminal receipts.
-8. The stable provider-facing response, validation-error, status-snapshot, control-acknowledgement, worktree-receipt, and terminal-event JSON contracts.
+1. The exact `limits` vocabulary and which limits are protocol-specific.
+2. Whether the standalone model-visible `send_message` tool is removed in favor of `multiagent action=send`.
+3. Whether teammates can directly mutate the Main Todo or only report proposed updates.
+4. The retention period and TUI presentation of transient finite event receipts after terminal settlement.
+5. How stopped teammate Sessions are indexed, rediscovered, authorized, and resumed after the Main runtime itself restarts.
+6. Whether persistent teammate assignment completion is always inferred from a turn's final output or may also use explicit terminal receipts.
+7. The stable provider-facing response, validation-error, status-snapshot, control-acknowledgement, worktree-receipt, and terminal-event JSON contracts.
