@@ -1,4 +1,4 @@
-import type { AssistantMessage } from "@earendil-works/pi-ai";
+import { type AssistantMessage, type ModelCost, resolveModelCostRates } from "@earendil-works/pi-ai";
 import type { SessionEntry } from "./session-manager.ts";
 
 /**
@@ -31,7 +31,7 @@ export interface CacheWasteTotals {
 
 /** Minimal pricing lookup, satisfied by ModelRuntime. Cost is $/million tokens. */
 export interface ModelPriceSource {
-	find(provider: string, modelId: string): { cost: { cacheRead: number } } | undefined;
+	find(provider: string, modelId: string): { cost: ModelCost } | undefined;
 }
 
 /** The last request seen by the scan; everything in its prompt should be cached. */
@@ -76,10 +76,10 @@ function detectMiss(
 	// from this message's own cost breakdown.
 	const paidTokens = usage.input + usage.cacheWrite;
 	const paidPerToken = paidTokens > 0 ? (usage.cost.input + usage.cost.cacheWrite) / paidTokens : 0;
+	const modelCost = models.find(message.provider, message.model)?.cost;
+	const fallbackReadRate = modelCost ? resolveModelCostRates(modelCost, promptTokens).cacheRead : 0;
 	const readPerToken =
-		usage.cacheRead > 0
-			? usage.cost.cacheRead / usage.cacheRead
-			: (models.find(message.provider, message.model)?.cost.cacheRead ?? 0) / 1_000_000;
+		usage.cacheRead > 0 ? usage.cost.cacheRead / usage.cacheRead : fallbackReadRate / 1_000_000;
 
 	return {
 		missedTokens,
