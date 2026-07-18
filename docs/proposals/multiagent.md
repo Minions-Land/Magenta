@@ -274,19 +274,19 @@ Required behavior:
 - Every accepted start returns one transient `eventId`; that Event independently owns status, cancellation, failure, optional explicit timeout, terminal output, and external activation.
 - A Workflow's internal workers are observable implementation children of its one top-level Event. They do not receive separate public event IDs or terminal activations.
 - Simultaneous Event completions may be coalesced by the external-activation coordinator into one parent turn without creating batch identity or shared settlement.
-- All starts share one atomic capacity and queue controller, so concurrent Tool calls and nested Workflow workers cannot bypass Session/Host hard limits. Capacity saturation queues valid Events under Decision 18 rather than rejecting them.
+- All starts issued by one caller Session share that Session's atomic top-level Event admission controller. Workflow-internal worker concurrency is owned independently by each Workflow under Decision 26. Capacity saturation queues valid Events under Decision 18 rather than rejecting them.
 - The current Subagent controller, event monitor, process supervision, cancellation settlement, logs, usage accounting, parent-progress support, automatic return path, Workflow drivers, and focused tests are the migration baseline. They are ported rather than rewritten unless they conflict with Decisions 1, 4, 13-17 or HCP ownership.
 - Internal implementation unification is optional. Refactoring must remove demonstrated duplication or satisfy an accepted invariant; it is not a goal by itself.
 
 ### Decision 18: Capacity Saturation Queues Events
 
-**Accepted.** A valid authorized `sub_agent start` is never rejected merely because execution capacity is currently full. The Tool registers one Event immediately and leaves it in `queued` state until the shared scheduler can admit it.
+**Accepted, with the former shared-worker-pool clauses superseded by Decision 26.** A valid authorized `sub_agent start` is never rejected merely because the caller Session's top-level Event capacity is currently full. The Tool registers one Event immediately and leaves it in `queued` state until that Session's scheduler can admit it.
 
 Required behavior:
 
 - Validation, caller authorization, workspace policy, and static resource checks happen before registration and may reject invalid requests. Capacity saturation after those checks is not an error.
-- The finite scheduler owns separate effective limits for simultaneously running top-level Events and concurrently active worker attempts. Queued Events and waiting Workflow children consume no worker permit.
-- Event admission is deterministic FIFO by registration sequence. Workflow-internal worker attempts enter the same shared permit system so multiple Workflows cannot each claim an independent full concurrency budget.
+- Each caller Session owns its own effective limit for simultaneously active top-level Events. Queued Events consume no active Event slot.
+- Event admission is deterministic FIFO by registration sequence within that caller Session. Workflow-internal worker admission is local to each Workflow and follows Decision 26; there is no lineage-wide or cross-Workflow worker permit pool.
 - The canonical Event state path is `registered -> queued -> starting -> running -> terminating -> terminal`, with protocol-specific phases allowed inside `running`. Scheduling may skip unobservable intermediate states only when their timestamps and settlement semantics remain unambiguous.
 - `start` returns after durable in-session Event registration and never waits for a worker permit, process spawn, readiness, or completion. The acknowledgement includes `eventId`, `state: "queued"`, `queuedAt`, and effective capacity information.
 - With no explicitly injected `runTimeoutSeconds`, an Event may remain queued indefinitely. An explicit run timeout starts at registration, includes queued time, and can settle the Event as `timed_out` before any worker starts.
@@ -390,9 +390,97 @@ Required behavior:
 - The public finite-Event action set gains no `forget`, `delete`, or retention-control action.
 - Raw process-log and temporary-artifact cleanup is a separate generic Resource policy; log presence is not the durable receipt guarantee.
 
+### Decision 25: Desired-State Teammate Recovery
+
+**Accepted.** Multiagent durably records both the desired process state and the last observed process state for every directly owned persistent teammate. Reopening the same Main Session automatically resumes every teammate whose desired state remains `running`, including teammates that were idle when the Main runtime stopped.
+
+Required behavior:
+
+- `multiagent start` and `resume` set `desiredProcessState: "running"`; an explicit `stop` or trusted lifecycle revocation sets `desiredProcessState: "stopped"`.
+- Normal Main disposal, Main-process failure, machine restart, transport loss, and implicit child shutdown update observed state but never silently rewrite desired `running` to `stopped`.
+- `tools/multiagent` owns an internal durable registry keyed by exact `<mainSessionId, teammateSessionId>` lineage. The registry is Tool state, not a public Team resource or second identity.
+- On reopening the exact same Main Session, the runtime validates the registry against the teammate Session header/managed identity and any worktree manifest, fences any stale live process, and automatically queues each desired-running teammate for resume.
+- A Main Session fork or another Session ID does not inherit or gain authority over the original registry. Possessing a teammate Session ID remains insufficient authorization.
+- Auto-resume is deterministic, subject to the 16-running-Teammate scheduler in Decision 26, and has no implicit queue timeout. Each Main-runtime startup makes one automatic resume attempt per eligible teammate; a failed attempt records `failed` and emits lifecycle failure telemetry without an infinite restart loop.
+- Explicitly stopped teammates remain discoverable and manually resumable but are never auto-resumed. Stopped registry records do not consume running capacity and may exceed 16.
+- A stopped/offline teammate's unread Mailbox remains durable. After successful resume, normal SendMessage wake/drain behavior processes the backlog.
+- An unintegrated worktree generation is recovered in place. An integrated or discarded generation is never resurrected; a later resume of the same Session under `workspace: "worktree"` provisions a new generation from the then-current clean Main HEAD while preserving prior immutable receipts.
+- The public Teammate identity remains the Session ID across every process and worktree generation.
+
+### Decision 26: Per-Session Finite Capacity and Sixteen Running Teammates
+
+**Accepted.** Finite capacity is scoped independently to each Session that may call `sub_agent`; Workflow worker concurrency is scoped independently to each Workflow Event. The Main Session may run at most 16 persistent Teammate processes. There is intentionally no lineage-wide worker pool or global Agent-process safety cap.
+
+Required behavior:
+
+- Each caller Session has `maxActiveEvents: 8`. Plain Subagent and Workflow Events share those eight top-level slots; any ninth valid Event is registered and FIFO queued within that Session.
+- One active plain Subagent Event uses one worker. Each active Workflow Event owns `maxConcurrentWorkers: 8` for its internal workers; excess child attempts queue within that Workflow.
+- A caller may therefore run eight full Workflows with up to 64 concurrent finite workers. Mixed workloads obey `plainEventCount + workflowEventCount <= 8`, with each Workflow independently capped at eight workers.
+- Main and every directly owned Teammate have independent top-level Event schedulers and independent per-Workflow worker limits. Teammate finite workers remain leaf workers and cannot delegate again.
+- Model-supplied Workflow `maxConcurrent` may lower one Workflow's local concurrency but cannot exceed eight. A disclosed trusted Host policy may lower the effective protocol maxima but cannot raise them.
+- `maxRunningTeammates: 16` counts `starting`, `running`, and `stopping` processes. Teammates still waiting in `processState: "queued"` and explicitly stopped/failed historical records do not consume a running slot.
+- `multiagent start`, manual `resume`, and automatic resume share deterministic FIFO process admission. Capacity saturation produces `processState: "queued"`, not rejection or an implicit timeout.
+- The accepted uncapped lineage maximum is deliberate: Main can run 64 finite workers and 16 Teammates can each run another 64, for 1,088 finite workers plus 16 Teammate processes. Status must make actual/effective usage observable; implementation must not silently add a global cap.
+
+### Decision 27: Minimal Model Tool Actions
+
+**Accepted.** The three model-visible Tool inputs are singular, action-specific, and free of model-managed default configuration or delivery policy.
+
+Required behavior:
+
+- `sub_agent` exposes only `start`, `status`, and `cancel`. `start` contains exactly one singular `task` or `workflow`; `status` has at most one optional `eventId`; `cancel` requires exactly one `eventId`.
+- `sub_agent` removes `config`, `tasks[]`, `eventIds[]`, blocking wait, `returnToMain`, `returnDelivery`, and `returnInstruction`. Every terminal Event uses the runtime-owned external-activation return path.
+- `multiagent` exposes only `start`, `status`, `interrupt`, `stop`, `resume`, `integrate`, and `discard`, targeted only by `sessionId` where applicable. `start` may include a bootstrap prompt and `interrupt` may atomically stage an optional replacement prompt.
+- `send_message` has no action field and accepts exactly `{ to, content }`.
+- Start/resume/stop/interrupt register durable control intent and acknowledge without waiting for process readiness or settlement. Later lifecycle settlement is controller telemetry keyed by Session ID, not teammate-authored communication and not another public Event identity.
+- Provider-facing root schemas remain flat enough for adapters that retain only root `properties` and `required`. Full TypeBox and action-specific semantic validation runs locally before state mutation.
+- Trusted Host policy enters through HCP build settings and is disclosed in status; the model cannot mutate persistent defaults with a Tool action.
+
+### Decision 28: Durable Atomic SendMessage Acknowledgement
+
+**Accepted.** `send_message` acknowledges durable Mailbox acceptance, never recipient consumption. Its only public delivery mode is urgent, and its model-visible input remains exactly one recipient Session ID plus one plain-text body.
+
+Required behavior:
+
+- The maximum UTF-8 body size is the canonical `MAX_PEER_MESSAGE_CONTENT_BYTES` implementation limit, whose exact value is fixed by code and tests rather than duplicated in documentation. Empty content, self-targeting, oversized content, malformed Session IDs, authorization failure, or durable storage failure are errors.
+- Sender identity, message ID, timestamp, priority, route metadata, retry state, and deduplication state are runtime-owned and cannot be spoofed by the caller.
+- Success returns a versioned acknowledgement containing `messageId`, `from`, `to`, `acceptedAt`, route disposition (`local_mailbox`, `peer_outbox`, or `unresolved_outbox`), recipient presence (`active`, `idle`, `offline`, or `unknown`), and wake disposition.
+- The acknowledgement is emitted only after the local SQLite inbox/outbox transaction commits. It never says `delivered` merely because a durable row exists and never promises the recipient model has observed the content.
+- Offline and currently unresolved remote routes remain successful durable acceptance states. Federation may resolve and forward them later.
+- Public messages are always urgent: they steer at the next safe active-turn boundary and attempt an immediate idle wake. There is no model-visible priority flag.
+- Delivery remains at-least-once across drain/inject/confirm failure windows, with `messageId` deduplication. There is no read receipt, Assignment metadata, terminal status, caller-supplied ID, or implicit reply.
+- A Teammate may address any known Session through the same Tool; its trusted system prompt separately requires material progress/results to be reported to Main.
+
+### Decision 29: Versioned Tool Outcomes and Typed Errors
+
+**Accepted.** All three Tools expose stable versioned structured `details` while retaining concise text for model readability. Tool failures remain real `isError: true` results and preserve machine-readable error information.
+
+Required behavior:
+
+- Every success details object begins with `schemaVersion: 1` and action/identity-specific acknowledgement or snapshot fields.
+- A generic typed Tool execution error carries `schemaVersion`, stable `code`, human-readable `message`, `retryable`, and optional target/current-state data. Initial codes include `invalid_arguments`, `unauthorized`, `not_found`, `invalid_state`, `conflict`, `storage_error`, and `spawn_failed`.
+- Local argument validation errors use the same structured error path. The generic Agent loop must preserve typed error details when converting a thrown Tool error into a ToolResult instead of replacing details with `{}`.
+- Capacity queueing is a successful acknowledgement, not an error. Worker timeout/cancellation/provider failure are terminal Event outcomes; control-state conflicts and invalid targets are Tool errors.
+- Text rendering, TUI adapters, and future schema additions may evolve without changing the meaning of existing versioned fields.
+
+### Decision 30: Generic Host Ports and Tool-Owned Stateful Runtime
+
+**Accepted.** Each of the three stateful Tool Source Magnets produces only `toTool()` and owns the complete business runtime behind that Tool. Pi supplies generic construction/presentation ports but no parallel controller, registry, scheduler, Mailbox, or lifecycle path.
+
+Required behavior:
+
+- Tool build settings may provide generic Session identity/paths, cwd, process/model invocation, Tool/package resolution, external activation, background-event presentation, read-only Main Todo projection, configured SSH endpoints, and disclosed policy values.
+- `tools/sub-agent` owns finite Event registration/queues, per-Session scheduling, Workflow drivers, child supervision, usage/log capture, terminal return, and receipt pruning.
+- `tools/send-message` owns SQLite inbox/outbox/claims, presence, boot-scoped wake, bounded drain/injection support, retry/deduplication, peer routes, and SSH federation.
+- `tools/multiagent` owns the persistent registry, desired/observed states, child Session hosting, automatic recovery, hard control, trusted prompt suffix, worktree generations/receipts, integration, and discard.
+- Multiagent consumes a typed internal Mailbox support API implemented/exported by `tools/send-message`; it never calls model-visible `send_message.execute()` and no support object receives an HCP Capability address.
+- Tool filtering changes only model visibility. Mandatory Teammate grants (`send_message` and read-only Main `todo`) and live state continue according to runtime policy.
+- Each Magnet implements idempotent cascading `dispose()` over only the resources it owns and does not require another Magnet to remain live during disposal, making the single HcpClient's concurrent retirement safe.
+- Stateful Magnets cannot be hot-swapped while live work or owned durable transitions exist. The Session's single HcpClient remains the sole assembly/disposal owner.
+
 ## Current Candidate Design
 
-**Status: Discussion only - not accepted beyond Decisions 1, 4-6, 13-24.**
+**Status: Accepted implementation target through Decisions 1, 4-6, and 13-30.**
 
 The current candidate has three public Tool products and no parallel Capability products:
 
@@ -412,12 +500,7 @@ tool:multiagent
 
 The runtime keeps finite Event receipts separate from persistent Session IDs. Background start calls acknowledge registration immediately; terminal finite results reactivate the caller. Persistent teammates remain available for repeated mailbox-delivered prompts until explicitly stopped; hard interruption and lifecycle control remain outside ordinary peer chat.
 
-Current open decisions:
-
-1. How stopped teammate Sessions are indexed, rediscovered, authorized, and resumed after the Main runtime itself restarts.
-2. The stable response, validation-error, acknowledgement, worktree-receipt, and terminal-event JSON contracts for the three stateful Tools.
-3. The exact host-adapter boundary for stateful Tool construction, lifecycle hooks, turn-boundary Mailbox injection, read-only Main Todo projection, and disposal.
-4. The final atomic `send_message` public schema after removing managed-assignment metadata.
+There are no remaining product-policy decisions. Concrete TypeScript field types, internal storage layouts, migration mechanics, and presentation details must implement the accepted ledger without adding model-visible concepts or weakening its invariants.
 
 ## Superseded Unified-Protocol Candidate
 
