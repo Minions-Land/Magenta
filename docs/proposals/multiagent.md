@@ -97,3 +97,17 @@ Required behavior:
 - Unifying AgentNode does not make every node a persistent teammate and does not require one internal lifecycle state machine.
 - A model is not required to call a message tool to return its final result; the runtime captures final output and converts it into the protocol result path.
 - Model-authored messages are a data-plane capability. They cannot replace runtime-owned workflow control, hard timeout, cancellation, or deterministic settlement.
+
+## Decision 8: HCP Is the Internal Multiagent Boundary
+
+**Accepted.** The model-visible `multiagent` tool is a product facade over one source-selected HCP `multiagent` capability. `HcpServer` defines the stable internal contract, `HcpMagnet` binds a concrete provider implementation, and every Subagent, static workflow, and persistent teammate path must enter through that capability rather than retaining a separate model-facing or direct-spawn business path.
+
+Required behavior:
+
+- Models call only the product-level `multiagent` tool and never address HcpServer, HcpMagnet, or provider implementations directly.
+- The tool resolves the active `multiagent` capability through HcpClient and delegates protocol execution and control to the selected provider.
+- HcpServer owns the provider-neutral capability contract, discovery surface, and internal routing boundary.
+- HcpMagnet owns source-specific construction and binding of a provider implementation.
+- Provider selection and replacement must not change the model-visible tool identity or create compatibility aliases.
+- Plain one-shot Subagent execution, the seven finite protocols, and the persistent teammate protocol may not bypass the HCP capability through independent controllers or direct-spawn business logic.
+- Host-specific process invocation may be injected through a provider adapter, but protocol semantics, settlement, supervision, and observability remain behind the HCP boundary.
