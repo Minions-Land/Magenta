@@ -67,8 +67,12 @@ export interface CollectEntriesResult {
 export interface GenerateBranchSummaryOptions {
 	/** Model to use for summarization */
 	model: Model<any>;
-	/** API key for the model */
-	apiKey: string;
+	/**
+	 * API key for the model. Optional: when omitted, the model's ambient/provider
+	 * auth is used (Bedrock SigV4, Cloudflare, and other credential-free transports).
+	 * CC-043 (upstream 7303cbac): summarization no longer requires an explicit key.
+	 */
+	apiKey?: string;
 	/** Request headers for the model */
 	headers?: Record<string, string>;
 	/** Provider-scoped environment values for the model */
