@@ -132,6 +132,19 @@ Required behavior:
 - Existing Pi agent-loop, model, Session, RPC, process, and TUI primitives may remain reusable dependencies behind public APIs or injected host adapters. Reusing them does not make the Magenta-owned protocol runtime a Pi Source.
 - Adding a separately selectable Pi multiagent Source later requires a new explicit product decision. It is not retained speculatively for migration, fallback, or backward compatibility.
 
+### Decision 10: Protocol Is the Public Semantic Selector
+
+**Accepted.** A `start` request selects a trusted runtime-owned execution contract through the public `protocol` field. `topology` is not a model-authored selector; it is internal protocol data or runtime-derived observability.
+
+Required behavior:
+
+- `action=start` requires a supported `protocol` after runtime validation. The selected name resolves to a registered descriptor whose slots, routing, lifecycle, context, mailbox, authority, child permissions, limits, and terminal semantics are fixed by trusted runtime code.
+- The model cannot submit or override `topology`, `lifecycle`, `context`, `mailbox`, `authority`, allowed child protocols, or termination conditions.
+- `protocol` describes the complete execution semantics, not merely the allowed message edges. Topology is derived from the selected descriptor and may be returned as status metadata.
+- Non-start actions identify an existing finite event or persistent Session and do not require the model to repeat `protocol`; the runtime resolves the existing ProtocolInstance from that target.
+- The provider-facing root schema may keep `protocol` structurally optional to remain flat, but conditional action validation must reject a start request without it or with an unsupported value.
+- The public protocol namespace spans both finite workflows and persistent collaboration. `subagent` is the single-node finite protocol; the six deterministic presets are finite protocols; the persistent protocol name remains a separate open decision.
+
 ## Integrated Candidate Design
 
 **Status: Discussion only - not accepted.**
@@ -747,13 +760,12 @@ Before removing existing tools, the candidate must prove:
 
 The following remain candidates and must be discussed one at a time:
 
-1. Whether `protocol` is the final public field name, replacing the earlier `topology` candidate.
-2. Whether the open persistent protocol is publicly named `teammate` or `open_conversation`.
-3. The exact `NodeBinding` fields and slot/cardinality rules.
-4. The exact `limits` vocabulary and which limits are protocol-specific.
-5. Whether the standalone model-visible `send_message` tool is removed in favor of `multiagent action=send`.
-6. Whether teammates can directly mutate the Main Todo or only report proposed updates.
-7. The retention period and TUI presentation of transient finite event receipts after terminal settlement.
-8. How stopped teammate Sessions are indexed, rediscovered, authorized, and resumed after the Main runtime itself restarts.
-9. Whether persistent teammate assignment completion is always inferred from a turn's final output or may also use explicit terminal receipts.
-10. The stable provider-facing response, validation-error, status-snapshot, control-acknowledgement, worktree-receipt, and terminal-event JSON contracts.
+1. Whether the open persistent protocol is publicly named `teammate` or `open_conversation`.
+2. The exact `NodeBinding` fields and slot/cardinality rules.
+3. The exact `limits` vocabulary and which limits are protocol-specific.
+4. Whether the standalone model-visible `send_message` tool is removed in favor of `multiagent action=send`.
+5. Whether teammates can directly mutate the Main Todo or only report proposed updates.
+6. The retention period and TUI presentation of transient finite event receipts after terminal settlement.
+7. How stopped teammate Sessions are indexed, rediscovered, authorized, and resumed after the Main runtime itself restarts.
+8. Whether persistent teammate assignment completion is always inferred from a turn's final output or may also use explicit terminal receipts.
+9. The stable provider-facing response, validation-error, status-snapshot, control-acknowledgement, worktree-receipt, and terminal-event JSON contracts.
