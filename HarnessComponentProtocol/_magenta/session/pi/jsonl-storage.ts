@@ -12,6 +12,8 @@ type SessionHeader = {
 	timestamp: string;
 	cwd: string;
 	parentSession?: string;
+	/** Optional application-defined metadata object preserved verbatim. */
+	metadata?: Record<string, unknown>;
 };
 
 function updateLabelCache(labelsById: Map<string, string>, entry: SessionTreeEntry): void {
@@ -75,6 +77,9 @@ function parseHeaderLine(line: string, filePath: string): SessionHeader {
 	if (parsed.parentSession !== undefined && typeof parsed.parentSession !== "string") {
 		throw invalidSession(filePath, "session header parentSession must be a string");
 	}
+	if (parsed.metadata !== undefined && (!isRecord(parsed.metadata) || Array.isArray(parsed.metadata))) {
+		throw invalidSession(filePath, "session header metadata must be an object");
+	}
 	return {
 		type: "session",
 		version: 3,
@@ -82,6 +87,7 @@ function parseHeaderLine(line: string, filePath: string): SessionHeader {
 		timestamp: parsed.timestamp,
 		cwd: parsed.cwd,
 		parentSession: parsed.parentSession,
+		...(parsed.metadata !== undefined ? { metadata: parsed.metadata as Record<string, unknown> } : {}),
 	};
 }
 
@@ -118,6 +124,7 @@ function headerToSessionMetadata(header: SessionHeader, path: string): JsonlSess
 		cwd: header.cwd,
 		path,
 		parentSessionPath: header.parentSession,
+		...(header.metadata !== undefined ? { metadata: header.metadata } : {}),
 	};
 }
 
@@ -196,8 +203,12 @@ export class JsonlSessionStorage {
 			cwd: string;
 			sessionId: string;
 			parentSessionPath?: string;
+			metadata?: Record<string, unknown>;
 		},
 	): Promise<JsonlSessionStorage> {
+		if (options.metadata !== undefined && (typeof options.metadata !== "object" || options.metadata === null || Array.isArray(options.metadata))) {
+			throw invalidSession(filePath, "session header metadata must be an object");
+		}
 		const header: SessionHeader = {
 			type: "session",
 			version: 3,
@@ -205,6 +216,7 @@ export class JsonlSessionStorage {
 			timestamp: new Date().toISOString(),
 			cwd: options.cwd,
 			parentSession: options.parentSessionPath,
+			...(options.metadata !== undefined ? { metadata: options.metadata } : {}),
 		};
 		getFileSystemResultOrThrow(
 			await fs.writeFile(filePath, `${JSON.stringify(header)}\n`),

@@ -384,6 +384,31 @@ export type SessionContext = {
 	activeToolNames: string[] | null;
 };
 
+/**
+ * Transforms the context entry sequence after the default latest-compaction selection. Transforms
+ * are stacked (constructor options first, then per-call) and receive the output of the previous
+ * transform. They operate on session entries, not projected model messages.
+ */
+export type ContextEntryTransform = (entries: SessionTreeEntry[]) => SessionTreeEntry[];
+
+/**
+ * Projects a `custom` session entry into model messages. Custom entries are otherwise omitted from
+ * the model context; a keyed projector opts a given `customType` back into projection.
+ */
+export type CustomEntryContextMessageProjector = (entry: CustomEntry) => AgentMessage[];
+
+/**
+ * Options controlling how a session's active branch is projected into model context. Constructor
+ * options stack with per-call options: transforms are concatenated (constructor first), and
+ * projectors merge by key with per-call projectors overriding same-name constructor defaults.
+ */
+export type SessionContextBuildOptions = {
+	/** Custom transforms applied after the default latest-compaction selection, in order. */
+	entryTransforms?: ContextEntryTransform[];
+	/** Custom-entry projectors keyed by `customType`. */
+	entryProjectors?: Record<string, CustomEntryContextMessageProjector>;
+};
+
 export type SessionMetadata = {
 	id: string;
 	createdAt: string;
@@ -393,6 +418,11 @@ export type JsonlSessionMetadata = SessionMetadata & {
 	cwd: string;
 	path: string;
 	parentSessionPath?: string;
+	/**
+	 * Optional application-defined metadata round-tripped verbatim through the JSONL session
+	 * header. Absent when the header omits it; unknown JSON values are preserved without mutation.
+	 */
+	metadata?: Record<string, unknown>;
 };
 
 export type SessionStorage<TMetadata extends SessionMetadata = SessionMetadata> = {
@@ -438,6 +468,8 @@ export type SessionRepo<
 export type JsonlSessionCreateOptions = SessionCreateOptions & {
 	cwd: string;
 	parentSessionPath?: string;
+	/** Optional application-defined metadata persisted verbatim into the JSONL session header. */
+	metadata?: Record<string, unknown>;
 };
 
 export type JsonlSessionListOptions = {

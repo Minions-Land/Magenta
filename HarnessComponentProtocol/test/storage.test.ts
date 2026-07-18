@@ -346,6 +346,87 @@ describe("JsonlSessionStorage", () => {
 			parentSessionPath: undefined,
 		});
 	});
+
+	it("round-trips custom metadata through create/open/load", async () => {
+		const dir = createTempDir();
+		const env = new NodeExecutionEnv({ cwd: dir });
+		const filePath = join(dir, "session.jsonl");
+		const metadata = { app: "test", version: 1, nested: { key: "value" } };
+		const storage = await JsonlSessionStorage.create(env, filePath, {
+			cwd: dir,
+			sessionId: "session-1",
+			metadata,
+		});
+		expect((await storage.getMetadata()).metadata).toEqual(metadata);
+		const loaded = await JsonlSessionStorage.open(env, filePath);
+		expect((await loaded.getMetadata()).metadata).toEqual(metadata);
+		expect(await loadJsonlSessionMetadata(env, filePath)).toMatchObject({ metadata });
+	});
+
+	it("omits metadata from header when absent", async () => {
+		const dir = createTempDir();
+		const env = new NodeExecutionEnv({ cwd: dir });
+		const filePath = join(dir, "session.jsonl");
+		const storage = await JsonlSessionStorage.create(env, filePath, { cwd: dir, sessionId: "session-1" });
+		expect((await storage.getMetadata()).metadata).toBeUndefined();
+		const lines = readFileSync(filePath, "utf8").split("\n");
+		const header = JSON.parse(lines[0]!);
+		expect(header.metadata).toBeUndefined();
+	});
+
+	it("rejects non-object metadata at create time", async () => {
+		const dir = createTempDir();
+		const env = new NodeExecutionEnv({ cwd: dir });
+		const filePath = join(dir, "session.jsonl");
+		await expect(
+			JsonlSessionStorage.create(env, filePath, {
+				cwd: dir,
+				sessionId: "session-1",
+				metadata: null as unknown as Record<string, unknown>,
+			}),
+		).rejects.toThrow("metadata must be an object");
+		await expect(
+			JsonlSessionStorage.create(env, filePath, {
+				cwd: dir,
+				sessionId: "session-1",
+				metadata: [] as unknown as Record<string, unknown>,
+			}),
+		).rejects.toThrow("metadata must be an object");
+	});
+
+	it("rejects non-object metadata when loading header", async () => {
+		const dir = createTempDir();
+		const env = new NodeExecutionEnv({ cwd: dir });
+		const filePath = join(dir, "session.jsonl");
+		const headerWithNull = {
+			type: "session",
+			version: 3,
+			id: "session-1",
+			timestamp: "2026-01-01T00:00:00.000Z",
+			cwd: dir,
+			metadata: null,
+		};
+		writeFileSync(filePath, `${JSON.stringify(headerWithNull)}\n`);
+		await expect(JsonlSessionStorage.open(env, filePath)).rejects.toThrow("metadata must be an object");
+
+		const headerWithArray = { ...headerWithNull, metadata: ["invalid"] };
+		writeFileSync(filePath, `${JSON.stringify(headerWithArray)}\n`);
+		await expect(JsonlSessionStorage.open(env, filePath)).rejects.toThrow("metadata must be an object");
+	});
+
+	it("preserves unknown metadata fields without mutation", async () => {
+		const dir = createTempDir();
+		const env = new NodeExecutionEnv({ cwd: dir });
+		const filePath = join(dir, "session.jsonl");
+		const metadata = { unknown: "field", nested: { deep: true } };
+		const storage = await JsonlSessionStorage.create(env, filePath, {
+			cwd: dir,
+			sessionId: "session-1",
+			metadata,
+		});
+		const loaded = await JsonlSessionStorage.open(env, filePath);
+		expect((await loaded.getMetadata()).metadata).toEqual(metadata);
+	});
 });
 
 describe.each(["memory", "jsonl"] as const)("%s session entry IDs", (kind) => {
