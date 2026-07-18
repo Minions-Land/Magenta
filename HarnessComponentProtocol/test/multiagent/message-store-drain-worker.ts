@@ -1,4 +1,4 @@
-import { MessageStore } from "../../multiagent/message/message-store.ts";
+import { MessageStore } from "../../tools/send-message/magenta/message-store.ts";
 
 const [dbPath, recipient, rawLimit] = process.argv.slice(2);
 if (!dbPath || !recipient || !rawLimit)

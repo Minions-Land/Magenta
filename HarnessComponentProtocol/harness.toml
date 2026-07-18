@@ -123,6 +123,24 @@ description = "Fetch a web page using the Magenta process-tool source."
 path = "tools/web-fetch/web-fetch.toml"
 
 [[components]]
+kind = "tool"
+name = "send_message"
+description = "Durable urgent Session mailbox messaging, presence, wake, and federation."
+path = "tools/send-message/send-message.toml"
+
+[[components]]
+kind = "tool"
+name = "sub_agent"
+description = "Finite Event scheduling over sessionless workers and trusted Workflow presets."
+path = "tools/sub-agent/sub-agent.toml"
+
+[[components]]
+kind = "tool"
+name = "multiagent"
+description = "Durable persistent teammate Session lifecycle, recovery, and worktree control."
+path = "tools/multiagent/multiagent.toml"
+
+[[components]]
 kind = "sandbox"
 name = "sandbox"
 description = "Sandbox profiles and selection provider migrated from Magenta1 general-harness."
@@ -157,12 +175,6 @@ kind = "context"
 name = "workspace"
 description = "Workspace context provider migrated from Magenta1 general-harness."
 path = "context/context.toml"
-
-[[components]]
-kind = "multiagent"
-name = "multiagent"
-description = "Deterministic multi-agent workflow orchestration."
-path = "multiagent/multiagent.toml"
 
 # Core modules
 [[components]]

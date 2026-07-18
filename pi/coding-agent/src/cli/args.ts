@@ -338,8 +338,8 @@ ${chalk.bold("Options:")}
   --no-builtin-tools, -nbt       Disable app/HCP defaults; keep explicit Package, MCP, and extension tools
   --harness-workflows            Enable sub_agent workflow templates independently of thinking level
   --no-harness-workflows         Disable sub_agent workflow templates independently of thinking level
-  --harness-teammates            Enable teammate_agent independently of thinking level
-  --no-harness-teammates         Disable teammate_agent independently of thinking level
+  --harness-teammates            Enable multiagent independently of thinking level
+  --no-harness-teammates         Disable multiagent independently of thinking level
   --background-policy <policy>   One-shot host exit policy: cancel (default), wait, or error
   --background-wait-timeout <s>  Host settlement deadline for --background-policy wait (default: 60)
   --non-interactive-ui <policy>  Blocking extension UI policy: deny (default) or error
@@ -488,7 +488,7 @@ ${chalk.bold("Native Application Tool Names:")}
   bg_shell  - Run long-running shell commands in the background
   sub_agent - Run parallel no-TUI agent subtasks
   send_message - Send messages to other agent sessions
-  teammate_agent - Manage persistent hidden teammate sessions
+  multiagent - Manage persistent hidden teammate Sessions
   show   - Display local files or remote URLs
   grep   - Search file contents (read-only)
   find   - Find files by glob pattern (read-only)

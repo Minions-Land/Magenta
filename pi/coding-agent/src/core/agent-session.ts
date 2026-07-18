@@ -34,18 +34,24 @@ import {
 } from "@earendil-works/pi-ai/compat";
 import {
 	type CompactionProvider,
+	type CreateChildSessionRequest,
 	createSshToolOperations,
+	formatPeerMessages,
 	formatSkillInvocation,
 	type HcpClient,
+	type MultiagentController,
+	PEER_MESSAGE_CUSTOM_TYPE,
 	type PeerEndpoint,
 	type PolicyProvider,
 	type ProcessRuntimeProvider,
 	type SandboxProvider,
+	type SendMessageRuntime,
 	type SshTarget,
 	type SshToolOperations,
+	type SubAgentRuntime,
 	type SystemPromptProvider,
 } from "@magenta/harness";
-import { ENV_TEAMMATE_PARENT_SESSION_ID, getAgentDir, getPeerMessageDbPath } from "../config.ts";
+import { getAgentDir, getAgentInvocation, getPeerMessageDbPath } from "../config.ts";
 import { createBuiltInMessageRenderersExtension } from "../modes/interactive/builtin-message-renderers.ts";
 import { getThemeByName, theme } from "../modes/interactive/theme/theme.ts";
 import { resolvePath } from "../utils/paths.ts";
@@ -115,10 +121,15 @@ import { HcpClientassembletools } from "./HcpClienttools.ts";
 import type { BashExecutionMessage, CustomMessage } from "./messages.ts";
 import type { ModelRegistry } from "./model-registry.ts";
 import { expandPromptTemplate, type PromptTemplate } from "./prompt-templates.ts";
-import { RemoteMailboxController } from "./remote-mailbox.ts";
 import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.ts";
-import type { BranchSummaryEntry, CompactionEntry, SessionManager } from "./session-manager.ts";
-import { CURRENT_SESSION_VERSION, getLatestCompactionEntry, type SessionHeader } from "./session-manager.ts";
+import {
+	type BranchSummaryEntry,
+	type CompactionEntry,
+	CURRENT_SESSION_VERSION,
+	getLatestCompactionEntry,
+	type SessionHeader,
+	SessionManager,
+} from "./session-manager.ts";
 import type { SettingsManager } from "./settings-manager.ts";
 import {
 	SIDE_CHAT_COMMAND_NAMES,
@@ -137,9 +148,6 @@ import { ToolProgressTracker } from "./tool-progress.ts";
 import { type BashOperations, createLocalBashOperations, withBashAutoPromotion } from "./tools/bash.ts";
 import { BackgroundShellController } from "./tools/bg-shell.ts";
 import { createAllToolDefinitions } from "./tools/index.ts";
-import { formatPeerMessages, PEER_MESSAGE_CUSTOM_TYPE, SendMessageController } from "./tools/send-message.ts";
-import { SubAgentController, type SubAgentWorkflowProvider } from "./tools/sub-agent.ts";
-import { TeammateAgentController } from "./tools/teammate-agent.ts";
 import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.ts";
 
 // ============================================================================
@@ -465,15 +473,16 @@ export class AgentSession {
 	private _externalActivations: ExternalActivationCoordinator;
 	private _backgroundShell: BackgroundShellController;
 	private _HcpClientpackageloadcontroller: HcpClientpackageloadcontroller;
-	private _subAgents: SubAgentController;
-	/** Magenta feature: peer messaging between agent sessions. */
-	private _peerMessages: SendMessageController;
-	private _remoteMailbox: RemoteMailboxController;
-	private _teammates: TeammateAgentController;
+	private _subAgents!: SubAgentRuntime;
+	/** HCP-owned peer mailbox runtime; assigned during stateful Tool assembly. */
+	private _peerMessages!: SendMessageRuntime;
+	private _teammates!: MultiagentController;
 	private _toolProgressTracker: ToolProgressTracker;
 	private _sideChat: SideChatManager;
 	private _sshTarget?: SshTarget;
 	private _sshOperations?: SshToolOperations;
+	private _agentDirPath: string;
+	private _peerMessageDbPath: string;
 
 	// Model registry for API key resolution
 	private _modelRegistry: ModelRegistry;
@@ -553,65 +562,15 @@ export class AgentSession {
 					onInjectionError: receipt.onDropped,
 				}),
 		});
-		this._subAgents = new SubAgentController(this._backgroundEvents, {
-			registerReturn: (eventIds, message, delivery, receipt) =>
-				this._externalActivations.register({
-					key: `sub-agent:${eventIds[0]}`,
-					source: { kind: "background", controller: "sub_agent", eventIds },
-					consumeIds: eventIds,
-					message,
-					delivery,
-					idlePolicy: delivery === "nextTurn" ? "passive" : "activate",
-					onPersisted: receipt.onPersisted,
-					onInjectionError: receipt.onDropped,
-				}),
-			cancelReturn: (eventIds) => this._externalActivations.cancel(eventIds),
-			getWorkflowProvider: () => this._resolveMultiAgentProvider(),
-			isWorkflowEnabled: () => this.harnessCapabilities.workflows,
-			getDefaultModel: () =>
-				this.model
-					? {
-							provider: this.model.provider,
-							model: this.model.id,
-						}
-					: undefined,
-		});
-		// Magenta feature: peer messaging. Sender identity is the live session id;
-		// the mailbox is a single machine-global database so messages cross between
-		// independent agent processes. A caller-provided agentDir (tests) overrides
-		// the location.
+		// Stateful Tool Sources receive these Session paths during the second HCP
+		// assembly pass after AgentSession exists. Pi does not construct their runtimes.
 		const configuredAgentDir = config.agentDir ? resolvePath(config.agentDir) : undefined;
 		const defaultAgentDir = resolvePath(getAgentDir());
-		const peerMessageDbPath =
+		this._agentDirPath = configuredAgentDir ?? defaultAgentDir;
+		this._peerMessageDbPath =
 			configuredAgentDir && configuredAgentDir !== defaultAgentDir
 				? join(configuredAgentDir, "messages.db")
 				: getPeerMessageDbPath();
-		this._peerMessages = new SendMessageController({
-			dbPath: peerMessageDbPath,
-			managedParentSessionId: process.env[ENV_TEAMMATE_PARENT_SESSION_ID],
-			getSessionId: () => this.sessionId,
-			// Urgent peer notification only drains and submits. The shared coordinator
-			// decides whether this joins an active boundary or wakes one idle loop.
-			wakeForMessages: () => this._wakeForPeerMessages(),
-		});
-		this._remoteMailbox = new RemoteMailboxController(peerMessageDbPath, { sshTarget: this._sshTarget });
-		this._teammates = new TeammateAgentController(this._backgroundEvents, {
-			sendPeerMessage: (params) => this._peerMessages.send(params),
-			getUnreadPeerMessageCount: (sessionId) => this._peerMessages.unreadCountFor(sessionId),
-			getParentSessionId: () => this.sessionId,
-			getParentSessionFile: () => this.sessionFile,
-			getParentSessionDir: () => this.sessionManager.getSessionDir(),
-			getAgentDirPath: () => configuredAgentDir ?? defaultAgentDir,
-			getPeerMessageDbPath: () => peerMessageDbPath,
-			isEnabled: () => this.harnessCapabilities.teammates,
-			getDefaultModel: () =>
-				this.model
-					? {
-							provider: this.model.provider,
-							model: this.model.id,
-						}
-					: undefined,
-		});
 		this._sideChat = new SideChatManager({
 			toolProgress: this._toolProgressTracker,
 			appendEntry: (customType, data) => this.sessionManager.appendCustomEntry(customType, data),
@@ -623,6 +582,130 @@ export class AgentSession {
 		this._unsubscribeAgent = this.agent.subscribe(this._handleAgentEvent);
 		this._installAgentToolHooks();
 
+		this._buildRuntime({
+			activeToolNames: this._initialActiveToolNames,
+			includeAllExtensionTools: true,
+		});
+	}
+
+	private _statefulToolSettings(
+		runtimes: Partial<{
+			peerMessages: SendMessageRuntime;
+			subAgents: SubAgentRuntime;
+			teammates: MultiagentController;
+		}>,
+	): Readonly<Record<string, unknown>> {
+		let peerMessages = this._peerMessages;
+		return {
+			"tools/send-message": {
+				dbPath: this._peerMessageDbPath,
+				getSessionId: () => this.sessionId,
+				wakeForMessages: () => this._wakeForPeerMessages(),
+				sshTarget: this._sshTarget,
+				resolveAgentInvocation: getAgentInvocation,
+				onRuntime: (runtime: SendMessageRuntime) => {
+					peerMessages = runtime;
+					runtimes.peerMessages = runtime;
+				},
+			},
+			"tools/sub-agent": {
+				cwd: this._cwd,
+				workDirRoot: join(this._agentDirPath, "tmp", "sub-agents"),
+				backgroundEvents: this._backgroundEvents,
+				resolveAgentInvocation: getAgentInvocation,
+				registerReturn: (
+					eventIds: string[],
+					message: { customType: string; content: string; display: boolean; details: unknown },
+					delivery: "steer" | "followUp" | "nextTurn",
+					receipt: { onPersisted: () => void; onDropped: (error: unknown) => void },
+				) =>
+					this._externalActivations.register({
+						key: `sub-agent:${eventIds[0]}`,
+						source: { kind: "background", controller: "sub_agent", eventIds },
+						consumeIds: eventIds,
+						message,
+						delivery,
+						idlePolicy: delivery === "nextTurn" ? "passive" : "activate",
+						onPersisted: receipt.onPersisted,
+						onInjectionError: receipt.onDropped,
+					}),
+				cancelReturn: (eventIds: string[]) =>
+					this._externalActivations.cancel(eventIds.map((eventId) => `sub-agent:${eventId}`)),
+				getDefaultModel: () => (this.model ? { provider: this.model.provider, model: this.model.id } : undefined),
+				workflowsEnabled: () => this.harnessCapabilities.workflows,
+				onRuntime: (runtime: SubAgentRuntime) => {
+					runtimes.subAgents = runtime;
+				},
+			},
+			"tools/multiagent": {
+				cwd: this._cwd,
+				agentDir: this._agentDirPath,
+				peerMessageDbPath: this._peerMessageDbPath,
+				registryPath: join(this._agentDirPath, "multiagent", `${this.sessionId}.json`),
+				parentSessionId: this.sessionId,
+				parentSessionFile: this.sessionFile,
+				backgroundEvents: this._backgroundEvents,
+				resolveAgentInvocation: getAgentInvocation,
+				createChildSession: async (request: CreateChildSessionRequest) => {
+					const childSession = SessionManager.create(request.cwd, this.sessionManager.getSessionDir(), {
+						id: request.sessionId,
+						parentSession: request.parentSessionFile,
+					});
+					childSession.appendSessionInfo(request.label);
+					childSession.appendCustomMessageEntry(
+						request.identityCustomType,
+						request.identityContent,
+						false,
+						request.identityDetails,
+					);
+					childSession.flush();
+					const sessionFile = childSession.getSessionFile();
+					if (!sessionFile) throw new Error(`Failed to persist child Session ${request.sessionId}`);
+					return { sessionFile };
+				},
+				getMailboxSupport: () => peerMessages,
+				getDefaultModel: () => (this.model ? { provider: this.model.provider, model: this.model.id } : undefined),
+				enabled: () => this.harnessCapabilities.teammates,
+				onRuntime: (runtime: MultiagentController) => {
+					runtimes.teammates = runtime;
+				},
+			},
+		};
+	}
+
+	private _installStatefulToolRuntimes(
+		runtimes: Partial<{
+			peerMessages: SendMessageRuntime;
+			subAgents: SubAgentRuntime;
+			teammates: MultiagentController;
+		}>,
+	): void {
+		if (!runtimes.peerMessages || !runtimes.subAgents || !runtimes.teammates) {
+			throw new Error("Stateful HCP Tool assembly did not construct all three Tool runtimes");
+		}
+		this._peerMessages = runtimes.peerMessages;
+		this._subAgents = runtimes.subAgents;
+		this._teammates = runtimes.teammates;
+	}
+
+	/** Assemble stateful HCP Tools after the live Session host ports exist. */
+	async initializeStatefulHcpTools(): Promise<void> {
+		const hcp = this._resourceLoader.HcpClientgetsession?.();
+		if (!hcp) return;
+		const runtimes: Partial<{
+			peerMessages: SendMessageRuntime;
+			subAgents: SubAgentRuntime;
+			teammates: MultiagentController;
+		}> = {};
+		await HcpClientassembletools({
+			hcp,
+			cwd: this._cwd,
+			settingsManager: this.settingsManager,
+			sessionManager: this.sessionManager,
+			sshOperations: this._sshOperations,
+			statefulToolSettings: this._statefulToolSettings(runtimes),
+		});
+		this._installStatefulToolRuntimes(runtimes);
 		this._buildRuntime({
 			activeToolNames: this._initialActiveToolNames,
 			includeAllExtensionTools: true,
@@ -702,11 +785,6 @@ export class AgentSession {
 			throw new Error('Session HCP is missing required capability slot "system-prompt"');
 		}
 		return provider;
-	}
-
-	private _resolveMultiAgentProvider(): SubAgentWorkflowProvider | undefined {
-		const hcp: HcpClient | undefined = this._resourceLoader.HcpClientgetsession?.();
-		return hcp?.resolveCapability?.<SubAgentWorkflowProvider>("multiagent");
 	}
 
 	/**
@@ -969,7 +1047,7 @@ export class AgentSession {
 			this._finalizePromptWithdrawal(promptWithdrawal);
 			const sessionEvent: AgentSessionEvent = { ...event, messages, willRetry: false };
 			this._toolProgressTracker.handleAgentEvent(sessionEvent);
-			this._subAgents.handleAgentEvent(sessionEvent);
+			this._subAgents?.handleAgentEvent(sessionEvent);
 			this._emit(sessionEvent);
 			return;
 		}
@@ -977,7 +1055,7 @@ export class AgentSession {
 		const sessionEvent =
 			event.type === "agent_end" ? { ...event, willRetry: this._willRetryAfterAgentEnd(event) } : event;
 		this._toolProgressTracker.handleAgentEvent(sessionEvent);
-		this._subAgents.handleAgentEvent(sessionEvent);
+		this._subAgents?.handleAgentEvent(sessionEvent);
 
 		// Notify all listeners
 		this._emit(sessionEvent);
@@ -1105,16 +1183,16 @@ export class AgentSession {
 			this._turnIndex = 0;
 			// Magenta feature: this session is now looping. Record presence so peers
 			// see it as active and know a message will be picked up soon.
-			this._peerMessages.recordPresence("active");
+			this._peerMessages?.recordPresence("active");
 			await this._extensionRunner.emit({ type: "agent_start" });
 		} else if (event.type === "agent_end") {
 			// Magenta feature: loop finished; the process is alive but not looping.
-			this._peerMessages.recordPresence("idle");
+			this._peerMessages?.recordPresence("idle");
 			await this._extensionRunner.emit({ type: "agent_end", messages: event.messages });
 		} else if (event.type === "turn_start") {
 			// A turn boundary atomically drains mailbox claims and commits all external
 			// submissions that are ready before the AgentLoop polls its batch queues.
-			this._peerMessages.recordPresence("active");
+			this._peerMessages?.recordPresence("active");
 			this._submitPeerMessages();
 			await this._externalActivations.flushReady();
 			const extensionEvent: TurnStartEvent = {
@@ -1293,15 +1371,17 @@ export class AgentSession {
 			// Stop source admission first, then settle/cancel their shared delivery
 			// tickets before closing the mailbox used by peer rollback callbacks.
 			this._backgroundShell.shutdown();
-			this._subAgents.shutdown();
-			await this._teammates.shutdown();
 			this.agent.abort();
 			await this.agent.waitForIdle();
-			await this._externalActivations.shutdown();
-			this._peerMessages.shutdown();
-			this._remoteMailbox.shutdown();
-			this._backgroundEvents.dispose();
 			resourceDisposal = Promise.resolve(this._resourceLoader.dispose?.());
+			try {
+				await resourceDisposal;
+			} catch {
+				// Continue closing generic Session coordinators after an HCP disposal failure.
+			}
+			resourceDisposal = Promise.resolve();
+			await this._externalActivations.shutdown();
+			this._backgroundEvents.dispose();
 		} catch {
 			// Dispose must succeed even if an abort hook throws.
 		}
@@ -1487,15 +1567,15 @@ export class AgentSession {
 	}
 
 	getRemoteMailboxEndpoints(): PeerEndpoint[] {
-		return this._remoteMailbox.list();
+		return this._peerMessages?.listRemoteEndpoints() ?? [];
 	}
 
 	openRemoteMailbox(endpointId?: string): PeerEndpoint[] {
-		return this._remoteMailbox.open(endpointId);
+		return this._peerMessages.openRemoteEndpoint(endpointId);
 	}
 
 	closeRemoteMailbox(endpointId?: string): PeerEndpoint[] {
-		return this._remoteMailbox.close(endpointId);
+		return this._peerMessages.closeRemoteEndpoint(endpointId);
 	}
 
 	/** Update scoped models for cycling */
@@ -1813,7 +1893,7 @@ export class AgentSession {
 
 	private async _enqueueHumanSideHandoff(
 		request: SideChatHandoffRequest,
-		ctx: ExtensionCommandContext,
+		_ctx: ExtensionCommandContext,
 	): Promise<SideChatHandoffResult> {
 		if (this._harnessCapabilityOverrides?.teammates === false) {
 			throw new Error("Managed teammates are explicitly disabled for this session");
@@ -1829,22 +1909,22 @@ export class AgentSession {
 		if (!previousCapabilities.teammates) {
 			this._harnessCapabilityOverrides = { ...previousOverrides, teammates: true };
 			this._refreshNativeCapabilityTools(previousCapabilities);
-			if (this.getToolDefinition("teammate_agent")) {
-				this.setActiveToolsByName([...this.getActiveToolNames(), "teammate_agent"]);
+			if (this.getToolDefinition("multiagent")) {
+				this.setActiveToolsByName([...this.getActiveToolNames(), "multiagent"]);
 			}
 			enabledForHandoff = true;
 		}
-		if (!this.getActiveToolNames().includes("teammate_agent")) {
+		if (!this.getActiveToolNames().includes("multiagent")) {
 			this._harnessCapabilityOverrides = previousOverrides;
 			if (enabledForHandoff) {
 				this._refreshNativeCapabilityTools(this.harnessCapabilities);
 				this.setActiveToolsByName(previousActiveToolNames);
 			}
-			throw new Error("teammate_agent is excluded by the current tool allowlist");
+			throw new Error("multiagent is excluded by the current tool allowlist");
 		}
 
 		try {
-			return await this._teammates.startHumanSideHandoff(request, ctx);
+			return await this._teammates.startHumanSideHandoff(request);
 		} catch (error) {
 			if (enabledForHandoff) {
 				const enabledCapabilities = this.harnessCapabilities;
@@ -2015,6 +2095,7 @@ export class AgentSession {
 
 	/** Drain a bounded mailbox claim into the unified external-activation hub. */
 	private _submitPeerMessages(): void {
+		if (!this._peerMessages) return;
 		let drained: ReturnType<typeof this._peerMessages.drainForInjection> = [];
 		try {
 			drained = this._peerMessages.drainForInjection();
@@ -2613,15 +2694,19 @@ export class AgentSession {
 	private _refreshNativeCapabilityTools(previousCapabilities?: HarnessCapabilities): void {
 		const activeToolNames = this.getActiveToolNames();
 		const capabilities = this.harnessCapabilities;
+		const hcp = this._resourceLoader.HcpClientgetsession?.();
+		this._baseToolDefinitions.delete("multiagent");
+		if (hcp) {
+			for (const [name, entry] of Object.entries(this.HcpClientresolvetools(hcp))) {
+				this._baseToolDefinitions.set(name, entry);
+			}
+		}
 		this._buildNativeToolDefinitions();
-		const nextActiveToolNames = activeToolNames.filter((name) => name !== "teammate_agent" || capabilities.teammates);
+		const nextActiveToolNames = activeToolNames.filter((name) => name !== "multiagent" || capabilities.teammates);
 		if (capabilities.teammates && !previousCapabilities?.teammates && this._autoActivateDefaultTools) {
-			nextActiveToolNames.push("teammate_agent");
+			nextActiveToolNames.push("multiagent");
 		}
 		this._refreshToolRegistry({ activeToolNames: [...new Set(nextActiveToolNames)] });
-		if (previousCapabilities?.teammates && !capabilities.teammates) {
-			void this._teammates.stopAll();
-		}
 	}
 
 	// =========================================================================
@@ -3561,7 +3646,7 @@ export class AgentSession {
 			? Object.keys(this._baseToolsOverride)
 			: [
 					...DEFAULT_NATIVE_ACTIVE_TOOLS,
-					...(this.harnessCapabilities.teammates ? ["teammate_agent"] : []),
+					...(this.harnessCapabilities.teammates ? ["multiagent"] : []),
 					...(this._autoActivateDefaultTools ? (this._resourceLoader.getDefaultToolNames?.() ?? []) : []),
 					...(this._autoActivateLoadedTools
 						? [
@@ -3579,17 +3664,12 @@ export class AgentSession {
 
 	private _buildNativeToolDefinitions(): void {
 		if (this._baseToolsOverride) return;
-		for (const name of ["bg_shell", "sub_agent", "send_message", "teammate_agent"]) {
+		for (const name of ["bg_shell"]) {
 			this._baseToolDefinitions.delete(name);
 		}
 		const definitions: Record<string, ToolDefinition> = {
 			bg_shell: this._backgroundShell.createToolDefinition() as ToolDefinition,
-			sub_agent: this._subAgents.createToolDefinition() as ToolDefinition,
-			send_message: this._peerMessages.createToolDefinition() as ToolDefinition,
 		};
-		if (this.harnessCapabilities.teammates) {
-			definitions.teammate_agent = this._teammates.createToolDefinition() as ToolDefinition;
-		}
 		for (const [name, definition] of Object.entries(definitions)) {
 			this._baseToolDefinitions.set(name, {
 				definition,
@@ -3624,6 +3704,7 @@ export class AgentSession {
 		const resolved: Record<string, ToolDefinitionEntry> = {};
 		for (const address of sessionHcp.addresses().filter((candidate) => candidate.startsWith("tool:"))) {
 			const tool = sessionHcp.resolveInstance<AgentTool>(address);
+			if (tool?.name === "multiagent" && !this.harnessCapabilities.teammates) continue;
 			if (tool) {
 				const def = createToolDefinitionFromAgentTool(tool);
 				// Merge pi-canonical prompt/render metadata (promptSnippet, promptGuidelines,
@@ -3669,6 +3750,9 @@ export class AgentSession {
 		HcpClienttrackpackageload?: boolean;
 		HcpClientpreservepackageloadevent?: boolean;
 	}): Promise<void> {
+		if (this._subAgents?.hasLiveWork() || this._teammates?.hasLiveWork()) {
+			throw new Error("Cannot reload HCP Tool Sources while sub_agent or multiagent has live work");
+		}
 		const previousFlagValues = this._extensionRunner.getFlagValues();
 		const previousToolNames = new Set(this.getAllTools().map((tool) => tool.name));
 		const previousActiveToolNames = this.getActiveToolNames();
@@ -3679,9 +3763,15 @@ export class AgentSession {
 		// Refresh model registry to reload models.json and provider configurations
 		this._modelRegistry.refresh();
 		const HcpClientpreservepackageloadevent = options?.HcpClientpreservepackageloadevent === true;
+		const candidateRuntimes: Partial<{
+			peerMessages: SendMessageRuntime;
+			subAgents: SubAgentRuntime;
+			teammates: MultiagentController;
+		}> = {};
 		if (options?.HcpClienttrackpackageload && !HcpClientpreservepackageloadevent) {
 			this._HcpClientpackageloadcontroller.begin(0);
 		}
+		const previousHcp = this._resourceLoader.HcpClientgetsession?.();
 		try {
 			await this._resourceLoader.reload({
 				onPackageAssemblyProgress: HcpClientpreservepackageloadevent
@@ -3694,7 +3784,11 @@ export class AgentSession {
 						settingsManager: this.settingsManager,
 						sessionManager: this.sessionManager,
 						sshOperations: this._sshOperations,
+						statefulToolSettings: this._statefulToolSettings(candidateRuntimes),
 					});
+					if (!candidateRuntimes.peerMessages || !candidateRuntimes.subAgents || !candidateRuntimes.teammates) {
+						throw new Error("Reload candidate did not construct all three stateful Tool runtimes");
+					}
 				},
 			});
 			if (!HcpClientpreservepackageloadevent) {
@@ -3705,6 +3799,11 @@ export class AgentSession {
 				this._HcpClientpackageloadcontroller.fail(error);
 			}
 			throw error;
+		}
+		if (candidateRuntimes.peerMessages && candidateRuntimes.subAgents && candidateRuntimes.teammates) {
+			this._installStatefulToolRuntimes(candidateRuntimes);
+		} else if (this._resourceLoader.HcpClientgetsession?.() !== previousHcp) {
+			throw new Error("ResourceLoader replaced its Session HCP without preparing stateful Tool runtimes");
 		}
 		const loadedToolNames = [
 			...(this._autoActivateDefaultTools ? (this._resourceLoader.getDefaultToolNames?.() ?? []) : []),

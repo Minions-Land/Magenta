@@ -7,7 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Changed
-- Model-facing background and multi-agent tools no longer expose blocking wait actions or opt-out terminal delivery: `bg_shell`, `sub_agent`, and `teammate_agent` return terminal results through external activation, while status remains an immediate snapshot and host-only settlement barriers stay outside model and extension surfaces
+- Multi-agent work is split into three HCP-owned Tools: singular finite `sub_agent` Events with automatic terminal activation, persistent Session-id lifecycle through `multiagent`, and atomic durable mailbox acceptance through `send_message`; the old `teammate_agent`, Assignment, batch, and blocking-wait surfaces are removed
+- Persistent teammates now keep durable desired/observed process state, recover only for the exact Main Session lineage under a 16-process FIFO limit, read Main Todo through a mandatory read-only projection, and use versioned Git worktree receipts for explicit integration or discard
 - Extension command contexts no longer expose the deadlock-prone `waitForIdle()` API; extensions inspect `isIdle()` and continue deferred work from `agent_end`, and RPC abort requests now acknowledge immediately
 
 ### Fixed

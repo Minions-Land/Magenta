@@ -333,10 +333,12 @@ function applyModelOverride(model: Model<Api>, override: ModelOverride): Model<A
 	// tiered { tiers: { default, scale } }. Normalize to flat base rates before overlaying
 	// the override's optional fields. For tiered models, use the default tier (volume < 128k).
 	if (override.cost) {
+		type FlatCost = Model<Api>["cost"];
+		const modelCost = model.cost as FlatCost | { tiers: { default: FlatCost } };
 		const baseRates =
-			"tiers" in model.cost
-				? model.cost.tiers.default // volume 0 → default tier
-				: model.cost; // already flat
+			"tiers" in modelCost
+				? modelCost.tiers.default // volume 0 → default tier
+				: modelCost; // already flat
 		result.cost = {
 			input: override.cost.input ?? baseRates.input,
 			output: override.cost.output ?? baseRates.output,

@@ -85,17 +85,17 @@ function checkToolEvidence(events, expect, errors) {
 	) {
 		errors.push("expected a successful workflow-based sub_agent call");
 	}
-	for (const action of expect.teammateActionsInclude ?? []) {
+	for (const action of expect.multiagentActionsInclude ?? []) {
 		if (
 			!successfulStarts.some(
 				(event) =>
-					event.toolName === "teammate_agent" &&
+					event.toolName === "multiagent" &&
 					event.args !== null &&
 					typeof event.args === "object" &&
 					event.args.action === action,
 			)
 		) {
-			errors.push(`expected successful teammate_agent action '${action}' was not observed`);
+			errors.push(`expected successful multiagent action '${action}' was not observed`);
 		}
 	}
 	return successfulStarts.map((event) => ({

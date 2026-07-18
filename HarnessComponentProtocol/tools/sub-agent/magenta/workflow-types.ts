@@ -1,84 +1,6 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { HcpMagnetBinding } from "../.HCP/HcpMagnetTypes.ts";
-import type { HcpServerDescription, HcpServerRequest } from "../.HCP/HcpServerTypes.ts";
 
-export class HcpServer {
-	readonly moduleName = "multiagent";
-	readonly description = "Workflow orchestration over sessionless, one-shot workers.";
-
-	private binding(magnet: { toCapability?(): unknown }): HcpMagnetBinding<MultiAgentProvider> {
-		return magnet.toCapability?.() as HcpMagnetBinding<MultiAgentProvider>;
-	}
-
-	describeSource(
-		_selector: string,
-		magnet: { readonly hotSwappable?: boolean; toCapability?(): unknown },
-	): HcpServerDescription {
-		const binding = this.binding(magnet);
-		return {
-			target: "capability:multiagent",
-			kind: binding.kind,
-			ops: ["discover", "orchestrate", "call"],
-			description: "Workflow orchestration over sessionless, one-shot workers.",
-			metadata: {
-				name: binding.name,
-				implementation: "native-ts",
-				source: binding.source,
-				patterns: binding.instance.discover().patterns,
-				hotSwappable: magnet.hotSwappable ?? false,
-			},
-		};
-	}
-
-	sourceAddresses(_selector: string, magnet: { toCapability?(): unknown }): string[] {
-		const binding = this.binding(magnet);
-		return ["capability:multiagent", ...binding.instance.discover().targets];
-	}
-
-	callSource(
-		_selector: string,
-		magnet: { toCapability?(): unknown },
-		request: HcpServerRequest,
-	): Promise<unknown> | unknown {
-		const provider = this.binding(magnet).instance;
-		const op = request.op || "orchestrate";
-		switch (op) {
-			case "discover":
-				return provider.discover();
-			case "orchestrate":
-			case "call":
-				return provider.orchestrate(request.input as OrchestrationRequest);
-			default:
-				throw new Error(`Unknown operation: ${op} for multiagent capability at ${request.target}`);
-		}
-	}
-}
-
-/**
- * Multi-agent orchestration capability.
- *
- * This module is NOT a sub-agent and NOT an agent team. It is a WORKFLOW
- * engine over sessionless, one-shot workers with a single execution path: every
- * pattern loads a workflow module (`(args, ctx) => {...}`) that composes the
- * injected primitives (agent, parallelAgents, pipeline, guards), routes results,
- * and terminates on explicit conditions.
- *
- * The six named patterns are PRESET workflow scripts shipped in-tree. Their
- * control flow is fixed by the runtime; the caller fills task-specific slots.
- * The `script` pattern loads an author-provided module whose author owns
- * if/while/await flow and termination. Both forms run through the same module
- * loader and runtime-controlled worker primitives, so depth guards, tool denial,
- * timeout, guard injection, state persistence, and cancellation apply equally.
- *
- * Design axiom: a pattern's value is not its shape, it is the step it forces the
- * LLM not to skip (classify-first, cover-every, independent re-check,
- * criteria-based scoring, pairwise judging, stop-on-no-new-findings). Each preset
- * enforces that soul step via a guard prompt (see `guards`) prepended to the
- * relevant worker; the LLM cannot dilute it.
- *
- * This module contains only business logic. The real module HcpServer above
- * owns HCP routing; providers do not construct or register HCP entities.
- */
+/** Runtime-owned Workflow data contracts used only by the sub_agent Tool. */
 
 /** The set of supported orchestration patterns. */
 export type Pattern =
@@ -291,7 +213,7 @@ export type ScriptAgentOptions = {
 	provider?: string;
 	/** Thinking level. */
 	thinking?: ThinkingLevel;
-	/** Tool whitelist (sanitized: sub_agent/bg_shell/teammate_agent/send_message are stripped). */
+	/** Tool whitelist (sanitized: sub_agent/bg_shell/multiagent/send_message are stripped). */
 	tools?: string[];
 	/** Harness package selectors granted to this worker. */
 	packages?: string[];
@@ -424,7 +346,7 @@ export type MultiAgentDiscoverResult = {
  * a source implementation and hands the loop this instance; the loop invokes
  * `orchestrate` directly (HCP does not sit on the hot path).
  *
- * The real module HcpServer above owns HCP routing; the provider remains a
+ * The owning sub_agent Tool runtime invokes this provider directly; it remains a
  * source-selected business value.
  */
 export type MultiAgentProvider = {

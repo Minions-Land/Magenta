@@ -50,8 +50,8 @@ describe("regression #5109: exclude tools", () => {
 			expect(allToolNames).not.toContain("ask_question");
 			expect(allToolNames).toContain("bash");
 			expect(allToolNames).toContain("dynamic_tool");
-			// Standard profiles activate native one-shot tools by default; persistent
-			// teammates are capability-gated and therefore absent here.
+			// This focused harness injects Pi base tools without a Session HCP, so
+			// HCP-owned sub_agent/send_message/multiagent are intentionally absent.
 			expect(harness.session.getActiveToolNames().sort()).toEqual([
 				"bash",
 				"bg_shell",
@@ -60,9 +60,7 @@ describe("regression #5109: exclude tools", () => {
 				"find",
 				"grep",
 				"ls",
-				"send_message",
 				"show",
-				"sub_agent",
 				"write",
 			]);
 			expect(harness.session.systemPrompt).not.toContain("- read:");

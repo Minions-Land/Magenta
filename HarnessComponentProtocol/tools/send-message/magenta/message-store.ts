@@ -38,11 +38,7 @@ export type PresenceState = "active" | "idle" | "offline";
 export type MessagePriority = "urgent" | "normal";
 
 /** Structured metadata carried end-to-end with a peer message. */
-export type PeerMessageMetadata = {
-	assignmentId?: string;
-	terminalStatus?: "completed" | "failed" | "blocked" | "cancelled";
-	[key: string]: unknown;
-};
+export type PeerMessageMetadata = Record<string, unknown>;
 
 /** A transport-neutral federated message. Relays preserve every field. */
 export type FederatedMessageEnvelope = {
@@ -75,6 +71,7 @@ export type PeerOutboxMessage = FederatedMessageEnvelope & {
 
 export type RoutedSendResult = {
 	id: string;
+	createdAt: string;
 	disposition: "local" | "peer" | "unresolved";
 	peerStoreId?: string;
 };
@@ -587,13 +584,13 @@ export class MessageStore {
 			this.recordSeen(envelope.id, envelope.createdAt, null);
 			if (local) {
 				this.insertInbox(envelope);
-				return { id: envelope.id, disposition: "local" };
+				return { id: envelope.id, createdAt: envelope.createdAt, disposition: "local" };
 			}
 			const peerStoreId = route?.peer_store_id ?? null;
 			this.insertOutbox(envelope, peerStoreId);
 			return peerStoreId === null
-				? { id: envelope.id, disposition: "unresolved" }
-				: { id: envelope.id, disposition: "peer", peerStoreId };
+				? { id: envelope.id, createdAt: envelope.createdAt, disposition: "unresolved" }
+				: { id: envelope.id, createdAt: envelope.createdAt, disposition: "peer", peerStoreId };
 		});
 	}
 

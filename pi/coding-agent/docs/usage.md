@@ -67,7 +67,7 @@ Opening `/side`, `/btw`, or `/s` first shows the Side/BTW conversations stored w
 
 The Side/BTW editor uses the standard multiline editor. Shift+Enter inserts a line, bracketed text paste preserves line breaks, Ctrl+C copies the current draft or latest message, PageUp/PageDown scroll the transcript, and Escape closes the window.
 
-Ctrl+T inside the Side/BTW window requests **Enqueue as teammate**. Magenta closes the chat overlay, asks for explicit confirmation, creates a managed child with a bounded hidden snapshot, and reopens the same Side/BTW conversation. The child receives an invitation, not an assignment: it must message the main session with its understanding and ask to be dispatched. The Side/BTW conversation stays usable, and no ownership lease exists until the main agent sends a formal assignment.
+Ctrl+T inside the Side/BTW window requests **Enqueue as teammate**. Magenta closes the chat overlay, asks for explicit confirmation, creates a persistent teammate Session with a bounded hidden snapshot, and reopens the same Side/BTW conversation. The teammate must message Main with its understanding and questions before broad action. The Side/BTW conversation stays usable; the handoff creates no Assignment or ownership lease, and Main tracks any agreed scope only in its authoritative Todo.
 
 ## Message Queue
 
@@ -223,14 +223,14 @@ The native levels use each model's `thinkingLevelMap`. Ultra is a Magenta execut
 | `--no-builtin-tools`, `-nbt` | Disable native application and repository-default HCP tools; keep extension/custom, Package, and user MCP tools enabled |
 | `--no-tools`, `-nt` | Disable all tools |
 | `--harness-workflows`, `--no-harness-workflows` | Explicitly enable or disable `sub_agent` workflow templates |
-| `--harness-teammates`, `--no-harness-teammates` | Explicitly enable or disable `teammate_agent` |
+| `--harness-teammates`, `--no-harness-teammates` | Explicitly enable or disable `multiagent` |
 
 The native tools active by default are `read`, `bash`, `edit`, `write`,
 `bg_shell`, `sub_agent`, `send_message`, `show`, `grep`, `find`, and `ls`.
 HCP also activates `lsp`, `todo`, `web-search`, and `web-fetch` by default.
 Standard profiles retain sessionless, one-shot `sub_agent` workers but omit
-workflow templates and `teammate_agent`. Ultra enables both capabilities by
-default without starting workers or teammates automatically. Its stall reminder
+workflow templates and `multiagent`. Ultra enables both capabilities by
+default without starting finite Events or persistent Sessions automatically. Its stall reminder
 is driven only by real activity and remains coalesced and rate-limited. `harness.workflows`,
 `harness.teammates`, and the matching CLI flags override those defaults in either
 direction; CLI flags have per-run precedence and do not change provider thinking.
@@ -239,14 +239,17 @@ A workflow orchestrates bounded one-shot workers through named presets with
 fixed runtime-owned control flow. The public `sub_agent` tool does not execute
 model-authored inline JavaScript; trusted programmatic workflow modules remain
 an internal Harness capability.
-Use `teammate_agent` for a parent-managed, long-lived child when retained context
-or iterative assignments matter. For editing, `workspace="worktree"` creates a
-linked checkout under the current repository's parent-session-scoped
-`.magenta/tmp/collaboration/` space. `wait` consumes a structured assignment
-status; `integrate` applies the immutable receipt to a clean parent as unstaged
-changes, while `discard` requires explicit confirmation. Parent shutdown stops
-children but preserves unintegrated worktrees and receipts. `send_message` is the
-urgent mailbox data plane and carries managed terminal receipts.
+Use `multiagent` for a persistent teammate Session when retained context,
+iterative collaboration, or explicit file ownership matters. Lifecycle actions
+use only the returned `sessionId`; ordinary prompts, progress, questions, results,
+and soft steering use `send_message`. For editing, `workspace="worktree"` creates
+a versioned linked checkout under the Main-Session-scoped
+`.magenta/tmp/collaboration/` space. `integrate` applies a verified binary/full-index
+receipt to a clean Main checkout as unstaged changes; `discard` requires explicit
+confirmation. Main shutdown stops observed processes but preserves desired-running
+state, unread messages, unintegrated generations, and receipts, so reopening the
+same Main Session resumes eligible teammates. There is no Assignment or blocking
+wait contract, and final teammate output is not forwarded automatically.
 
 ### Resource Options
 
@@ -354,7 +357,7 @@ magenta --exclude-tools ask_question
 ## Runtime Boundaries
 
 Magenta includes first-class `bg_shell`, `sub_agent`, `send_message`, and
-`teammate_agent` tools and can load user MCP tools through the Harness path.
+`multiagent` tools and can load user MCP tools through the Harness path.
 The model-facing background and multi-agent tools intentionally have no blocking
 wait actions. Every `bg_shell` or `sub_agent` start delivers one automatic
 terminal result through external activation, and `status` is an immediate
@@ -363,15 +366,17 @@ until the owned process exits or the adopted execution reports completion.
 Headless `--background-policy wait` is a separate bounded host-settlement policy
 after the model run; it does not hold an interactive tool call open. `sub_agent`
 workers are sessionless and one-shot. Workflows orchestrate those workers and
-forbid delegation controllers plus `send_message` inside each workflow worker.
-Teammates are long-lived child sessions managed by the current parent runtime;
-RPC controls process state, while assignment and structured result payloads use
-the peer mailbox. `stop` acknowledges the shutdown request immediately and a
-later urgent terminal mailbox event confirms process exit. Editing teammates may
-use managed Git worktrees; worktree isolation prevents ordinary path conflicts
-but is not a permission sandbox. Integrate or discard only after the teammate is
-terminal. The parent stops child processes at shutdown without deleting
-unintegrated work. Workflow-specific UI and commands remain extension surfaces.
+forbid `sub_agent`, `multiagent`, `bg_shell`, and `send_message` inside each
+workflow worker. Persistent teammates retain private Session history and are
+controlled by Session id; RPC controls hard lifecycle state, while every ordinary
+cross-Session prompt or report uses `send_message`. `stop` acknowledges durable
+intent immediately; `status` later exposes observed settlement. Teammate final
+output remains private unless the teammate explicitly reports it. Editing
+teammates may use managed Git worktrees; worktree isolation prevents ordinary
+path conflicts but is not a permission sandbox. Integrate or discard only after
+the Session is stopped. Main Todo is projected read-only into teammates, and Main
+alone applies requested Todo mutations. Workflow-specific UI and commands remain
+extension surfaces.
 
 External activations become durable session entries only when committed to model
 context. A passive `nextTurn` activation is intentionally held in runtime memory

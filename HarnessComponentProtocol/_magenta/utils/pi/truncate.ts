@@ -102,6 +102,51 @@ function replaceUnpairedSurrogates(content: string): string {
 	return output;
 }
 
+function takeUtf8Prefix(text: string, maxBytes: number): string {
+	if (maxBytes <= 0) return "";
+	let bytes = 0;
+	let result = "";
+	for (const char of text) {
+		const charBytes = utf8ByteLength(char);
+		if (bytes + charBytes > maxBytes) break;
+		result += char;
+		bytes += charBytes;
+	}
+	return result;
+}
+
+function takeUtf8Suffix(text: string, maxBytes: number): string {
+	if (maxBytes <= 0) return "";
+	const chars = Array.from(text);
+	let bytes = 0;
+	let start = chars.length;
+	while (start > 0) {
+		const charBytes = utf8ByteLength(chars[start - 1]!);
+		if (bytes + charBytes > maxBytes) break;
+		start--;
+		bytes += charBytes;
+	}
+	return chars.slice(start).join("");
+}
+
+/** Bound model-visible text while preserving identifying head and recent tail. */
+export function truncateModelText(
+	text: string,
+	maxBytes: number,
+	shortenedMarker = "\n\n[Model-visible text shortened.]\n\n",
+): { text: string; truncated: boolean } {
+	if (maxBytes <= 0) return { text: "", truncated: text.length > 0 };
+	if (utf8ByteLength(text) <= maxBytes) return { text, truncated: false };
+	const marker = takeUtf8Prefix(shortenedMarker, maxBytes);
+	const remaining = Math.max(0, maxBytes - utf8ByteLength(marker));
+	const headBytes = Math.floor(remaining * 0.4);
+	const tailBytes = remaining - headBytes;
+	return {
+		text: `${takeUtf8Prefix(text, headBytes)}${marker}${takeUtf8Suffix(text, tailBytes)}`,
+		truncated: true,
+	};
+}
+
 /**
  * Format bytes as human-readable size.
  */

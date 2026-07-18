@@ -28,7 +28,6 @@ describe("session HcpClient assembly", () => {
 			"context",
 			"hook",
 			"memory",
-			"multiagent",
 			"policy",
 			"prompt-template",
 			"sandbox",
@@ -36,6 +35,9 @@ describe("session HcpClient assembly", () => {
 		]) {
 			expect(result.hcp.resolveCapability(slot), `capability:${slot}`).toBeDefined();
 		}
+
+		expect(result.hcp.resolveCapability("multiagent")).toBeUndefined();
+		expect(result.hcp.resolve("multiagent://local")).toBeUndefined();
 
 		const runtimeModule = result.hcp.resolveModule("runtime");
 		expect(result.hcp.resolve("capability:runtime:process")).toBe(runtimeModule);

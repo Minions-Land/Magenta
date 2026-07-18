@@ -2,9 +2,14 @@ import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import { HcpClientbuildsession, type SshToolOperations, type TodoPlanState } from "@magenta/harness";
+import {
+	HcpClientbuildsession,
+	MAIN_TODO_SESSION_FILE_ENV,
+	type SshToolOperations,
+	type TodoPlanState,
+} from "@magenta/harness";
 import { Type } from "typebox";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { HcpClientassembletools, loadTodoPlanStateFromBranch } from "../src/core/HcpClienttools.ts";
 import { DefaultResourceLoader } from "../src/core/resource-loader.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
@@ -14,6 +19,7 @@ describe("HcpClient host tool assembly", () => {
 	const roots: string[] = [];
 
 	afterEach(() => {
+		vi.unstubAllEnvs();
 		for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 	});
 
@@ -98,6 +104,62 @@ describe("HcpClient host tool assembly", () => {
 			content: [{ type: "text", text: expect.stringContaining("From this branch") }],
 			details: { state: todoState },
 		});
+	});
+
+	it("projects the latest persisted Main Todo read-only into a teammate assembly", async () => {
+		const root = join(tmpdir(), `hcp-client-tools-main-todo-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+		const agentDir = join(root, "agent");
+		const sessionDir = join(root, "sessions");
+		mkdirSync(agentDir, { recursive: true });
+		roots.push(root);
+		const parent = SessionManager.create(root, sessionDir, { id: "main-session" });
+		const state = (text: string, revision: number): TodoPlanState => ({
+			version: 2,
+			title: "Main plan",
+			summary: null,
+			currentId: 1,
+			nodes: [{ id: 1, parentId: null, order: 0, text, status: "in_progress" }],
+			nextId: 2,
+			revision,
+			history: [],
+		});
+		const appendTodo = (snapshot: TodoPlanState) => {
+			parent.appendMessage({
+				role: "toolResult",
+				toolCallId: `todo-${snapshot.revision}`,
+				toolName: "todo",
+				content: [{ type: "text", text: "persisted" }],
+				details: { action: "apply", state: snapshot, applied: 1, changes: {}, refs: {} },
+				isError: false,
+				timestamp: Date.now(),
+			});
+			parent.flush();
+		};
+		appendTodo(state("Initial Main item", 1));
+		const parentFile = parent.getSessionFile()!;
+		vi.stubEnv(MAIN_TODO_SESSION_FILE_ENV, parentFile);
+		const settingsManager = SettingsManager.create(root, agentDir);
+		const { hcp } = await HcpClientbuildsession({ repoRoot: root });
+		await HcpClientassembletools({
+			hcp,
+			cwd: root,
+			settingsManager,
+			sessionManager: SessionManager.inMemory(root),
+		});
+		const todo = hcp.resolveInstance<AgentTool>("tool:todo")!;
+		await expect(todo.execute("get-initial", { action: "get" })).resolves.toMatchObject({
+			content: [{ type: "text", text: expect.stringContaining("Initial Main item") }],
+		});
+		await expect(
+			todo.execute("mutate-denied", { action: "apply", operations: [{ op: "add", text: "unauthorized" }] }),
+		).rejects.toMatchObject({
+			details: { code: "unauthorized" },
+		});
+		appendTodo(state("Updated Main item", 2));
+		await expect(todo.execute("get-updated", { action: "get" })).resolves.toMatchObject({
+			content: [{ type: "text", text: expect.stringContaining("Updated Main item") }],
+		});
+		await hcp.dispose();
 	});
 
 	it("fills missing defaults without replacing a Package-owned tool address", async () => {

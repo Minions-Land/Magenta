@@ -59,32 +59,37 @@ orchestrates the same kind of worker through named presets with fixed
 runtime-owned control flow. The public tool neither exposes nor accepts
 model-authored inline JavaScript; trusted programmatic script modules remain an
 internal Harness capability. Workflow workers are denied `sub_agent`, `bg_shell`,
-`teammate_agent`, and `send_message`, preventing nested delegation and
-out-of-band peer coordination.
+`multiagent`, and `send_message`, preventing nested delegation and out-of-band
+peer coordination.
 
-`teammate_agent` is the parent-managed control plane for long-lived child sessions.
-With `workspace="worktree"`, Magenta requires a clean Git parent, creates a linked
-checkout under `.magenta/tmp/collaboration/<parent-session>/`, captures committed,
-unstaged, untracked, deleted, mode, symlink, and binary changes through a separate
-Git index, and applies them only through explicit `integrate`. Integration verifies
+`multiagent` is the durable lifecycle control plane for persistent teammate
+Sessions. Its public target identity is only `sessionId`; ordinary communication
+uses `send_message`, and there is no Assignment or blocking wait API. With
+`workspace="worktree"`, Magenta requires a clean Git Main checkout, creates a
+versioned linked checkout under `.magenta/tmp/collaboration/<main-session>/`,
+captures tracked and untracked non-ignored changes (including mode, symlink, and
+binary data) through a separate Git index, and applies them only through explicit
+`integrate`. Integration verifies
 the receipt hash and requires a clean parent; it never stashes, resets, cleans, or
 silently resolves conflicts. `discard` requires confirmation, and shutdown retains
-unintegrated worktrees and receipts.
+unintegrated worktree generations and receipts. Reopening the exact same Main
+Session validates the child Session identity and manifest before automatically
+resuming desired-running teammates.
 
 A worktree is conflict isolation, not a security sandbox. A granted `bash` or file
 tool can still use absolute paths outside it, and repository Git filters/hooks may
 execute under the existing project-trust policy. Patch receipts can contain
 sensitive source data; they are mode `0600` and are never inlined into model
-context. `send_message` remains the urgent mailbox data plane and does not create
-a teammate.
+context. `send_message` remains the urgent, durable-acceptance mailbox data plane
+and does not create a teammate, prove delivery, or carry Assignment status.
 
 Side/BTW history is stored as versioned custom session entries that are excluded
 from the main model context. Its **Enqueue as teammate** action exists only in the
 human TUI, requires confirmation, and is not exposed in the teammate tool schema
 or main system prompt. The bounded transcript is written only to the child's
 hidden context; parent status/tool details retain metadata but never the
-transcript. The first child message is an invitation to discuss and request
-formal dispatch, so it creates neither an assignment id nor an ownership lease.
+transcript. The bootstrap asks the teammate to send Main its understanding and
+questions before broad action, so it creates neither an Assignment nor an ownership lease.
 
 Ultra enables workflow and managed-teammate capabilities by default and maps to
 the selected model's highest native reasoning level. It does not dispatch work,

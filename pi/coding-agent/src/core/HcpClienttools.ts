@@ -1,6 +1,11 @@
 import type { HcpClient, SshTarget, SshToolOperations, TodoPlanState } from "@magenta/harness";
-import { createSshToolOperations, HcpClientassemble, restoreTodoPlanState } from "@magenta/harness";
-import type { SessionManager } from "./session-manager.ts";
+import {
+	createSshToolOperations,
+	HcpClientassemble,
+	MAIN_TODO_SESSION_FILE_ENV,
+	restoreTodoPlanState,
+} from "@magenta/harness";
+import { SessionManager } from "./session-manager.ts";
 import type { SettingsManager } from "./settings-manager.ts";
 import { createLocalBashOperations } from "./tools/bash.ts";
 import { createLocalReadOperations } from "./tools/read.ts";
@@ -12,15 +17,21 @@ export type HcpClienttoolassemblyoptions = {
 	sshTarget?: SshTarget;
 	sshOperations?: SshToolOperations;
 	sessionManager?: Pick<SessionManager, "getBranch">;
+	/** Source-owned settings for stateful Tool modules, keyed by real module path. */
+	statefulToolSettings?: Readonly<Record<string, unknown>>;
 };
 
 /** Assemble the host-selected core tools into the existing session Client. */
 export async function HcpClientassembletools(options: HcpClienttoolassemblyoptions): Promise<void> {
 	const todoSessionManager = options.sessionManager;
+	const mainTodoSessionFile = process.env[MAIN_TODO_SESSION_FILE_ENV];
 	const sshOperations =
 		options.sshOperations ??
 		(options.sshTarget ? createSshToolOperations(options.sshTarget, options.cwd) : undefined);
 	const shellPath = options.settingsManager.getShellPath();
+	const statefulSettings = options.statefulToolSettings ?? {};
+	const statefulModules = ["tools/send-message", "tools/sub-agent", "tools/multiagent"];
+	const disabledStatefulModules = statefulModules.filter((moduleName) => statefulSettings[moduleName] === undefined);
 	const assembled = await HcpClientassemble({
 		hcp: options.hcp,
 		repoRoot: options.cwd,
@@ -28,7 +39,9 @@ export async function HcpClientassembletools(options: HcpClienttoolassemblyoptio
 		includeAutoload: false,
 		includeSelectedProducts: ["tool"],
 		skipOccupied: true,
+		disabledModules: disabledStatefulModules,
 		settings: {
+			...statefulSettings,
 			"tools/read": {
 				autoResizeImages: options.settingsManager.getImageAutoResize(),
 				operations: sshOperations?.read ?? createLocalReadOperations(),
@@ -43,10 +56,13 @@ export async function HcpClientassembletools(options: HcpClienttoolassemblyoptio
 						"tools/write": { operations: sshOperations.write },
 					}
 				: {}),
-			...(todoSessionManager
+			...(todoSessionManager || mainTodoSessionFile
 				? {
 						"tools/todo": {
-							loadState: () => loadTodoPlanStateFromBranch(todoSessionManager),
+							loadState: mainTodoSessionFile
+								? () => loadTodoPlanStateFromSessionFile(mainTodoSessionFile)
+								: () => loadTodoPlanStateFromBranch(todoSessionManager!),
+							readOnly: Boolean(mainTodoSessionFile),
 						},
 					}
 				: {}),
@@ -57,6 +73,10 @@ export async function HcpClientassembletools(options: HcpClienttoolassemblyoptio
 	if (errors.length > 0) {
 		throw new Error(`HcpClient tool assembly failed: ${errors.map((diagnostic) => diagnostic.message).join("; ")}`);
 	}
+}
+
+export function loadTodoPlanStateFromSessionFile(sessionFile: string): TodoPlanState | undefined {
+	return loadTodoPlanStateFromBranch(SessionManager.open(sessionFile));
 }
 
 export function loadTodoPlanStateFromBranch(

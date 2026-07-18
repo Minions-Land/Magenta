@@ -58,30 +58,31 @@ describe("AgentSession peer messaging", () => {
 		try {
 			const tool = session.getAllTools().find((t) => t.name === "send_message");
 			expect(tool).toBeDefined();
-			expect(tool?.description).toContain("any known peer agent session");
-			expect(tool?.description).toContain("does not create, register, or manage a teammate");
-			expect(tool?.promptGuidelines?.some((g) => g.includes("send_message"))).toBe(true);
+			expect(tool?.description).toContain("durable urgent plain-text message");
+			expect(tool?.description).toContain("Acceptance does not imply recipient consumption");
+			expect(tool?.promptGuidelines?.some((guideline) => guideline.includes("cross-Session"))).toBe(true);
 		} finally {
 			await session.dispose();
 		}
 	});
 
-	it("gates teammate_agent by execution profile", async () => {
+	it("gates multiagent by execution profile", async () => {
 		const standard = await makeSession("medium");
 		try {
-			expect(standard.getAllTools().some((tool) => tool.name === "teammate_agent")).toBe(false);
+			expect(standard.getAllTools().some((tool) => tool.name === "multiagent")).toBe(false);
 		} finally {
 			await standard.dispose();
 		}
 
 		const ultra = await makeSession("ultra");
 		try {
-			const tool = ultra.getAllTools().find((candidate) => candidate.name === "teammate_agent");
+			const tool = ultra.getAllTools().find((candidate) => candidate.name === "multiagent");
 			expect(tool).toBeDefined();
-			expect(tool?.description).toContain("parent-managed, long-lived hidden");
-			expect(tool?.description).toContain("current parent runtime");
+			expect(tool?.description).toContain("persistent teammate Sessions by Session id");
+			expect(tool?.description).toContain("durable and acknowledged without waiting");
 			const properties = (tool?.parameters as any).properties;
 			expect(JSON.stringify(properties.action)).not.toContain('"wait"');
+			expect(properties.teammateId).toBeUndefined();
 			expect(properties.assignmentId).toBeUndefined();
 			expect(properties.waitTimeoutSeconds).toBeUndefined();
 			expect(tool?.promptGuidelines?.some((guideline) => guideline.includes("send_message"))).toBe(true);
@@ -125,7 +126,7 @@ describe("AgentSession peer messaging", () => {
 			expect(session.executionProfile).toBe("ultra");
 			expect(session.thinkingLevel).not.toBe("ultra");
 			expect(session.harnessCapabilities).toEqual({ workflows: true, teammates: true });
-			expect(session.getActiveToolNames()).toContain("teammate_agent");
+			expect(session.getActiveToolNames()).toContain("multiagent");
 		} finally {
 			await session.dispose();
 		}
@@ -140,17 +141,17 @@ describe("AgentSession peer messaging", () => {
 			expect(JSON.stringify(standardProperties.action)).not.toContain('"wait"');
 			expect(standardProperties.returnToMain).toBeUndefined();
 			expect(standardProperties.waitTimeoutSeconds).toBeUndefined();
-			expect(session.getActiveToolNames()).not.toContain("teammate_agent");
+			expect(session.getActiveToolNames()).not.toContain("multiagent");
 
 			session.setExecutionProfile("ultra");
 			const ultraSubAgent = session.getAllTools().find((tool) => tool.name === "sub_agent");
 			expect((ultraSubAgent?.parameters as any).properties.workflow).toBeDefined();
 			expect((ultraSubAgent?.parameters as any).properties.returnToMain).toBeUndefined();
-			expect(session.getActiveToolNames()).toContain("teammate_agent");
+			expect(session.getActiveToolNames()).toContain("multiagent");
 
 			session.setExecutionProfile("high");
-			expect(session.getAllTools().some((tool) => tool.name === "teammate_agent")).toBe(false);
-			expect(session.getActiveToolNames()).not.toContain("teammate_agent");
+			expect(session.getAllTools().some((tool) => tool.name === "multiagent")).toBe(false);
+			expect(session.getActiveToolNames()).not.toContain("multiagent");
 		} finally {
 			await session.dispose();
 		}
@@ -175,7 +176,7 @@ describe("AgentSession peer messaging", () => {
 		});
 		try {
 			expect(session.harnessCapabilities).toEqual({ workflows: true, teammates: true });
-			expect(session.getAllTools().some((tool) => tool.name === "teammate_agent")).toBe(true);
+			expect(session.getAllTools().some((tool) => tool.name === "multiagent")).toBe(true);
 			const subAgent = session.getAllTools().find((tool) => tool.name === "sub_agent");
 			expect((subAgent?.parameters as any).properties.workflow).toBeDefined();
 		} finally {
@@ -203,9 +204,41 @@ describe("AgentSession peer messaging", () => {
 		try {
 			expect(session.executionProfile).toBe("ultra");
 			expect(session.harnessCapabilities).toEqual({ workflows: false, teammates: false });
-			expect(session.getAllTools().some((tool) => tool.name === "teammate_agent")).toBe(false);
+			expect(session.getAllTools().some((tool) => tool.name === "multiagent")).toBe(false);
 			const subAgent = session.getAllTools().find((tool) => tool.name === "sub_agent");
 			expect((subAgent?.parameters as any).properties.workflow).toBeUndefined();
+		} finally {
+			await session.dispose();
+		}
+	});
+
+	it("publishes replacement stateful runtimes only after a successful ResourceLoader reload", async () => {
+		const session = await makeSession("ultra");
+		try {
+			const internals = session as any;
+			const before = {
+				peerMessages: internals._peerMessages,
+				subAgents: internals._subAgents,
+				teammates: internals._teammates,
+			};
+			await session.reload();
+			expect(internals._peerMessages).not.toBe(before.peerMessages);
+			expect(internals._subAgents).not.toBe(before.subAgents);
+			expect(internals._teammates).not.toBe(before.teammates);
+			expect(session.getAllTools().some((tool) => tool.name === "multiagent")).toBe(true);
+		} finally {
+			await session.dispose();
+		}
+	});
+
+	it("rejects a stateful Tool hot-swap while finite or persistent work is live", async () => {
+		const session = await makeSession("ultra");
+		try {
+			const internals = session as any;
+			const beforeHcp = internals._resourceLoader.HcpClientgetsession();
+			vi.spyOn(internals._subAgents, "hasLiveWork").mockReturnValue(true);
+			await expect(session.reload()).rejects.toThrow("while sub_agent or multiagent has live work");
+			expect(internals._resourceLoader.HcpClientgetsession()).toBe(beforeHcp);
 		} finally {
 			await session.dispose();
 		}

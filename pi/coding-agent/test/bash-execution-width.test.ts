@@ -19,9 +19,7 @@ function createTuiStub(columns: number): { columns: number; stub: any } {
 				return 24;
 			},
 		},
-		// Loader calls ui.addInterval / ui.removeInterval
-		addInterval: (_cb: () => void, _ms: number) => ({ dispose: () => {} }),
-		removeInterval: () => {},
+		subscribeAnimation: (_callback: () => void, _intervalMs: number) => () => {},
 		requestRender: () => {},
 	};
 	return { columns: state.columns, stub };

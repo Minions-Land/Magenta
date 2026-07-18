@@ -11,8 +11,6 @@ import * as hooks from "../../hooks/HcpServer.ts";
 import * as hooksMagenta from "../../hooks/magenta/HcpMagnet.ts";
 import * as memory from "../../memory/HcpServer.ts";
 import * as memoryMagenta from "../../memory/magenta/HcpMagnet.ts";
-import * as multiagent from "../../multiagent/HcpServer.ts";
-import * as multiagentWorkflowMagenta from "../../multiagent/workflow/magenta/HcpMagnet.ts";
 import * as policy from "../../policy/HcpServer.ts";
 import * as policyMagenta from "../../policy/magenta/HcpMagnet.ts";
 import * as promptTemplatesDescriptor from "../../prompt-templates/descriptor/HcpMagnet.ts";
@@ -56,11 +54,17 @@ import * as toolsLsMagenta from "../../tools/ls/magenta/HcpMagnet.ts";
 import * as toolsLsPi from "../../tools/ls/pi/HcpMagnet.ts";
 import * as toolsLsp from "../../tools/lsp/HcpServer.ts";
 import * as toolsLspMagenta from "../../tools/lsp/magenta/HcpMagnet.ts";
+import * as toolsMultiagent from "../../tools/multiagent/HcpServer.ts";
+import * as toolsMultiagentMagenta from "../../tools/multiagent/magenta/HcpMagnet.ts";
 import * as toolsRead from "../../tools/read/HcpServer.ts";
 import * as toolsReadMagenta from "../../tools/read/magenta/HcpMagnet.ts";
 import * as toolsReadPi from "../../tools/read/pi/HcpMagnet.ts";
+import * as toolsSendMessage from "../../tools/send-message/HcpServer.ts";
+import * as toolsSendMessageMagenta from "../../tools/send-message/magenta/HcpMagnet.ts";
 import * as toolsShow from "../../tools/show/HcpServer.ts";
 import * as toolsShowPi from "../../tools/show/pi/HcpMagnet.ts";
+import * as toolsSubAgent from "../../tools/sub-agent/HcpServer.ts";
+import * as toolsSubAgentMagenta from "../../tools/sub-agent/magenta/HcpMagnet.ts";
 import * as toolsTodo from "../../tools/todo/HcpServer.ts";
 import * as toolsTodoMagenta from "../../tools/todo/magenta/HcpMagnet.ts";
 import * as toolsToolSearch from "../../tools/tool-search/HcpServer.ts";
@@ -102,7 +106,6 @@ export const HCP_SERVERS: ReadonlyMap<string, HcpServerclass> = new Map<string, 
 	["context", context.HcpServer],
 	["hooks", hooks.HcpServer],
 	["memory", memory.HcpServer],
-	["multiagent", multiagent.HcpServer],
 	["policy", policy.HcpServer],
 	["prompt-templates", promptTemplates.HcpServer],
 	["runtime", runtime.HcpServer],
@@ -121,8 +124,11 @@ export const HCP_SERVERS: ReadonlyMap<string, HcpServerclass> = new Map<string, 
 	["tools/grep", toolsGrep.HcpServer],
 	["tools/ls", toolsLs.HcpServer],
 	["tools/lsp", toolsLsp.HcpServer],
+	["tools/multiagent", toolsMultiagent.HcpServer],
 	["tools/read", toolsRead.HcpServer],
+	["tools/send-message", toolsSendMessage.HcpServer],
 	["tools/show", toolsShow.HcpServer],
+	["tools/sub-agent", toolsSubAgent.HcpServer],
 	["tools/todo", toolsTodo.HcpServer],
 	["tools/tool-search", toolsToolSearch.HcpServer],
 	["tools/web-fetch", toolsWebFetch.HcpServer],
@@ -264,20 +270,6 @@ export const HCP_MAGNETS: readonly HcpMagnetentry[] = [
 		slot: "memory",
 		requires: [],
 		HcpMagnet: memoryMagenta.HcpMagnet,
-	},
-	{
-		module: "multiagent",
-		kind: "multiagent",
-		name: "multiagent",
-		product: "capability",
-		source: "magenta",
-		selected: true,
-		autoload: true,
-		hotSwappable: false,
-		descriptorPath: "multiagent/multiagent.toml",
-		slot: "multiagent",
-		requires: [],
-		HcpMagnet: multiagentWorkflowMagenta.HcpMagnet,
 	},
 	{
 		module: "policy",
@@ -559,6 +551,19 @@ export const HCP_MAGNETS: readonly HcpMagnetentry[] = [
 		HcpMagnet: toolsLspMagenta.HcpMagnet,
 	},
 	{
+		module: "tools/multiagent",
+		kind: "tool",
+		name: "multiagent",
+		product: "tool",
+		source: "magenta",
+		selected: true,
+		autoload: false,
+		hotSwappable: false,
+		descriptorPath: "tools/multiagent/multiagent.toml",
+		requires: [],
+		HcpMagnet: toolsMultiagentMagenta.HcpMagnet,
+	},
+	{
 		module: "tools/read",
 		kind: "tool",
 		name: "read",
@@ -585,6 +590,19 @@ export const HCP_MAGNETS: readonly HcpMagnetentry[] = [
 		HcpMagnet: toolsReadPi.HcpMagnet,
 	},
 	{
+		module: "tools/send-message",
+		kind: "tool",
+		name: "send_message",
+		product: "tool",
+		source: "magenta",
+		selected: true,
+		autoload: false,
+		hotSwappable: false,
+		descriptorPath: "tools/send-message/send-message.toml",
+		requires: [],
+		HcpMagnet: toolsSendMessageMagenta.HcpMagnet,
+	},
+	{
 		module: "tools/show",
 		kind: "tool",
 		name: "show",
@@ -596,6 +614,19 @@ export const HCP_MAGNETS: readonly HcpMagnetentry[] = [
 		descriptorPath: "tools/show/show.toml",
 		requires: [],
 		HcpMagnet: toolsShowPi.HcpMagnet,
+	},
+	{
+		module: "tools/sub-agent",
+		kind: "tool",
+		name: "sub_agent",
+		product: "tool",
+		source: "magenta",
+		selected: true,
+		autoload: false,
+		hotSwappable: false,
+		descriptorPath: "tools/sub-agent/sub-agent.toml",
+		requires: [],
+		HcpMagnet: toolsSubAgentMagenta.HcpMagnet,
 	},
 	{
 		module: "tools/todo",

@@ -836,7 +836,8 @@ async function fetchOpenRouterModels(): Promise<Model<any>[]> {
 			// charge depends on the selected downstream model. Keep the router in the
 			// catalog without leaking the sentinel into the public non-negative cost
 			// contract. Any negative price from another model still fails integrity.
-			const variableRouterCost = model.id === "openrouter/auto" && inputCost === -1_000_000 && outputCost === -1_000_000;
+			const isAutoRouter = model.id === "openrouter/auto" || model.id.startsWith("openrouter/auto-");
+			const variableRouterCost = isAutoRouter && inputCost === -1_000_000 && outputCost === -1_000_000;
 
 			const normalizedModel: Model<any> = {
 				id: modelKey,

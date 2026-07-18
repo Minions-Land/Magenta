@@ -1,0 +1,11 @@
+kind = "tool"
+product = "tool"
+name = "sub_agent"
+description = "Register, inspect, or cancel one finite Event backed by a sessionless worker or trusted Workflow."
+source = "magenta"
+sources = ["magenta"]
+autoload = false
+
+[exports]
+module = "tools/sub-agent/magenta/sub-agent.ts"
+factory = "SubAgentController"

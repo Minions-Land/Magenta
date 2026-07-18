@@ -53,8 +53,8 @@ describe("MessageStorePeerLinkAdapter", () => {
 		a.updatePresence("session-a", "idle");
 		b.updatePresence("session-b", "idle");
 		const sent = a.sendRouted("session-a", "session-b", "hello through hub", "urgent", {
-			assignmentId: "assignment-1",
-			terminalStatus: "completed",
+			routeTag: "route-1",
+			relayState: "completed",
 		});
 		const aHub = link(a, hub);
 		const bHub = link(b, hub);
@@ -72,7 +72,7 @@ describe("MessageStorePeerLinkAdapter", () => {
 				sender: "session-a",
 				recipient: "session-b",
 				content: "hello through hub",
-				metadata: { assignmentId: "assignment-1", terminalStatus: "completed" },
+				metadata: { routeTag: "route-1", relayState: "completed" },
 			});
 			expect(a.getPeerOutboxCounts().forwarded).toBe(1);
 			expect(hub.getPeerOutboxCounts().forwarded).toBe(1);

@@ -15,7 +15,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { Isolation, WorkerResult, WorkerSlot, WorkerUsage } from "../../HcpServer.ts";
+import type { Isolation, WorkerResult, WorkerSlot, WorkerUsage } from "../workflow-types.ts";
 
 /** Default tools handed to a worker when none are specified: read-only. */
 const DEFAULT_TOOLS = ["read", "grep", "find", "ls"];
@@ -32,7 +32,7 @@ const DEFAULT_TOOLS = ["read", "grep", "find", "ls"];
  * in the worker registry. This is the primary structural safety boundary; the
  * depth guard below is a defense-in-depth backstop.
  */
-const FORBIDDEN_WORKER_TOOLS = new Set(["sub_agent", "bg_shell", "teammate_agent", "send_message"]);
+const FORBIDDEN_WORKER_TOOLS = new Set(["sub_agent", "bg_shell", "multiagent", "send_message"]);
 
 /**
  * Sanitize a tool whitelist for a worker: drop any forbidden tool. If the result
@@ -47,9 +47,6 @@ export function sanitizeWorkerTools(requested: string[] | undefined): string[] {
 /** Grace period between SIGTERM and SIGKILL when cancelling a worker. */
 const TERM_GRACE_MS = 5000;
 
-/** Hard wall-clock cap per worker. A worker that never finishes is killed. */
-const DEFAULT_WORKER_TIMEOUT_MS = 120_000;
-
 /**
  * Recursion guard. Every worker is spawned with PI_MAORCH_DEPTH set one higher
  * than the current process. If we are already inside an orchestrated worker, we
@@ -59,6 +56,7 @@ const DEFAULT_WORKER_TIMEOUT_MS = 120_000;
  */
 const DEPTH_ENV = "PI_MAORCH_DEPTH";
 const MAX_DEPTH = 1;
+export const MAX_WORKFLOW_CONCURRENT = 8;
 
 /** Current orchestration depth of this process (0 at the top level). */
 export function currentDepth(): number {
@@ -90,7 +88,7 @@ export type SpawnWorkerOptions = {
 	isolation?: Isolation;
 	/** Stable id for this worker (for result correlation). */
 	workerId: string;
-	/** Hard wall-clock timeout in ms. Defaults to 120s. */
+	/** Optional explicit hard wall-clock timeout in milliseconds. */
 	timeoutMs?: number;
 };
 
@@ -249,7 +247,7 @@ export async function spawnWorker(
 	}
 
 	const tools = sanitizeWorkerTools(options.tools);
-	const timeoutMs = options.timeoutMs ?? DEFAULT_WORKER_TIMEOUT_MS;
+	const timeoutMs = options.timeoutMs;
 
 	// Headless, sessionless, no extensions (prevents recursive sub-agent spawning),
 	// structured NDJSON output.
@@ -365,14 +363,14 @@ export async function spawnWorker(
 				}, TERM_GRACE_MS);
 			};
 
-			// Hard wall-clock timeout: a worker that never finishes is killed and
-			// surfaces as a failed result rather than hanging the orchestration.
-			const timer = setTimeout(() => {
-				timedOut = true;
-				killProc();
-			}, timeoutMs);
-			timer.unref?.();
-			child.on("close", () => clearTimeout(timer));
+			if (timeoutMs !== undefined) {
+				const timer = setTimeout(() => {
+					timedOut = true;
+					killProc();
+				}, timeoutMs);
+				timer.unref?.();
+				child.on("close", () => clearTimeout(timer));
+			}
 
 			if (signal) {
 				if (signal.aborted) killProc();
@@ -393,7 +391,7 @@ export async function spawnWorker(
 			error: success
 				? undefined
 				: timedOut
-					? `worker timed out after ${timeoutMs}ms`
+					? `worker timed out after ${timeoutMs!}ms`
 					: errorMessage || stderr.trim() || `exit code ${exitCode}`,
 		};
 	} catch (err) {
@@ -425,7 +423,7 @@ export async function parallel(
 	signal?: AbortSignal,
 	resolveInvocation: WorkerInvocationResolver = getPiInvocation,
 ): Promise<WorkerResult[]> {
-	const limit = Math.max(1, maxConcurrent);
+	const limit = Math.min(MAX_WORKFLOW_CONCURRENT, Math.max(1, Math.floor(maxConcurrent)));
 	const results = new Array<WorkerResult>(specs.length);
 	let next = 0;
 
@@ -480,7 +478,7 @@ export async function parallelAgents<T>(
 	signal?: AbortSignal,
 ): Promise<T[]> {
 	signal?.throwIfAborted();
-	const limit = Math.max(1, maxConcurrent);
+	const limit = Math.min(MAX_WORKFLOW_CONCURRENT, Math.max(1, Math.floor(maxConcurrent)));
 	const results = new Array<T>(tasks.length);
 	let next = 0;
 
@@ -518,7 +516,7 @@ export async function pipeline<T, R>(
 ): Promise<R[]> {
 	signal?.throwIfAborted();
 	const results: R[] = [];
-	const limit = Math.max(1, maxConcurrent);
+	const limit = Math.min(MAX_WORKFLOW_CONCURRENT, Math.max(1, Math.floor(maxConcurrent)));
 	let next = 0;
 
 	async function runLane(): Promise<void> {

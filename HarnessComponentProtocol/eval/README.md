@@ -71,7 +71,7 @@ Run controls can be declared at scenario scope and overridden by a variant:
 `runtime_manifest.tools.active`; `active_tools` is an exact set comparison.
 `successful_tools_include` requires matching non-error tool executions.
 `require_workflow_sub_agent = true` requires a successful `sub_agent` call with
-a structured `workflow` argument, and `teammate_actions_include` requires each
+a structured `workflow` argument, and `multiagent_actions_include` requires each
 listed managed-teammate lifecycle action to complete successfully. A variant
 can replace or extend these through an inline `expect` table.
 

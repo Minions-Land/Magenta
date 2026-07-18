@@ -24,6 +24,7 @@
 	"dependencies": {
 		"@earendil-works/pi-agent-core": "0.80.2",
 		"@earendil-works/pi-ai": "0.80.2",
+		"proper-lockfile": "4.1.2",
 		"smol-toml": "1.7.0"
 	},
 	"optionalDependencies": {
@@ -31,6 +32,7 @@
 	},
 	"devDependencies": {
 		"@types/node": "24.12.4",
+		"@types/proper-lockfile": "4.1.4",
 		"@typescript-eslint/eslint-plugin": "8.63.0",
 		"@typescript-eslint/parser": "8.63.0",
 		"@typescript/typescript6": "6.0.2",

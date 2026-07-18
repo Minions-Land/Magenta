@@ -16,7 +16,6 @@ describe("generated capability Magnet rows", () => {
 				"context:workspace:magenta",
 				"hooks:hooks:magenta",
 				"memory:memory:magenta",
-				"multiagent:multiagent:magenta",
 				"policy:policy:magenta",
 				"prompt-templates:prompt-templates:pi",
 				"runtime:process:magenta",
@@ -51,7 +50,6 @@ describe("generated capability Magnet rows", () => {
 				"context",
 				"hooks",
 				"memory",
-				"multiagent",
 				"policy",
 				"prompt-templates",
 				"runtime",
@@ -62,6 +60,7 @@ describe("generated capability Magnet rows", () => {
 		expect(result.hcp.addresses().filter((address) => address.startsWith("capability:"))).toHaveLength(
 			expectedSlots.length,
 		);
+		expect(result.hcp.resolveCapability("multiagent")).toBeUndefined();
 	});
 });
 

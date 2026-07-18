@@ -1,9 +1,9 @@
+import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { appendFile, chmod, mkdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import lockfile from "proper-lockfile";
-import { spawnProcess } from "../../utils/child-process.ts";
 
 const GIT_TIMEOUT_MS = 30_000;
 const MAX_GIT_OUTPUT_BYTES = 64 * 1024 * 1024;
@@ -34,7 +34,8 @@ export type TeammateChangeReceipt = {
 
 export type TeammateWorktreeRecord = {
 	version: 1;
-	teammateId: string;
+	generation: number;
+	sessionId: string;
 	parentSessionId: string;
 	repoRoot: string;
 	gitCommonDir: string;
@@ -86,7 +87,7 @@ async function runGit(
 	options?: { env?: NodeJS.ProcessEnv; maxBytes?: number; allowExitCodes?: number[] },
 ): Promise<GitResult> {
 	const maxBytes = options?.maxBytes ?? MAX_GIT_OUTPUT_BYTES;
-	const child = spawnProcess("git", ["-C", cwd, ...args], {
+	const child = spawn("git", ["-C", cwd, ...args], {
 		cwd,
 		stdio: ["ignore", "pipe", "pipe"],
 		env: {
@@ -175,9 +176,10 @@ function parseNumstat(output: string): { insertions: number; deletions: number }
 
 export class TeammateWorktreeManager {
 	async provision(input: {
-		teammateId: string;
+		sessionId: string;
 		parentSessionId: string;
 		requestedCwd: string;
+		generation?: number;
 	}): Promise<TeammateWorktreeRecord> {
 		const requestedCwd = await realpath(input.requestedCwd);
 		await assertDirectory(requestedCwd, "Teammate working directory");
@@ -200,22 +202,25 @@ export class TeammateWorktreeManager {
 		const requestedRelativeCwd = relative(repoRoot, requestedCwd);
 		if (!isWithin(repoRoot, requestedCwd)) throw new Error("Requested teammate cwd is outside its Git repository");
 		const parentSegment = safeSegment(input.parentSessionId);
-		const teammateSegment = safeSegment(input.teammateId);
+		const teammateSegment = safeSegment(input.sessionId);
+		const generation = Math.max(1, Math.floor(input.generation ?? 1));
+		const generationSegment = `generation-${String(generation).padStart(3, "0")}`;
 		const collaborationRoot = join(repoRoot, ".magenta", "tmp", "collaboration", parentSegment);
-		const checkoutPath = join(collaborationRoot, "worktrees", teammateSegment);
-		const recordDir = join(collaborationRoot, "receipts", teammateSegment);
+		const checkoutPath = join(collaborationRoot, "worktrees", teammateSegment, generationSegment);
+		const recordDir = join(collaborationRoot, "receipts", teammateSegment, generationSegment);
 		const manifestPath = join(recordDir, "manifest.json");
 		if (existsSync(checkoutPath) || existsSync(manifestPath)) {
-			throw new Error(`Managed teammate workspace already exists for ${input.teammateId}`);
+			throw new Error(`Managed teammate workspace already exists for ${input.sessionId}`);
 		}
-		await mkdir(join(collaborationRoot, "worktrees"), { recursive: true, mode: 0o700 });
+		await mkdir(dirname(checkoutPath), { recursive: true, mode: 0o700 });
 		await mkdir(recordDir, { recursive: true, mode: 0o700 });
-		const branch = `magenta/teammate/${safeSegment(input.parentSessionId).slice(0, 12)}/${teammateSegment}-${randomUUID().slice(0, 8)}`;
+		const branch = `magenta/teammate/${safeSegment(input.parentSessionId).slice(0, 12)}/${teammateSegment}-g${generation}-${randomUUID().slice(0, 8)}`;
 		const checkoutCwd = join(checkoutPath, requestedRelativeCwd);
 		const now = Date.now();
 		const record: TeammateWorktreeRecord = {
 			version: 1,
-			teammateId: input.teammateId,
+			generation,
+			sessionId: input.sessionId,
 			parentSessionId: input.parentSessionId,
 			repoRoot,
 			gitCommonDir,
@@ -248,10 +253,36 @@ export class TeammateWorktreeManager {
 		}
 	}
 
+	async validate(record: TeammateWorktreeRecord): Promise<TeammateWorktreeRecord> {
+		const parsed = JSON.parse(await readFile(record.manifestPath, "utf8")) as TeammateWorktreeRecord;
+		for (const [field, expected] of [
+			["version", 1],
+			["generation", record.generation],
+			["sessionId", record.sessionId],
+			["parentSessionId", record.parentSessionId],
+			["repoRoot", record.repoRoot],
+			["gitCommonDir", record.gitCommonDir],
+			["collaborationRoot", record.collaborationRoot],
+			["checkoutPath", record.checkoutPath],
+			["manifestPath", record.manifestPath],
+			["branch", record.branch],
+			["baseCommit", record.baseCommit],
+		] as const) {
+			if (parsed[field] !== expected) throw new Error(`Managed teammate manifest ${field} mismatch`);
+		}
+		if (!isWithin(parsed.collaborationRoot, parsed.checkoutPath)) {
+			throw new Error("Managed teammate checkout escaped its collaboration root");
+		}
+		if (!["integrated", "discarded", "cleanup_pending"].includes(parsed.state)) {
+			await this.assertRegistered(parsed);
+		}
+		return parsed;
+	}
+
 	async captureReceipt(record: TeammateWorktreeRecord): Promise<TeammateChangeReceipt> {
 		if (record.receipt) return record.receipt;
 		if (record.state === "integrated" || record.state === "discarded") {
-			throw new Error(`Cannot capture changes for ${record.teammateId}: workspace is ${record.state}`);
+			throw new Error(`Cannot capture changes for ${record.sessionId}: workspace is ${record.state}`);
 		}
 		await this.assertRegistered(record);
 		const dirtySubmodules = decode(
@@ -333,7 +364,7 @@ export class TeammateWorktreeManager {
 
 	async reactivate(record: TeammateWorktreeRecord): Promise<void> {
 		if (record.state === "integrated" || record.state === "discarded" || record.state === "cleanup_pending") {
-			throw new Error(`Cannot resume teammate ${record.teammateId}: workspace is ${record.state}`);
+			throw new Error(`Cannot resume teammate ${record.sessionId}: workspace is ${record.state}`);
 		}
 		await this.assertRegistered(record);
 		record.state = "active";
@@ -364,7 +395,7 @@ export class TeammateWorktreeManager {
 				cleanupPending: record.state === "cleanup_pending",
 			};
 		}
-		if (record.state === "discarded") throw new Error(`Cannot integrate discarded teammate ${record.teammateId}`);
+		if (record.state === "discarded") throw new Error(`Cannot integrate discarded teammate ${record.sessionId}`);
 		const receipt = await this.captureReceipt(record);
 		const release = await lockfile.lock(record.gitCommonDir, {
 			realpath: false,
@@ -416,7 +447,7 @@ export class TeammateWorktreeManager {
 	async discard(record: TeammateWorktreeRecord, confirm: boolean): Promise<void> {
 		if (!confirm) throw new Error("Discarding teammate changes requires confirm=true");
 		if (record.state === "integrated" || record.state === "cleanup_pending") {
-			throw new Error(`Cannot discard teammate ${record.teammateId}: changes were already integrated`);
+			throw new Error(`Cannot discard teammate ${record.sessionId}: changes were already integrated`);
 		}
 		if (record.state === "discarded") return;
 		await this.captureReceipt(record);

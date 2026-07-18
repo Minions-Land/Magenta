@@ -1,6 +1,6 @@
-import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { probeAndCacheCapabilities, getCapabilities, resetCapabilitiesCache } from "../src/terminal-image.ts";
+import { afterEach, beforeEach, describe, it } from "node:test";
+import { getCapabilities, probeAndCacheCapabilities, resetCapabilitiesCache } from "../src/terminal-image.ts";
 
 /**
  * Tests for the opt-in runtime truecolor probe gating.

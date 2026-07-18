@@ -1075,8 +1075,8 @@ export class TUI extends Container {
 		}
 		// Base tick interval: minimum of all subscriber intervals
 		const baseInterval = Math.min(
-			...Array.from(this.animationSubscribers.values()).map(sub => sub.intervalMs),
-			TUI.ANIMATION_INTERVAL_MS
+			...Array.from(this.animationSubscribers.values()).map((sub) => sub.intervalMs),
+			TUI.ANIMATION_INTERVAL_MS,
 		);
 		this.animationTimer = setInterval(() => {
 			let anyFired = false;

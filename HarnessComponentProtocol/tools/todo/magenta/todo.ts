@@ -1,6 +1,7 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
+import { ToolExecutionError } from "../../tool-error.ts";
 
 export const TODO_PLAN_VERSION = 2 as const;
 export const TODO_RENDER_KIND = "todo-plan";
@@ -88,6 +89,8 @@ export type TodoDetails = {
 export type TodoToolOptions = {
 	/** Load the latest persisted value for the host's currently selected session branch. */
 	loadState?: () => unknown;
+	/** Expose a projection that permits get but rejects every mutation. */
+	readOnly?: boolean;
 };
 
 const todoOperationSchema = Type.Object({
@@ -129,6 +132,15 @@ export const todoSchema = Type.Object({
 		}),
 	),
 });
+
+export const readOnlyTodoSchema = Type.Object(
+	{
+		action: StringEnum(["get"] as const, {
+			description: "Read the latest authoritative Main Todo projection.",
+		}),
+	},
+	{ additionalProperties: false },
+);
 
 type DraftResult =
 	| { state: TodoPlanState; changes: TodoChangeSummary; refs: Record<string, number> }
@@ -750,9 +762,10 @@ export function createTodoTool(_cwd: string, options: TodoToolOptions = {}): Age
 	return {
 		name: "todo",
 		label: "Todo",
-		description:
-			'The single source of truth for multi-step planning and progress; do not mirror it in plan/progress files or a second checklist. Top-level action is only "get" or "apply". Read with {"action":"get"}. Mutate with {"action":"apply","operations":[{"op":"add","text":"..."}]}; add/update/move/etc. belong in operations[].op, never action. A single change is a one-operation batch. Use reset to archive and start a new plan only after the current plan is non-empty and every item is completed.',
-		parameters: todoSchema,
+		description: options.readOnly
+			? 'Read Main\'s authoritative Todo projection with {"action":"get"}. This Session cannot mutate the plan; send proposed changes to Main with send_message.'
+			: 'The single source of truth for multi-step planning and progress; do not mirror it in plan/progress files or a second checklist. Top-level action is only "get" or "apply". Read with {"action":"get"}. Mutate with {"action":"apply","operations":[{"op":"add","text":"..."}]}; add/update/move/etc. belong in operations[].op, never action. A single change is a one-operation batch. Use reset to archive and start a new plan only after the current plan is non-empty and every item is completed.',
+		parameters: (options.readOnly ? readOnlyTodoSchema : todoSchema) as typeof todoSchema,
 		executionMode: "sequential",
 		renderKind: TODO_RENDER_KIND,
 		execute: async (_toolCallId, params) => {
@@ -770,6 +783,9 @@ export function createTodoTool(_cwd: string, options: TodoToolOptions = {}): Age
 				};
 			}
 
+			if (options.readOnly) {
+				throw new ToolExecutionError("unauthorized", "This Session has read-only access to Main Todo");
+			}
 			const original = cloneTodoPlanState(state);
 			const operations = (params.operations ?? []) as TodoOperation[];
 			const result = applyTodoOperations(original, operations);

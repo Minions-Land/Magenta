@@ -67,17 +67,18 @@ The native tools active by default are `read`, `bash`, `edit`, `write`,
 `bg_shell`, `sub_agent`, `send_message`, `show`, `grep`, `find`, and `ls`.
 HCP also activates `lsp`, `todo`, `web-search`, and `web-fetch`. Standard
 profiles expose sessionless, one-shot `sub_agent` workers but omit workflows
-and `teammate_agent`. Ultra enables both capabilities by default but never
+and `multiagent`. Ultra enables both capabilities by default but never
 dispatches work automatically.
 
 Use a workflow to orchestrate bounded one-shot workers through named presets
 with fixed runtime-owned control flow. The public `sub_agent` tool does not
 execute model-authored inline JavaScript; trusted programmatic script modules
-remain an internal Harness capability. Use `teammate_agent` when a
-parent-managed child needs retained context, multiple assignments, or explicit
-file ownership. `send_message` sends
-an urgent mailbox message to any known peer session id; it does not create a
-teammate. All tools and extensions run with the permissions of the Magenta
+remain an internal Harness capability. Use `multiagent` when a persistent
+teammate Session needs retained context, repeated collaboration, or explicit
+worktree ownership. Control it by Session id and use `send_message` for every
+ordinary prompt, progress update, question, or result. `send_message` durably
+accepts one urgent mailbox message to a known Session id; it does not create a
+teammate or imply recipient consumption. All tools and extensions run with the permissions of the Magenta
 process; project trust is not a sandbox.
 
 ## Project Instructions

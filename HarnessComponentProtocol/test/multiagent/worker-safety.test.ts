@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { currentDepth, sanitizeWorkerTools, spawnWorker } from "../../multiagent/workflow/magenta/worker.ts";
+import { currentDepth, sanitizeWorkerTools, spawnWorker } from "../../tools/sub-agent/magenta/workflow/worker.ts";
 
 /**
  * Safety guards for worker spawning. These invariants keep a workflow worker
@@ -8,14 +8,14 @@ import { currentDepth, sanitizeWorkerTools, spawnWorker } from "../../multiagent
  */
 describe("worker capability denial", () => {
 	it("strips delegation controllers and peer messaging from any requested whitelist", () => {
-		expect(sanitizeWorkerTools(["read", "sub_agent", "bg_shell", "teammate_agent", "send_message", "ls"])).toEqual([
+		expect(sanitizeWorkerTools(["read", "sub_agent", "bg_shell", "multiagent", "send_message", "ls"])).toEqual([
 			"read",
 			"ls",
 		]);
 	});
 
 	it("falls back to read-only when only forbidden tools are requested", () => {
-		expect(sanitizeWorkerTools(["sub_agent", "bg_shell", "teammate_agent", "send_message"])).toEqual([
+		expect(sanitizeWorkerTools(["sub_agent", "bg_shell", "multiagent", "send_message"])).toEqual([
 			"read",
 			"grep",
 			"find",

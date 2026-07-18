@@ -40,14 +40,15 @@ describe("research-orchestration state contract", () => {
 
 		expect(skill).toContain("Delegation uses **soft leases**, not runtime locks");
 		expect(skill).toContain("successful `sub_agent` or workflow dispatch leases its delegated analysis scope");
-		expect(skill).toContain("assignment must name owned files or globs");
+		expect(skill).toContain("Main records persistent teammate scope in its Todo");
+		expect(skill).toContain("name owned files or globs");
 		expect(skill).toContain('workspace="worktree"');
-		expect(skill).toContain("matching structured terminal receipt");
-		expect(skill).toContain("main agent may advance only non-overlapping Todo work");
+		expect(skill).toContain("explicit result or blocker to Main");
+		expect(skill).toContain("Main may advance only non-overlapping Todo work");
 		expect(skill).toContain("A teammate becoming idle does not release");
-		expect(skill).toContain("reclaim the scope only after its terminal event or receipt arrives");
+		expect(skill).toContain("reclaim or replace scope only after explicit Main coordination");
 		expect(skill).toContain("synthesize the result and independently verify it");
-		expect(skill).toContain("Do not add a Todo owner schema or a separate lease registry");
+		expect(skill).toContain("Do not add an Assignment entity, Todo owner schema, or separate lease registry");
 		expect(skill).toContain("blocks `bash`");
 	});
 

@@ -1,0 +1,11 @@
+kind = "tool"
+product = "tool"
+name = "send_message"
+description = "Send one durable urgent plain-text message to a known Session mailbox."
+source = "magenta"
+sources = ["magenta"]
+autoload = false
+
+[exports]
+module = "tools/send-message/magenta/send-message.ts"
+factory = "SendMessageController"

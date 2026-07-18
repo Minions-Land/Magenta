@@ -78,7 +78,7 @@ export interface CreateAgentSessionOptions {
 	 *
 	 * When omitted, pi enables the default application tools (read, bash, edit, write,
 	 * bg_shell, sub_agent, send_message), repository-default HCP tools, package tools, user MCP tools,
-	 * and extension/custom tools unless `noTools` changes that default. Ultra also enables teammate_agent.
+	 * and extension/custom tools unless `noTools` changes that default. Ultra also enables multiagent.
 	 * When provided, only the listed tool names are enabled.
 	 */
 	tools?: string[];
@@ -280,7 +280,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	);
 	const defaultActiveToolNames: string[] = [
 		...DEFAULT_NATIVE_ACTIVE_TOOLS,
-		...(harnessCapabilities.teammates ? ["teammate_agent"] : []),
+		...(harnessCapabilities.teammates ? ["multiagent"] : []),
 	];
 	const sessionHcp = resourceLoader.HcpClientgetsession?.();
 	if (sessionHcp && !HcpClientprepared) {
@@ -492,6 +492,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		extensionRunnerRef,
 		sessionStartEvent: options.sessionStartEvent,
 	});
+	await session.initializeStatefulHcpTools();
 	const extensionsResult = resourceLoader.getExtensions();
 
 	return {

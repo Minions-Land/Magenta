@@ -53,11 +53,11 @@ Use `/trust` in interactive mode to save a project trust decision for future ses
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
 | `harness.workflows` | boolean | profile default | Enable `sub_agent` workflow templates |
-| `harness.teammates` | boolean | profile default | Enable parent-managed, long-lived `teammate_agent` child sessions |
+| `harness.teammates` | boolean | profile default | Enable persistent teammate Session lifecycle through `multiagent` |
 
 Both capabilities default to `true` in Ultra and `false` in other profiles. Enabling a capability only exposes its tool surface; it never starts workers or teammates automatically. Explicit settings win in either direction, so standard profiles can enable them and Ultra can disable them. Per-run `--harness-workflows` / `--no-harness-workflows` and `--harness-teammates` / `--no-harness-teammates` flags override both settings and profile defaults without changing the provider thinking level.
 
-Workflows orchestrate sessionless, one-shot workers through named presets with fixed runtime-owned control flow. The public `sub_agent` tool does not execute model-authored inline JavaScript; trusted programmatic script modules remain an internal Harness capability. `teammate_agent` manages long-lived child sessions for retained context and multiple assignments; the parent stops them when its runtime shuts down. `send_message` is a separate urgent mailbox data plane for known peer session ids and does not create a teammate.
+Workflows orchestrate sessionless, one-shot workers through named presets with fixed runtime-owned control flow. The public `sub_agent` tool does not execute model-authored inline JavaScript; trusted programmatic script modules remain an internal Harness capability. `multiagent` manages persistent teammate Sessions by Session id for retained context, repeated collaboration, and optional worktree ownership. Main shutdown preserves desired state and reopening the exact Main Session resumes eligible teammates. `send_message` is the separate durable urgent mailbox data plane for known Session ids; it carries ordinary prompts and reports but creates no teammate or Assignment.
 
 ### UI & Display
 

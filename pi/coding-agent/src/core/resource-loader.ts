@@ -2,7 +2,7 @@ import type { FSWatcher } from "node:fs";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
 import chalk from "chalk";
-import { CONFIG_DIR_NAME, getAgentInvocation } from "../config.ts";
+import { CONFIG_DIR_NAME } from "../config.ts";
 import { loadThemeFromPath, type Theme } from "../modes/interactive/theme/theme.ts";
 import type { ResourceDiagnostic } from "./diagnostics.ts";
 import { loadUserMcpTools } from "./mcp-config-loader.ts";
@@ -44,9 +44,7 @@ import { SettingsManager } from "./settings-manager.ts";
 import type { Skill } from "./skills.ts";
 import { createSourceInfo, type SourceInfo } from "./source-info.ts";
 
-const HcpClientsessionassemblysettings = {
-	"multiagent:multiagent": { resolveWorkerInvocation: getAgentInvocation },
-} as const;
+const HcpClientsessionassemblysettings = {} as const;
 
 export interface ResourceExtensionPaths {
 	skillPaths?: Array<{ path: string; metadata: PathMetadata }>;

@@ -159,7 +159,7 @@ function mergeExpectations(base = {}, override = {}) {
 		activeToolsExclude: override.active_tools_exclude ?? base.active_tools_exclude ?? [],
 		successfulToolsInclude: override.successful_tools_include ?? base.successful_tools_include ?? [],
 		requireWorkflowSubAgent: override.require_workflow_sub_agent ?? base.require_workflow_sub_agent ?? false,
-		teammateActionsInclude: override.teammate_actions_include ?? base.teammate_actions_include ?? [],
+		multiagentActionsInclude: override.multiagent_actions_include ?? base.multiagent_actions_include ?? [],
 	};
 	for (const [name, value] of Object.entries(merged.capabilities)) {
 		if (typeof value !== "boolean") throw new Error(`expected capability '${name}' must be boolean`);
@@ -172,7 +172,7 @@ function mergeExpectations(base = {}, override = {}) {
 		["active_tools_include", merged.activeToolsInclude],
 		["active_tools_exclude", merged.activeToolsExclude],
 		["successful_tools_include", merged.successfulToolsInclude],
-		["teammate_actions_include", merged.teammateActionsInclude],
+		["multiagent_actions_include", merged.multiagentActionsInclude],
 	]) {
 		if (value !== undefined && (!Array.isArray(value) || value.some((item) => typeof item !== "string"))) {
 			throw new Error(`expect.${label} must be an array of tool names`);

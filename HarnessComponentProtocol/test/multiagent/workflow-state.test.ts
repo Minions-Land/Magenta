@@ -3,9 +3,9 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { WorkerResult } from "../../multiagent/HcpServer.ts";
-import { MultiAgentOrchestrator, type WorkerRunner } from "../../multiagent/workflow/magenta/orchestrator.ts";
-import type { SpawnWorkerOptions } from "../../multiagent/workflow/magenta/worker.ts";
+import { MultiAgentOrchestrator, type WorkerRunner } from "../../tools/sub-agent/magenta/workflow/orchestrator.ts";
+import type { SpawnWorkerOptions } from "../../tools/sub-agent/magenta/workflow/worker.ts";
+import type { WorkerResult } from "../../tools/sub-agent/magenta/workflow-types.ts";
 
 /**
  * Phase 3 state-persistence tests. A script workflow must leave an inspectable

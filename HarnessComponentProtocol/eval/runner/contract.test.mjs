@@ -9,11 +9,11 @@ const variant = {
 	configuration: { thinking: "ultra", backgroundPolicy: "wait", backgroundWaitTimeoutSeconds: 5 },
 	expect: {
 		capabilities: { workflows: true, teammates: true },
-		activeToolsInclude: ["sub_agent", "teammate_agent"],
+		activeToolsInclude: ["sub_agent", "multiagent"],
 		activeToolsExclude: ["ask_question"],
-		successfulToolsInclude: ["sub_agent", "teammate_agent"],
+		successfulToolsInclude: ["sub_agent", "multiagent"],
 		requireWorkflowSubAgent: true,
-		teammateActionsInclude: ["start", "stop"],
+		multiagentActionsInclude: ["start", "stop"],
 	},
 };
 
@@ -25,7 +25,7 @@ function event(overrides = {}) {
 		product: { name: "magenta", version: "test", infrastructureVersion: "test" },
 		cwd: "/repo",
 		execution: { thinkingLevel: "xhigh", profile: "ultra", harnessCapabilities: { workflows: true, teammates: true } },
-		tools: { active: ["teammate_agent", "sub_agent"] },
+		tools: { active: ["multiagent", "sub_agent"] },
 		policies: { background: { policy: "wait", waitTimeoutMs: 5000 } },
 		...overrides,
 	};
@@ -50,8 +50,8 @@ function toolTrace() {
 		{ type: "tool_execution_start", toolCallId: "sub-1", toolName: "sub_agent", args: { workflow: { pattern: "fan_out_synthesize" } } },
 		{ type: "tool_execution_end", toolCallId: "sub-1", toolName: "sub_agent", isError: false, result: {} },
 		...(["start", "stop"].flatMap((action, index) => [
-			{ type: "tool_execution_start", toolCallId: `team-${index}`, toolName: "teammate_agent", args: { action } },
-			{ type: "tool_execution_end", toolCallId: `team-${index}`, toolName: "teammate_agent", isError: false, result: {} },
+			{ type: "tool_execution_start", toolCallId: `team-${index}`, toolName: "multiagent", args: { action } },
+			{ type: "tool_execution_end", toolCallId: `team-${index}`, toolName: "multiagent", isError: false, result: {} },
 		])),
 	];
 }
@@ -74,7 +74,7 @@ test("accepts and normalizes one complete headless terminal contract", () => {
 	const summary = validateAndNormalizeResult(result(completeEvents()), variant);
 	assert.equal(summary.valid, true);
 	assert.deepEqual(summary.errors, []);
-	assert.deepEqual(summary.runtime.activeTools, ["sub_agent", "teammate_agent"]);
+	assert.deepEqual(summary.runtime.activeTools, ["sub_agent", "multiagent"]);
 	assert.deepEqual(summary.eventCounts, {
 		run_end: 1,
 		runtime_manifest: 1,
@@ -121,7 +121,7 @@ test("rejects missing orchestration tool evidence", () => {
 	const errors = summary.errors.join("\n");
 	assert.match(errors, /expected successful tool 'sub_agent'/);
 	assert.match(errors, /workflow-based sub_agent/);
-	assert.match(errors, /teammate_agent action 'stop'/);
+	assert.match(errors, /multiagent action 'stop'/);
 });
 
 test("rejects Ultra when the profile or native thinking resolution is wrong", () => {

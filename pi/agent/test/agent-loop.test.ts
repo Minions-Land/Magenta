@@ -307,6 +307,107 @@ describe("agentLoop with AgentMessage", () => {
 		}
 	});
 
+	it("preserves typed Tool error details from execute failures", async () => {
+		const schema = Type.Object({ value: Type.String() });
+		const tool: AgentTool<typeof schema, unknown> = {
+			name: "typed_error",
+			label: "Typed Error",
+			description: "fails with structured details",
+			parameters: schema,
+			async execute() {
+				const error = new Error("target is unavailable") as Error & { details: Record<string, unknown> };
+				error.details = {
+					schemaVersion: 1,
+					code: "not_found",
+					message: error.message,
+					retryable: false,
+					target: "session-1",
+				};
+				throw error;
+			},
+		};
+		const context: AgentContext = { systemPrompt: "", messages: [], tools: [tool] };
+		const config: AgentLoopConfig = { model: createModel(), convertToLlm: identityConverter };
+		let callIndex = 0;
+		const streamFn = () => {
+			const stream = new MockAssistantStream();
+			queueMicrotask(() => {
+				if (callIndex++ === 0) {
+					const message = createAssistantMessage(
+						[{ type: "toolCall", id: "typed-1", name: "typed_error", arguments: { value: "x" } }],
+						"toolUse",
+					);
+					stream.push({ type: "done", reason: "toolUse", message });
+					return;
+				}
+				const message = createAssistantMessage([{ type: "text", text: "done" }]);
+				stream.push({ type: "done", reason: "stop", message });
+			});
+			return stream;
+		};
+		const events: AgentEvent[] = [];
+		const stream = agentLoop([createUserMessage("run")], context, config, undefined, streamFn);
+		for await (const event of stream) events.push(event);
+		const end = events.find(
+			(event): event is Extract<AgentEvent, { type: "tool_execution_end" }> => event.type === "tool_execution_end",
+		);
+		expect(end?.isError).toBe(true);
+		expect(end?.result.details).toEqual({
+			schemaVersion: 1,
+			code: "not_found",
+			message: "target is unavailable",
+			retryable: false,
+			target: "session-1",
+		});
+	});
+
+	it("returns versioned invalid_arguments details for local schema validation", async () => {
+		const schema = Type.Object({ value: Type.String() }, { additionalProperties: false });
+		let executed = false;
+		const tool: AgentTool<typeof schema, unknown> = {
+			name: "validated",
+			label: "Validated",
+			description: "requires a string",
+			parameters: schema,
+			async execute() {
+				executed = true;
+				return { content: [{ type: "text", text: "unexpected" }], details: {} };
+			},
+		};
+		const context: AgentContext = { systemPrompt: "", messages: [], tools: [tool] };
+		const config: AgentLoopConfig = { model: createModel(), convertToLlm: identityConverter };
+		let callIndex = 0;
+		const streamFn = () => {
+			const stream = new MockAssistantStream();
+			queueMicrotask(() => {
+				if (callIndex++ === 0) {
+					const message = createAssistantMessage(
+						[{ type: "toolCall", id: "invalid-1", name: "validated", arguments: {} }],
+						"toolUse",
+					);
+					stream.push({ type: "done", reason: "toolUse", message });
+					return;
+				}
+				const message = createAssistantMessage([{ type: "text", text: "done" }]);
+				stream.push({ type: "done", reason: "stop", message });
+			});
+			return stream;
+		};
+		const events: AgentEvent[] = [];
+		const stream = agentLoop([createUserMessage("run")], context, config, undefined, streamFn);
+		for await (const event of stream) events.push(event);
+		const end = events.find(
+			(event): event is Extract<AgentEvent, { type: "tool_execution_end" }> => event.type === "tool_execution_end",
+		);
+		expect(executed).toBe(false);
+		expect(end?.isError).toBe(true);
+		expect(end?.result.details).toMatchObject({
+			schemaVersion: 1,
+			code: "invalid_arguments",
+			retryable: false,
+		});
+	});
+
 	it("should execute mutated beforeToolCall args without revalidation", async () => {
 		const toolSchema = Type.Object({ value: Type.String() });
 		const executed: Array<string | number> = [];

@@ -185,6 +185,12 @@ describe("model generation scripts", () => {
 			name: "Auto Router",
 			pricing: { prompt: "-1", completion: "-1" },
 		};
+		openRouterModels[1] = {
+			...openRouterModels[1],
+			id: "openrouter/auto-beta",
+			name: "Auto Router (Beta)",
+			pricing: { prompt: "-1", completion: "-1" },
+		};
 		const gatewayModels = Array.from({ length: 50 }, (_, index) => ({
 			id: `gateway-${index}`,
 			name: `Gateway ${index}`,
@@ -230,8 +236,12 @@ describe("model generation scripts", () => {
 		expect(readFileSync(join(root, "src", "models.generated.ts"), "utf8")).toContain("NVIDIA_MODELS");
 		const openRouterCatalog = readFileSync(join(root, "src", "providers", "openrouter.models.ts"), "utf8");
 		expect(openRouterCatalog).toContain('"openrouter/auto"');
+		expect(openRouterCatalog).toContain('"openrouter/auto-beta"');
 		expect(openRouterCatalog).toContain("input: 0,");
 		expect(openRouterCatalog).toContain("variablePricing: true,");
+		expect(openRouterCatalog).toMatch(
+			/"openrouter\/auto-beta": \{[\s\S]*?variablePricing: true,[\s\S]*?\n\t+input: 0,/,
+		);
 		expect(openRouterCatalog).toMatch(/"auto": \{[\s\S]*?variablePricing: true,[\s\S]*?\n\t\tinput:/);
 		expect(openRouterCatalog).toMatch(/"openrouter\/fusion": \{[\s\S]*?variablePricing: true,[\s\S]*?\n\t\tinput:/);
 		expect(openRouterCatalog).not.toContain("input: -1000000,");
@@ -242,7 +252,7 @@ describe("model generation scripts", () => {
 		const imageCatalog = join(root, "src", "image-models.generated.ts");
 		writeFileSync(imageCatalog, "stable image catalog\n");
 		const models = Array.from({ length: 5 }, (_, index) => ({
-			id: index === 0 ? "openrouter/auto" : `image-${index}`,
+			id: index === 0 ? "openrouter/auto-beta" : `image-${index}`,
 			name: `Image ${index}`,
 			architecture: { input_modalities: ["text"], output_modalities: ["image"] },
 			pricing: {

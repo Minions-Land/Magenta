@@ -1,10 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { HcpClient } from "../../HcpClient.ts";
-import type { MultiAgentProvider, WorkerSlot } from "../../multiagent/HcpServer.ts";
-import * as multiagentServer from "../../multiagent/HcpServer.ts";
-import * as multiagentWorkflowMagenta from "../../multiagent/workflow/magenta/HcpMagnet.ts";
-import { MultiAgentOrchestrator } from "../../multiagent/workflow/magenta/orchestrator.ts";
-import { buildSystemPrompt } from "../../multiagent/workflow/magenta/worker.ts";
+import { MultiAgentOrchestrator } from "../../tools/sub-agent/magenta/workflow/orchestrator.ts";
+import { buildSystemPrompt } from "../../tools/sub-agent/magenta/workflow/worker.ts";
+import type { WorkerSlot } from "../../tools/sub-agent/magenta/workflow-types.ts";
 
 /**
  * These guards protect the orchestration CONTRACT, not the worker execution.
@@ -31,38 +28,13 @@ describe("multiagent orchestrator", () => {
 		);
 	});
 
-	it("exposes the source through the real module HCP server", async () => {
-		const magnet = new multiagentWorkflowMagenta.HcpMagnet({
-			repoRoot: process.cwd(),
-			kind: "multiagent",
-			name: "multiagent",
-			source: "magenta",
-		});
-		const hcp = new HcpClient();
-		hcp.registerModule(new multiagentServer.HcpServer(), new Map([["multiagent", magnet]]));
-
-		expect(hcp.addresses()).toEqual(["capability:multiagent", "multiagent://local"]);
-		expect(hcp.describeAll()).toContainEqual(
-			expect.objectContaining({
-				target: "capability:multiagent",
-				kind: "multiagent",
-				ops: ["discover", "orchestrate", "call"],
-				metadata: expect.objectContaining({ source: "magenta", patterns: expect.any(Array) }),
-			}),
-		);
-		await expect(hcp.dispatch({ target: "multiagent://local", op: "discover" })).resolves.toMatchObject({
-			provider: "multiagent",
-			targets: ["multiagent://local"],
-		});
-	});
-
 	it("dispatches every pattern to an implementation (no notImplemented rejections)", () => {
 		const orch = new MultiAgentOrchestrator();
 		// All seven patterns are wired; discover() reflects the full set.
 		expect(orch.discover().patterns).toHaveLength(7);
 	});
 
-	it("passes the host invocation resolver from the Magnet to every worker", async () => {
+	it("passes the host invocation resolver to every internal worker", async () => {
 		const requestedArgs: string[][] = [];
 		const fixture = [
 			"const event = {",
@@ -71,19 +43,12 @@ describe("multiagent orchestrator", () => {
 			"};",
 			'process.stdout.write(JSON.stringify(event) + "\\n");',
 		].join("\n");
-		const magnet = new multiagentWorkflowMagenta.HcpMagnet({
-			repoRoot: process.cwd(),
-			kind: "multiagent",
-			name: "multiagent",
-			source: "magenta",
-			settings: {
-				resolveWorkerInvocation: (args: string[]) => {
-					requestedArgs.push([...args]);
-					return { command: process.execPath, args: ["-e", fixture] };
-				},
+		const provider = new MultiAgentOrchestrator({
+			resolveWorkerInvocation: (args: string[]) => {
+				requestedArgs.push([...args]);
+				return { command: process.execPath, args: ["-e", fixture] };
 			},
 		});
-		const provider = magnet.toCapability().instance as MultiAgentProvider;
 
 		const result = await provider.orchestrate({
 			pattern: "fan_out_synthesize",

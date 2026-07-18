@@ -29,6 +29,7 @@
 			"pi/*/test/**/*.ts",
 			"pi/coding-agent/examples/**/*.ts",
 			"HarnessComponentProtocol/**/*.ts",
+			"!**/.magenta/**/*",
 			"!**/node_modules/**/*",
 			"!**/dist/**/*",
 			"!**/test-sessions.ts",

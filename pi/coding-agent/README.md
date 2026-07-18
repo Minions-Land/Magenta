@@ -138,7 +138,7 @@ The native tools active by default are `read`, `bash`, `edit`, `write`,
 `bg_shell`, `sub_agent`, `send_message`, `show`, `grep`, `find`, and `ls`.
 HCP also activates `lsp`, `todo`, `web-search`, and `web-fetch` by default.
 Standard profiles expose sessionless, one-shot `sub_agent` workers but omit
-workflow templates and `teammate_agent`. Ultra enables both capabilities by
+workflow templates and `multiagent`. Ultra enables both capabilities by
 default without dispatching work automatically. It also makes the low-frequency,
 real-activity-based background stall reminder proactive through the shared
 external activation coordinator. `harness.workflows` and `harness.teammates` can
@@ -147,13 +147,14 @@ override either delegation capability.
 A workflow orchestrates sessionless, one-shot workers through named presets with
 fixed runtime-owned control flow. The public `sub_agent` tool does not execute
 model-authored inline JavaScript; trusted programmatic workflow modules remain
-an internal Harness capability. Use `teammate_agent` for a
-parent-managed, long-lived child when retained context or iterative assignments
-matter. Editing teammates can use `workspace="worktree"`; Magenta creates a
-parent-session-scoped checkout under `.magenta/tmp/collaboration/`, waits for a
-structured assignment receipt, and integrates or discards the captured patch
-explicitly. Parent shutdown stops child processes but preserves unintegrated
-worktrees and receipts. `send_message` remains the urgent mailbox data plane. Use `--tools`, `--exclude-tools`,
+an internal Harness capability. Use `multiagent` for a persistent teammate
+Session when retained context, repeated collaboration, or explicit worktree
+ownership matters. Lifecycle actions target only the returned Session id;
+ordinary prompts and reports use `send_message`. Editing teammates can use
+`workspace="worktree"`; Magenta creates versioned Main-Session-scoped checkouts
+under `.magenta/tmp/collaboration/` and integrates or discards verified receipts
+explicitly. Main shutdown preserves desired state and unintegrated generations
+for exact-lineage recovery. There is no Assignment or blocking wait API. Use `--tools`, `--exclude-tools`,
 `--no-tools`, or `--no-builtin-tools` to control the active set.
 
 Common commands:

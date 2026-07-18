@@ -26,9 +26,9 @@
  */
 
 import type { Component } from "@earendil-works/pi-tui";
-import type { CustomMessage } from "../messages.ts";
 import type { Theme } from "../../modes/interactive/theme/theme.ts";
 import type { ToolRenderContext } from "../extensions/types.ts";
+import type { CustomMessage } from "../messages.ts";
 
 /**
  * 工具渲染器契约。renderCall/renderResult 签名与 ToolDefinition 保持一致,
@@ -104,9 +104,11 @@ export function getRegisteredRenderKinds(): string[] {
  * 与 extensions/types.ts 的 MessageRenderer 类型签名保持一致,
  * 这样扩展注册的渲染器可以直接进入本注册表。
  */
-export interface MessageRenderer<T = unknown> {
-	(message: CustomMessage<T>, options: { expanded: boolean }, theme: Theme): Component | undefined;
-}
+export type MessageRenderer<T = unknown> = (
+	message: CustomMessage<T>,
+	options: { expanded: boolean },
+	theme: Theme,
+) => Component | undefined;
 
 /** 全局消息渲染器注册表:messageType → MessageRenderer */
 const messageRenderers = new Map<string, MessageRenderer>();

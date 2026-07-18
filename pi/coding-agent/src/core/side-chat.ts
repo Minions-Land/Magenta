@@ -50,7 +50,6 @@ export type SideChatHandoffRequest = {
 
 export type SideChatHandoffResult = {
 	handoffId: string;
-	teammateId: string;
 	sessionId: string;
 };
 
@@ -77,7 +76,6 @@ type SideChatEnqueuedEvent = {
 	action: "enqueued";
 	conversationId: string;
 	handoffId: string;
-	teammateId: string;
 	sessionId: string;
 	at: number;
 };
@@ -92,7 +90,7 @@ export type SideChatConversation = {
 	modelLabel: string;
 	messages: Array<{ role: "user" | "assistant"; text: string }>;
 	persisted: boolean;
-	handoff?: { handoffId: string; teammateId: string; sessionId: string; at: number };
+	handoff?: { handoffId: string; sessionId: string; at: number };
 };
 
 type SideChatManagerOptions = {
@@ -156,12 +154,7 @@ function isPersistenceEvent(value: unknown): value is SideChatPersistenceEvent {
 		);
 	}
 	if (event.action === "enqueued") {
-		return (
-			typeof event.handoffId === "string" &&
-			typeof event.teammateId === "string" &&
-			typeof event.sessionId === "string" &&
-			typeof event.at === "number"
-		);
+		return typeof event.handoffId === "string" && typeof event.sessionId === "string" && typeof event.at === "number";
 	}
 	return false;
 }
@@ -193,7 +186,6 @@ export function loadSideChatConversations(sessionManager: ReadonlySessionManager
 		} else {
 			conversation.handoff = {
 				handoffId: event.handoffId,
-				teammateId: event.teammateId,
 				sessionId: event.sessionId,
 				at: event.at,
 			};
@@ -213,7 +205,7 @@ function conversationSummary(conversation: SideChatConversation): string {
 
 function historyOption(conversation: SideChatConversation): string {
 	const stamp = new Date(conversation.updatedAt).toISOString().slice(0, 16).replace("T", " ");
-	const queued = conversation.handoff ? ` · queued ${conversation.handoff.teammateId}` : "";
+	const queued = conversation.handoff ? ` · queued ${conversation.handoff.sessionId}` : "";
 	return `${conversation.kind} · ${conversationSummary(conversation)} · ${stamp}${queued} · ${conversation.id.slice(-6)}`;
 }
 
@@ -333,7 +325,7 @@ export class SideChatManager {
 			}
 			const confirmed = await ctx.ui.confirm(
 				"Enqueue Side / BTW as teammate?",
-				"Create a managed teammate from this conversation. It will ask the main session to discuss and dispatch the human-requested work; no assignment or file lease is created yet.",
+				"Create a persistent teammate Session from this conversation. It will send Main its understanding and questions before broad action; no Assignment or file lease is created.",
 			);
 			if (!confirmed) continue;
 
@@ -357,7 +349,7 @@ export class SideChatManager {
 					...result,
 					at,
 				});
-				ctx.ui.notify(`Enqueued as ${result.teammateId}; waiting for its message to the main session.`, "info");
+				ctx.ui.notify(`Enqueued as Session ${result.sessionId}; waiting for its message to Main.`, "info");
 			} catch (error) {
 				ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
 			}
@@ -426,7 +418,7 @@ export class SideChatManager {
 					initialQuestion,
 					initialMessages: conversation.messages.map((message): SideChatItem => ({ ...message })),
 					modelLabel,
-					enqueuedTeammateId: conversation.handoff?.teammateId,
+					enqueuedSessionId: conversation.handoff?.sessionId,
 					onCopy: this.copyText,
 					initialDraft: draft,
 				}),

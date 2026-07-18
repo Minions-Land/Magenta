@@ -140,7 +140,7 @@ async function probeTrueColor(): Promise<boolean> {
 			// Query terminal for color 0 definition
 			// OSC 4 ; c ; ? queries the RGB value of color c
 			process.stdout.write("\x1b]4;0;?\x07");
-		} catch (error) {
+		} catch {
 			// If anything fails (e.g., setRawMode throws), assume no truecolor
 			clearTimeout(timeoutId);
 			cleanup();
@@ -225,19 +225,19 @@ export function getCapabilities(): TerminalCapabilities {
 
 /**
  * Asynchronously probe terminal capabilities and update the cache.
- * 
+ *
  * This should be called during initialization (before first render) when you want
  * to enable runtime truecolor detection for unknown terminals.
- * 
+ *
  * **Requires `MAGENTA_PROBE_TRUECOLOR=1` to be set, otherwise returns immediately.**
- * 
+ *
  * @example
  * ```typescript
  * // During TUI initialization:
  * await probeAndCacheCapabilities();
  * // Now getCapabilities() will return the probed result
  * ```
- * 
+ *
  * @returns Promise that resolves when probing is complete (or skipped)
  */
 export async function probeAndCacheCapabilities(): Promise<void> {

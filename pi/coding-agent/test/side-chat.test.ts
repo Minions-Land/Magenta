@@ -278,7 +278,6 @@ describe("SideChatManager", () => {
 		);
 		const enqueueHumanHandoff = vi.fn(async (_request: SideChatHandoffRequest) => ({
 			handoffId: "handoff-1",
-			teammateId: "teammate_007",
 			sessionId: "child-session-7",
 		}));
 		const notify = vi.fn();
@@ -308,12 +307,12 @@ describe("SideChatManager", () => {
 			truncated: false,
 		});
 		expect(enqueueHumanHandoff.mock.calls[0]?.[0].context).toContain("Human: Should this become delegated work?");
-		expect(reopenedOverlay?.enqueuedTeammateId).toBe("teammate_007");
+		expect(reopenedOverlay?.enqueuedSessionId).toBe("child-session-7");
 		expect(reopenedOverlay?.messages).toContainEqual({
 			role: "assistant",
 			text: "Ask the main session to scope it first.",
 		});
-		expect(loadSideChatConversations(session)[0]?.handoff).toMatchObject({ teammateId: "teammate_007" });
+		expect(loadSideChatConversations(session)[0]?.handoff).toMatchObject({ sessionId: "child-session-7" });
 		expect(notify).toHaveBeenCalledWith(expect.stringContaining("waiting for its message"), "info");
 	});
 

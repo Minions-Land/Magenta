@@ -79,7 +79,8 @@ async function fetchOpenRouterImageModels(): Promise<ImagesModel<"openrouter-ima
 		// OpenRouter's auto router reports -1 for variable downstream pricing.
 		// Normalize only that documented sentinel; every other negative or invalid
 		// price remains an integrity error for the required image catalog.
-		const variableRouterCost = model.id === "openrouter/auto" && inputCost === -1_000_000 && outputCost === -1_000_000;
+		const isAutoRouter = model.id === "openrouter/auto" || model.id.startsWith("openrouter/auto-");
+		const variableRouterCost = isAutoRouter && inputCost === -1_000_000 && outputCost === -1_000_000;
 
 		models.push({
 			id: model.id,

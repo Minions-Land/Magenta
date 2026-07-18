@@ -13,10 +13,10 @@ wall_timeout_seconds = 900
 
 [expect]
 capabilities = { workflows = true, teammates = true }
-active_tools_include = ["sub_agent", "teammate_agent", "bg_shell", "send_message"]
-successful_tools_include = ["sub_agent", "teammate_agent"]
+active_tools_include = ["sub_agent", "multiagent", "bg_shell", "send_message"]
+successful_tools_include = ["sub_agent", "multiagent"]
 require_workflow_sub_agent = true
-teammate_actions_include = ["start", "stop"]
+multiagent_actions_include = ["start", "stop"]
 
 [[variants]]
 name = "ultra"

@@ -371,7 +371,7 @@ const { session } = await createAgentSession({
 - Credentials (`auth.json`)
 - Sessions (`sessions/`)
 
-When you pass a custom `ResourceLoader`, `cwd` and `agentDir` no longer control resource discovery. They still influence session naming and tool path resolution.
+When you pass a custom `ResourceLoader`, `cwd` and `agentDir` no longer control resource discovery. They still influence session naming and tool path resolution. A custom loader that does not expose `HcpClientgetsession()` intentionally omits HCP-owned tools, including `sub_agent`, `send_message`, and `multiagent`; use `DefaultResourceLoader` or provide a Session HCP when those tools are required.
 
 ### Model
 
@@ -485,7 +485,7 @@ Specify which tools to enable:
 
 - Native tools active by default: `read`, `bash`, `edit`, `write`, `bg_shell`, `sub_agent`, `send_message`, `show`, `grep`, `find`, and `ls`
 - HCP tools active by default: `lsp`, `todo`, `web-search`, and `web-fetch`
-- Standard profiles expose sessionless, one-shot `sub_agent` workers but omit workflows and `teammate_agent`
+- Standard profiles expose sessionless, one-shot `sub_agent` workers but omit workflows and `multiagent`
 - Ultra enables workflow and managed-teammate capabilities by default; it never dispatches work automatically
 - `harnessCapabilities.workflows` and `harnessCapabilities.teammates` override those defaults
 - `noTools: "all"` disables all tools
@@ -495,11 +495,12 @@ Specify which tools to enable:
 A workflow orchestrates the same sessionless, one-shot workers through named
 presets with fixed runtime-owned control flow. The public `sub_agent` tool does
 not execute model-authored inline JavaScript; trusted programmatic workflow
-modules remain an internal Harness capability. Use `teammate_agent` for a
-parent-managed, long-lived child when retained context, iterative
-assignments, or explicit file ownership matters. Managed children stop when the
-parent runtime shuts down. `send_message` is a separate urgent mailbox data
-plane for any known peer session id; it does not create or manage teammates.
+modules remain an internal Harness capability. Use `multiagent` for a persistent
+teammate Session when retained context, repeated collaboration, or explicit
+worktree ownership matters. Its public lifecycle identity is the returned Session
+id. Main shutdown preserves desired state for recovery. `send_message` is the
+separate urgent mailbox data plane for ordinary prompts and reports to any known
+Session id; it does not create a teammate, Assignment, or delivery receipt.
 
 The `edit` tool returns `details.diff` for Magenta's TUI display and `details.patch` as a standard unified patch for SDK consumers.
 

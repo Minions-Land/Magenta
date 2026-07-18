@@ -9,7 +9,7 @@ export const DEFAULT_THINKING_LEVEL: ThinkingLevel = "medium";
  * entrypoint (createAgentSession) and the interactive AgentSession derive their
  * defaults from this array, so the two paths can never drift apart. Every native
  * tool in this list is enabled out of the box. Capability-gated tools such as
- * teammate_agent are appended by the execution profile. Users still narrow the
+ * multiagent are appended by the execution profile. Users still narrow the
  * set with --tools / --exclude-tools (or the SDK options).
  *
  * Note: HCP repository-default tools, package tools, and user MCP tools are

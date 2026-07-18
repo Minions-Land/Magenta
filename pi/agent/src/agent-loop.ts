@@ -641,7 +641,7 @@ async function prepareToolCall(
 	} catch (error) {
 		return {
 			kind: "immediate",
-			result: createErrorToolResult(error instanceof Error ? error.message : String(error)),
+			result: createErrorToolResult(error, "invalid_arguments"),
 			isError: true,
 		};
 	}
@@ -682,7 +682,7 @@ async function executePreparedToolCall(
 		acceptingUpdates = false;
 		await Promise.all(updateEvents);
 		return {
-			result: createErrorToolResult(error instanceof Error ? error.message : String(error)),
+			result: createErrorToolResult(error),
 			isError: true,
 		};
 	} finally {
@@ -723,7 +723,7 @@ async function finalizeExecutedToolCall(
 				isError = afterResult.isError ?? isError;
 			}
 		} catch (error) {
-			result = createErrorToolResult(error instanceof Error ? error.message : String(error));
+			result = createErrorToolResult(error);
 			isError = true;
 		}
 	}
@@ -735,10 +735,24 @@ async function finalizeExecutedToolCall(
 	};
 }
 
-function createErrorToolResult(message: string): AgentToolResult<any> {
+function createErrorToolResult(error: unknown, fallbackCode?: "invalid_arguments"): AgentToolResult<any> {
+	const message = error instanceof Error ? error.message : String(error);
+	const candidate = error as { details?: unknown } | null;
+	const details = candidate && typeof candidate === "object" ? candidate.details : undefined;
+	const isTypedDetails =
+		details !== null &&
+		typeof details === "object" &&
+		(details as { schemaVersion?: unknown }).schemaVersion === 1 &&
+		typeof (details as { code?: unknown }).code === "string" &&
+		typeof (details as { message?: unknown }).message === "string" &&
+		typeof (details as { retryable?: unknown }).retryable === "boolean";
 	return {
 		content: [{ type: "text", text: message }],
-		details: {},
+		details: isTypedDetails
+			? details
+			: fallbackCode
+				? { schemaVersion: 1, code: fallbackCode, message, retryable: false }
+				: {},
 	};
 }
 

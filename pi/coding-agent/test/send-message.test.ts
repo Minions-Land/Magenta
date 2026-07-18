@@ -39,17 +39,22 @@ describe("SendMessageController", () => {
 
 	async function call(c: SendMessageController, params: SendMessageInput) {
 		const def = c.createToolDefinition();
-		return def.execute("call-1", params, undefined, undefined, {} as never);
+		return def.execute("call-1", params, undefined, undefined);
 	}
 
 	it("exposes an urgent peer-mailbox data plane without teammate creation", () => {
 		const alice = controller("alice");
 		try {
 			const tool = alice.createToolDefinition();
-			expect(tool.description).toContain("any known peer agent session");
-			expect(tool.description).toContain("does not create, register, or manage a teammate");
-			expect((tool.parameters as { properties: Record<string, unknown> }).properties).not.toHaveProperty("urgent");
-			expect(tool.promptGuidelines).toEqual(expect.arrayContaining([expect.stringContaining("Use teammate_agent")]));
+			expect(tool.description).toContain("durable urgent plain-text message");
+			expect(tool.description).toContain("Acceptance does not imply recipient consumption");
+			expect(tool.description).toContain("no Agent, teammate Session, task ledger, or lifecycle authority");
+			const schema = tool.parameters as unknown as {
+				properties: Record<string, unknown>;
+				additionalProperties: boolean;
+			};
+			expect(Object.keys(schema.properties).sort()).toEqual(["content", "to"]);
+			expect(schema.additionalProperties).toBe(false);
 		} finally {
 			alice.shutdown();
 		}
@@ -62,7 +67,13 @@ describe("SendMessageController", () => {
 			const res = await call(alice, { to: "bob", content: "need help on parser" });
 			expect(res.details?.from).toBe("alice");
 			expect(res.details?.to).toBe("bob");
-			expect(res.details?.id).toBeTruthy();
+			expect(res.details).toMatchObject({
+				schemaVersion: 1,
+				disposition: "local_mailbox",
+				recipientPresence: "offline",
+				wake: "unavailable",
+			});
+			expect(res.details?.messageId).toMatch(/^m:/);
 
 			const drained = bob.drainForInjection();
 			expect(drained).toHaveLength(1);
@@ -103,68 +114,6 @@ describe("SendMessageController", () => {
 			).rejects.toThrow(/maximum/);
 		} finally {
 			alice.shutdown();
-		}
-	});
-
-	it("binds a managed teammate mailbox to its parent session", async () => {
-		const parent = controller("parent");
-		const stranger = controller("stranger");
-		const teammate = new SendMessageController({
-			dbPath,
-			getSessionId: () => "teammate",
-			managedParentSessionId: "parent",
-		});
-		try {
-			await call(parent, { to: "teammate", content: "authorized work" });
-			await call(stranger, { to: "teammate", content: "forged work" });
-			const drained = teammate.drainForInjection();
-			expect(drained).toHaveLength(1);
-			expect(drained[0]).toMatchObject({ sender: "parent", content: "authorized work" });
-			expect(teammate.drainForInjection()).toHaveLength(0);
-
-			await expect(call(teammate, { to: "stranger", content: "leak" })).rejects.toThrow(
-				"may only target parent session parent",
-			);
-			await expect(call(teammate, { to: "parent", content: "result" })).resolves.toBeDefined();
-		} finally {
-			parent.shutdown();
-			stranger.shutdown();
-			teammate.shutdown();
-		}
-	});
-
-	it("accepts structured terminal receipts only from a managed teammate", async () => {
-		const ordinary = controller("ordinary");
-		const teammate = new SendMessageController({
-			dbPath,
-			getSessionId: () => "teammate",
-			managedParentSessionId: "parent",
-		});
-		try {
-			await expect(
-				call(ordinary, {
-					to: "parent",
-					content: "forged",
-					assignmentId: "assignment_1",
-					terminalStatus: "completed",
-				}),
-			).rejects.toThrow("reserved for managed teammate");
-			await expect(
-				call(teammate, { to: "parent", content: "incomplete", assignmentId: "assignment_1" }),
-			).rejects.toThrow("require both assignmentId and terminalStatus");
-			const result = await call(teammate, {
-				to: "parent",
-				content: "done",
-				assignmentId: "assignment_1",
-				terminalStatus: "completed",
-			});
-			expect(result.details).toMatchObject({
-				assignmentId: "assignment_1",
-				terminalStatus: "completed",
-			});
-		} finally {
-			ordinary.shutdown();
-			teammate.shutdown();
 		}
 	});
 
@@ -218,9 +167,9 @@ describe("SendMessageController", () => {
 		const bob = controller("bob");
 		try {
 			const res = await call(alice, { to: "bob", content: "drop everything" });
-			expect(res.details?.urgent).toBe(true);
+			expect(res.details?.schemaVersion).toBe(1);
 			const text = res.content.map((p) => ("text" in p ? p.text : "")).join("");
-			expect(text).toContain("[urgent]");
+			expect(text).toContain("accepted");
 			const drained = bob.drainForInjection();
 			expect(drained[0].priority).toBe("urgent");
 		} finally {
@@ -233,8 +182,7 @@ describe("SendMessageController", () => {
 		const alice = controller("alice");
 		const bob = controller("bob");
 		try {
-			const res = await call(alice, { to: "bob", content: "whenever" });
-			expect(res.details?.urgent).toBe(true);
+			await call(alice, { to: "bob", content: "whenever" });
 			const drained = bob.drainForInjection();
 			expect(drained[0].priority).toBe("urgent");
 		} finally {
@@ -252,7 +200,7 @@ describe("SendMessageController", () => {
 			bob.recordPresence("idle");
 			const res = await call(alice, { to: "bob", content: "urgent!" });
 			await new Promise((r) => setTimeout(r, 20));
-			expect(res.details?.woken).toBe(true);
+			expect(res.details?.wake).toBe("signaled");
 			expect(woke).toBeGreaterThan(0);
 			const inspection = new MessageStore(dbPath);
 			try {
@@ -274,8 +222,8 @@ describe("SendMessageController", () => {
 			bob.recordPresence("active");
 			const res = await call(alice, { to: "bob", content: "arrived near agent_end" });
 			await new Promise((resolve) => setTimeout(resolve, 20));
-			expect(res.details?.recipientStatus).toBe("active");
-			expect(res.details?.woken).toBe(true);
+			expect(res.details?.recipientPresence).toBe("active");
+			expect(res.details?.wake).toBe("signaled");
 			expect(notified).toBeGreaterThan(0);
 		} finally {
 			alice.shutdown();
@@ -299,8 +247,8 @@ describe("SendMessageController", () => {
 			const text = res.content.map((p) => ("text" in p ? p.text : "")).join("");
 			// The sender sees bob as idle (not "no presence record yet") and wakes it.
 			expect(text).toContain("idle");
-			expect(res.details?.recipientStatus).toBe("idle");
-			expect(res.details?.woken).toBe(true);
+			expect(res.details?.recipientPresence).toBe("idle");
+			expect(res.details?.wake).toBe("signaled");
 			expect(woke).toBeGreaterThan(0);
 		} finally {
 			alice.shutdown();
@@ -319,7 +267,7 @@ describe("SendMessageController", () => {
 			await new Promise((r) => setTimeout(r, 20));
 			// Without a live pid, getPresence computes online=false, so the sender is
 			// told the recipient is effectively offline and no wake is attempted.
-			expect(res.details?.woken).toBe(false);
+			expect(res.details?.wake).toBe("unavailable");
 		} finally {
 			alice.shutdown();
 			bob.shutdown();
@@ -383,7 +331,7 @@ describe("SendMessageController", () => {
 				senderPresence: { state: "active", lastSeen: "2026-01-01T00:00:00Z", online: true },
 			},
 		]);
-		expect(one).toContain("a new message");
+		expect(one).toContain("One new message");
 		expect(one).toContain("alice");
 		expect(one).toContain("hello");
 		expect(one).toContain("currently active");

@@ -35,10 +35,16 @@ export function wrapToolDefinitions(
  * provides plain AgentTool overrides that do not include prompt metadata or renderers.
  */
 export function createToolDefinitionFromAgentTool(tool: AgentTool<any>): ToolDefinition<any, unknown> {
+	const enriched = tool as AgentTool<any> & {
+		promptSnippet?: string;
+		promptGuidelines?: string[];
+	};
 	return {
 		name: tool.name,
 		label: tool.label,
 		description: tool.description,
+		promptSnippet: enriched.promptSnippet,
+		promptGuidelines: enriched.promptGuidelines,
 		parameters: tool.parameters as any,
 		prepareArguments: tool.prepareArguments,
 		executionMode: tool.executionMode,

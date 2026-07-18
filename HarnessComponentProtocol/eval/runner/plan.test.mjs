@@ -43,7 +43,7 @@ test("Ultra smoke scenario resolves the benchmark contract", async () => {
 	assert.equal(variant.configuration.workflows, true);
 	assert.equal(variant.configuration.teammates, true);
 	assert.deepEqual(variant.expect.capabilities, { workflows: true, teammates: true });
-	assert.deepEqual(variant.expect.activeToolsInclude, ["sub_agent", "teammate_agent", "bg_shell", "send_message"]);
+	assert.deepEqual(variant.expect.activeToolsInclude, ["sub_agent", "multiagent", "bg_shell", "send_message"]);
 });
 
 test("invalid bounded run settings fail during plan construction", async () => {

@@ -1,0 +1,11 @@
+kind = "tool"
+product = "tool"
+name = "multiagent"
+description = "Register and control persistent teammate Sessions by Session id."
+source = "magenta"
+sources = ["magenta"]
+autoload = false
+
+[exports]
+module = "tools/multiagent/magenta/multiagent.ts"
+factory = "MultiagentController"

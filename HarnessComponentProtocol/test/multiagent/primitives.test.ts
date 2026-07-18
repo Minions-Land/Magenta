@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parallelAgents, pipeline } from "../../multiagent/workflow/magenta/worker.ts";
+import { parallelAgents, pipeline } from "../../tools/sub-agent/magenta/workflow/worker.ts";
 
 /**
  * Tests for the Phase 1 primitives (Claude Code style API): parallelAgents and

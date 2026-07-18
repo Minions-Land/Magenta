@@ -24,7 +24,7 @@ export type SideChatOverlayOptions = {
 	initialDraft?: string;
 	initialMessages?: SideChatItem[];
 	modelLabel?: string;
-	enqueuedTeammateId?: string;
+	enqueuedSessionId?: string;
 	onCopy?: (text: string) => Promise<void>;
 };
 
@@ -36,7 +36,7 @@ export class SideChatOverlay implements Component, Focusable {
 	followBottom = true;
 	lastBodyLength = 0;
 	modelLabel: string;
-	enqueuedTeammateId?: string;
+	enqueuedSessionId?: string;
 
 	private _focused = false;
 	private closed = false;
@@ -79,7 +79,7 @@ export class SideChatOverlay implements Component, Focusable {
 		this.onSend = onSend;
 		this.onCopy = options.onCopy;
 		this.modelLabel = options.modelLabel ?? "model unknown";
-		this.enqueuedTeammateId = options.enqueuedTeammateId;
+		this.enqueuedSessionId = options.enqueuedSessionId;
 		this.messages = options.initialMessages?.map((message) => ({ ...message })) ?? [];
 		this.editor = new Editor(tui, getEditorTheme(), { slashAutocomplete: false, paddingX: 0 });
 		this.editor.onSubmit = (text) => void this.send(text);
@@ -95,8 +95,8 @@ export class SideChatOverlay implements Component, Focusable {
 
 	requestEnqueue(): void {
 		if (this.closed || this.busy) return;
-		if (this.enqueuedTeammateId) {
-			this.pushSystem(`Already enqueued as ${this.enqueuedTeammateId}.`);
+		if (this.enqueuedSessionId) {
+			this.pushSystem(`Already enqueued as ${this.enqueuedSessionId}.`);
 			return;
 		}
 		if (!this.messages.some((message) => message.role === "user")) {
@@ -244,7 +244,7 @@ export class SideChatOverlay implements Component, Focusable {
 				? `${this.scrollTop + 1}-${Math.min(body.length, this.scrollTop + viewportLines)}/${body.length}`
 				: "";
 		const statusParts = [this.busy ? "thinking" : `no tools · ${this.modelLabel}`];
-		if (this.enqueuedTeammateId) statusParts.push(`queued ${this.enqueuedTeammateId}`);
+		if (this.enqueuedSessionId) statusParts.push(`queued ${this.enqueuedSessionId}`);
 		if (range) statusParts.push(range);
 		const visibleBody = body.slice(this.scrollTop, this.scrollTop + viewportLines);
 		while (visibleBody.length < viewportLines) visibleBody.push("");

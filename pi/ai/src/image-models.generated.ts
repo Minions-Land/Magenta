@@ -291,6 +291,22 @@ export const IMAGE_MODELS = {
 	  "cacheWrite": 0
 	}
 		} satisfies ImagesModel<"openrouter-images">,
+		"openrouter/auto-beta": {
+			id: "openrouter/auto-beta",
+			name: "Auto Router (Beta)",
+			api: "openrouter-images",
+			provider: "openrouter",
+			baseUrl: "https://openrouter.ai/api/v1",
+			input: ["text","image"],
+			output: ["text","image"],
+			variablePricing: true,
+			cost: 	{
+	  "input": 0,
+	  "output": 0,
+	  "cacheRead": 0,
+	  "cacheWrite": 0
+	}
+		} satisfies ImagesModel<"openrouter-images">,
 		"recraft/recraft-v3": {
 			id: "recraft/recraft-v3",
 			name: "Recraft: Recraft V3",

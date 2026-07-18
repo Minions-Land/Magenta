@@ -1,4 +1,4 @@
-import type { WorkflowContext } from "../../../multiagent/HcpServer.ts";
+import type { WorkflowContext } from "../../../tools/sub-agent/magenta/workflow-types.ts";
 
 /**
  * A sample workflow script fixture for the script-pattern test. Exercises the

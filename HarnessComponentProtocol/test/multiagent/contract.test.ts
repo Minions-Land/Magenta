@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { aggregateWorkerUsage, type WorkerResult, type WorkerUsage } from "../../multiagent/HcpServer.ts";
+import {
+	aggregateWorkerUsage,
+	type WorkerResult,
+	type WorkerUsage,
+} from "../../tools/sub-agent/magenta/workflow-types.ts";
 
 /**
  * Unit coverage for aggregateWorkerUsage: the helper that rolls per-worker

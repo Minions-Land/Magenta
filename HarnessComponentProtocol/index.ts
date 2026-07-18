@@ -45,12 +45,6 @@ export * from "./context/magenta/context.ts";
 export * from "./HcpClient.ts";
 export type { HookDescriptor, HookDiscoverResult, HookProvider, HookResult } from "./hooks/HcpServer.ts";
 export * from "./memory/magenta/session-grounding.ts";
-export type { OrchestrationRequest, OrchestrationResult } from "./multiagent/HcpServer.ts";
-export * from "./multiagent/message/message-store.ts";
-export {
-	MultiAgentOrchestrator,
-	type WorkerRunner,
-} from "./multiagent/workflow/magenta/orchestrator.ts";
 export * from "./policy/magenta/approval.ts";
 export * from "./policy/magenta/policy.ts";
 export * from "./policy/magenta/shell-policy.ts";
@@ -73,5 +67,25 @@ export * from "./system-prompt/pi/system-prompt.ts";
 export * from "./tools/descriptor/package-tool.ts";
 // Tools: pure-execution tool logic + the AgentTool Tool contract.
 export * from "./tools/index.ts";
+export * from "./tools/multiagent/magenta/multiagent.ts";
+export * from "./tools/multiagent/magenta/registry.ts";
+export * from "./tools/multiagent/magenta/worktree.ts";
 export * from "./tools/process-tool.ts";
+export * from "./tools/send-message/magenta/message-store.ts";
+export * from "./tools/send-message/magenta/peer-command.ts";
+export * from "./tools/send-message/magenta/peer-endpoint.ts";
+export * from "./tools/send-message/magenta/peer-link-protocol.ts";
+export * from "./tools/send-message/magenta/peer-link-session.ts";
+export * from "./tools/send-message/magenta/peer-link-store-adapter.ts";
+export * from "./tools/send-message/magenta/remote-mailbox.ts";
+export * from "./tools/send-message/magenta/runtime.ts";
+export * from "./tools/send-message/magenta/send-message.ts";
+export * from "./tools/sub-agent/magenta/runtime.ts";
+export * from "./tools/sub-agent/magenta/sub-agent.ts";
+export {
+	MultiAgentOrchestrator,
+	type WorkerRunner,
+} from "./tools/sub-agent/magenta/workflow/orchestrator.ts";
+export type { OrchestrationRequest, OrchestrationResult } from "./tools/sub-agent/magenta/workflow-types.ts";
 export * from "./tools/todo/magenta/todo.ts";
+export * from "./tools/tool-error.ts";
