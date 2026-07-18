@@ -179,6 +179,25 @@ Required behavior:
 - Unknown slots, missing required slots, duplicate singleton slots, duplicate keyed-slot keys, unsupported `count`, and invalid cardinality are validation errors and are never silently ignored.
 - Prompt assembly order is fixed: trusted protocol guard, node-local `instruction`, then shared protocol `message.content`.
 
+### Decision 13: Canonical Limits and No Implicit Timeouts
+
+**Accepted.** Each public limit expresses one enforceable runtime budget. Node cardinality, concurrency, iteration count, retained-output count, confidence threshold, whole-run timeout, and per-attempt timeout remain distinct concepts with no compatibility aliases.
+
+The canonical run-level fields are `maxConcurrent`, `maxIterations`, `minConfidence`, `maxOutputs`, and `runTimeoutSeconds`. Per-node `attemptTimeoutSeconds` remains in `NodeBindingInput`.
+
+Required behavior:
+
+- Node quantities are expressed only by protocol-authorized slot cardinality and `count`; there are no separate `workerCount`, `verifyCount`, `candidateCount`, or `approachCount` limits.
+- `threshold`, `topK`, and ambiguous `timeoutSeconds` aliases are not exposed. Their unambiguous concepts are `minConfidence`, `maxOutputs`, `runTimeoutSeconds`, and `attemptTimeoutSeconds`.
+- Omitted `runTimeoutSeconds` and `attemptTimeoutSeconds` mean no multiagent semantic deadline and create no hidden timer. A deadline exists only when a caller, Host/Session policy, or trusted protocol policy explicitly injects one.
+- Every injected or policy-tightened deadline is visible in acknowledgement and status data through requested/effective values and provenance; timeout injection or clamping is never silent.
+- A finite run deadline covers queueing, node execution, tools, barriers, reducers, retries, and settlement from registration. An attempt deadline begins when one AgentNode attempt starts and cannot extend the remaining run deadline.
+- `teammate` rejects a whole-session `runTimeoutSeconds`; an optional peer `attemptTimeoutSeconds` applies to each active model turn. Assignment-queue expiry would require a separately named future contract.
+- `loop_until_done` still requires a finite effective `maxIterations` hard cap even when it has no wall-clock deadline. This is a control-flow termination invariant, not an implicit time limit.
+- Unsupported fields, non-finite values, invalid ranges, contradictory deadlines, and protocol-inapplicable limits are validation errors rather than ignored input.
+- Host and protocol policy may make requested limits stricter, but returned `effectiveLimits` must disclose the result. Requested limits are never resource grants.
+- Cross-provider token or monetary limits are not exposed until the runtime can enforce and settle them under one reliable accounting contract.
+
 ## Integrated Candidate Design
 
 **Status: Discussion only - not accepted.**
@@ -516,7 +535,7 @@ The limits matrix is:
 | `runTimeoutSeconds` | all finite protocols | wall-clock deadline for the complete protocol run |
 | `attemptTimeoutSeconds` | any node binding | wall-clock deadline for one node attempt |
 
-Unsupported limits, non-finite values, invalid ranges, and a node attempt timeout greater than the finite run timeout are validation errors. `teammate` has no whole-session run timeout; each assignment/turn may later receive a separately defined deadline policy.
+Unsupported limits, non-finite values, invalid ranges, and an explicitly contradictory node-attempt/run deadline are validation errors. Omitted timeouts create no multiagent semantic timer. A caller, Host/Session policy, or trusted protocol policy may inject or tighten a deadline, but acknowledgement and status data must expose requested/effective values and provenance. `teammate` has no whole-session run timeout; an optional peer attempt timeout applies to each active model turn. `loop_until_done` retains a finite effective iteration cap even without a wall-clock deadline.
 
 ### 9. Example Calls
 
@@ -557,8 +576,8 @@ multiagent({
   action: "start",
   protocol: "fan_out_synthesize",
   nodes: [
-    { id: "frontend", slot: "worker", instruction: "Review frontend authentication" },
-    { id: "backend", slot: "worker", instruction: "Review backend authentication" },
+    { slot: "worker", instruction: "Review frontend authentication" },
+    { slot: "worker", instruction: "Review backend authentication" },
     { slot: "synthesizer", instruction: "Merge every review result" }
   ],
   message: {
@@ -792,10 +811,9 @@ Before removing existing tools, the candidate must prove:
 
 The following remain candidates and must be discussed one at a time:
 
-1. The exact `limits` vocabulary and which limits are protocol-specific.
-2. Whether the standalone model-visible `send_message` tool is removed in favor of `multiagent action=send`.
-3. Whether teammates can directly mutate the Main Todo or only report proposed updates.
-4. The retention period and TUI presentation of transient finite event receipts after terminal settlement.
-5. How stopped teammate Sessions are indexed, rediscovered, authorized, and resumed after the Main runtime itself restarts.
-6. Whether persistent teammate assignment completion is always inferred from a turn's final output or may also use explicit terminal receipts.
-7. The stable provider-facing response, validation-error, status-snapshot, control-acknowledgement, worktree-receipt, and terminal-event JSON contracts.
+1. Whether the standalone model-visible `send_message` tool is removed in favor of `multiagent action=send`.
+2. Whether teammates can directly mutate the Main Todo or only report proposed updates.
+3. The retention period and TUI presentation of transient finite event receipts after terminal settlement.
+4. How stopped teammate Sessions are indexed, rediscovered, authorized, and resumed after the Main runtime itself restarts.
+5. Whether persistent teammate assignment completion is always inferred from a turn's final output or may also use explicit terminal receipts.
+6. The stable provider-facing response, validation-error, status-snapshot, control-acknowledgement, worktree-receipt, and terminal-event JSON contracts.
