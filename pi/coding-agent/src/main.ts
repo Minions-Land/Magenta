@@ -247,7 +247,7 @@ function validateSessionIdFlags(parsed: Args): void {
 		parsed.session ? "--session" : undefined,
 		parsed.continue ? "--continue" : undefined,
 		parsed.resume ? "--resume" : undefined,
-		parsed.noSession ? "--no-session" : undefined,
+		// --no-session is allowed with --session-id for deterministic non-persisted IDs (CC-004)
 	].filter((flag): flag is string => flag !== undefined);
 
 	if (conflictingFlags.length > 0) {
@@ -291,7 +291,8 @@ async function createSessionManager(
 	settingsManager: SettingsManager,
 ): Promise<SessionManager> {
 	if (parsed.noSession || parsed.help || parsed.listModels !== undefined) {
-		return SessionManager.inMemory(cwd);
+		// CC-004: --no-session with --session-id creates deterministic non-persisted session
+		return SessionManager.inMemory(cwd, parsed.sessionId);
 	}
 
 	if (parsed.fork) {
@@ -367,6 +368,12 @@ async function createSessionManager(
 		if (existingSession) {
 			return SessionManager.open(existingSession.path, sessionDir);
 		}
+		// CC-031: warn when user creates a NEW session with --session-id (typically for reopening)
+		console.error(
+			chalk.yellow(
+				`Warning: --session-id is typically used to reopen existing sessions. Creating new session with id '${parsed.sessionId}'.`,
+			),
+		);
 	}
 
 	return SessionManager.create(cwd, sessionDir, { id: parsed.sessionId });

@@ -861,6 +861,8 @@ export class SessionManager {
 		this.fileEntries = [header];
 		this.byId.clear();
 		this.labelsById.clear();
+		// CC-023: also clear label timestamp cache so stale timestamps do not leak into the new session
+		this.labelTimestampsById.clear();
 		this.leafId = null;
 		this.flushed = false;
 
@@ -1533,8 +1535,8 @@ export class SessionManager {
 	}
 
 	/** Create an in-memory session (no file persistence) */
-	static inMemory(cwd: string = process.cwd()): SessionManager {
-		return new SessionManager(cwd, "", undefined, false);
+	static inMemory(cwd: string = process.cwd(), id?: string): SessionManager {
+		return new SessionManager(cwd, "", undefined, false, id !== undefined ? { id } : undefined);
 	}
 
 	/**
