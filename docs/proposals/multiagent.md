@@ -70,3 +70,30 @@ Required behavior:
 - `subagent` remains a single-node workflow template; unification covers workflow execution and persistent teammate collaboration without adding a new Team orchestration domain.
 - Shared task coordination, if added, is scoped to the main session and its teammates rather than owned by a separate Team resource. Its concrete semantics remain a later decision.
 - Internal indexing or grouping metadata may exist, but it must not create a separately addressable public Team identity or lifecycle.
+
+## Decision 6: Main Todo Is the Team Board
+
+**Accepted.** Each main session has one implicit team consisting of all teammates it directly owns. The main session's existing Todo is the only authoritative board for work coordinated with those teammates; the unified multi-agent design does not add a separate Team Todo or support multiple isolated teams.
+
+Required behavior:
+
+- There is no team-scoped Todo, task-board handle, team namespace, or per-team planning lifecycle.
+- All teammates owned by one main session participate in the same coordination scope represented by that main session's Todo.
+- The main session remains the human-facing coordination owner and reconciles teammate assignments, progress, and results into that Todo.
+- Assignments and progress may travel through messages, but they must not create a second source of planning truth.
+- Whether teammates may propose or directly mutate Todo entries is a separate access-control decision; it does not require another board.
+- Supporting multiple isolated teams in one main session is outside the design and would require a new explicit decision.
+
+## Decision 7: One AgentNode, Runtime-Owned Protocols
+
+**Accepted.** Magenta's multi-agent runtime has one agent execution primitive, `AgentNode`. Subagent, the seven static workflow templates, and persistent teammate collaboration are not separate agent implementation types; their semantic differences are expressed through trusted runtime-owned protocols, context policy, routing policy, and lifecycle policy.
+
+Required behavior:
+
+- Model/provider selection, tools, packages, cwd/workspace, context construction, model execution, usage collection, and final-output capture use the common `AgentNode` abstraction.
+- The `subagent` protocol binds exactly one clean-context, sessionless, one-shot AgentNode and automatically returns its final output before reclaiming the node.
+- Static workflow protocols bind one or more clean-context AgentNodes while runtime code owns branch, barrier, ranking, threshold, loop, cancellation, and terminal semantics.
+- The teammate protocol binds a retained-context AgentNode to a persistent Session with a reentrant mailbox and explicit lifecycle control.
+- Unifying AgentNode does not make every node a persistent teammate and does not require one internal lifecycle state machine.
+- A model is not required to call a message tool to return its final result; the runtime captures final output and converts it into the protocol result path.
+- Model-authored messages are a data-plane capability. They cannot replace runtime-owned workflow control, hard timeout, cancellation, or deterministic settlement.
