@@ -25,6 +25,8 @@ export * from "./_magenta/packages/runtime-magnet-loader.ts";
 export { initProcessToolsBinary } from "./_magenta/process-tools/embedded-binaries.ts";
 export * from "./_magenta/session/pi/repo-utils.ts";
 export * from "./_magenta/session/pi/session.ts";
+export { InMemorySessionStorage } from "./_magenta/session/pi/memory-storage.ts";
+export { JsonlSessionStorage, loadJsonlSessionMetadata } from "./_magenta/session/pi/jsonl-storage.ts";
 export { uuidv7 } from "./_magenta/session/pi/uuid.ts";
 export * from "./_magenta/types/types.ts";
 export { getEmbeddedToolPath } from "./_magenta/utils/pi/embedded-tools.ts";
