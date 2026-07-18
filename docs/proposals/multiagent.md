@@ -2,10 +2,11 @@
 
 Status: Working draft
 
-This document has two deliberately separate layers:
+This document separates confirmed decisions from discussion drafts and preserves superseded reasoning:
 
-- The **Accepted Decision Ledger** is normative. New decisions are added one at a time only after explicit confirmation.
-- The **Integrated Candidate Design** is a discussion draft. It combines the accepted constraints into one concrete architecture, but none of that section is accepted merely because it appears here.
+- The **Accepted Decision Ledger** is normative except for entries explicitly marked `Superseded`. New decisions are added one at a time only after explicit confirmation.
+- The **Current Candidate Design** combines the active decisions into a concrete discussion draft. Nothing in that section is accepted merely because it appears there.
+- The **Superseded Unified-Protocol Candidate** is retained only as historical design evidence and is non-normative.
 
 ## Accepted Decision Ledger
 
@@ -27,7 +28,7 @@ This does not prohibit internal runtime promises or host-level shutdown settleme
 
 ### Decision 2: One Model-Visible Multiagent Tool
 
-**Accepted.** Static workflow execution and persistent dynamic-team collaboration must be exposed to the model through one tool named `multiagent`.
+**Superseded by Decision 14.** Static workflow execution and persistent dynamic-team collaboration were previously required to share one model-visible `multiagent` tool.
 
 Required behavior:
 
@@ -38,7 +39,7 @@ Required behavior:
 
 ### Decision 3: Subagent Is a Workflow Template
 
-**Accepted.** `subagent` remains only as the name of a built-in static workflow template. It is not a separate tool, controller concept, or agent type.
+**Superseded by Decision 14.** `subagent` was previously reduced to the name of one built-in static workflow template rather than retained as a separate finite-execution Tool.
 
 Required behavior:
 
@@ -57,10 +58,10 @@ Required behavior:
 - The main session is the root authority. It may create and manage teammates and may start workflows directly.
 - A teammate is a persistent, stateful child session owned by the main session.
 - A teammate may start workflows, but it may not create or manage another teammate or team.
-- A workflow is the leaf execution layer. Its workers may not start another workflow or create or manage teammates or teams.
-- A workflow launched directly by the main session and one launched by a teammate use the same workflow runtime and leaf-level capability restrictions.
-- Runtime-owned spawning of the predefined worker nodes inside a static workflow is part of that workflow's execution and is not recursive model-visible delegation.
-- The main session retains supervisory visibility and control over teammate-owned descendant workflow runs.
+- A finite Subagent or Workflow is the leaf execution layer. Its workers may not start another finite job or create or manage teammates or teams.
+- Finite work launched directly by the Main Session and finite work launched by a teammate use the same background execution rules and leaf-level capability restrictions.
+- Runtime-owned spawning of predefined workers inside a deterministic Workflow is part of that Workflow's execution and is not recursive model-visible delegation.
+- The Main Session retains supervisory visibility and control over teammate-owned descendant finite jobs.
 
 ### Decision 5: No First-Class Team Resource
 
@@ -72,7 +73,7 @@ Required behavior:
 - The main session creates, addresses, and manages teammates directly through the unified `multiagent` tool.
 - Each teammate belongs directly to one main session and retains its own persistent session state.
 - Teammates may start leaf workflows under the delegation restrictions in Decision 4.
-- `subagent` remains a single-node workflow template; unification covers workflow execution and persistent teammate collaboration without adding a new Team orchestration domain.
+- The independent `sub_agent` Tool owns finite Subagent and Workflow execution; the separate `multiagent` Tool manages persistent teammates without adding a Team orchestration domain.
 - Shared task coordination, if added, is scoped to the main session and its teammates rather than owned by a separate Team resource. Its concrete semantics remain a later decision.
 - Internal indexing or grouping metadata may exist, but it must not create a separately addressable public Team identity or lifecycle.
 
@@ -91,7 +92,7 @@ Required behavior:
 
 ### Decision 7: One AgentNode, Runtime-Owned Protocols
 
-**Accepted.** Magenta's multi-agent runtime has one agent execution primitive, `AgentNode`. Subagent, the seven static workflow templates, and persistent teammate collaboration are not separate agent implementation types; their semantic differences are expressed through trusted runtime-owned protocols, context policy, routing policy, and lifecycle policy.
+**Superseded by Decision 14 as a mandatory cross-Tool abstraction.** The unified design previously required one `AgentNode` primitive across Subagent, Workflow, and Teammate execution. The replacement permits shared implementation primitives where they remove real duplication but does not impose one public schema, host, or state machine.
 
 Required behavior:
 
@@ -105,7 +106,7 @@ Required behavior:
 
 ### Decision 8: HCP Is the Internal Multiagent Boundary
 
-**Accepted.** The model-visible `multiagent` tool is a product facade over one source-selected HCP `multiagent` capability. `HcpServer` defines the stable internal contract, `HcpMagnet` binds a concrete provider implementation, and every Subagent, static workflow, and persistent teammate path must enter through that capability rather than retaining a separate model-facing or direct-spawn business path.
+**Superseded by Decision 15.** The earlier design routed Subagent, Workflow, and Teammate behavior through one source-selected HCP `multiagent` Capability.
 
 Required behavior:
 
@@ -119,7 +120,7 @@ Required behavior:
 
 ### Decision 9: Tool Facade, Capability Core
 
-**Accepted.** Multiagent remains an independent Harness Capability owned by the `multiagent` Module. The `tools/multiagent` Module owns only the single model-visible Tool facade and binds the already-assembled `capability:multiagent`; the runtime is not moved wholesale into the Tool product.
+**Superseded by Decision 15.** The earlier design split a top-level `multiagent` Capability core from a `tools/multiagent` Tool facade.
 
 Required behavior:
 
@@ -134,7 +135,7 @@ Required behavior:
 
 ### Decision 10: Protocol Is the Public Semantic Selector
 
-**Accepted.** A `start` request selects a trusted runtime-owned execution contract through the public `protocol` field. `topology` is not a model-authored selector; it is internal protocol data or runtime-derived observability.
+**Superseded by Decision 14.** The unified facade previously required public `start` requests to select a runtime-owned contract through `protocol`.
 
 Required behavior:
 
@@ -147,7 +148,7 @@ Required behavior:
 
 ### Decision 11: Persistent Protocol Is Named Teammate
 
-**Accepted.** The public persistent collaboration protocol is named `teammate`. It represents one Main-owned, retained-context, reentrant Agent endpoint; it does not introduce a Team resource or imply an unrestricted peer-to-peer conversation network.
+**Superseded by Decision 14 as a public protocol decision.** `teammate` remains the domain name for a Main-owned persistent collaborator, but the model no longer submits `protocol: "teammate"`; the dedicated `multiagent` Tool manages teammates directly.
 
 Required behavior:
 
@@ -159,7 +160,7 @@ Required behavior:
 
 ### Decision 12: Model Input Is Not a Trusted Node Binding
 
-**Accepted.** The provider-facing node object describes only a protocol slot, task content, and constrained execution preferences. The runtime converts that input into a separate trusted node binding; identity, authority, routing, grants, output contracts, correlation, lifecycle, and terminal semantics are never model-authored fields.
+**Superseded by Decision 14 as a universal public schema.** The trusted-input principle remains valid inside finite Workflow implementation, but Subagent, Workflow, and Teammate no longer share one public `NodeBindingInput[]` contract.
 
 The model-visible node fields are:
 
@@ -183,26 +184,123 @@ Required behavior:
 
 **Accepted.** Each public limit expresses one enforceable runtime budget. Node cardinality, concurrency, iteration count, retained-output count, confidence threshold, whole-run timeout, and per-attempt timeout remain distinct concepts with no compatibility aliases.
 
-The canonical run-level fields are `maxConcurrent`, `maxIterations`, `minConfidence`, `maxOutputs`, and `runTimeoutSeconds`. Per-node `attemptTimeoutSeconds` remains in `NodeBindingInput`.
+The canonical finite-run and Workflow fields are `maxConcurrent`, `maxIterations`, `minConfidence`, `maxOutputs`, and `runTimeoutSeconds`. Per-worker or per-job `attemptTimeoutSeconds` remains a distinct execution preference.
 
 Required behavior:
 
-- Node quantities are expressed only by protocol-authorized slot cardinality and `count`; there are no separate `workerCount`, `verifyCount`, `candidateCount`, or `approachCount` limits.
+- Node quantities are expressed only by the owning `sub_agent` job or Workflow slot/cardinality schema; there are no duplicate `workerCount`, `verifyCount`, `candidateCount`, or `approachCount` limits.
 - `threshold`, `topK`, and ambiguous `timeoutSeconds` aliases are not exposed. Their unambiguous concepts are `minConfidence`, `maxOutputs`, `runTimeoutSeconds`, and `attemptTimeoutSeconds`.
-- Omitted `runTimeoutSeconds` and `attemptTimeoutSeconds` mean no multiagent semantic deadline and create no hidden timer. A deadline exists only when a caller, Host/Session policy, or trusted protocol policy explicitly injects one.
+- Omitted `runTimeoutSeconds` and `attemptTimeoutSeconds` mean no Tool-owned semantic deadline and create no hidden timer. A deadline exists only when a caller, Host/Session policy, or trusted Workflow/Tool policy explicitly injects one.
 - Every injected or policy-tightened deadline is visible in acknowledgement and status data through requested/effective values and provenance; timeout injection or clamping is never silent.
 - A finite run deadline covers queueing, node execution, tools, barriers, reducers, retries, and settlement from registration. An attempt deadline begins when one AgentNode attempt starts and cannot extend the remaining run deadline.
 - `teammate` rejects a whole-session `runTimeoutSeconds`; an optional peer `attemptTimeoutSeconds` applies to each active model turn. Assignment-queue expiry would require a separately named future contract.
 - `loop_until_done` still requires a finite effective `maxIterations` hard cap even when it has no wall-clock deadline. This is a control-flow termination invariant, not an implicit time limit.
-- Unsupported fields, non-finite values, invalid ranges, contradictory deadlines, and protocol-inapplicable limits are validation errors rather than ignored input.
+- Unsupported fields, non-finite values, invalid ranges, contradictory deadlines, and operation-inapplicable limits are validation errors rather than ignored input.
 - Host and protocol policy may make requested limits stricter, but returned `effectiveLimits` must disclose the result. Requested limits are never resource grants.
 - Cross-provider token or monetary limits are not exposed until the runtime can enforce and settle them under one reliable accounting contract.
 
-## Integrated Candidate Design
+Decision 14 re-scopes these limit rules to the Tool that owns each operation. It does not preserve the superseded universal `protocol` or `NodeBindingInput[]` schema.
 
-**Status: Discussion only - not accepted.**
+### Decision 14: Three Orthogonal Model Tools
 
-This section proposes an integrated architecture candidate for review. It is intentionally incomplete where Open Decisions remain, and it must not be treated as normative until its individual decisions are promoted into the Accepted Decision Ledger.
+**Accepted.** Magenta exposes three separate model primitives whose boundaries follow lifecycle and authority rather than the number of models involved: `sub_agent` owns finite sessionless execution, `multiagent` owns persistent Main-managed teammates, and `send_message` owns atomic Session-to-Session mailbox delivery.
+
+Required behavior:
+
+- `sub_agent` starts one or more finite background jobs. A job is either one ordinary clean-context Subagent or a trusted deterministic Workflow composed from sessionless workers.
+- Ordinary Subagents and Workflows share transient event identity, status/cancel control, non-blocking registration, background execution, automatic terminal return through external activation, and no resumable Session.
+- One call may launch multiple ordinary Subagents, multiple Workflows, or a supported mixture in parallel. The exact batch schema remains an open decision.
+- Workflow branch, barrier, ranking, verifier, reducer, loop, and termination behavior remains runtime-owned. Generic mailbox chat cannot replace deterministic Workflow control.
+- `multiagent` creates and manages persistent teammates with retained Session history, stable Session identity, reentrant assignments, explicit interrupt/stop/resume, and optional worktree integration/discard.
+- Managed work dispatch uses a lifecycle command such as `assign`; it creates correlation and ownership semantics and is not ordinary chat.
+- `send_message` remains an independent lightweight Tool for durable direct delivery to known Sessions, including local peer chat, presence, idle wake, offline backlog, and SSH federation. It creates no Agent, assignment, lease, or lifecycle authority.
+- Public identities remain distinct: finite work uses transient event receipts; teammates and mailbox recipients use Session identity. There is no universal Agent or Multiagent ID.
+- Tool availability enforces delegation: Main may use all three Tools; a teammate may use `sub_agent` and `send_message` but not `multiagent`; finite Subagents and Workflow workers may not delegate further.
+- Shared invocation, policy, supervision, usage, transport, and observability code is permitted where it removes real duplication, but one common public schema, runtime host, or state machine is not required.
+
+### Decision 15: Tool-Owned HCP Modules
+
+**Accepted.** Each model primitive is one complete HCP Tool Module. Workflow, Mailbox, and Teammate lifecycle code live under their owning Tool Source as private runtime/support implementation; they are not parallel top-level HCP Capability Modules or addresses.
+
+The owning modules are:
+
+```text
+HarnessComponentProtocol/tools/sub-agent
+HarnessComponentProtocol/tools/send-message
+HarnessComponentProtocol/tools/multiagent
+```
+
+Required behavior:
+
+- Each Module owns a real `HcpServer.ts`; each selected Source owns one `HcpMagnet.ts`; each Magnet exposes exactly `toTool()` as its single HCP Product.
+- `tools/sub-agent` owns ordinary finite workers, parallel job control, the deterministic Workflow engine and presets, finite event supervision, cancellation, and automatic terminal delivery.
+- `tools/send-message` owns the model Tool, durable Mailbox store, presence, wake transport, bounded injection, peer routes, outbox, deduplication, and SSH federation support.
+- `tools/multiagent` owns persistent teammate Session hosting, assignments, supervision, stop/resume, restart recovery, worktree receipts, integration, and discard.
+- Capability-like classes inside these directories are ordinary Tool-owned runtime/services. Their Magnets do not expose `toCapability()`, and assembly publishes no `capability:workflow`, `capability:mailbox`, or `capability:multiagent` address.
+- Every stateful Tool Magnet must retain its controller and implement `dispose()` that cascades through all owned live work and resources. The session's single HcpClient exclusively owns and awaits disposal for rejected, unroutable, replaced, and session-terminated products.
+- The sole assembly and routing chain remains `HcpClient -> tools/<tool>/HcpServer -> selected Source HcpMagnet -> toTool()`. Host adapters provide construction dependencies only; they create no alternate Server, Source selector, address, registry, or lifecycle path.
+- Stateful Tools are not hot-swapped while live work exists, and changing model-visible Tool availability does not implicitly dispose their assembled runtime state.
+- Host-specific Session, model/process invocation, background-event, external-activation, turn-boundary injection, and workspace operations enter through explicit build settings or host adapters rather than Pi-owned duplicate business controllers.
+- Multiagent may reuse a public or injected Mailbox support API owned by `tools/send-message`; it must not invoke the model-visible `send_message.execute()` function as an internal transport.
+- The current top-level HCP Workflow implementation migrates under `tools/sub-agent`; current Pi Subagent, SendMessage, and Teammate business logic migrates under the corresponding Tool Source. Pi Coding Agent retains application composition and presentation adapters.
+- Promoting any private Tool-owned runtime into an independently selected HCP Capability later requires a new explicit decision backed by a real non-Tool consumer or replacement requirement.
+
+### Decision 16: SendMessage Fully Leaves Pi
+
+**Accepted.** The complete SendMessage feature becomes HCP-owned implementation under `HarnessComponentProtocol/tools/send-message`. Pi Coding Agent no longer owns a native SendMessage Tool or any mailbox, presence, wake, peer-routing, or SSH-federation business controller; it consumes the assembled HCP Tool and supplies only generic application-host adapters.
+
+Required behavior:
+
+- `tools/send-message/HcpServer.ts`, its component TOML, and its selected Source `HcpMagnet.ts` participate in the normal generated HCP assembly chain and publish only `tool:send_message` through `toTool()`.
+- The Tool Source owns the provider-facing schema and execution, durable SQLite inbox/outbox and claims, message size and batch bounds, sender provenance framing, presence state, boot-scoped wake transport, idle activation, offline backlog, peer routes, deduplication, retry/relay behavior, and SSH federation protocol and connections.
+- Existing SendMessage-specific implementation in Pi, including the native controller, remote mailbox controller, peer-link protocol/session, mailbox drain/requeue coordination, wake handling, and Tool factory/registration path, is migrated rather than wrapped or retained as a fallback.
+- Existing HCP message-store code currently nested under the old top-level multiagent module migrates into the SendMessage Tool Source with its tests and provenance intact.
+- The stateful SendMessage Magnet is assembled early enough to advertise presence and receive/wake independently of whether `send_message` is currently model-visible. Active Tool filtering controls model permission only, not Mailbox liveness.
+- The Magnet implements mandatory cascading `dispose()` for its wake server, database handles, remote links, claims, and presence transition to offline; the session HcpClient is the sole owner of that disposal path.
+- Pi may pass declarative paths, configured SSH endpoints, the current Session identity, lifecycle notifications, and a generic external-activation/injection port through build settings. Those adapters contain no SendMessage routing, persistence, federation, formatting, or assignment semantics.
+- Multiagent uses an HCP-owned internal Mailbox support API exported or injected by the SendMessage module. It never imports a Pi SendMessage controller and never calls the model-visible Tool as an internal function.
+- Pi retains only generic Tool resolution, active-Tool selection, external-activation machinery, and presentation/rendering integration. SendMessage-specific unit and transport tests move to HCP; Pi tests cover only the generic host integration boundary.
+- There is no compatibility fallback to the former Pi implementation. Missing or failed `tool:send_message` assembly is reported explicitly rather than silently constructing the old Tool.
+
+## Current Candidate Design
+
+**Status: Discussion only - not accepted beyond Decisions 1, 4-6, 13-16.**
+
+The current candidate has three public Tool products and no parallel Capability products:
+
+```text
+tool:sub_agent
+    -> finite job controller
+       -> plain clean-context worker
+       -> deterministic workflow runner
+
+tool:send_message
+    -> mailbox, presence, wake, local/SSH routing
+
+tool:multiagent
+    -> persistent teammate Session and assignment controller
+       -> Mailbox support API for managed delivery
+```
+
+The runtime keeps finite event receipts separate from persistent Session IDs. Background start calls acknowledge registration immediately; terminal finite results reactivate the caller. Persistent teammates remain available for later assignments until explicitly stopped, while ordinary peer chat remains outside lifecycle control.
+
+Current open decisions:
+
+1. The exact `sub_agent` batch shape for tasks, Workflows, and heterogeneous parallel jobs.
+2. The exact `multiagent` action and target schema, including `assign` and stable status snapshots.
+3. Whether teammates can directly mutate the Main Todo or only report proposed updates.
+4. The retention period and TUI presentation of transient finite event receipts after terminal settlement.
+5. How stopped teammate Sessions are indexed, rediscovered, authorized, and resumed after the Main runtime itself restarts.
+6. Whether persistent teammate assignment completion is inferred from final output, uses internal structured receipts, or supports both.
+7. The stable response, validation-error, acknowledgement, worktree-receipt, and terminal-event JSON contracts for both stateful Tools.
+8. The exact host-adapter boundary for stateful Tool construction, lifecycle hooks, turn-boundary mailbox injection, and disposal.
+9. Which assignment metadata, if any, remains model-visible on the otherwise atomic `send_message` Tool.
+
+## Superseded Unified-Protocol Candidate
+
+**Status: Superseded by Decisions 14 and 15; retained only as historical design evidence.**
+
+This section records the previous integrated architecture candidate. It is non-normative and must not be used as the implementation target.
 
 ### 1. Candidate Summary
 
@@ -807,9 +905,9 @@ Before removing existing tools, the candidate must prove:
 - A universal public ID for finite runs and persistent Sessions.
 - Blocking wait semantics.
 
-### 19. Open Decisions
+### 19. Historical Open Decisions
 
-The following remain candidates and must be discussed one at a time:
+These questions belonged to the superseded unified-Protocol candidate and are retained only to explain its former review state:
 
 1. Whether the standalone model-visible `send_message` tool is removed in favor of `multiagent action=send`.
 2. Whether teammates can directly mutate the Main Todo or only report proposed updates.
