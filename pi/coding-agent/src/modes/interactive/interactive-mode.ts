@@ -7916,7 +7916,15 @@ export class InteractiveMode {
 				throw new Error("API key cannot be empty.");
 			}
 
-			this.session.authStorage.set(providerId, { type: "api_key", key: apiKey });
+			// CC-018: persist through the async modify() path so a write failure throws
+			// (surfaced by the catch below) instead of the fire-and-forget set() that
+			// swallows persistence errors. Do not report success before the credential
+			// is actually written to disk.
+			await this.session.authStorage.modify(providerId, async () => ({ type: "api_key", key: apiKey }));
+			const persistErrors = this.session.authStorage.drainErrors();
+			if (persistErrors.length > 0) {
+				throw new Error(persistErrors.map((error) => error.message).join("; "));
+			}
 
 			restoreEditor();
 			await this.completeProviderAuthentication(providerId, providerName, "api_key", previousModel);
