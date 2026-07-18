@@ -261,11 +261,31 @@ describe("context entry transforms and custom projectors (AG-003)", () => {
 	});
 
 	it("sessionEntryToContextMessages omits custom entries without a projector", () => {
-		expect(sessionEntryToContextMessages(customEntry("note", "c1"))).toEqual([]);
-		const projected = sessionEntryToContextMessages(customEntry("note", "c1", { text: "x" }), {
-			note: () => [createUserMessage("projected")],
+		const entry = customEntry("note", "c1");
+		expect(sessionEntryToContextMessages(entry, 0, [entry])).toEqual([]);
+		const withData = customEntry("note", "c1", { text: "x" });
+		const projected = sessionEntryToContextMessages(withData, 0, [withData], {
+			entryProjectors: { note: () => [createUserMessage("projected")] },
 		});
 		expect(projected).toHaveLength(1);
+	});
+
+	it("passes index and entries to custom projectors and treats undefined as no messages", async () => {
+		const session = new Session(new InMemorySessionStorage());
+		await session.appendMessage(createUserMessage("one"));
+		await session.appendCustomEntry("note", { text: "projected" });
+		let seenIndex = -1;
+		let seenLength = -1;
+		const projector = (entry: CustomEntry, index: number, entries: readonly SessionTreeEntry[]) => {
+			seenIndex = index;
+			seenLength = entries.length;
+			return undefined;
+		};
+		const context = await session.buildContext({ entryProjectors: { note: projector } });
+		// undefined projector result contributes no messages; only the user message remains.
+		expect(context.messages.map((message) => message.role)).toEqual(["user"]);
+		expect(seenIndex).toBe(1);
+		expect(seenLength).toBe(2);
 	});
 
 	it("buildContextEntries applies stacked transforms on plain entry arrays", () => {
