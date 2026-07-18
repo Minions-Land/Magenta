@@ -84,6 +84,19 @@ describe("builtin providers", () => {
 		expect(result?.env).toEqual({ CLOUDFLARE_ACCOUNT_ID: "account-id" });
 	});
 
+	it("falls back to ambient CLOUDFLARE_ACCOUNT_ID when the credential carries only the API key", async () => {
+		const provider = cloudflareWorkersAIProvider();
+		const auth = provider.auth.apiKey;
+		if (!auth) throw new Error("expected api-key auth");
+
+		const result = await auth.resolve({
+			ctx: fakeAuthContext({ CLOUDFLARE_ACCOUNT_ID: "account-id" }),
+			credential: { type: "api_key", key: "cf-key" },
+		});
+		expect(result?.auth).toEqual({ apiKey: "cf-key" });
+		expect(result?.env).toEqual({ CLOUDFLARE_ACCOUNT_ID: "account-id" });
+	});
+
 	it("requires Cloudflare AI Gateway account and gateway config and returns scoped env headers", async () => {
 		const missingGateway = createModels({
 			authContext: fakeAuthContext({ CLOUDFLARE_API_KEY: "cf-key", CLOUDFLARE_ACCOUNT_ID: "account-id" }),
