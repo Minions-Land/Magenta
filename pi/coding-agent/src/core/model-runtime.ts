@@ -347,7 +347,9 @@ export class ModelRuntime implements Models {
 	}
 
 	hasConfiguredAuth(providerId: string): boolean {
-		return this.snapshot.configuredProviders.has(providerId);
+		// A provider is "configured" if it has models and auth, OR if there's a
+		// stored/runtime credential (matching the old authStorage.hasCredential precedent).
+		return this.snapshot.configuredProviders.has(providerId) || this.snapshot.storedProviders.has(providerId);
 	}
 
 	getAuth(providerId: string, overrides?: ModelRuntimeAuthOverrides): Promise<AuthResult | undefined>;
