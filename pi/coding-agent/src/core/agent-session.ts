@@ -1112,6 +1112,23 @@ export class AgentSession {
 		return undefined;
 	}
 
+	/**
+	 * CC-007: Whether `agent.continue()` can safely run.
+	 *
+	 * `agent.continue()` throws "Cannot continue from message role: assistant" when the
+	 * last message is a completed assistant turn with no queued steering/follow-up work.
+	 * After a pre-prompt (aborted-response) compaction the retained context often ends on
+	 * exactly such an assistant message, so callers must gate the continuation instead of
+	 * assuming compaction always leaves a resumable tool-result tail.
+	 */
+	private _canContinueAfterCompaction(): boolean {
+		const messages = this.agent.state.messages;
+		const last = messages[messages.length - 1];
+		if (!last) return false;
+		if (last.role !== "assistant") return true;
+		return this.agent.hasQueuedMessages();
+	}
+
 	private _replaceMessageInPlace(target: AgentMessage, replacement: AgentMessage): void {
 		// Agent-core stores the finalized message object in its state before emitting message_end.
 		// SessionManager persistence happens later in _handleAgentEvent() with event.message.
@@ -1757,13 +1774,19 @@ export class AgentSession {
 			// Check if we need to compact before sending (catches aborted responses)
 			const lastAssistant = this._findLastAssistantMessage();
 			if (lastAssistant && (await this._checkCompaction(lastAssistant, false))) {
-				try {
-					await this.agent.continue();
-					while (await this._handlePostAgentRun()) {
+				// CC-007: only resume the loop when there is genuine continuation work.
+				// Pre-prompt compaction may retain a completed assistant tail, and
+				// agent.continue() throws "Cannot continue from message role: assistant"
+				// in that case. Skipping straight to the new user prompt is correct.
+				if (this._canContinueAfterCompaction()) {
+					try {
 						await this.agent.continue();
+						while (await this._handlePostAgentRun()) {
+							await this.agent.continue();
+						}
+					} finally {
+						this._flushPendingBashMessages();
 					}
-				} finally {
-					this._flushPendingBashMessages();
 				}
 			}
 
