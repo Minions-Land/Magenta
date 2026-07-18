@@ -25,6 +25,7 @@ import type {
 	Model,
 	OAuthCredentials,
 	OAuthLoginCallbacks,
+	ProviderHeaders,
 	RefreshModelsContext,
 	SimpleStreamOptions,
 	TextContent,
@@ -678,6 +679,17 @@ export interface BeforeProviderRequestEvent {
 	payload: unknown;
 }
 
+/**
+ * Fired after request headers are assembled (auth + attribution), before the
+ * provider HTTP call. Handlers mutate `headers` in place (e.g. to inject
+ * tracing/session headers); the return value is ignored. A `null` value deletes
+ * that header. Header names are matched case-insensitively when merged.
+ */
+export interface BeforeProviderHeadersEvent {
+	type: "before_provider_headers";
+	headers: ProviderHeaders;
+}
+
 /** Fired after a provider response is received and before the response stream is consumed. */
 export interface AfterProviderResponseEvent {
 	type: "after_provider_response";
@@ -1025,6 +1037,7 @@ export type ExtensionEvent =
 	| SessionEvent
 	| ContextEvent
 	| BeforeProviderRequestEvent
+	| BeforeProviderHeadersEvent
 	| AfterProviderResponseEvent
 	| BeforeAgentStartEvent
 	| AgentStartEvent
@@ -1192,6 +1205,7 @@ export interface ExtensionAPI {
 		event: "before_provider_request",
 		handler: ExtensionHandler<BeforeProviderRequestEvent, BeforeProviderRequestEventResult>,
 	): void;
+	on(event: "before_provider_headers", handler: ExtensionHandler<BeforeProviderHeadersEvent>): void;
 	on(event: "after_provider_response", handler: ExtensionHandler<AfterProviderResponseEvent>): void;
 	on(event: "before_agent_start", handler: ExtensionHandler<BeforeAgentStartEvent, BeforeAgentStartEventResult>): void;
 	on(event: "agent_start", handler: ExtensionHandler<AgentStartEvent>): void;

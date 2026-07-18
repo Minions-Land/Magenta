@@ -404,6 +404,22 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			const websocketConnectTimeoutMs =
 				options?.websocketConnectTimeoutMs ?? settingsManager.getWebSocketConnectTimeoutMs();
 			const providerReportsWirePayload = model.api === "openai-codex-responses";
+			// CC-027: assemble final headers (auth + attribution), then run the
+			// before_provider_headers extension transform as the last mutation step
+			// before dispatch. Header names are matched case-insensitively when merged
+			// by mergeProviderAttributionHeaders; the extension hook mutates the
+			// resolved object in place (null deletes a header).
+			const attributedHeaders = mergeProviderAttributionHeaders(
+				model,
+				settingsManager,
+				effectiveSessionId,
+				auth.headers,
+				options?.headers,
+			);
+			const headerRunner = extensionRunnerRef.current;
+			const resolvedHeaders = headerRunner?.hasHandlers("before_provider_headers")
+				? await headerRunner.emitBeforeProviderHeaders(attributedHeaders ?? {})
+				: attributedHeaders;
 			const providerStream = streamSimple(model, context, {
 				...options,
 				apiKey: auth.apiKey,
@@ -413,13 +429,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 				websocketConnectTimeoutMs,
 				maxRetries: options?.maxRetries ?? providerRetrySettings.maxRetries,
 				maxRetryDelayMs: options?.maxRetryDelayMs ?? providerRetrySettings.maxRetryDelayMs,
-				headers: mergeProviderAttributionHeaders(
-					model,
-					settingsManager,
-					effectiveSessionId,
-					auth.headers,
-					options?.headers,
-				),
+				headers: resolvedHeaders,
 				onPayload: cacheRequest
 					? async (payload, requestModel) => {
 							const replacement = await options?.onPayload?.(payload, requestModel);
