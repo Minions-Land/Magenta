@@ -9,7 +9,6 @@ import type {
 	OpenAICompletionsCompat,
 } from "@earendil-works/pi-ai/compat";
 import { getApiProvider } from "@earendil-works/pi-ai/compat";
-import { getOAuthProvider } from "@earendil-works/pi-ai/oauth";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { createMagentaCredentialStore } from "../src/core/external-credential-adapter.ts";
@@ -990,6 +989,7 @@ describe("ModelRegistry", () => {
 				env: {
 					CLOUDFLARE_API_KEY: "stored-cf-token",
 					CLOUDFLARE_ACCOUNT_ID: "stored-account",
+					CLOUDFLARE_GATEWAY_ID: "stored-gateway",
 				},
 			});
 			writeRawModelsJson({
@@ -1006,11 +1006,13 @@ describe("ModelRegistry", () => {
 
 			expect(auth).toEqual({
 				ok: true,
-				apiKey: "stored-cf-token",
-				headers: { "x-account": "stored-account" },
+				headers: {
+					"cf-aig-authorization": "Bearer stored-cf-token",
+					"x-account": "stored-account",
+				},
 				env: {
-					CLOUDFLARE_API_KEY: "stored-cf-token",
 					CLOUDFLARE_ACCOUNT_ID: "stored-account",
+					CLOUDFLARE_GATEWAY_ID: "stored-gateway",
 				},
 			});
 		});
@@ -1143,11 +1145,15 @@ describe("ModelRegistry", () => {
 				},
 			});
 
-			expect(getOAuthProvider("anthropic")?.name).toBe("Custom Anthropic OAuth");
+			// Provider-owned auth: the registered OAuth provider is scoped to the
+			// runtime, not the legacy global OAuth registry. The custom name is
+			// observable through the runtime-backed display name.
+			expect(registry.getProviderDisplayName("anthropic")).toBe("Custom Anthropic OAuth");
 
 			registry.unregisterProvider("anthropic");
 
-			expect(getOAuthProvider("anthropic")?.name).not.toBe("Custom Anthropic OAuth");
+			expect(registry.getProviderDisplayName("anthropic")).not.toBe("Custom Anthropic OAuth");
+			expect(registry.getProviderDisplayName("anthropic")).toBe("Anthropic");
 		});
 
 		test("unregisterProvider removes custom streamSimple override and restores built-in API stream handler", async () => {
