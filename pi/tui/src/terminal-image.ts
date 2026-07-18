@@ -62,6 +62,93 @@ function probeTmuxHyperlinks(): boolean {
 	}
 }
 
+/**
+ * Runtime probe for truecolor (24-bit RGB) terminal support.
+ *
+ * **This feature is opt-in and disabled by default.** Set the environment variable
+ * `MAGENTA_PROBE_TRUECOLOR=1` to enable it.
+ *
+ * ## How it works
+ * Sends an OSC 4;0;? sequence to query the terminal's color 0 (black) definition.
+ * Terminals that support 24-bit color respond with rgb:RRRR/GGGG/BBBB format (16-bit per channel).
+ * Terminals that don't support queries or only support 256 colors will not respond or time out.
+ *
+ * ## Limitations and risks
+ * - **Timeout delay**: Non-responsive terminals will block for ~100ms on first render.
+ * - **Terminal compatibility**: Some terminals may not respond to OSC queries even if they support truecolor.
+ * - **False negatives**: A timeout doesn't definitively mean the terminal lacks truecolor support.
+ * - **stdin interference**: If stdin is not a TTY or is being read by another process, the probe fails silently.
+ *
+ * ## Usage
+ * ```bash
+ * export MAGENTA_PROBE_TRUECOLOR=1
+ * your-app
+ * ```
+ *
+ * @returns Promise resolving to `true` if terminal responds with 24-bit color info, `false` otherwise
+ */
+async function probeTrueColor(): Promise<boolean> {
+	const stdin = process.stdin;
+
+	// Only probe if stdin is a TTY
+	if (!stdin.isTTY) {
+		return false;
+	}
+
+	return new Promise<boolean>((resolve) => {
+		let resolved = false;
+		let originalRawMode: boolean | undefined;
+
+		const cleanup = () => {
+			if (!resolved) {
+				resolved = true;
+				stdin.removeListener("data", onData);
+				if (originalRawMode !== undefined && stdin.isTTY) {
+					stdin.setRawMode(originalRawMode);
+				}
+			}
+		};
+
+		const onData = (data: Buffer) => {
+			const response = data.toString();
+			// OSC 4;0;? response format: \x1b]4;0;rgb:RRRR/GGGG/BBBB\x07 or \x1b\\
+			// Look for rgb: followed by hex values with slashes (16-bit per channel = truecolor capable)
+			if (response.includes("rgb:") && /rgb:[0-9a-fA-F]{4}\/[0-9a-fA-F]{4}\/[0-9a-fA-F]{4}/.test(response)) {
+				cleanup();
+				resolve(true);
+			}
+		};
+
+		// Set timeout for non-responsive terminals
+		const timeoutId = setTimeout(() => {
+			cleanup();
+			resolve(false);
+		}, 100);
+
+		try {
+			// Save original raw mode state
+			originalRawMode = stdin.isRaw;
+
+			// Enter raw mode to receive terminal responses
+			if (stdin.isTTY) {
+				stdin.setRawMode(true);
+			}
+
+			// Listen for terminal response
+			stdin.once("data", onData);
+
+			// Query terminal for color 0 definition
+			// OSC 4 ; c ; ? queries the RGB value of color c
+			process.stdout.write("\x1b]4;0;?\x07");
+		} catch (error) {
+			// If anything fails (e.g., setRawMode throws), assume no truecolor
+			clearTimeout(timeoutId);
+			cleanup();
+			resolve(false);
+		}
+	});
+}
+
 export function detectCapabilities(tmuxForwardsHyperlink: () => boolean = probeTmuxHyperlinks): TerminalCapabilities {
 	const termProgram = process.env.TERM_PROGRAM?.toLowerCase() || "";
 	const terminalEmulator = process.env.TERMINAL_EMULATOR?.toLowerCase() || "";
@@ -121,6 +208,11 @@ export function detectCapabilities(tmuxForwardsHyperlink: () => boolean = probeT
 	// text" on terminals that swallow it, which means the URL disappears from
 	// the rendered output. Default to the legacy `text (url)` behavior unless we
 	// have positively identified a hyperlink-capable terminal above.
+	//
+	// For truecolor on unknown terminals: detectCapabilities is synchronous and
+	// only trusts the COLORTERM env hint here. To probe the terminal at runtime
+	// (opt-in via MAGENTA_PROBE_TRUECOLOR=1), call the async
+	// probeAndCacheCapabilities() during initialization before getCapabilities().
 	return { images: null, trueColor: hasTrueColorHint, hyperlinks: false };
 }
 
@@ -129,6 +221,49 @@ export function getCapabilities(): TerminalCapabilities {
 		cachedCapabilities = detectCapabilities();
 	}
 	return cachedCapabilities;
+}
+
+/**
+ * Asynchronously probe terminal capabilities and update the cache.
+ * 
+ * This should be called during initialization (before first render) when you want
+ * to enable runtime truecolor detection for unknown terminals.
+ * 
+ * **Requires `MAGENTA_PROBE_TRUECOLOR=1` to be set, otherwise returns immediately.**
+ * 
+ * @example
+ * ```typescript
+ * // During TUI initialization:
+ * await probeAndCacheCapabilities();
+ * // Now getCapabilities() will return the probed result
+ * ```
+ * 
+ * @returns Promise that resolves when probing is complete (or skipped)
+ */
+export async function probeAndCacheCapabilities(): Promise<void> {
+	// Only probe if explicitly enabled
+	if (process.env.MAGENTA_PROBE_TRUECOLOR !== "1") {
+		return;
+	}
+
+	// Get initial detection
+	const detected = detectCapabilities();
+
+	// Only probe for unknown terminals that don't already have truecolor hint
+	if (detected.trueColor) {
+		// Already knows it supports truecolor, no need to probe
+		cachedCapabilities = detected;
+		return;
+	}
+
+	// Run the probe
+	const probeResult = await probeTrueColor();
+
+	// Update cache with probe result
+	cachedCapabilities = {
+		...detected,
+		trueColor: probeResult,
+	};
 }
 
 export function resetCapabilitiesCache(): void {

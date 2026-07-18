@@ -86,6 +86,7 @@ export {
 	getPngDimensions,
 	getWebpDimensions,
 	hyperlink,
+	probeAndCacheCapabilities,
 	type ImageDimensions,
 	type ImageProtocol,
 	type ImageRenderOptions,

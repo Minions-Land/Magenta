@@ -18,7 +18,7 @@ export class Loader extends Text {
 	private frames = [...DEFAULT_FRAMES];
 	private intervalMs = DEFAULT_INTERVAL_MS;
 	private currentFrame = 0;
-	private intervalId: NodeJS.Timeout | null = null;
+	private unsubscribeAnimation: (() => void) | null = null;
 	private ui: TUI | null = null;
 	private renderIndicatorVerbatim = false;
 	private spinnerColorFn: (str: string) => string;
@@ -50,9 +50,9 @@ export class Loader extends Text {
 	}
 
 	stop(): void {
-		if (this.intervalId) {
-			clearInterval(this.intervalId);
-			this.intervalId = null;
+		if (this.unsubscribeAnimation) {
+			this.unsubscribeAnimation();
+			this.unsubscribeAnimation = null;
 		}
 	}
 
@@ -71,10 +71,12 @@ export class Loader extends Text {
 
 	private restartAnimation(): void {
 		this.stop();
-		if (this.frames.length <= 1) {
+		if (this.frames.length <= 1 || !this.ui) {
 			return;
 		}
-		this.intervalId = setInterval(() => {
+		// Subscribe to the central animation clock shared by all Loaders, passing
+		// this loader's custom interval (honors LoaderIndicatorOptions.intervalMs).
+		this.unsubscribeAnimation = this.ui.subscribeAnimation(() => {
 			this.currentFrame = (this.currentFrame + 1) % this.frames.length;
 			this.updateDisplay();
 		}, this.intervalMs);
@@ -85,6 +87,10 @@ export class Loader extends Text {
 		const renderedFrame = this.renderIndicatorVerbatim ? frame : this.spinnerColorFn(frame);
 		const indicator = frame.length > 0 ? `${renderedFrame} ` : "";
 		this.setText(`${indicator}${this.messageColorFn(this.message)}`);
+		// Request a render for non-animated updates (setMessage, initial start,
+		// static indicators). During animation ticks this coalesces with the
+		// central timer's single requestRender via the renderRequested flag, so
+		// it stays a single render per tick.
 		if (this.ui) {
 			this.ui.requestRender();
 		}

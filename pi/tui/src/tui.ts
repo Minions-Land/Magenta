@@ -539,6 +539,17 @@ export class TUI extends Container {
 	private renderTimer: NodeJS.Timeout | undefined;
 	private lastRenderAt = 0;
 	private static readonly MIN_RENDER_INTERVAL_MS = 16;
+
+	// Central animation clock: all animated components (loaders/spinners) share a
+	// single timer instead of each running its own setInterval. The timer only
+	// runs while there is at least one subscriber and is cleared automatically
+	// when the last subscriber unsubscribes, so an idle UI has zero timers.
+	// Subscribers can specify custom intervals; the base timer ticks at the minimum
+	// subscriber interval, and each subscriber fires when its accumulated time reaches
+	// its configured interval.
+	private animationSubscribers = new Map<() => void, { intervalMs: number; elapsed: number }>();
+	private animationTimer: NodeJS.Timeout | undefined;
+	private static readonly ANIMATION_INTERVAL_MS = 80;
 	private cursorRow = 0; // Logical cursor row (end of rendered content)
 	private hardwareCursorRow = 0; // Actual terminal cursor row (may differ due to IME positioning)
 	private showHardwareCursor = process.env.PI_HARDWARE_CURSOR === "1";
@@ -1002,6 +1013,11 @@ export class TUI extends Container {
 			clearTimeout(this.renderTimer);
 			this.renderTimer = undefined;
 		}
+		if (this.animationTimer) {
+			clearInterval(this.animationTimer);
+			this.animationTimer = undefined;
+		}
+		this.animationSubscribers.clear();
 		if (this.terminalColorSchemeNotificationsEnabled) {
 			this.terminal.write("\x1b[?2031l");
 		}
@@ -1020,6 +1036,80 @@ export class TUI extends Container {
 		this.terminal.showCursor();
 		this.terminal.stop();
 		this.flushRenderProfile();
+	}
+
+	/**
+	 * Subscribe to the central animation clock.
+	 *
+	 * All subscribers share a single interval timer that ticks at the minimum subscriber
+	 * interval (or 80ms default). Each subscriber can specify a custom interval; when its
+	 * accumulated elapsed time reaches that interval, its callback fires. Multiple subscribers
+	 * can have different intervals while still sharing one underlying timer. Visual updates
+	 * are coalesced into a single `requestRender()` per tick.
+	 *
+	 * The timer is lazily started when the first subscriber registers and is cleared
+	 * automatically once the last subscriber unsubscribes, so an idle UI keeps zero timers.
+	 *
+	 * @param callback Invoked when this subscriber's interval elapses (e.g. advance a spinner frame).
+	 * @param intervalMs Custom interval in milliseconds (defaults to 80ms). Honors per-subscriber cadence.
+	 * @returns An unsubscribe function. Call it to stop receiving ticks; the shared timer is torn
+	 *          down automatically when no subscribers remain. Calling it more than once is a no-op.
+	 */
+	subscribeAnimation(callback: () => void, intervalMs = TUI.ANIMATION_INTERVAL_MS): () => void {
+		this.animationSubscribers.set(callback, { intervalMs, elapsed: 0 });
+		this.startAnimationTimer();
+		let unsubscribed = false;
+		return () => {
+			if (unsubscribed) return;
+			unsubscribed = true;
+			this.animationSubscribers.delete(callback);
+			if (this.animationSubscribers.size === 0) {
+				this.stopAnimationTimer();
+			}
+		};
+	}
+
+	private startAnimationTimer(): void {
+		if (this.animationTimer || this.stopped || this.animationSubscribers.size === 0) {
+			return;
+		}
+		// Base tick interval: minimum of all subscriber intervals
+		const baseInterval = Math.min(
+			...Array.from(this.animationSubscribers.values()).map(sub => sub.intervalMs),
+			TUI.ANIMATION_INTERVAL_MS
+		);
+		this.animationTimer = setInterval(() => {
+			let anyFired = false;
+			for (const [callback, state] of this.animationSubscribers) {
+				state.elapsed += baseInterval;
+				if (state.elapsed >= state.intervalMs) {
+					state.elapsed = 0;
+					callback();
+					anyFired = true;
+				}
+			}
+			// Coalesce all subscriber updates into a single render per tick.
+			if (anyFired) {
+				this.requestRender();
+			}
+		}, baseInterval);
+	}
+
+	private stopAnimationTimer(): void {
+		if (this.animationTimer) {
+			clearInterval(this.animationTimer);
+			this.animationTimer = undefined;
+		}
+	}
+
+	/** Number of active animation subscribers (primarily for testing/diagnostics). */
+	get animationSubscriberCount(): number {
+		return this.animationSubscribers.size;
+	}
+
+	/** Whether the shared animation timer is currently running (primarily for testing/diagnostics). */
+	get animationTimerActive(): boolean {
+		return this.animationTimer !== undefined;
 	}
 
 	requestRender(force = false): void {
