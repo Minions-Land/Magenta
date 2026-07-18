@@ -137,7 +137,15 @@ export interface AgentLoopTurnUpdate {
 	thinkingLevel?: ThinkingLevel;
 }
 
-export interface PrepareNextTurnContext extends ShouldStopAfterTurnContext {}
+/**
+ * Context passed to `prepareNextTurnWithContext`.
+ *
+ * Includes all fields from `ShouldStopAfterTurnContext` plus the active abort signal.
+ */
+export interface PrepareNextTurnContext extends ShouldStopAfterTurnContext {
+	/** Active abort signal for the current agent run. */
+	signal?: AbortSignal;
+}
 
 export interface AgentLoopConfig extends SimpleStreamOptions {
 	model: Model<any>;

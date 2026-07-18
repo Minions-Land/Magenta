@@ -721,4 +721,228 @@ describe("Agent", () => {
 		await agent.prompt("hello again");
 		expect(receivedSessionId).toBe("session-def");
 	});
+
+	// AG-001 + AG-002: prepareNextTurnWithContext + legacy signal preservation
+	describe("prepareNextTurn callbacks", () => {
+		it("keeps legacy prepareNextTurn signal callback behavior (AG-002)", async () => {
+			const schema = Type.Object({});
+			const tool: AgentTool<typeof schema> = {
+				name: "noop",
+				label: "Noop",
+				description: "Noop tool",
+				parameters: schema,
+				execute: async () => ({ content: [{ type: "text", text: "ok" }], details: {} }),
+			};
+			let requestCount = 0;
+			let sawAbortSignal = false;
+			const agent = new Agent({
+				initialState: { tools: [tool] },
+				prepareNextTurn: async (signal) => {
+					sawAbortSignal = signal instanceof AbortSignal;
+					return undefined;
+				},
+				streamFn: () => {
+					requestCount++;
+					const stream = new MockAssistantStream();
+					queueMicrotask(() => {
+						if (requestCount === 1) {
+							const message = createAssistantToolUseMessage([
+								{ type: "toolCall", id: "tool-1", name: "noop", arguments: {} },
+							]);
+							stream.push({ type: "done", reason: "toolUse", message });
+							return;
+						}
+						const message = createAssistantMessage("done");
+						stream.push({ type: "done", reason: "stop", message });
+					});
+					return stream;
+				},
+			});
+
+			await agent.prompt("start");
+
+			expect(requestCount).toBe(2);
+			expect(sawAbortSignal).toBe(true);
+		});
+
+		it("receives full context with prepareNextTurnWithContext (AG-001)", async () => {
+			const schema = Type.Object({});
+			const tool: AgentTool<typeof schema> = {
+				name: "noop",
+				label: "Noop",
+				description: "Noop tool",
+				parameters: schema,
+				execute: async () => ({ content: [{ type: "text", text: "ok" }], details: {} }),
+			};
+			let requestCount = 0;
+			let contextWithToolResults: any = null;
+			let signalWithToolResults: any = null;
+			const agent = new Agent({
+				initialState: { tools: [tool] },
+				prepareNextTurnWithContext: async (context, signal) => {
+					// Capture the first invocation that has tool results
+					if (context.toolResults.length > 0 && !contextWithToolResults) {
+						contextWithToolResults = context;
+						signalWithToolResults = signal;
+					}
+					return undefined;
+				},
+				streamFn: () => {
+					requestCount++;
+					const stream = new MockAssistantStream();
+					queueMicrotask(() => {
+						if (requestCount === 1) {
+							const message = createAssistantToolUseMessage([
+								{ type: "toolCall", id: "tool-1", name: "noop", arguments: {} },
+							]);
+							stream.push({ type: "done", reason: "toolUse", message });
+							return;
+						}
+						const message = createAssistantMessage("done");
+						stream.push({ type: "done", reason: "stop", message });
+					});
+					return stream;
+				},
+			});
+
+			await agent.prompt("start");
+
+			expect(requestCount).toBe(2);
+			expect(contextWithToolResults).toBeTruthy();
+			expect(contextWithToolResults.message).toBeTruthy();
+			expect(contextWithToolResults.message.role).toBe("assistant");
+			expect(contextWithToolResults.toolResults).toBeInstanceOf(Array);
+			expect(contextWithToolResults.toolResults.length).toBe(1);
+			expect(contextWithToolResults.context).toBeTruthy();
+			expect(contextWithToolResults.context.messages).toBeInstanceOf(Array);
+			expect(contextWithToolResults.newMessages).toBeInstanceOf(Array);
+			expect(typeof contextWithToolResults.hasMoreToolCalls).toBe("boolean");
+			expect(contextWithToolResults.signal).toBeInstanceOf(AbortSignal);
+			expect(signalWithToolResults).toBeInstanceOf(AbortSignal);
+			expect(contextWithToolResults.signal).toBe(signalWithToolResults);
+		});
+
+		it("prefers prepareNextTurnWithContext over legacy when both supplied", async () => {
+			const schema = Type.Object({});
+			const tool: AgentTool<typeof schema> = {
+				name: "noop",
+				label: "Noop",
+				description: "Noop tool",
+				parameters: schema,
+				execute: async () => ({ content: [{ type: "text", text: "ok" }], details: {} }),
+			};
+			let requestCount = 0;
+			let legacyCalled = false;
+			let contextCalled = false;
+			const agent = new Agent({
+				initialState: { tools: [tool] },
+				prepareNextTurn: async () => {
+					legacyCalled = true;
+					return undefined;
+				},
+				prepareNextTurnWithContext: async () => {
+					contextCalled = true;
+					return undefined;
+				},
+				streamFn: () => {
+					requestCount++;
+					const stream = new MockAssistantStream();
+					queueMicrotask(() => {
+						if (requestCount === 1) {
+							const message = createAssistantToolUseMessage([
+								{ type: "toolCall", id: "tool-1", name: "noop", arguments: {} },
+							]);
+							stream.push({ type: "done", reason: "toolUse", message });
+							return;
+						}
+						const message = createAssistantMessage("done");
+						stream.push({ type: "done", reason: "stop", message });
+					});
+					return stream;
+				},
+			});
+
+			await agent.prompt("start");
+
+			expect(requestCount).toBe(2);
+			expect(contextCalled).toBe(true);
+			expect(legacyCalled).toBe(false);
+		});
+
+		it("hasMoreToolCalls field exists in PrepareNextTurnContext (Magenta extension)", async () => {
+			const schema = Type.Object({});
+			const tool: AgentTool<typeof schema> = {
+				name: "noop",
+				label: "Noop",
+				description: "Noop tool",
+				parameters: schema,
+				execute: async () => ({ content: [{ type: "text", text: "ok" }], details: {} }),
+			};
+			let hasMoreToolCallsValue: boolean | undefined;
+			let requestCount = 0;
+			const agent = new Agent({
+				initialState: { tools: [tool] },
+				prepareNextTurnWithContext: async (context) => {
+					hasMoreToolCallsValue = context.hasMoreToolCalls;
+					return undefined;
+				},
+				streamFn: () => {
+					requestCount++;
+					const stream = new MockAssistantStream();
+					queueMicrotask(() => {
+						if (requestCount === 1) {
+							const message = createAssistantToolUseMessage([
+								{ type: "toolCall", id: "tool-1", name: "noop", arguments: {} },
+							]);
+							stream.push({ type: "done", reason: "toolUse", message });
+							return;
+						}
+						const message = createAssistantMessage("done");
+						stream.push({ type: "done", reason: "stop", message });
+					});
+					return stream;
+				},
+			});
+
+			await agent.prompt("start");
+
+			expect(typeof hasMoreToolCallsValue).toBe("boolean");
+			expect(hasMoreToolCallsValue).toBe(false);
+		});
+
+		it("abort signal is correctly passed to prepareNextTurnWithContext", async () => {
+			const schema = Type.Object({});
+			const tool: AgentTool<typeof schema> = {
+				name: "noop",
+				label: "Noop",
+				description: "Noop tool",
+				parameters: schema,
+				execute: async () => ({ content: [{ type: "text", text: "ok" }], details: {} }),
+			};
+			let contextSignalAborted = false;
+			let paramSignalAborted = false;
+			const agent = new Agent({
+				initialState: { tools: [tool] },
+				prepareNextTurnWithContext: async (context, signal) => {
+					contextSignalAborted = context.signal?.aborted ?? false;
+					paramSignalAborted = signal?.aborted ?? false;
+					return undefined;
+				},
+				streamFn: () => {
+					const stream = new MockAssistantStream();
+					queueMicrotask(() => {
+						const message = createAssistantMessage("done");
+						stream.push({ type: "done", reason: "stop", message });
+					});
+					return stream;
+				},
+			});
+
+			await agent.prompt("start");
+
+			// Signal should not be aborted during normal operation
+			expect(contextSignalAborted).toBe(false);
+			expect(paramSignalAborted).toBe(false);
+		});
+	});
 });
