@@ -4,7 +4,7 @@ All notable changes to Magenta CLI are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## [Unreleased]
+## [0.0.24] - 2026-07-18
 
 ### Changed
 - Multi-agent work is split into three HCP-owned Tools: singular finite `sub_agent` Events with automatic terminal activation, persistent Session-id lifecycle through `multiagent`, and atomic durable mailbox acceptance through `send_message`; the old `teammate_agent`, Assignment, batch, and blocking-wait surfaces are removed
