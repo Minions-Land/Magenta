@@ -1,14 +1,16 @@
 /**
- * ModelRuntime (CC-048/049/050/051/059 P2.3b, upstream 9993c969).
+ * ModelRuntime (CC-048/049/050/051/059 P2.3b + CC-052/058 Phase 3, upstream 9993c969 + cd7cad4e).
  *
  * The configured pi-ai Models collection used by coding-agent and SDK consumers.
  * Owns provider composition, provider-owned auth resolution, final request auth/
  * header assembly, and async catalog refresh. Replaces ModelRegistry as the single
  * model/credential owner (ModelRegistry becomes a thin facade in P2.6).
  *
- * Radius providers (CC-052) and remote catalog overlay (CC-058) are deferred to
- * Phase 3; configureRadiusProviders/withRemoteCatalog are intentionally omitted
- * here and will be added when pi-ai gains radiusProvider/withRemoteCatalog.
+ * Phase 3: built-in providers are wrapped with the pi.dev remote catalog overlay
+ * (CC-058, withRemoteCatalog). Radius gateway providers (CC-052) are configured
+ * through configureRadiusProviders when pi-ai exposes a radiusProvider factory;
+ * the seam feature-detects that factory so coding-agent carries no hard dependency
+ * on the pi-ai Radius port (AI-040).
  */
 
 import { dirname, join } from "node:path";
@@ -42,13 +44,14 @@ import {
 	type SimpleStreamOptions,
 	type StreamOptions,
 } from "@earendil-works/pi-ai";
-import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
+import * as builtinProviderCatalog from "@earendil-works/pi-ai/providers/all";
 import { registerApiProvider, unregisterApiProviders } from "@earendil-works/pi-ai/compat";
 import { getAgentDir } from "../config.ts";
 import { AuthStorage } from "./auth-storage.ts";
 import { createMagentaCredentialStore } from "./external-credential-adapter.ts";
 import { ModelConfig } from "./model-config.ts";
 import { FileModelsStore, InMemoryCodingAgentModelsStore } from "./models-store.ts";
+import { withRemoteCatalog } from "./remote-catalog-provider.ts";
 import {
 	type AuthStatus,
 	type CompatibilityRequestConfig,
@@ -153,8 +156,14 @@ export class ModelRuntime implements Models {
 			(modelsPath
 				? new FileModelsStore(options.modelsStorePath ?? join(dirname(modelsPath), "models-store.json"))
 				: new InMemoryCodingAgentModelsStore());
-		// Radius + remote catalog overlay (CC-052/058) deferred to Phase 3.
-		const providers = builtinProviders();
+		// CC-058: wrap built-in providers with remote catalog overlay (except radius,
+		// which manages its own catalog). When pi-ai exports radiusProvider, radius
+		// instances are configured through the models.json oauth: "radius" convention.
+		const providers = builtinProviderCatalog
+			.builtinProviders()
+			.map((provider) =>
+				provider.id === "radius" ? provider : withRemoteCatalog(provider, options.catalogBaseUrl),
+			);
 		const runtime = new ModelRuntime(
 			credentials,
 			config,
@@ -163,6 +172,7 @@ export class ModelRuntime implements Models {
 			providers,
 			options.allowModelNetwork ?? process.env.PI_OFFLINE === undefined,
 		);
+		runtime.configureRadiusProviders();
 		runtime.rebuildProviders();
 		const controller = new AbortController();
 		const timeout = runtime.allowModelNetwork
@@ -174,6 +184,37 @@ export class ModelRuntime implements Models {
 			if (timeout) clearTimeout(timeout);
 		}
 		return runtime;
+	}
+
+	/**
+	 * CC-052: swap models.json providers declared with `oauth: "radius"` for a
+	 * Radius gateway provider that owns its own dynamically refreshed catalog.
+	 *
+	 * The pi-ai Radius factory (AI-040) is feature-detected: when the installed
+	 * pi-ai does not export `radiusProvider`, radius-configured providers fall
+	 * back to the standard models.json composition path (provider-composer already
+	 * preserves the model baseUrl for `oauth: "radius"`), so coding-agent carries
+	 * no hard dependency on the pi-ai Radius port.
+	 */
+	private configureRadiusProviders(): void {
+		const radiusFactory = (
+			builtinProviderCatalog as { radiusProvider?: (options: { id: string; name: string; gateway: string }) => Provider }
+		).radiusProvider;
+		if (typeof radiusFactory !== "function") return;
+		this.builtins.clear();
+		for (const [providerId, provider] of this.defaultBuiltins) this.builtins.set(providerId, provider);
+		for (const providerId of this.config.getProviderIds()) {
+			const config = this.config.getProvider(providerId);
+			if (config?.oauth !== "radius" || !config.baseUrl) continue;
+			this.builtins.set(
+				providerId,
+				radiusFactory({
+					id: providerId,
+					name: config.name ?? providerId,
+					gateway: config.baseUrl.replace(/\/v1\/?$/u, ""),
+				}),
+			);
+		}
 	}
 
 	private providerIds(): Set<string> {
