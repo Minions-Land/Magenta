@@ -85,8 +85,8 @@ Required behavior:
 
 - There is no team-scoped Todo, task-board handle, team namespace, or per-team planning lifecycle.
 - All teammates owned by one main session participate in the same coordination scope represented by that main session's Todo.
-- The main session remains the human-facing coordination owner and reconciles teammate assignments, progress, and results into that Todo.
-- Assignments and progress may travel through messages, but they must not create a second source of planning truth.
+- The main session remains the human-facing coordination owner and reconciles teammate prompts, progress, and results into that Todo.
+- Work prompts and progress may travel through messages, but they must not create a second source of planning truth.
 - Whether teammates may propose or directly mutate Todo entries is a separate access-control decision; it does not require another board.
 - Supporting multiple isolated teams in one main session is outside the design and would require a new explicit decision.
 
@@ -211,9 +211,9 @@ Required behavior:
 - Ordinary Subagent and Workflow Events share transient `eventId` identity, status/cancel control, non-blocking registration, background execution, automatic terminal return through external activation, and no resumable Session.
 - Independent parallelism is outside the Tool input contract. Magenta may execute any number of independent `sub_agent` calls concurrently; the Tool accepts the same singular call whether invocations are parallel, sequential, model-authored, or trusted-host-authored.
 - Workflow branch, barrier, ranking, verifier, reducer, loop, and termination behavior remains runtime-owned. Generic mailbox chat cannot replace deterministic Workflow control.
-- `multiagent` creates and manages persistent teammates with retained Session history, stable Session identity, reentrant assignments, explicit interrupt/stop/resume, and optional worktree integration/discard.
-- Managed work dispatch uses a lifecycle command such as `assign`; it creates correlation and ownership semantics and is not ordinary chat.
-- `send_message` remains an independent lightweight Tool for durable direct delivery to known Sessions, including local peer chat, presence, idle wake, offline backlog, and SSH federation. It creates no Agent, assignment, lease, or lifecycle authority.
+- `multiagent` creates and manages persistent teammates with retained Session history, stable Session identity, repeated message-driven prompts, explicit hard interrupt/stop/resume, and optional worktree integration/discard.
+- Ordinary ongoing prompts, chat, and soft steering use `send_message`. `multiagent interrupt` remains the trusted hard-abort control path and may carry a replacement prompt.
+- `send_message` remains an independent lightweight Tool for durable direct delivery to known Sessions, including local peer chat, presence, idle wake, offline backlog, and SSH federation. It creates no Agent, task ledger, lease, or lifecycle authority.
 - Public identities remain distinct: finite work uses transient event receipts; teammates and mailbox recipients use Session identity. There is no universal Agent or Multiagent ID.
 - Tool availability enforces delegation: Main may use all three Tools; a teammate may use `sub_agent` and `send_message` but not `multiagent`; finite Subagents and Workflow workers may not delegate further.
 - Shared invocation, policy, supervision, usage, transport, and observability code is permitted where it removes real duplication, but one common public schema, runtime host, or state machine is not required.
@@ -235,7 +235,7 @@ Required behavior:
 - Each Module owns a real `HcpServer.ts`; each selected Source owns one `HcpMagnet.ts`; each Magnet exposes exactly `toTool()` as its single HCP Product.
 - `tools/sub-agent` owns ordinary finite workers, a shared capacity controller for independent Events, the deterministic Workflow engine and presets, Event supervision, cancellation, and automatic terminal delivery.
 - `tools/send-message` owns the model Tool, durable Mailbox store, presence, wake transport, bounded injection, peer routes, outbox, deduplication, and SSH federation support.
-- `tools/multiagent` owns persistent teammate Session hosting, assignments, supervision, stop/resume, restart recovery, worktree receipts, integration, and discard.
+- `tools/multiagent` owns persistent teammate Session hosting, turn supervision, hard interrupt, stop/resume, restart recovery, worktree receipts, integration, and discard.
 - Capability-like classes inside these directories are ordinary Tool-owned runtime/services. Their Magnets do not expose `toCapability()`, and assembly publishes no `capability:workflow`, `capability:mailbox`, or `capability:multiagent` address.
 - Every stateful Tool Magnet must retain its controller and implement `dispose()` that cascades through all owned live work and resources. The session's single HcpClient exclusively owns and awaits disposal for rejected, unroutable, replaced, and session-terminated products.
 - The sole assembly and routing chain remains `HcpClient -> tools/<tool>/HcpServer -> selected Source HcpMagnet -> toTool()`. Host adapters provide construction dependencies only; they create no alternate Server, Source selector, address, registry, or lifecycle path.
@@ -257,8 +257,8 @@ Required behavior:
 - Existing HCP message-store code currently nested under the old top-level multiagent module migrates into the SendMessage Tool Source with its tests and provenance intact.
 - The stateful SendMessage Magnet is assembled early enough to advertise presence and receive/wake independently of whether `send_message` is currently model-visible. Active Tool filtering controls model permission only, not Mailbox liveness.
 - The Magnet implements mandatory cascading `dispose()` for its wake server, database handles, remote links, claims, and presence transition to offline; the session HcpClient is the sole owner of that disposal path.
-- Pi may pass declarative paths, configured SSH endpoints, the current Session identity, lifecycle notifications, and a generic external-activation/injection port through build settings. Those adapters contain no SendMessage routing, persistence, federation, formatting, or assignment semantics.
-- Multiagent uses an HCP-owned internal Mailbox support API exported or injected by the SendMessage module. It never imports a Pi SendMessage controller and never calls the model-visible Tool as an internal function.
+- Pi may pass declarative paths, configured SSH endpoints, the current Session identity, lifecycle notifications, and a generic external-activation/injection port through build settings. Those adapters contain no SendMessage routing, persistence, federation, formatting, or managed-turn semantics.
+- Multiagent uses an HCP-owned internal Mailbox support API exported or injected by the SendMessage module for prompt delivery and wake behavior. It never imports a Pi SendMessage controller and never calls the model-visible Tool as an internal function.
 - Pi retains only generic Tool resolution, active-Tool selection, external-activation machinery, and presentation/rendering integration. SendMessage-specific unit and transport tests move to HCP; Pi tests cover only the generic host integration boundary.
 - There is no compatibility fallback to the former Pi implementation. Missing or failed `tool:send_message` assembly is reported explicitly rather than silently constructing the old Tool.
 
@@ -301,18 +301,66 @@ Required behavior:
 
 Required behavior:
 
-- `multiagent start` allocates and returns `sessionId` as soon as the persistent teammate Session is durably registered. Process readiness or initial-assignment completion remains asynchronous.
-- Every targeted `multiagent` lifecycle or assignment action uses `sessionId`. `status` without a target lists all teammates owned by the current Main; targeted status uses exactly one `sessionId`.
-- `send_message.to` uses the same Session ID for ordinary mailbox chat, while `multiagent` applies managed assignment and lifecycle semantics. Sharing an address does not merge the two Tools.
+- `multiagent start` allocates and returns `sessionId` as soon as the persistent teammate Session is durably registered. Process readiness or optional bootstrap-prompt completion remains asynchronous.
+- Every targeted `multiagent` lifecycle or interrupt action uses `sessionId`. `status` without a target lists all teammates owned by the current Main; targeted status uses exactly one `sessionId`.
+- `send_message.to` uses the same Session ID for ordinary mailbox prompts and chat, while `multiagent` applies trusted lifecycle and hard-interrupt semantics. Sharing an address does not merge the two Tools.
 - A human-readable `label` is presentation metadata and may be non-unique or mutable. It is never accepted as an authority-bearing target.
-- Process IDs, controller records, RPC request IDs, assignment IDs, worktree IDs, message IDs, and finite Event IDs remain internal or subordinate identities. None substitutes for the teammate Session ID.
-- Stop, resume, Main-runtime restart recovery, mailbox delivery, assignment history, and worktree receipts preserve the same Session ID.
+- Process IDs, controller records, RPC request IDs, worktree IDs, message IDs, and finite Event IDs remain internal or subordinate identities. None substitutes for the teammate Session ID.
+- Stop, resume, Main-runtime restart recovery, mailbox delivery, retained prompt history, and worktree receipts preserve the same Session ID.
 - Possession or discovery of a Session ID grants no management authority. Runtime-owned lineage must prove that the target is a persistent teammate directly owned by the calling Main Session before any `multiagent` control action is admitted.
 - A teammate uses its known parent Session ID for ordinary `send_message` replies, but it cannot use the parent's Session ID to obtain Main-level `multiagent` authority.
 
+### Decision 20: No First-Class Assignment
+
+**Accepted.** Persistent teammate work input is repeated Prompt delivery to an existing retained Session, not a separate public Assignment domain. `multiagent` has no `assign` or `send` action; ordinary prompts, chat, and soft steering use the independent `send_message` Tool.
+
+Required behavior:
+
+- A plain `sub_agent task` and a teammate work message may reuse the same prompt-content data shape, but their lifecycle differs: the former creates one clean finite Event, while the latter enters an existing retained Session and may be repeated indefinitely.
+- `multiagent start` may include one optional bootstrap prompt. Subsequent normal input is delivered through `send_message` to the teammate Session ID.
+- The public contract has no `assignmentId`, assignment queue, assignment waiter, soft-lease state machine, or model-authored assignment terminal receipt. Mailbox `messageId` and internal consumed-message correlation do not create another task entity.
+- The Main Todo remains the sole work plan and ownership ledger. Scope and requested work are written there by Main and communicated in prompt text without creating a second Assignment board.
+- An idle teammate is awakened by a message; an active teammate receives an urgent message at the next safe loop boundary as additional context or soft steering; a stopped/offline teammate retains the message in its Mailbox for later processing.
+- `send_message` cannot guarantee abort of an active model request or running Tool. Natural-language stop instructions remain ordinary messages.
+- `multiagent interrupt` is retained as the only hard-abort action. It uses trusted RPC/Abort control, targets one owned `sessionId`, and may atomically provide an optional replacement prompt after the abort transition.
+- The model-visible `multiagent` action set is `start`, `status`, `interrupt`, `stop`, `resume`, `integrate`, and `discard`. It contains no `assign`, `send`, `wait`, or `cancel`.
+- A completed teammate turn is not an implicit result-delivery channel. Decision 22 defines explicit `send_message` communication.
+
+### Decision 21: Explicit Git-Managed Teammate Worktrees
+
+**Accepted.** Teammate workspace isolation is explicitly selected by the caller and automatically provisioned by the Multiagent runtime as a real registered Git linked worktree. The caller never supplies or manually creates the checkout path.
+
+Required behavior:
+
+- `workspace: "shared"` uses the requested Main checkout path without creating a worktree. `workspace: "worktree"` requests isolation and causes the runtime to run the equivalent of `git worktree add` from a verified base commit.
+- Managed worktrees are stored under `<repo>/.magenta/tmp/collaboration/<parent-session-id>/worktrees/<teammate-session-id>/`; manifests and immutable receipts live under the sibling `receipts/<teammate-session-id>/` directory.
+- The worktree and its internal branch belong to the persistent teammate Session and may span multiple prompt turns until integrated or discarded. Paths and branch names are runtime-generated, containment-checked, and not model-authored.
+- Provisioning requires a valid supported Git repository, a committed base, and a clean parent checkout; unsupported submodule/superproject cases and unsafe path conditions fail explicitly before the teammate starts editing.
+- Receipt capture uses a temporary Git index to snapshot tracked and untracked non-ignored files, records base/head/tree, changed files, binary full-index patch, size/statistics, and SHA-256, and preserves its manifest after checkout cleanup.
+- `integrate` requires the teammate to be stopped with no active turn and an unintegrated receipt. It locks the shared Git common directory, verifies receipt integrity and parent readiness, runs patch preflight, and applies the verified patch to the clean Main checkout as unstaged changes.
+- `integrate` does not automatically merge, cherry-pick, or commit the teammate branch. Main remains responsible for independent review and commit.
+- Successful integration removes the registered worktree and internal branch while retaining the manifest/receipt. Cleanup failure is reported as `cleanup_pending` without pretending the already-applied patch was not integrated.
+- `discard` requires `confirm: true`, captures/preserves the final receipt, removes the registered worktree and internal branch, and does not delete the persistent teammate Session history.
+
+### Decision 22: SendMessage Is the Only Teammate Communication Channel
+
+**Accepted as an iron law.** A persistent teammate communicates across Session boundaries only by explicitly invoking `send_message`. The Multiagent runtime never auto-forwards, wraps, or injects a teammate's final assistant output into Main or another Session.
+
+Required behavior:
+
+- A teammate's final assistant output remains part of its retained private Session transcript. Turn completion may update activity/status telemetry, but it emits no result message, external activation, implicit Mailbox row, or synthetic reply.
+- Important progress, questions, blockers, uncertainty, and completed results must be explicitly sent to the Main Session with `send_message`. Messages to other known Sessions use the same sole communication primitive.
+- Arrival of the teammate-authored Mailbox message, not teammate turn completion, is what may wake or externally activate Main.
+- `send_message` is a mandatory, non-removable Tool grant for every persistent teammate. If the SendMessage support module cannot be assembled, `multiagent start` fails validation rather than creating a teammate that cannot communicate.
+- The Multiagent runtime appends a trusted managed-teammate system prompt containing the teammate's own Session ID, its owning Main Session ID, and the communication contract. Caller prompts cannot override or suppress this suffix.
+- That system prompt states at minimum: final assistant text is not visible to Main; all cross-Session communication uses `send_message`; the teammate must report material progress, questions, blockers, and results to Main; and it must not address the human user directly.
+- The prompt may tell a teammate to send a concise report before becoming idle after a work turn, but the runtime does not manufacture, parse, validate, deduplicate, or retry a report on the model's behalf.
+- The atomic SendMessage contract contains no assignment terminal status or result envelope. Correlation needed for Mailbox delivery remains message-level metadata, not an Assignment entity.
+- This rule applies to persistent teammates. Finite `sub_agent` and Workflow Events retain their separate runtime-owned terminal-result return defined by Decision 4.
+
 ## Current Candidate Design
 
-**Status: Discussion only - not accepted beyond Decisions 1, 4-6, 13-19.**
+**Status: Discussion only - not accepted beyond Decisions 1, 4-6, 13-22.**
 
 The current candidate has three public Tool products and no parallel Capability products:
 
@@ -326,22 +374,20 @@ tool:send_message
     -> mailbox, presence, wake, local/SSH routing
 
 tool:multiagent
-    -> persistent teammate Session and assignment controller
-       -> Mailbox support API for managed delivery
+    -> persistent teammate Session and hard-control controller
+       -> SendMessage-owned Mailbox support API for prompt delivery
 ```
 
-The runtime keeps finite event receipts separate from persistent Session IDs. Background start calls acknowledge registration immediately; terminal finite results reactivate the caller. Persistent teammates remain available for later assignments until explicitly stopped, while ordinary peer chat remains outside lifecycle control.
+The runtime keeps finite Event receipts separate from persistent Session IDs. Background start calls acknowledge registration immediately; terminal finite results reactivate the caller. Persistent teammates remain available for repeated mailbox-delivered prompts until explicitly stopped; hard interruption and lifecycle control remain outside ordinary peer chat.
 
 Current open decisions:
 
-1. The exact `multiagent` action set and state-transition semantics, including `assign` and stable status snapshots.
-2. Whether teammates can directly mutate the Main Todo or only report proposed updates.
-3. The retention period and TUI presentation of transient finite Event receipts after terminal settlement.
-4. How stopped teammate Sessions are indexed, rediscovered, authorized, and resumed after the Main runtime itself restarts.
-5. Whether persistent teammate assignment completion is inferred from final output, uses internal structured receipts, or supports both.
-6. The stable response, validation-error, acknowledgement, worktree-receipt, and terminal-event JSON contracts for both stateful Tools.
-7. The exact host-adapter boundary for stateful Tool construction, lifecycle hooks, turn-boundary mailbox injection, and disposal.
-8. Which assignment metadata, if any, remains model-visible on the otherwise atomic `send_message` Tool.
+1. Whether teammates can directly mutate the Main Todo or only report proposed updates.
+2. The retention period and TUI presentation of transient finite Event receipts after terminal settlement.
+3. How stopped teammate Sessions are indexed, rediscovered, authorized, and resumed after the Main runtime itself restarts.
+4. The stable response, validation-error, acknowledgement, worktree-receipt, and terminal-event JSON contracts for the three stateful Tools.
+5. The exact host-adapter boundary for stateful Tool construction, lifecycle hooks, turn-boundary Mailbox injection, and disposal.
+6. The final atomic `send_message` public schema after removing managed-assignment metadata.
 
 ## Superseded Unified-Protocol Candidate
 
