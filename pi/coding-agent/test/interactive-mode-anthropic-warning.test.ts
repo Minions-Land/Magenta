@@ -13,10 +13,10 @@ describe("InteractiveMode.maybeWarnAboutAnthropicSubscriptionAuth", () => {
 			anthropicSubscriptionWarningShown: false,
 			settingsManager: createSettingsManager(),
 			session: {
+				authStorage: {
+					get: vi.fn().mockReturnValue(undefined),
+				},
 				modelRegistry: {
-					authStorage: {
-						get: vi.fn().mockReturnValue(undefined),
-					},
 					getApiKeyForProvider: vi.fn().mockResolvedValue("sk-ant-oat01-test"),
 				},
 			},
@@ -39,10 +39,10 @@ describe("InteractiveMode.maybeWarnAboutAnthropicSubscriptionAuth", () => {
 			anthropicSubscriptionWarningShown: false,
 			settingsManager: createSettingsManager(),
 			session: {
+				authStorage: {
+					get: vi.fn().mockReturnValue({ type: "oauth" }),
+				},
 				modelRegistry: {
-					authStorage: {
-						get: vi.fn().mockReturnValue({ type: "oauth" }),
-					},
 					getApiKeyForProvider: vi.fn().mockResolvedValue(undefined),
 				},
 			},
@@ -62,10 +62,10 @@ describe("InteractiveMode.maybeWarnAboutAnthropicSubscriptionAuth", () => {
 			anthropicSubscriptionWarningShown: false,
 			settingsManager: createSettingsManager(),
 			session: {
+				authStorage: {
+					get: vi.fn(),
+				},
 				modelRegistry: {
-					authStorage: {
-						get: vi.fn(),
-					},
 					getApiKeyForProvider: vi.fn(),
 				},
 			},
@@ -85,10 +85,10 @@ describe("InteractiveMode.maybeWarnAboutAnthropicSubscriptionAuth", () => {
 			anthropicSubscriptionWarningShown: false,
 			settingsManager: createSettingsManager({ anthropicExtraUsage: false }),
 			session: {
+				authStorage: {
+					get: vi.fn(),
+				},
 				modelRegistry: {
-					authStorage: {
-						get: vi.fn(),
-					},
 					getApiKeyForProvider: vi.fn(),
 				},
 			},
@@ -100,7 +100,7 @@ describe("InteractiveMode.maybeWarnAboutAnthropicSubscriptionAuth", () => {
 		});
 
 		expect(fakeThis.showWarning).not.toHaveBeenCalled();
-		expect(fakeThis.session.modelRegistry.authStorage.get).not.toHaveBeenCalled();
+		expect(fakeThis.session.authStorage.get).not.toHaveBeenCalled();
 		expect(fakeThis.session.modelRegistry.getApiKeyForProvider).not.toHaveBeenCalled();
 	});
 });
