@@ -373,9 +373,26 @@ Required behavior:
 - The trusted managed-teammate system prompt identifies the Todo as the authoritative team board, instructs the teammate to read it when coordination context is needed, and requires all proposed changes to be messaged to Main.
 - This decision does not change finite-worker progress injection or grant finite workers direct Main Todo access.
 
+### Decision 24: Transient Finite Event Receipt Retention
+
+**Accepted.** A finite Event's terminal result is durably recorded in the Main Session transcript through its exactly-once external activation, while the Event controller keeps only a bounded current-runtime index for status and TUI convenience. A finite `eventId` does not become a durable cross-restart resource identity.
+
+Required behavior:
+
+- All non-terminal Events and every terminal Event whose external-activation delivery is still pending remain retained and are never removed by receipt pruning.
+- After terminal delivery settles, the controller retains the most recent `maxRetainedTerminalEvents` receipts, ordered by terminal time, and evicts the oldest eligible receipts when the count exceeds the effective limit.
+- The baseline default is `maxRetainedTerminalEvents: 200`. A Host policy may configure another positive bounded value, but status/configuration output must disclose the effective value and its source.
+- Retention is count-based. It has no time TTL, cleanup timer, model-visible retention parameter, or expiry wakeup.
+- The durable historical fact is the terminal envelope already persisted in the Main Session transcript. The controller does not create a second receipt database or rebuild its terminal receipt index from transcript history after Main-runtime restart.
+- A targeted lookup after controller disposal, restart, or receipt eviction reports that the `eventId` is unknown or no longer retained. It does not silently register, resume, or reconstruct the Event.
+- `status` without a target and the TUI Event overlay expose active Events plus the bounded retained terminal set. Active entries sort ahead of terminal history; terminal entries use stable timestamps/status and do not sustain animation or periodic redraw.
+- Failure-warning acknowledgement is independent of receipt retention. Acknowledging a warning neither deletes the persisted terminal result nor changes Event settlement.
+- The public finite-Event action set gains no `forget`, `delete`, or retention-control action.
+- Raw process-log and temporary-artifact cleanup is a separate generic Resource policy; log presence is not the durable receipt guarantee.
+
 ## Current Candidate Design
 
-**Status: Discussion only - not accepted beyond Decisions 1, 4-6, 13-23.**
+**Status: Discussion only - not accepted beyond Decisions 1, 4-6, 13-24.**
 
 The current candidate has three public Tool products and no parallel Capability products:
 
@@ -397,11 +414,10 @@ The runtime keeps finite Event receipts separate from persistent Session IDs. Ba
 
 Current open decisions:
 
-1. The retention period and TUI presentation of transient finite Event receipts after terminal settlement.
-2. How stopped teammate Sessions are indexed, rediscovered, authorized, and resumed after the Main runtime itself restarts.
-3. The stable response, validation-error, acknowledgement, worktree-receipt, and terminal-event JSON contracts for the three stateful Tools.
-4. The exact host-adapter boundary for stateful Tool construction, lifecycle hooks, turn-boundary Mailbox injection, read-only Main Todo projection, and disposal.
-5. The final atomic `send_message` public schema after removing managed-assignment metadata.
+1. How stopped teammate Sessions are indexed, rediscovered, authorized, and resumed after the Main runtime itself restarts.
+2. The stable response, validation-error, acknowledgement, worktree-receipt, and terminal-event JSON contracts for the three stateful Tools.
+3. The exact host-adapter boundary for stateful Tool construction, lifecycle hooks, turn-boundary Mailbox injection, read-only Main Todo projection, and disposal.
+4. The final atomic `send_message` public schema after removing managed-assignment metadata.
 
 ## Superseded Unified-Protocol Candidate
 
