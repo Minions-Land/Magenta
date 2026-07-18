@@ -79,10 +79,7 @@ describe("builtin providers", () => {
 		});
 		configured.setProvider(cloudflareWorkersAIProvider());
 		const result = await configured.getAuth(model);
-		expect(result?.auth).toEqual({
-			apiKey: "cf-key",
-			baseUrl: "https://api.cloudflare.com/client/v4/accounts/account-id/ai/v1",
-		});
+		expect(result?.auth).toEqual({ apiKey: "cf-key" });
 		expect(result?.env).toEqual({ CLOUDFLARE_ACCOUNT_ID: "account-id" });
 	});
 
@@ -109,7 +106,6 @@ describe("builtin providers", () => {
 				Authorization: null,
 				"x-api-key": null,
 			},
-			baseUrl: "https://gateway.ai.cloudflare.com/v1/account-id/gateway-id/anthropic",
 		});
 		expect(result?.env).toEqual({
 			CLOUDFLARE_ACCOUNT_ID: "account-id",
