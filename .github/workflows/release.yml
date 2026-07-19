@@ -248,17 +248,26 @@ jobs:
           fi
       
       - name: Finalize GitHub Release
-        uses: softprops/action-gh-release@v3
-        with:
-          repository: Minions-Land/Magenta-CLI
-          token: ${{ secrets.MAGENTA_CLI_RELEASE_TOKEN }}
-          tag_name: ${{ env.RELEASE_TAG }}
-          target_commitish: main
-          files: |
-            scripts/install.ps1
-          body_path: /tmp/release_notes.md
-          draft: false
-          prerelease: false
+        run: |
+          # Get the draft release ID
+          RELEASE_ID=$(gh api /repos/Minions-Land/Magenta-CLI/releases --jq '.[] | select(.tag_name=="${{ env.RELEASE_TAG }}" and .draft==true) | .id')
+          if [ -z "$RELEASE_ID" ]; then
+            echo "Error: Draft release ${{ env.RELEASE_TAG }} not found"
+            exit 1
+          fi
+          
+          # Upload install.ps1 to the draft
+          gh release upload ${{ env.RELEASE_TAG }} --repo Minions-Land/Magenta-CLI scripts/install.ps1 --clobber
+          
+          # Update release notes and finalize (draft=false)
+          gh api /repos/Minions-Land/Magenta-CLI/releases/$RELEASE_ID -X PATCH \
+            -f body="$(cat /tmp/release_notes.md)" \
+            -F draft=false \
+            -F prerelease=false
+          
+          echo "✅ Release ${{ env.RELEASE_TAG }} published"
+        env:
+          GH_TOKEN: ${{ secrets.MAGENTA_CLI_RELEASE_TOKEN }}
       
       - name: Release complete
         if: success()
