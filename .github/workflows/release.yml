@@ -82,25 +82,23 @@ jobs:
           esac
           test -f _magenta/process-tools/target/release/magenta-process-tools
 
-      - name: Upload release assets for verification
-        uses: actions/upload-artifact@v7
+      - name: Upload to draft release for verification
+        uses: softprops/action-gh-release@v3
         with:
-          name: magenta-release-assets
-          path: |
+          repository: Minions-Land/Magenta-CLI
+          token: ${{ secrets.MAGENTA_CLI_RELEASE_TOKEN }}
+          tag_name: ${{ env.RELEASE_TAG }}
+          target_commitish: main
+          files: |
             pi/coding-agent/dist/release/magenta-macos-arm64
             pi/coding-agent/dist/release/magenta-macos-x64
             pi/coding-agent/dist/release/magenta-linux-x64
             pi/coding-agent/dist/release/magenta-windows-x64.exe
             pi/coding-agent/dist/release/magenta-resources-universal.tar.gz
             pi/coding-agent/dist/release/SHA256SUMS
-          if-no-files-found: error
-          # Intermediate CI hand-off only (build -> smoke -> publish). The
-          # authoritative artifacts live in the Magenta-CLI GitHub Release, so
-          # keep this the shortest time GitHub allows to avoid exhausting the
-          # Actions storage quota (the ~232MB bundle otherwise accumulates per
-          # release and eventually fails uploads with a quota error).
-          retention-days: 1
-          compression-level: 9
+          draft: true
+          prerelease: false
+          body: "Pending verification..."
 
   smoke-windows:
     name: Smoke test Windows release
@@ -129,11 +127,11 @@ jobs:
             throw "scripts/install.ps1 failed PowerShell syntax validation"
           }
 
-      - name: Download release assets
-        uses: actions/download-artifact@v8
-        with:
-          name: magenta-release-assets
-          path: release
+      - name: Download release assets from draft
+        run: |
+          gh release download ${{ github.ref_name }} --repo Minions-Land/Magenta-CLI --dir release --pattern '*'
+        env:
+          GH_TOKEN: ${{ secrets.MAGENTA_CLI_RELEASE_TOKEN }}
 
       - name: Install resources and start Magenta
         shell: powershell
@@ -228,11 +226,11 @@ jobs:
         with:
           ref: refs/tags/${{ env.RELEASE_TAG }}
 
-      - name: Download verified release assets
-        uses: actions/download-artifact@v8
-        with:
-          name: magenta-release-assets
-          path: release
+      - name: Download verified release assets from draft
+        run: |
+          gh release download ${{ env.RELEASE_TAG }} --repo Minions-Land/Magenta-CLI --dir release --pattern '*'
+        env:
+          GH_TOKEN: ${{ secrets.MAGENTA_CLI_RELEASE_TOKEN }}
 
       - name: Extract release notes
         id: release_notes
@@ -249,7 +247,7 @@ jobs:
             echo "Release $VERSION" > /tmp/release_notes.md
           fi
       
-      - name: Create GitHub Release
+      - name: Finalize GitHub Release
         uses: softprops/action-gh-release@v3
         with:
           repository: Minions-Land/Magenta-CLI
@@ -257,12 +255,6 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           target_commitish: main
           files: |
-            release/magenta-macos-arm64
-            release/magenta-macos-x64
-            release/magenta-linux-x64
-            release/magenta-windows-x64.exe
-            release/magenta-resources-universal.tar.gz
-            release/SHA256SUMS
             scripts/install.ps1
           body_path: /tmp/release_notes.md
           draft: false
@@ -278,13 +270,5 @@ jobs:
           echo "🔗 Download URL:"
           echo "   https://github.com/Minions-Land/Magenta-CLI/releases/tag/${{ steps.release_notes.outputs.version }}"
 
-      # The verified assets now live in the Magenta-CLI GitHub Release, so the
-      # ~232MB intermediate CI artifact is no longer needed. Delete it eagerly
-      # to keep the Actions storage quota clear; retention-days=1 is the backstop
-      # if this step is skipped because an earlier step failed.
-      - name: Prune verification artifact
-        if: always()
-        uses: geekyeggo/delete-artifact@v5
-        with:
-          name: magenta-release-assets
-          failOnError: false
+      # Draft release is now finalized; no cleanup needed since releases
+      # don't consume Actions artifact storage quota.
