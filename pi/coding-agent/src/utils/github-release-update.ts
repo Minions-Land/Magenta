@@ -43,6 +43,8 @@ const GITHUB_TOKEN = process.env.MAGENTA_GITHUB_TOKEN || "";
 const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 30_000;
 const DOWNLOAD_TIMEOUT_MS = 300_000;
+const DOWNLOAD_INACTIVITY_TIMEOUT_MS = 120_000; // 2 minutes of no data = stalled
+const DOWNLOAD_MAX_RETRIES = 3;
 const BINARY_VERIFICATION_TIMEOUT_MS = 30_000;
 
 interface GitHubRelease {
@@ -216,16 +218,31 @@ function buildGitHubHeaders(accept: string): Record<string, string> {
 	return headers;
 }
 
-async function downloadReleaseAsset(
+/**
+ * Download a release asset to `destination` with an inactivity-based timeout
+ * and bounded retries. Exported for testing.
+ * @internal
+ */
+export async function downloadReleaseAsset(
 	asset: ReleaseAssetPlan[keyof ReleaseAssetPlan],
 	destination: string,
-	options: { useMirror?: boolean } = {},
+	options: { useMirror?: boolean; attempt?: number } = {},
 ): Promise<void> {
+	const attempt = options.attempt ?? 1;
 	const controller = new AbortController();
-	const timeout = setTimeout(() => controller.abort(), DOWNLOAD_TIMEOUT_MS);
+	let inactivityTimer: NodeJS.Timeout | undefined;
+
+	const resetInactivityTimeout = () => {
+		if (inactivityTimer) clearTimeout(inactivityTimer);
+		inactivityTimer = setTimeout(() => {
+			controller.abort();
+		}, DOWNLOAD_INACTIVITY_TIMEOUT_MS);
+	};
 
 	try {
 		const downloadUrl = options.useMirror === false ? asset.downloadUrl : resolveGitHubUrl(asset.downloadUrl);
+		resetInactivityTimeout();
+
 		const response = await fetch(downloadUrl, {
 			headers: buildGitHubHeaders("application/octet-stream"),
 			signal: controller.signal,
@@ -236,9 +253,42 @@ async function downloadReleaseAsset(
 		if (!response.body) throw new Error(`Download returned no body for ${asset.name}`);
 
 		const webStream = response.body as unknown as Parameters<typeof Readable.fromWeb>[0];
-		await pipeline(Readable.fromWeb(webStream), createWriteStream(destination, { flags: "wx" }));
+		const nodeStream = Readable.fromWeb(webStream);
+		
+		// Reset inactivity timer on each chunk
+		nodeStream.on("data", () => resetInactivityTimeout());
+
+		await pipeline(nodeStream, createWriteStream(destination, { flags: "wx" }));
+	} catch (error) {
+		if (inactivityTimer) clearTimeout(inactivityTimer);
+		
+		// Retry on abort/timeout/network errors, but not on permanent failures
+		const isRetryable = 
+			error instanceof Error && 
+			(error.name === "AbortError" || 
+			 error.message.includes("aborted") ||
+			 error.message.includes("timeout") ||
+			 error.message.includes("ECONNRESET") ||
+			 error.message.includes("ETIMEDOUT"));
+		
+		if (isRetryable && attempt < DOWNLOAD_MAX_RETRIES) {
+			console.warn(`⚠️  Download interrupted for ${asset.name} (attempt ${attempt}/${DOWNLOAD_MAX_RETRIES}), retrying...`);
+			// Remove any partial file so the next attempt's exclusive-create flag succeeds.
+			await rm(destination, { force: true }).catch(() => undefined);
+			await new Promise(resolve => setTimeout(resolve, 2000 * attempt)); // backoff
+			return downloadReleaseAsset(asset, destination, { ...options, attempt: attempt + 1 });
+		}
+		
+		// Provide clearer error message
+		if (error instanceof Error && (error.name === "AbortError" || error.message.includes("aborted"))) {
+			throw new Error(
+				`Download of ${asset.name} stalled (no data for ${DOWNLOAD_INACTIVITY_TIMEOUT_MS / 1000}s after ${attempt} attempts). ` +
+				`Check your network connection or try setting MAGENTA_GITHUB_MIRROR to use a download mirror.`
+			);
+		}
+		throw error;
 	} finally {
-		clearTimeout(timeout);
+		if (inactivityTimer) clearTimeout(inactivityTimer);
 	}
 }
 

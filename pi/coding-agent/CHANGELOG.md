@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+- `magenta update self` (and the deprecated `magenta --update`) no longer aborts mid-download on slow or unstable connections: release-asset downloads now use a 2-minute inactivity timeout that resets on each received chunk instead of a fixed 5-minute overall deadline, retry up to three times with backoff on transient network/abort errors, and surface a clear stall message that points to `MAGENTA_GITHUB_MIRROR` instead of the opaque "The operation was aborted."
+
 ## [0.0.24] - 2026-07-18
 
 ### Changed

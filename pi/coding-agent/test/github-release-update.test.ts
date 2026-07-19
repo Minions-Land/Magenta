@@ -9,6 +9,7 @@ import { _clearMirrorCache } from "../src/utils/github-mirror.ts";
 import {
 	checkForUpdate,
 	consumePreviousWindowsUpdateError,
+	downloadReleaseAsset,
 	ensureCurrentReleaseResources,
 	shouldSkipConcurrentUpdateTransaction,
 } from "../src/utils/github-release-update.ts";
@@ -641,5 +642,58 @@ describe("checkForUpdate error surfacing", () => {
 
 		expect(result.updateAvailable).toBe(false);
 		expect(result.error).toContain("404 or empty response");
+	});
+});
+
+describe("downloadReleaseAsset resilience", () => {
+	const makeAsset = (name: string) => ({
+		name,
+		downloadUrl: `https://github.com/Minions-Land/Magenta-CLI/releases/download/v999.0.0/${name}`,
+		sha256: "b".repeat(64),
+	});
+
+	it("retries a transient abort and then succeeds", async () => {
+		const directory = await makeTemporaryDirectory();
+		const destination = join(directory, "asset.bin");
+		let calls = 0;
+		const fetchMock = vi.fn(async () => {
+			calls += 1;
+			if (calls === 1) {
+				const error = new Error("The operation was aborted.");
+				error.name = "AbortError";
+				throw error;
+			}
+			return new Response("payload-bytes", { status: 200 });
+		});
+		vi.stubGlobal("fetch", fetchMock);
+
+		await downloadReleaseAsset(makeAsset("magenta-macos-arm64"), destination);
+
+		expect(calls).toBe(2);
+		expect(await readFile(destination, "utf8")).toBe("payload-bytes");
+	});
+
+	it("surfaces a clear stall message after exhausting retries", async () => {
+		const directory = await makeTemporaryDirectory();
+		const destination = join(directory, "asset.bin");
+		const fetchMock = vi.fn(async () => {
+			const error = new Error("The operation was aborted.");
+			error.name = "AbortError";
+			throw error;
+		});
+		vi.stubGlobal("fetch", fetchMock);
+
+		await expect(downloadReleaseAsset(makeAsset("magenta-linux-x64"), destination)).rejects.toThrow(/stalled/);
+		expect(fetchMock).toHaveBeenCalledTimes(3);
+	});
+
+	it("does not retry a permanent HTTP failure", async () => {
+		const directory = await makeTemporaryDirectory();
+		const destination = join(directory, "asset.bin");
+		const fetchMock = vi.fn(async () => new Response("gone", { status: 404, statusText: "Not Found" }));
+		vi.stubGlobal("fetch", fetchMock);
+
+		await expect(downloadReleaseAsset(makeAsset("magenta-linux-x64"), destination)).rejects.toThrow(/404/);
+		expect(fetchMock).toHaveBeenCalledTimes(1);
 	});
 });
