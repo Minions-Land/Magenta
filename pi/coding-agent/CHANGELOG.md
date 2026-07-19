@@ -6,7 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.0.25] - 2026-07-19
+
 ### Fixed
+- Tool descriptions now match system prompt: `sub_agent` clarifies "Magenta worker", `send_message` includes delivery semantics, and `multiagent` parameter descriptions improved for model clarity
+- OpenRouter pricing updated for Claude 3.7 Sonnet
 - `magenta update self` (and the deprecated `magenta --update`) no longer aborts mid-download on slow or unstable connections: release-asset downloads now use a 2-minute inactivity timeout that resets on each received chunk instead of a fixed 5-minute overall deadline, retry up to three times with backoff on transient network/abort errors, and surface a clear stall message that points to `MAGENTA_GITHUB_MIRROR` instead of the opaque "The operation was aborted."
 
 ## [0.0.24] - 2026-07-18
