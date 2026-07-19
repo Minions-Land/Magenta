@@ -1,4 +1,3 @@
-import type { Component } from "@earendil-works/pi-tui";
 import { Container } from "@earendil-works/pi-tui";
 import { getTextOutput as getRenderedTextOutput } from "../../../core/tools/render-utils.ts";
 import {
@@ -154,7 +153,9 @@ export class ToolExecutionGroupComponent extends Container {
 		const tiles = this.tiles();
 		if (tiles.length === 0) return [];
 		if (!this.expanded) {
-			if (tiles.length === 1) return this.singleComponent()?.render(width) ?? [];
+			// A single tool call is batch=1: it flows through the same activity gallery
+			// as multi-tool turns instead of a separate single-line path. This keeps one
+			// rendering code path (single = batch of one) and a consistent visual frame.
 			return ["", ...renderToolCallActivity(tiles, width, { maxRows: 8, hint: "Ctrl+o gallery" })];
 		}
 		const lines = ["", ...renderToolCallGallery(tiles, width, { maxHeight: 16 })];
@@ -162,9 +163,5 @@ export class ToolExecutionGroupComponent extends Container {
 			lines.push(...entry.component.render(width));
 		}
 		return lines;
-	}
-
-	private singleComponent(): Component | undefined {
-		return this.entries.values().next().value?.component;
 	}
 }

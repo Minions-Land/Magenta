@@ -63,12 +63,14 @@ describe("ToolExecutionGroupComponent", () => {
 		expect(expanded).toContain("result custom_b Error: failed b");
 	});
 
-	test("keeps single-tool rendering identical to the child component when collapsed", () => {
+	test("renders single tool as activity gallery (batch=1)", () => {
 		const group = new ToolExecutionGroupComponent({ showImages: true });
 		const child = component("custom_single", "single", { value: 3 });
 		group.addOrUpdateTool("single", "custom_single", { value: 3 }, child);
 
-		expect(stripAnsi(group.render(100).join("\n"))).toContain("call custom_single");
+		const rendered = stripAnsi(group.render(100).join("\n"));
+		expect(rendered).toContain("activity");
+		expect(rendered).toContain("tools ×1");
 	});
 
 	test("propagates child-driven invalidation through a cached chat prefix", () => {
@@ -91,6 +93,9 @@ describe("ToolExecutionGroupComponent", () => {
 		);
 		const renderSpy = vi.spyOn(child, "render");
 		group.addOrUpdateTool("async", "custom_async", { value: 1 }, child);
+		// Child components render only in the expanded gallery view; single-tool
+		// collapsed rendering flows through the activity tiles (batch=1).
+		group.setExpanded(true);
 		group.setRenderInvalidationListener(() => chat.invalidateChild(group));
 		chat.addChild(group);
 
@@ -110,6 +115,9 @@ describe("ToolExecutionGroupComponent", () => {
 		const child = component("custom_cached", "cached", { value: 1 });
 		const renderSpy = vi.spyOn(child, "render");
 		group.addOrUpdateTool("cached", "custom_cached", { value: 1 }, child);
+		// Expanded so the child component participates in rendering; the collapsed
+		// single-tool path renders activity tiles without invoking the child.
+		group.setExpanded(true);
 
 		const first = group.render(100);
 		expect(group.render(100)).toBe(first);
