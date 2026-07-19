@@ -129,7 +129,7 @@ jobs:
 
       - name: Download release assets from draft
         run: |
-          gh release download ${{ github.ref_name }} --repo Minions-Land/Magenta-CLI --dir release --pattern '*'
+          gh release download ${{ inputs.release_tag || github.ref_name }} --repo Minions-Land/Magenta-CLI --dir release --pattern '*'
         env:
           GH_TOKEN: ${{ secrets.MAGENTA_CLI_RELEASE_TOKEN }}
 
