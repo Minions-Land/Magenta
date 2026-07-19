@@ -1,7 +1,7 @@
 kind = "tool"
 product = "tool"
 name = "sub_agent"
-description = "Register, inspect, or cancel one finite Event backed by a sessionless worker or trusted Workflow."
+description = "Register, inspect, or cancel one finite Event backed by a sessionless Magenta worker or one trusted Workflow."
 source = "magenta"
 sources = ["magenta"]
 autoload = false

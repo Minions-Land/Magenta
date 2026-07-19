@@ -1,7 +1,7 @@
 kind = "tool"
 product = "tool"
 name = "send_message"
-description = "Send one durable urgent plain-text message to a known Session mailbox."
+description = "Send one durable urgent plain-text message to a known Session mailbox. Acceptance does not imply recipient consumption. This Tool creates no Agent, teammate Session, task ledger, or lifecycle authority."
 source = "magenta"
 sources = ["magenta"]
 autoload = false
