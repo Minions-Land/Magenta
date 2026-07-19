@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.0.26] - 2026-07-19
+
+### Changed
+- Single tool calls now render through the same activity gallery as multi-tool turns (batch=1), eliminating dual rendering paths and providing a consistent visual frame for all tool executions
+
+### Technical Notes
+- bg_shell returns already wake idle agents when delivery is not "nextTurn" (idlePolicy: "activate")
+- Multiple bg_shell returns within 50ms automatically batch into a single context injection via ExternalActivationCoordinator
+- Tool execution group component simplified: removed singleComponent() special case, unified rendering through renderToolCallActivity
+
 ## [0.0.25] - 2026-07-19
 
 ### Fixed
