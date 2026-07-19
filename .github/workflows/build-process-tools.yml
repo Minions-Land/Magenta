@@ -72,6 +72,10 @@ jobs:
           name: ${{ matrix.artifact }}
           path: HarnessComponentProtocol/_magenta/process-tools/artifacts/${{ matrix.artifact }}
           if-no-files-found: error
+          # Intermediate build stage hand-off to the collect job. The authoritative
+          # prebuilt binaries live in the source tree after collect commits them.
+          retention-days: 1
+          compression-level: 9
 
   collect:
     needs: build
@@ -96,3 +100,20 @@ jobs:
         with:
           name: all-process-tools-binaries
           path: HarnessComponentProtocol/_magenta/process-tools/prebuilt/
+          retention-days: 1
+          compression-level: 9
+
+      # The per-platform binaries are only an intermediate hand-off to this
+      # collect job; the merged all-process-tools-binaries bundle is what a
+      # maintainer downloads to commit. Prune the intermediates to keep the
+      # Actions storage quota clear; retention-days=1 is the backstop.
+      - name: Prune per-platform build artifacts
+        if: always()
+        uses: geekyeggo/delete-artifact@v5
+        with:
+          name: |
+            magenta-process-tools-macos-arm64
+            magenta-process-tools-macos-x64
+            magenta-process-tools-linux-x64
+            magenta-process-tools-windows-x64.exe
+          failOnError: false

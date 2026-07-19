@@ -94,6 +94,13 @@ jobs:
             pi/coding-agent/dist/release/magenta-resources-universal.tar.gz
             pi/coding-agent/dist/release/SHA256SUMS
           if-no-files-found: error
+          # Intermediate CI hand-off only (build -> smoke -> publish). The
+          # authoritative artifacts live in the Magenta-CLI GitHub Release, so
+          # keep this the shortest time GitHub allows to avoid exhausting the
+          # Actions storage quota (the ~232MB bundle otherwise accumulates per
+          # release and eventually fails uploads with a quota error).
+          retention-days: 1
+          compression-level: 9
 
   smoke-windows:
     name: Smoke test Windows release
@@ -270,3 +277,14 @@ jobs:
           echo ""
           echo "🔗 Download URL:"
           echo "   https://github.com/Minions-Land/Magenta-CLI/releases/tag/${{ steps.release_notes.outputs.version }}"
+
+      # The verified assets now live in the Magenta-CLI GitHub Release, so the
+      # ~232MB intermediate CI artifact is no longer needed. Delete it eagerly
+      # to keep the Actions storage quota clear; retention-days=1 is the backstop
+      # if this step is skipped because an earlier step failed.
+      - name: Prune verification artifact
+        if: always()
+        uses: geekyeggo/delete-artifact@v5
+        with:
+          name: magenta-release-assets
+          failOnError: false
