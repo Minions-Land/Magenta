@@ -4,7 +4,7 @@ All notable changes to Magenta CLI are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## [Unreleased]
+## [0.0.27] - 2026-07-20
 
 ### Added
 - Durable SSH peer federation now floods messages across relays with per-link acknowledgements and retries, deduplication, bounded hop and advertisement frames, scheduled retention maintenance, mixed-schema compatibility, and automatic reconnect
