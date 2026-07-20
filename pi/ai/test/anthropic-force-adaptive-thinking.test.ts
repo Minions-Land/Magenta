@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getModel, streamSimple } from "../src/compat.ts";
+import { getModel, getSupportedThinkingLevels, streamSimple } from "../src/compat.ts";
 import type { Context, Model, SimpleStreamOptions } from "../src/types.ts";
 
 interface AnthropicThinkingPayload {
@@ -80,6 +80,32 @@ describe("Anthropic forceAdaptiveThinking compat override", () => {
 
 		expect(payload.thinking).toEqual({ type: "adaptive", display: "summarized" });
 		expect(payload.output_config).toEqual({ effort: "medium" });
+	});
+
+	it.each(["low", "medium", "high", "xhigh", "max"] as const)(
+		"sends adaptive thinking with effort=%s for Claude Sonnet 5",
+		async (reasoning) => {
+			const model = getModel("anthropic", "claude-sonnet-5");
+			const payload = await capturePayload(model, { reasoning });
+
+			expect(getSupportedThinkingLevels(model)).toContain(reasoning);
+			expect(payload.thinking).toEqual({ type: "adaptive", display: "summarized" });
+			expect(payload.output_config).toEqual({ effort: reasoning });
+		},
+	);
+
+	it.each([
+		["low", 2048],
+		["medium", 8192],
+		["high", 16384],
+		["xhigh", 16384],
+	] as const)("maps Claude Haiku 4.5 reasoning=%s to budget_tokens=%i", async (reasoning, budgetTokens) => {
+		const model = getModel("anthropic", "claude-haiku-4-5");
+		const payload = await capturePayload(model, { reasoning });
+
+		expect(getSupportedThinkingLevels(model)).not.toContain("max");
+		expect(payload.thinking).toEqual({ type: "enabled", budget_tokens: budgetTokens, display: "summarized" });
+		expect(payload.output_config).toBeUndefined();
 	});
 
 	it("uses adaptive thinking with native xhigh effort for Claude Fable 5", async () => {

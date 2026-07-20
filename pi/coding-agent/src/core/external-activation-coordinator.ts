@@ -46,6 +46,13 @@ type DeliveryRecord = {
 	state: DeliveryState;
 };
 
+type FlushOptions = {
+	/** The compaction-barrier release phase may commit its own accumulated batch. */
+	bypassReleasingBarrier?: boolean;
+	/** The turn-barrier release phase may commit its own accumulated batch. */
+	bypassTurnBarrier?: boolean;
+};
+
 export type ExternalActivationCoordinatorDeps = {
 	/** Commit one coalesced batch. Single messages use this same path. */
 	injectBatch: (entries: ExternalActivationEntry[]) => Promise<void>;
@@ -67,6 +74,10 @@ export class ExternalActivationCoordinator {
 	private releasingBarrier = false;
 	private barrierSettled: Promise<void> | undefined;
 	private resolveBarrierSettled: (() => void) | undefined;
+	private turnBarrierDepth = 0;
+	private releasingTurnBarrier = false;
+	private turnBarrierSettled: Promise<void> | undefined;
+	private resolveTurnBarrierSettled: (() => void) | undefined;
 	private stopped = false;
 	private readonly deps: ExternalActivationCoordinatorDeps;
 	private readonly batchWindowMs: number;
@@ -179,6 +190,13 @@ export class ExternalActivationCoordinator {
 	async acquireDeliveryBarrier(): Promise<() => Promise<void>> {
 		if (this.stopped) return async () => {};
 		this.barrierDepth++;
+		// Compaction's deliveryBarrier supersedes the turn barrier. Zero its depth
+		// to prevent nested conflicts; the outermost deliveryBarrier release owns
+		// the combined accumulated batch. Agent-session disconnect/reconnect skips
+		// the agent_end releaseTurnBarrier() call, so this clearing is safe.
+		this.turnBarrierDepth = 0;
+		this.releasingTurnBarrier = false;
+		this.settleTurnBarrierSignal();
 		this.ensureBarrierSignal();
 		this.clearTimer();
 		await this.settleBehindBarrier();
@@ -195,6 +213,37 @@ export class ExternalActivationCoordinator {
 	async waitForDeliveryReady(): Promise<void> {
 		while (this.isDeliveryBlocked()) {
 			const settled = this.barrierSettled;
+			if (!settled) return;
+			await settled;
+		}
+	}
+
+	/**
+	 * Hold followUp and nextTurn deliveries for the duration of an agent run while
+	 * letting steer pass through as a mid-turn interrupt. Entries accumulate in
+	 * `pending`; the outermost release flushes the whole coalesced batch at the
+	 * run's idle boundary. Compaction's deliveryBarrier supersedes this entirely —
+	 * acquireDeliveryBarrier zeros the turn barrier so the two never nest.
+	 *
+	 * The returned release is idempotent.
+	 */
+	async acquireTurnBarrier(): Promise<() => Promise<void>> {
+		if (this.stopped) return async () => {};
+		this.turnBarrierDepth++;
+		this.ensureTurnBarrierSignal();
+
+		let released = false;
+		return async () => {
+			if (released) return;
+			released = true;
+			await this.releaseTurnBarrier();
+		};
+	}
+
+	/** Wait until the turn barrier has released and its coalesced batch committed. */
+	async waitForTurnBarrierReady(): Promise<void> {
+		while (this.turnBarrierDepth > 0 || this.releasingTurnBarrier) {
+			const settled = this.turnBarrierSettled;
 			if (!settled) return;
 			await settled;
 		}
@@ -242,6 +291,29 @@ export class ExternalActivationCoordinator {
 				continue;
 			}
 
+			// A turn barrier intentionally holds followUp/nextTurn records. Once any
+			// steer work is drained, wait on the barrier signal instead of spinning on
+			// resolved promises and starving the timer that will release the turn.
+			if ((this.turnBarrierDepth > 0 || this.releasingTurnBarrier) && !this.hasPendingFlushable()) {
+				const remaining = deadline === undefined ? undefined : Math.max(0, deadline - Date.now());
+				if (remaining === 0) return false;
+				const settled = this.turnBarrierSettled ?? Promise.resolve();
+				if (remaining === undefined) {
+					await settled;
+					continue;
+				}
+				let turnTimer: NodeJS.Timeout | undefined;
+				const released = await Promise.race([
+					settled.then(() => true),
+					new Promise<boolean>((resolve) => {
+						turnTimer = setTimeout(() => resolve(false), remaining);
+					}),
+				]);
+				if (turnTimer) clearTimeout(turnTimer);
+				if (!released) return false;
+				continue;
+			}
+
 			const flush = this.flushReady();
 			if (deadline === undefined) {
 				await flush;
@@ -265,6 +337,8 @@ export class ExternalActivationCoordinator {
 		this.stopped = true;
 		this.barrierDepth = 0;
 		this.releasingBarrier = false;
+		this.turnBarrierDepth = 0;
+		this.releasingTurnBarrier = false;
 		this.clearTimer();
 		for (const record of [...this.active.values()]) {
 			if (record.state === "committed") continue;
@@ -282,6 +356,7 @@ export class ExternalActivationCoordinator {
 			this.drop(record, new Error(`External activation ${record.entry.key} did not settle before shutdown`));
 		}
 		this.settleBarrierSignal();
+		this.settleTurnBarrierSignal();
 	}
 
 	private cloneEntry(entry: ExternalActivationEntry): ExternalActivationEntry {
@@ -298,7 +373,10 @@ export class ExternalActivationCoordinator {
 	}
 
 	private armTimer(): void {
-		if (this.timer || this.isDeliveryBlocked()) return;
+		// Only arm the debounce window if there's something currently deliverable.
+		// During a turn barrier, steer records still flush while followUp/nextTurn
+		// stay coalesced; the barrier release owns the latter's drain cycle.
+		if (this.timer || !this.hasPendingFlushable()) return;
 		this.timer = setTimeout(() => {
 			this.timer = undefined;
 			void this.flush();
@@ -311,16 +389,25 @@ export class ExternalActivationCoordinator {
 		this.timer = undefined;
 	}
 
-	private async flush(options?: { bypassReleasingBarrier?: boolean }): Promise<void> {
+	private async flush(options?: FlushOptions): Promise<void> {
 		if (!this.canFlush(options)) return;
 		if (this.pending.size === 0) {
 			await this.inFlight;
 			return;
 		}
 
-		const drained = [...this.pending.values()];
-		this.pending.clear();
-		for (const record of drained) record.state = "injecting";
+		// Only drain entries whose delivery lane is currently unblocked. During a
+		// turn barrier, steer passes through as a mid-turn interrupt while followUp
+		// and nextTurn stay coalesced in `pending` until the run's idle boundary.
+		const drained = [...this.pending.values()].filter((record) => this.canFlushEntry(record.entry, options));
+		if (drained.length === 0) {
+			await this.inFlight;
+			return;
+		}
+		for (const record of drained) {
+			this.pending.delete(record.entry.key);
+			record.state = "injecting";
+		}
 		const prior = this.inFlight ?? Promise.resolve();
 		const operation = prior.then(async () => {
 			const deliverable = drained.filter((record) => this.active.get(record.entry.key) === record);
@@ -355,9 +442,30 @@ export class ExternalActivationCoordinator {
 		return this.barrierDepth > 0 || this.releasingBarrier;
 	}
 
-	private canFlush(options?: { bypassReleasingBarrier?: boolean }): boolean {
+	private canFlush(options?: FlushOptions): boolean {
 		if (this.barrierDepth > 0) return false;
 		return !this.releasingBarrier || options?.bypassReleasingBarrier === true;
+	}
+
+	/**
+	 * Per-entry delivery gate. The compaction barrier blocks every lane; the turn
+	 * barrier blocks only followUp/nextTurn while steer stays deliverable. A
+	 * release phase bypasses its own barrier so the accumulated batch can commit.
+	 */
+	private canFlushEntry(entry: ExternalActivationEntry, options?: FlushOptions): boolean {
+		if (this.barrierDepth > 0) return false;
+		if (this.releasingBarrier && options?.bypassReleasingBarrier !== true) return false;
+		if (entry.delivery === "steer") return true;
+		if (this.turnBarrierDepth > 0) return false;
+		if (this.releasingTurnBarrier && options?.bypassTurnBarrier !== true) return false;
+		return true;
+	}
+
+	private hasPendingFlushable(): boolean {
+		for (const record of this.pending.values()) {
+			if (this.canFlushEntry(record.entry)) return true;
+		}
+		return false;
 	}
 
 	private ensureBarrierSignal(): void {
@@ -372,6 +480,52 @@ export class ExternalActivationCoordinator {
 		this.resolveBarrierSettled = undefined;
 		this.barrierSettled = undefined;
 		resolve?.();
+	}
+
+	private ensureTurnBarrierSignal(): void {
+		if (this.turnBarrierSettled) return;
+		this.turnBarrierSettled = new Promise<void>((resolve) => {
+			this.resolveTurnBarrierSettled = resolve;
+		});
+	}
+
+	private settleTurnBarrierSignal(): void {
+		const resolve = this.resolveTurnBarrierSettled;
+		this.resolveTurnBarrierSettled = undefined;
+		this.turnBarrierSettled = undefined;
+		resolve?.();
+	}
+
+	private async releaseTurnBarrier(): Promise<void> {
+		if (this.turnBarrierDepth === 0) return;
+		this.turnBarrierDepth--;
+		if (this.turnBarrierDepth > 0) return;
+		if (this.stopped) {
+			this.settleTurnBarrierSignal();
+			return;
+		}
+		// A compaction barrier now supersedes this turn. Its release owns the
+		// accumulated batch; leave records in `pending` and hand off the signal.
+		if (this.barrierDepth > 0 || this.releasingBarrier) {
+			this.settleTurnBarrierSignal();
+			return;
+		}
+
+		this.releasingTurnBarrier = true;
+		try {
+			// Admit same-tick completion callbacks into the release batch, then keep
+			// draining if an asynchronous injection raced with another registration.
+			await Promise.resolve();
+			while (this.turnBarrierDepth === 0 && this.barrierDepth === 0 && this.pending.size > 0) {
+				await this.flush({ bypassTurnBarrier: true });
+			}
+		} finally {
+			this.releasingTurnBarrier = false;
+			if (this.turnBarrierDepth === 0) {
+				this.settleTurnBarrierSignal();
+				if (this.pending.size > 0 && !this.isDeliveryBlocked()) this.armTimer();
+			}
+		}
 	}
 
 	private deferRecords(records: readonly DeliveryRecord[]): void {

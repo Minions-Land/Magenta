@@ -18,6 +18,7 @@ import {
 	applyUnixUpdateTransaction,
 	buildWindowsUpdateScript,
 	currentReleaseResourcesAreValid,
+	getInstalledRequiredResourcePaths,
 	inspectReleaseResourceArchive,
 	NODE_UPDATE_TRANSACTION_FILE_SYSTEM,
 	parseReleaseChecksums,
@@ -25,6 +26,7 @@ import {
 	RELEASE_CHECKSUMS_ASSET_NAME,
 	RELEASE_RESOURCE_MARKER_NAME,
 	RELEASE_RESOURCES_ASSET_NAME,
+	REQUIRED_RESOURCE_PATHS,
 	RESOURCE_DIRECTORY_NAMES,
 	RESOURCE_FILE_NAMES,
 	type ReleaseArchiveEntry,
@@ -54,10 +56,7 @@ function makeValidArchiveEntries(): ReleaseArchiveEntry[] {
 		...RESOURCE_DIRECTORY_NAMES.map((name) => ({ path: `${name}/`, type: "directory" as const })),
 		...RESOURCE_FILE_NAMES.map((name) => ({ path: name, type: "file" as const })),
 		{ path: RELEASE_RESOURCE_MARKER_NAME, type: "file" },
-		{ path: "theme/dark.json", type: "file" },
-		{ path: "tools/read/read.toml", type: "file" },
-		{ path: "skills/paper-analysis/pi/SKILL.md", type: "file" },
-		{ path: "photon_rs_bg.wasm", type: "file" },
+		...REQUIRED_RESOURCE_PATHS.map((path) => ({ path, type: "file" as const })),
 	];
 }
 
@@ -69,6 +68,9 @@ async function makeValidResourceTree(root: string, version = "0.0.12"): Promise<
 		await writeFile(join(root, fileName), `${fileName}\n`, "utf8");
 	}
 	await writeFile(join(root, RELEASE_RESOURCE_MARKER_NAME), `${JSON.stringify({ version })}\n`, "utf8");
+	for (const requiredPath of REQUIRED_RESOURCE_PATHS) {
+		await writeText(join(root, ...requiredPath.split("/")), `${requiredPath}\n`);
+	}
 	await writeText(join(root, "theme", "dark.json"), "{}\n");
 	await writeText(join(root, "tools", "read", "read.toml"), 'name = "read"\n');
 	await writeText(join(root, "skills", "paper-analysis", "pi", "SKILL.md"), "# Skill\n");
@@ -233,10 +235,29 @@ describe("release resource archive validation", () => {
 		expect(() => validateReleaseArchiveEntries([...makeValidArchiveEntries(), maliciousEntry])).toThrow();
 	});
 
+	it("rejects a universal archive missing a released clipboard binding", () => {
+		const missingPath = "runtime/node_modules/@mariozechner/clipboard-win32-x64-msvc/clipboard.win32-x64-msvc.node";
+		expect(() =>
+			validateReleaseArchiveEntries(makeValidArchiveEntries().filter((entry) => entry.path !== missingPath)),
+		).toThrow(/missing required file/i);
+	});
+
 	it("rejects case-insensitive duplicate paths", () => {
 		expect(() =>
 			validateReleaseArchiveEntries([...makeValidArchiveEntries(), { path: "theme/DARK.json", type: "file" }]),
 		).toThrow(/duplicate path/i);
+	});
+
+	it("maps installed resource validation to the current platform binding", () => {
+		expect(getInstalledRequiredResourcePaths("darwin", "arm64")).toContain(
+			"runtime/node_modules/@mariozechner/clipboard-darwin-universal/clipboard.darwin-universal.node",
+		);
+		expect(getInstalledRequiredResourcePaths("linux", "x64")).toContain(
+			"runtime/node_modules/@mariozechner/clipboard-linux-x64-gnu/clipboard.linux-x64-gnu.node",
+		);
+		expect(getInstalledRequiredResourcePaths("win32", "x64")).toContain(
+			"runtime/node_modules/@mariozechner/clipboard-win32-x64-msvc/clipboard.win32-x64-msvc.node",
+		);
 	});
 
 	it("parses a real gzip tar and verifies extracted marker files", async () => {
@@ -339,6 +360,15 @@ describe("startup resource bootstrap", () => {
 		await mkdir(join(installDirectory, "policy"));
 		await rm(join(installDirectory, "photon_rs_bg.wasm"));
 		expect(await currentReleaseResourcesAreValid(installDirectory, "0.0.12")).toBe(false);
+	});
+
+	it("rejects installed resources when the current platform clipboard binding is missing", async () => {
+		const root = await makeTemporaryDirectory();
+		await makeValidResourceTree(root, "0.0.12");
+		const nativeBinding = getInstalledRequiredResourcePaths().find((path) => path.endsWith(".node"));
+		expect(nativeBinding).toBeDefined();
+		await rm(join(root, ...(nativeBinding as string).split("/")));
+		expect(await currentReleaseResourcesAreValid(root, "0.0.12")).toBe(false);
 	});
 
 	it("rolls back a resource-only startup repair when verification fails", async () => {
@@ -519,6 +549,9 @@ describe("Windows update helper", () => {
 		expect(script).toContain("New-Item -ItemType Directory -Path $lockDirectory");
 		expect(script).toContain("Timed out waiting for another Magenta install/update transaction");
 		expect(script).toContain("$requiredResourceDirectories");
+		expect(script).toContain(
+			"runtime/node_modules/@mariozechner/clipboard-win32-x64-msvc/clipboard.win32-x64-msvc.node",
+		);
 		expect(script).toContain("Test-MagentaResourceDirectory");
 		expect(script).toContain("Test-MagentaResourceFile");
 		expect(script).toContain("ConvertFrom-Json");

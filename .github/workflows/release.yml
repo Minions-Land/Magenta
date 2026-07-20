@@ -40,6 +40,22 @@ jobs:
       - name: Install dependencies
         run: |
           npm install
+          CLIPBOARD_VERSION=$(node -p "require('./pi/coding-agent/package.json').optionalDependencies['@mariozechner/clipboard']")
+          CLIPBOARD_STAGE=$(mktemp -d)
+          trap 'rm -rf "$CLIPBOARD_STAGE"' EXIT
+          npm install --prefix "$CLIPBOARD_STAGE" --include=optional --omit=dev --no-save \
+            --package-lock=false --force --ignore-scripts \
+            @mariozechner/clipboard@"$CLIPBOARD_VERSION" \
+            @mariozechner/clipboard-darwin-universal@"$CLIPBOARD_VERSION" \
+            @mariozechner/clipboard-linux-x64-gnu@"$CLIPBOARD_VERSION" \
+            @mariozechner/clipboard-win32-x64-msvc@"$CLIPBOARD_VERSION"
+          mkdir -p node_modules/@mariozechner
+          for PACKAGE in clipboard clipboard-darwin-universal clipboard-linux-x64-gnu clipboard-win32-x64-msvc; do
+            rm -rf "node_modules/@mariozechner/$PACKAGE"
+            cp -R "$CLIPBOARD_STAGE/node_modules/@mariozechner/$PACKAGE" node_modules/@mariozechner/
+          done
+          rm -rf "$CLIPBOARD_STAGE"
+          trap - EXIT
       
       - name: Verify embedded binaries
         run: |
@@ -62,6 +78,13 @@ jobs:
             export-html docs examples package.json README.md \
             magenta-release.json \
             CHANGELOG.md *.wasm
+          node --input-type=module <<'NODE'
+          import { inspectReleaseResourceArchive } from "../utils/github-release-update-support.js";
+          await inspectReleaseResourceArchive("magenta-resources-universal.tar.gz");
+          NODE
+          bun build --compile ../../scripts/clipboard-runtime-probe.ts --outfile magenta-clipboard-runtime-probe
+          ./magenta-clipboard-runtime-probe
+          rm magenta-clipboard-runtime-probe
       
       - name: Calculate checksums
         run: |

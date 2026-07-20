@@ -18,11 +18,13 @@ export type PeerLinkAcceptResult = {
 export type PeerLinkStorage = {
 	getStoreId(): string;
 	listRegisteredSessionIds(): string[];
+	listAdvertisableSessions(excludePeerStoreId?: string): string[];
 	replacePeerRoutes(peerStoreId: string, sessionIds: string[]): void;
 	claimOutbound(peerStoreId: string, ownerId: string, includeUnresolved: boolean, limit: number): PeerLinkEnvelope[];
 	ackOutbound(messageIds: string[], ownerId: string): void;
 	requeueOutbound(messageIds: string[], ownerId: string, options?: { notFound?: boolean }): void;
 	acceptIncoming(message: PeerLinkEnvelope, ingressPeerStoreId: string): PeerLinkAcceptResult;
+	runMaintenance?(): void;
 };
 
 export type PeerLinkSessionOptions = {
@@ -34,6 +36,7 @@ export type PeerLinkSessionOptions = {
 	handshakeTimeoutMs?: number;
 	flushIntervalMs?: number;
 	sessionRefreshIntervalMs?: number;
+	maintenanceIntervalMs?: number;
 	batchSize?: number;
 	onLocalRecipient?: (sessionId: string) => void;
 	onState?: (state: "handshaking" | "ready" | "closed" | "failed", error?: string) => void;
@@ -42,6 +45,7 @@ export type PeerLinkSessionOptions = {
 const DEFAULT_HANDSHAKE_TIMEOUT_MS = 10_000;
 const DEFAULT_FLUSH_INTERVAL_MS = 250;
 const DEFAULT_SESSION_REFRESH_INTERVAL_MS = 1_000;
+const DEFAULT_MAINTENANCE_INTERVAL_MS = 60 * 60 * 1_000;
 const DEFAULT_BATCH_SIZE = 50;
 
 export class PeerLinkSession {
@@ -56,6 +60,7 @@ export class PeerLinkSession {
 	private handshakeTimer?: NodeJS.Timeout;
 	private flushTimer?: NodeJS.Timeout;
 	private sessionTimer?: NodeJS.Timeout;
+	private maintenanceTimer?: NodeJS.Timeout;
 	private processing = Promise.resolve();
 	private writing = Promise.resolve();
 	private inFlight = new Set<string>();
@@ -153,9 +158,26 @@ export class PeerLinkSession {
 	private readonly onOutputError = (error: Error) => this.fail(error);
 
 	private helloFrame(type: "hello" | "hello_ack"): PeerLinkFrame {
-		const sessions = this.options.storage.listRegisteredSessionIds().sort();
+		const sessions = this.fitSessionsToFrame(type, this.options.storage.listRegisteredSessionIds().sort());
 		this.lastAdvertisedSessions = JSON.stringify(sessions);
 		return { type, protocol: PEER_LINK_PROTOCOL_VERSION, storeId: this.localStoreId, sessions };
+	}
+
+	private fitSessionsToFrame(type: "hello" | "hello_ack" | "sessions", sessions: string[]): string[] {
+		const unique = [...new Set(sessions)];
+		const frameFor = (candidate: string[]): PeerLinkFrame =>
+			type === "sessions"
+				? { type, sessions: candidate }
+				: { type, protocol: PEER_LINK_PROTOCOL_VERSION, storeId: this.localStoreId, sessions: candidate };
+		let lower = 0;
+		let upper = unique.length;
+		while (lower < upper) {
+			const middle = Math.ceil((lower + upper) / 2);
+			const bytes = Buffer.byteLength(JSON.stringify(frameFor(unique.slice(0, middle))), "utf8");
+			if (bytes <= MAX_PEER_LINK_FRAME_BYTES) lower = middle;
+			else upper = middle - 1;
+		}
+		return unique.slice(0, lower);
 	}
 
 	private attachBoundedJsonlReader(stream: Readable): () => void {
@@ -252,23 +274,40 @@ export class PeerLinkSession {
 			() => void this.advertiseSessions().catch((error) => this.fail(error)),
 			this.options.sessionRefreshIntervalMs ?? DEFAULT_SESSION_REFRESH_INTERVAL_MS,
 		);
+		if (this.options.storage.runMaintenance) {
+			this.maintenanceTimer = setInterval(() => {
+				try {
+					this.options.storage.runMaintenance?.();
+				} catch (error) {
+					this.fail(error instanceof Error ? error : new Error(String(error)));
+				}
+			}, this.options.maintenanceIntervalMs ?? DEFAULT_MAINTENANCE_INTERVAL_MS);
+		}
 		await this.flush();
 	}
 
 	private replaceRemoteSessions(peerStoreId: string, sessionIds: string[]): void {
+		// A peer may advertise sessions reachable through it, which can transitively
+		// include our own local sessions (reflected back via a relay hub). Local
+		// sessions must always resolve locally, so filter them out of remote routes
+		// rather than treating the reflection as a spoofing attempt.
 		const localSessions = new Set(this.options.storage.listRegisteredSessionIds());
-		const collision = sessionIds.find((sessionId) => localSessions.has(sessionId));
-		if (collision) throw new Error(`peer attempted to advertise local session ${collision}`);
-		this.remoteSessions = new Set(sessionIds);
-		this.options.storage.replacePeerRoutes(peerStoreId, sessionIds);
+		const remoteSessionIds = sessionIds.filter((sessionId) => !localSessions.has(sessionId));
+		this.remoteSessions = new Set(remoteSessionIds);
+		this.options.storage.replacePeerRoutes(peerStoreId, remoteSessionIds);
 	}
 
 	private async handleMessage(message: PeerLinkEnvelope): Promise<void> {
 		const ingressStoreId = this.peerStoreId!;
 		const previousHop = message.visitedStoreIds.at(-1);
-		const invalidFirstHop = message.visitedStoreIds.length === 1 && message.originStoreId !== ingressStoreId;
-		const responderRelaySpoof = this.options.role === "responder" && message.originStoreId !== ingressStoreId;
-		const unownedOriginSender = message.originStoreId === ingressStoreId && !this.remoteSessions.has(message.sender);
+		const isFirstHop = message.visitedStoreIds.length === 1;
+		const invalidFirstHop = isFirstHop && message.originStoreId !== ingressStoreId;
+		// First-hop ownership: a leaf may only originate messages it owns. On later
+		// hops (gossip relay) origin != ingress is expected and must be allowed.
+		const responderRelaySpoof =
+			this.options.role === "responder" && isFirstHop && message.originStoreId !== ingressStoreId;
+		const unownedOriginSender =
+			isFirstHop && message.originStoreId === ingressStoreId && !this.remoteSessions.has(message.sender);
 		if (previousHop !== ingressStoreId || invalidFirstHop || responderRelaySpoof || unownedOriginSender) {
 			await this.writeFrame({
 				type: "ack",
@@ -293,8 +332,14 @@ export class PeerLinkSession {
 	}
 
 	private async advertiseSessions(): Promise<void> {
-		if (!this.isReady) return;
-		const sessions = this.options.storage.listRegisteredSessionIds().sort();
+		if (!this.isReady || !this.peerStoreId) return;
+		// Advertise local presence sessions plus sessions reachable through other
+		// peers, so a peer connected only to this relay can still route to them.
+		// Exclude routes owned by this peer's own store to prevent reflection loops.
+		const sessions = this.fitSessionsToFrame(
+			"sessions",
+			this.options.storage.listAdvertisableSessions(this.peerStoreId),
+		);
 		const snapshot = JSON.stringify(sessions);
 		if (snapshot === this.lastAdvertisedSessions) return;
 		this.lastAdvertisedSessions = snapshot;
@@ -355,9 +400,11 @@ export class PeerLinkSession {
 		if (this.handshakeTimer) clearTimeout(this.handshakeTimer);
 		if (this.flushTimer) clearInterval(this.flushTimer);
 		if (this.sessionTimer) clearInterval(this.sessionTimer);
+		if (this.maintenanceTimer) clearInterval(this.maintenanceTimer);
 		this.handshakeTimer = undefined;
 		this.flushTimer = undefined;
 		this.sessionTimer = undefined;
+		this.maintenanceTimer = undefined;
 		this.stopReading?.();
 		this.stopReading = undefined;
 		this.options.input.off("end", this.onInputEnd);

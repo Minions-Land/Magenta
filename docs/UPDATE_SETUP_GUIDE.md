@@ -14,9 +14,9 @@ A source tag matching `v*` starts the workflow. The workflow checks out that exa
 1. installs the pinned Node.js and Bun toolchains;
 2. verifies embedded process-tool binaries;
 3. builds four standalone executables;
-4. packages the universal runtime resources archive;
+4. packages the universal runtime resources archive, including native clipboard bindings for every released target;
 5. writes SHA-256 checksums for every executable and the archive;
-6. smoke-tests the macOS build;
+6. validates the resource archive and loads its packaged macOS clipboard binding before smoke-testing the macOS build;
 7. installs and tests the staged Windows build from Windows PowerShell, PowerShell 7, and Git Bash;
 8. rejects a checksum-valid resource archive that attempts to overwrite the executable;
 9. publishes the verified assets and installer to the public CLI Release.

@@ -1292,8 +1292,8 @@ export class SubAgentController {
 			: [...this.events.values()].sort((left, right) => {
 					const activeOrder = Number(isEventActive(right)) - Number(isEventActive(left));
 					if (activeOrder !== 0) return activeOrder;
-					const terminalOrder = (right.endedAt ?? right.startedAt) - (left.endedAt ?? left.startedAt);
-					return terminalOrder !== 0 ? terminalOrder : right.id.localeCompare(left.id);
+					const registrationOrder = right.queuedAt - left.queuedAt;
+					return registrationOrder !== 0 ? registrationOrder : right.id.localeCompare(left.id);
 				});
 		const summaries = selected.map((event) =>
 			params.eventId ? summarizeSubAgentForModel(event) : summarizeEvent(event, false),
@@ -1585,7 +1585,10 @@ export class SubAgentController {
 			(event) => !isEventActive(event) && event.waiters.length === 0 && !event.autoReturnPending,
 		);
 		if (finished.length <= this.maxRetainedFinishedEvents) return;
-		finished.sort((a, b) => (a.endedAt ?? a.startedAt) - (b.endedAt ?? b.startedAt));
+		finished.sort((a, b) => {
+			const registrationOrder = a.queuedAt - b.queuedAt;
+			return registrationOrder !== 0 ? registrationOrder : a.id.localeCompare(b.id);
+		});
 		for (const event of finished.slice(0, finished.length - this.maxRetainedFinishedEvents)) {
 			this.events.delete(event.id);
 		}

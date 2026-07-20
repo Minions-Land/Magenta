@@ -1413,6 +1413,33 @@ describe("openai-completions tool_choice", () => {
 		expect(response.usage.totalTokens).toBe(105);
 	});
 
+	it("clamps inconsistent cache components to the reported prompt-token total", async () => {
+		mockState.chunks = [
+			{
+				id: "chatcmpl-cache-overreported",
+				choices: [{ delta: {}, finish_reason: "stop" }],
+				usage: {
+					prompt_tokens: 10,
+					completion_tokens: 5,
+					prompt_tokens_details: { cached_tokens: 20, cache_write_tokens: 30 },
+					completion_tokens_details: { reasoning_tokens: 0 },
+				},
+			},
+		];
+
+		const { compat: _compat, ...baseModel } = getModel("openai", "gpt-4o-mini")!;
+		const model = { ...baseModel, api: "openai-completions" } as const;
+		const response = await streamSimple(
+			model,
+			{
+				messages: [{ role: "user", content: "Reply with exactly OK", timestamp: Date.now() }],
+			},
+			{ apiKey: "test" },
+		).result();
+
+		expect(response.usage).toMatchObject({ input: 0, output: 5, cacheRead: 10, cacheWrite: 0, totalTokens: 15 });
+	});
+
 	it("preserves prompt_tokens_details cache read/write fields from choice usage fallback", async () => {
 		mockState.chunks = [
 			{

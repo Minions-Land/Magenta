@@ -39,6 +39,10 @@ export interface RpcClientOptions {
 	cwd?: string;
 	/** Environment variables */
 	env?: Record<string, string>;
+	/** Inherit the parent environment before applying env overrides. Default: true. */
+	inheritEnv?: boolean;
+	/** Forward child stderr to the parent process. Default: true. */
+	forwardStderr?: boolean;
 	/** Provider to use */
 	provider?: string;
 	/** Model ID to use */
@@ -105,7 +109,7 @@ export class RpcClient {
 
 		const childProcess = spawn("node", [cliPath, ...args], {
 			cwd: this.options.cwd,
-			env: { ...process.env, ...this.options.env },
+			env: { ...(this.options.inheritEnv === false ? {} : process.env), ...this.options.env },
 			stdio: ["pipe", "pipe", "pipe"],
 		});
 		this.process = childProcess;
@@ -113,7 +117,7 @@ export class RpcClient {
 		// Collect stderr for debugging
 		childProcess.stderr?.on("data", (data) => {
 			this.stderr += data.toString();
-			process.stderr.write(data);
+			if (this.options.forwardStderr !== false) process.stderr.write(data);
 		});
 
 		childProcess.once("exit", (code, signal) => {

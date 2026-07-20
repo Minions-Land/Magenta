@@ -142,7 +142,13 @@ function writeEmptySseResponse(response: ServerResponse): void {
 async function captureAnthropicRequest(
 	model: Model<"anthropic-messages">,
 	context: Context,
-	options?: { sessionId?: string; cacheRetention?: string },
+	options?: {
+		sessionId?: string;
+		cacheRetention?: string;
+		apiKey?: string;
+		headers?: Record<string, string>;
+		metadata?: Record<string, unknown>;
+	},
 ): Promise<CapturedRequest> {
 	let capturedRequest: CapturedRequest | undefined;
 
@@ -162,9 +168,11 @@ async function captureAnthropicRequest(
 		const localModel = { ...model, baseUrl: `http://127.0.0.1:${address.port}` };
 
 		const stream = streamAnthropic(localModel, context, {
-			apiKey: "test-key",
+			apiKey: options?.apiKey ?? "test-key",
 			cacheRetention: (options?.cacheRetention as "none" | "short" | "long") ?? "short",
 			sessionId: options?.sessionId,
+			headers: options?.headers,
+			metadata: options?.metadata,
 		});
 
 		for await (const event of stream) {
@@ -201,13 +209,29 @@ describe("Fireworks Anthropic session affinity and tool compat", () => {
 		expect(request.headers["x-session-affinity"]).toBe("fireworks-session-1");
 	});
 
-	it("omits x-session-affinity header for native Anthropic models", async () => {
+	it("omits unconfigured session-routing signals for native Anthropic models", async () => {
 		const model = createAnthropicModel();
 		const request = await captureAnthropicRequest(model, createContext(), {
 			sessionId: "anthropic-session-1",
 		});
 
 		expect(request.headers["x-session-affinity"]).toBeUndefined();
+		expect(request.headers["x-claude-code-session-id"]).toBeUndefined();
+		expect(request.body.metadata).toBeUndefined();
+	});
+
+	it("sends explicit Claude Code session header and metadata without x-session-affinity", async () => {
+		const model = createAnthropicModel();
+		const userId = JSON.stringify({ device_id: "test-device", account_uuid: "", session_id: "test-session" });
+		const request = await captureAnthropicRequest(model, createContext(), {
+			sessionId: "test-session",
+			headers: { "X-Claude-Code-Session-Id": "test-session" },
+			metadata: { user_id: userId },
+		});
+
+		expect(request.headers["x-claude-code-session-id"]).toBe("test-session");
+		expect(request.headers["x-session-affinity"]).toBeUndefined();
+		expect(request.body.metadata).toEqual({ user_id: userId });
 	});
 
 	it("omits x-session-affinity header when cacheRetention is none", async () => {
@@ -255,5 +279,65 @@ describe("Fireworks Anthropic session affinity and tool compat", () => {
 
 		const tools = getTools(request.body);
 		expect(tools[0].eager_input_streaming).toBe(true);
+	});
+});
+
+// OAuth tokens take a separate client-construction branch. Verify that the
+// model-scoped affinity opt-in is applied consistently while remaining off by default.
+const OAUTH_TOKEN = "sk-ant-oat-test-token";
+
+describe("Anthropic OAuth session affinity", () => {
+	it("sends x-session-affinity header for OAuth tokens when compat enables it", async () => {
+		const model = createFireworksModel();
+		const request = await captureAnthropicRequest(model, createContext(), {
+			apiKey: OAUTH_TOKEN,
+			sessionId: "oauth-session-1",
+		});
+
+		expect(request.headers["x-session-affinity"]).toBe("oauth-session-1");
+	});
+
+	it("omits x-session-affinity for OAuth tokens when compat disables it", async () => {
+		const model = createFireworksModel({
+			...FIREWORKS_ANTHROPIC_COMPAT,
+			sendSessionAffinityHeaders: false,
+		});
+		const request = await captureAnthropicRequest(model, createContext(), {
+			apiKey: OAUTH_TOKEN,
+			sessionId: "oauth-session-2",
+		});
+
+		expect(request.headers["x-session-affinity"]).toBeUndefined();
+	});
+
+	it("omits x-session-affinity for OAuth tokens when no sessionId is provided", async () => {
+		const model = createFireworksModel();
+		const request = await captureAnthropicRequest(model, createContext(), {
+			apiKey: OAUTH_TOKEN,
+		});
+
+		expect(request.headers["x-session-affinity"]).toBeUndefined();
+	});
+
+	it("omits x-session-affinity for OAuth tokens on native Anthropic models (no affinity compat)", async () => {
+		const model = createAnthropicModel();
+		const request = await captureAnthropicRequest(model, createContext(), {
+			apiKey: OAUTH_TOKEN,
+			sessionId: "oauth-session-3",
+		});
+
+		expect(request.headers["x-session-affinity"]).toBeUndefined();
+	});
+
+	it("still sends Claude Code identity headers alongside affinity", async () => {
+		const model = createFireworksModel();
+		const request = await captureAnthropicRequest(model, createContext(), {
+			apiKey: OAUTH_TOKEN,
+			sessionId: "oauth-session-4",
+		});
+
+		expect(request.headers["x-session-affinity"]).toBe("oauth-session-4");
+		expect(request.headers["x-app"]).toBe("cli");
+		expect(String(request.headers["user-agent"])).toContain("claude-cli/");
 	});
 });

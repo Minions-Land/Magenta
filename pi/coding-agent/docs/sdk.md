@@ -120,6 +120,8 @@ interface AgentSession {
 }
 ```
 
+`setModel()` and `cycleModel()` may await one pre-switch compaction when auto-compaction is enabled and the current estimated context exceeds the target model's threshold. The compaction uses the previously selected model; if it fails or is cancelled, the promise rejects and the model remains unchanged.
+
 Session replacement APIs such as new-session, resume, fork, and import live on `AgentSessionRuntime`, not on `AgentSession`.
 
 ### createAgentSessionRuntime() and AgentSessionRuntime

@@ -1,9 +1,66 @@
 import type { AgentTool, ThinkingLevel } from "@earendil-works/pi-agent-core";
-import { fauxAssistantMessage, fauxToolCall, type Model } from "@earendil-works/pi-ai";
+import {
+	createAssistantMessageEventStream,
+	fauxAssistantMessage,
+	fauxToolCall,
+	type Model,
+} from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import type { BuildSystemPromptOptions, ExtensionAPI } from "../../src/index.ts";
 import { createHarness, getAssistantTexts, type Harness } from "./harness.ts";
+
+function createUsage(totalTokens: number) {
+	return {
+		input: totalTokens,
+		output: 0,
+		cacheRead: 0,
+		cacheWrite: 0,
+		totalTokens,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+	};
+}
+
+function seedModelSwitchContext(harness: Harness, totalTokens: number): void {
+	const now = Date.now();
+	const model = harness.getModel();
+	harness.sessionManager.appendMessage({
+		role: "user",
+		content: [{ type: "text", text: "context before model switch" }],
+		timestamp: now - 1000,
+	});
+	harness.sessionManager.appendMessage({
+		...fauxAssistantMessage("old model response", { timestamp: now - 500 }),
+		api: model.api,
+		provider: model.provider,
+		model: model.id,
+		usage: createUsage(totalTokens),
+	});
+	harness.session.agent.state.messages = harness.sessionManager.buildSessionContext().messages;
+}
+
+function useCompactionSummaryStream(harness: Harness, summary: string): string[] {
+	const modelIds: string[] = [];
+	harness.session.agent.streamFn = (model) => {
+		modelIds.push(model.id);
+		const stream = createAssistantMessageEventStream();
+		queueMicrotask(() => {
+			stream.push({
+				type: "done",
+				reason: "stop",
+				message: {
+					...fauxAssistantMessage(summary),
+					api: model.api,
+					provider: model.provider,
+					model: model.id,
+					usage: createUsage(10),
+				},
+			});
+		});
+		return stream;
+	};
+	return modelIds;
+}
 
 describe("AgentSession model and extension characterization", () => {
 	const harnesses: Harness[] = [];
@@ -35,6 +92,8 @@ describe("AgentSession model and extension characterization", () => {
 		await harness.session.setModel(nextModel);
 
 		expect(harness.session.model?.id).toBe("faux-2");
+		expect(harness.settingsManager.getDefaultProvider()).toBe(nextModel.provider);
+		expect(harness.settingsManager.getDefaultModel()).toBe(nextModel.id);
 		expect(modelEvents).toEqual(["faux-1->faux-2:set"]);
 		expect(
 			harness.sessionManager
@@ -42,6 +101,223 @@ describe("AgentSession model and extension characterization", () => {
 				.filter((entry) => entry.type === "model_change")
 				.map((entry) => `${entry.provider}/${entry.modelId}`),
 		).toEqual([`${nextModel.provider}/${nextModel.id}`]);
+	});
+
+	it("compacts with the previous model before committing a target with a smaller threshold", async () => {
+		const lifecycle: string[] = [];
+		const harness = await createHarness({
+			settings: { compaction: { reserveTokens: 20, keepRecentTokens: 1 } },
+			models: [
+				{ id: "faux-1", name: "Large", contextWindow: 1000 },
+				{ id: "faux-2", name: "Small", contextWindow: 100 },
+			],
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_compact", async (event) => {
+						lifecycle.push(`compact:${event.reason}`);
+					});
+					pi.on("model_select", async (event) => {
+						lifecycle.push(`model:${event.previousModel?.id}->${event.model.id}`);
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		seedModelSwitchContext(harness, 90);
+		const compactionModelIds = useCompactionSummaryStream(harness, "summary before switching");
+
+		await harness.session.setModel(harness.getModel("faux-2")!);
+
+		expect(compactionModelIds.length).toBeGreaterThan(0);
+		expect(new Set(compactionModelIds)).toEqual(new Set(["faux-1"]));
+		expect(harness.session.model?.id).toBe("faux-2");
+		expect(lifecycle).toEqual(["compact:threshold", "model:faux-1->faux-2"]);
+		expect(
+			harness.sessionManager
+				.getEntries()
+				.filter((entry) => entry.type === "compaction" || entry.type === "model_change")
+				.map((entry) => entry.type),
+		).toEqual(["compaction", "model_change"]);
+		expect(harness.eventsOfType("compaction_start").at(-1)?.reason).toBe("threshold");
+	});
+
+	it("switches without compaction when current context is at the target threshold", async () => {
+		const harness = await createHarness({
+			settings: { compaction: { reserveTokens: 20, keepRecentTokens: 1 } },
+			models: [
+				{ id: "faux-1", contextWindow: 1000 },
+				{ id: "faux-2", contextWindow: 100 },
+			],
+		});
+		harnesses.push(harness);
+		seedModelSwitchContext(harness, 80);
+
+		await harness.session.setModel(harness.getModel("faux-2")!);
+
+		expect(harness.session.model?.id).toBe("faux-2");
+		expect(harness.sessionManager.getEntries().filter((entry) => entry.type === "compaction")).toHaveLength(0);
+		expect(harness.eventsOfType("compaction_start")).toHaveLength(0);
+	});
+
+	it("honors disabled auto-compaction during model switching", async () => {
+		const harness = await createHarness({
+			settings: { compaction: { enabled: false, reserveTokens: 20, keepRecentTokens: 1 } },
+			models: [
+				{ id: "faux-1", contextWindow: 1000 },
+				{ id: "faux-2", contextWindow: 100 },
+			],
+		});
+		harnesses.push(harness);
+		seedModelSwitchContext(harness, 90);
+
+		await harness.session.setModel(harness.getModel("faux-2")!);
+
+		expect(harness.session.model?.id).toBe("faux-2");
+		expect(harness.eventsOfType("compaction_start")).toHaveLength(0);
+		expect(harness.sessionManager.getEntries().filter((entry) => entry.type === "compaction")).toHaveLength(0);
+	});
+
+	it("keeps the previous model when pre-switch compaction is cancelled", async () => {
+		const modelEvents: string[] = [];
+		const harness = await createHarness({
+			settings: { compaction: { reserveTokens: 20, keepRecentTokens: 1 } },
+			models: [
+				{ id: "faux-1", contextWindow: 1000 },
+				{ id: "faux-2", contextWindow: 100 },
+			],
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", async () => ({ cancel: true }));
+					pi.on("model_select", async (event) => {
+						modelEvents.push(event.model.id);
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		seedModelSwitchContext(harness, 90);
+		const defaultProviderBeforeSwitch = harness.settingsManager.getDefaultProvider();
+		const defaultModelBeforeSwitch = harness.settingsManager.getDefaultModel();
+
+		await expect(harness.session.setModel(harness.getModel("faux-2")!)).rejects.toThrow("Compaction cancelled");
+
+		expect(harness.session.model?.id).toBe("faux-1");
+		expect(harness.settingsManager.getDefaultProvider()).toBe(defaultProviderBeforeSwitch);
+		expect(harness.settingsManager.getDefaultModel()).toBe(defaultModelBeforeSwitch);
+		expect(modelEvents).toEqual([]);
+		expect(harness.sessionManager.getEntries().filter((entry) => entry.type === "model_change")).toHaveLength(0);
+		expect(harness.eventsOfType("compaction_end").at(-1)).toMatchObject({
+			reason: "threshold",
+			aborted: true,
+		});
+	});
+
+	it("does not compact again when usage is unknown immediately after compaction", async () => {
+		const harness = await createHarness({
+			settings: { compaction: { reserveTokens: 1, keepRecentTokens: 1 } },
+			models: [
+				{ id: "faux-1", contextWindow: 1000 },
+				{ id: "faux-2", contextWindow: 5 },
+			],
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", async (event) => ({
+						compaction: {
+							summary: "long compacted summary ".repeat(20),
+							firstKeptEntryId: event.preparation.firstKeptEntryId,
+							tokensBefore: event.preparation.tokensBefore,
+						},
+					}));
+				},
+			],
+		});
+		harnesses.push(harness);
+		seedModelSwitchContext(harness, 90);
+		await harness.session.compact();
+		const compactionStartsBeforeSwitch = harness.eventsOfType("compaction_start").length;
+
+		expect(harness.session.getContextUsage()?.tokens).toBeNull();
+		await harness.session.setModel(harness.getModel("faux-2")!);
+
+		expect(harness.session.model?.id).toBe("faux-2");
+		expect(harness.eventsOfType("compaction_start")).toHaveLength(compactionStartsBeforeSwitch);
+		expect(harness.sessionManager.getEntries().filter((entry) => entry.type === "compaction")).toHaveLength(1);
+	});
+
+	it("rejects an overlapping model switch while pre-switch compaction is in progress", async () => {
+		let markCompactionStarted!: () => void;
+		let releaseCompaction!: () => void;
+		const compactionStarted = new Promise<void>((resolve) => {
+			markCompactionStarted = resolve;
+		});
+		const compactionRelease = new Promise<void>((resolve) => {
+			releaseCompaction = resolve;
+		});
+		const harness = await createHarness({
+			settings: { compaction: { reserveTokens: 20, keepRecentTokens: 1 } },
+			models: [
+				{ id: "faux-1", contextWindow: 1000 },
+				{ id: "faux-2", contextWindow: 100 },
+				{ id: "faux-3", contextWindow: 1000 },
+			],
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", async (event) => {
+						markCompactionStarted();
+						await compactionRelease;
+						return {
+							compaction: {
+								summary: "summary after overlap guard",
+								firstKeptEntryId: event.preparation.firstKeptEntryId,
+								tokensBefore: event.preparation.tokensBefore,
+							},
+						};
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		seedModelSwitchContext(harness, 90);
+
+		const firstSwitch = harness.session.setModel(harness.getModel("faux-2")!);
+		await compactionStarted;
+		const overlappingSwitch = harness.session.setModel(harness.getModel("faux-3")!);
+		releaseCompaction();
+
+		await expect(overlappingSwitch).rejects.toThrow("A model switch is already in progress");
+		await firstSwitch;
+		expect(harness.session.model?.id).toBe("faux-2");
+		expect(harness.sessionManager.getEntries().filter((entry) => entry.type === "compaction")).toHaveLength(1);
+		expect(harness.sessionManager.getEntries().filter((entry) => entry.type === "model_change")).toHaveLength(1);
+	});
+
+	it("applies pre-switch compaction when cycling scoped models", async () => {
+		const harness = await createHarness({
+			settings: { compaction: { reserveTokens: 20, keepRecentTokens: 1 } },
+			models: [
+				{ id: "faux-1", contextWindow: 1000 },
+				{ id: "faux-2", contextWindow: 100 },
+			],
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", async (event) => ({
+						compaction: {
+							summary: "summary before scoped cycle",
+							firstKeptEntryId: event.preparation.firstKeptEntryId,
+							tokensBefore: event.preparation.tokensBefore,
+						},
+					}));
+				},
+			],
+		});
+		harnesses.push(harness);
+		seedModelSwitchContext(harness, 90);
+		harness.session.setScopedModels([{ model: harness.getModel("faux-1")! }, { model: harness.getModel("faux-2")! }]);
+
+		const result = await harness.session.cycleModel();
+
+		expect(result?.model.id).toBe("faux-2");
+		expect(harness.sessionManager.getEntries().filter((entry) => entry.type === "compaction")).toHaveLength(1);
 	});
 
 	it("cycles through scoped models and preserves the scoped thinking preference", async () => {

@@ -325,8 +325,8 @@ describe("MessageStore", () => {
 		});
 
 		it("registers and replaces only one peer's advertised routes", () => {
-			store.registerPeerRoute("remote-old", "store:peer-a");
-			store.registerPeerRoute("remote-other", "store:peer-b");
+			store.replacePeerRoutes("store:peer-a", ["remote-old"]);
+			store.replacePeerRoutes("store:peer-b", ["remote-other"]);
 			store.replacePeerRoutes("store:peer-a", ["remote-new", "remote-new"]);
 			expect(store.listPeerRoutes().map(({ sessionId, peerStoreId }) => ({ sessionId, peerStoreId }))).toEqual([
 				{ sessionId: "remote-new", peerStoreId: "store:peer-a" },
@@ -345,43 +345,42 @@ describe("MessageStore", () => {
 			]);
 		});
 
-		it("queues peer and unresolved sends, then resolves pending rows when a route arrives", () => {
-			store.registerPeerRoute("known", "store:peer-a");
-			const routed = store.sendRouted("sender", "known", "known target");
-			const unresolved = store.sendRouted("sender", "later", "unknown target");
+		it("queues every non-local send into the outbox for flooding (no target binding)", () => {
+			const first = store.sendRouted("sender", "known", "first target");
+			const second = store.sendRouted("sender", "later", "second target");
+			expect(first).toMatchObject({
+				id: expect.stringMatching(/^m:/),
+				createdAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
+				disposition: "peer",
+			});
+			expect(second).toMatchObject({
+				id: expect.stringMatching(/^m:/),
+				createdAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
+				disposition: "peer",
+			});
+			expect(store.getPeerOutboxCounts()).toEqual({ pending: 2, inflight: 0, forwarded: 0, unresolved: 0 });
+			// A single link claims both (gossip: no target filtering).
+			const claimed = store.claimPeerOutbox("store:peer-a", "bridge-a", 10);
+			expect(claimed.map((message) => message.id).sort()).toEqual([first.id, second.id].sort());
+			for (const m of claimed) expect(m.targetPeerStoreId).toBeNull();
+		});
+
+		it("floods to all peers under pure gossip: no unresolved state", () => {
+			const routed = store.sendRouted("sender", "unknown-recipient", "gossip flood");
 			expect(routed).toMatchObject({
 				id: expect.stringMatching(/^m:/),
 				createdAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
 				disposition: "peer",
-				peerStoreId: "store:peer-a",
 			});
-			expect(unresolved).toMatchObject({
-				id: expect.stringMatching(/^m:/),
-				createdAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
-				disposition: "unresolved",
-			});
-			expect(store.getPeerOutboxCounts()).toEqual({ pending: 2, inflight: 0, forwarded: 0, unresolved: 1 });
-			expect(store.claimPeerOutbox("store:peer-a", "bridge-a", 10).map((message) => message.id)).toEqual([
-				routed.id,
-			]);
-			store.registerPeerRoute("later", "store:peer-b");
-			const resolved = store.claimPeerOutbox("store:peer-b", "bridge-b", 10);
-			expect(resolved.map((message) => ({ id: message.id, target: message.targetPeerStoreId }))).toEqual([
-				{ id: unresolved.id, target: "store:peer-b" },
-			]);
-		});
-
-		it("lets one peer claim unresolved rows when discovery forwarding is enabled", () => {
-			const sent = store.sendRouted("sender", "unknown", "discover me");
-			expect(store.claimPeerOutbox("store:peer-a", "bridge-a", 10)).toHaveLength(0);
-			const claimed = store.claimPeerOutbox("store:peer-a", "bridge-a", 10, true);
-			expect(claimed).toHaveLength(1);
-			expect(claimed[0]).toMatchObject({ id: sent.id, targetPeerStoreId: null, status: "inflight" });
-			// A route learned while the unresolved row is in flight is applied when
-			// the failed discovery attempt is requeued.
-			store.registerPeerRoute("unknown", "store:peer-b");
-			expect(store.requeuePeerOutbox([sent.id], "bridge-a")).toBe(1);
-			expect(store.claimPeerOutbox("store:peer-b", "bridge-b", 10)[0].targetPeerStoreId).toBe("store:peer-b");
+			expect(routed).not.toHaveProperty("peerStoreId");
+			expect(store.getPeerOutboxCounts()).toEqual({ pending: 1, inflight: 0, forwarded: 0, unresolved: 0 });
+			// Any peer can claim under gossip.
+			const claimedA = store.claimPeerOutbox("store:peer-a", "bridge-a", 10);
+			expect(claimedA.map((m) => m.id)).toEqual([routed.id]);
+			store.ackPeerOutbox([routed.id], "bridge-a");
+			// After ack on one link, other links can still claim (per-link delivery).
+			const claimedB = store.claimPeerOutbox("store:peer-b", "bridge-b", 10);
+			expect(claimedB.map((m) => m.id)).toEqual([routed.id]);
 		});
 
 		it("claims disjoint outbox batches across independent store handles", () => {
@@ -389,11 +388,13 @@ describe("MessageStore", () => {
 			const first = new MessageStore(dbPath);
 			const second = new MessageStore(dbPath);
 			try {
-				first.registerPeerRoute("remote", "store:peer-a");
 				const ids = Array.from(
 					{ length: 6 },
 					(_, index) => first.sendRouted("sender", "remote", `peer-${index}`).id,
 				);
+				// Two independent link processes to the SAME peer must not double-claim:
+				// per-link delivery ledger keys on peer_store_id, so concurrent claims for
+				// the same peer are disjoint (each row's delivery row is claimed once).
 				const firstClaim = first.claimPeerOutbox("store:peer-a", "bridge-1", 3);
 				const secondClaim = second.claimPeerOutbox("store:peer-a", "bridge-2", 3);
 				const claimedIds = [...firstClaim, ...secondClaim].map((message) => message.id);
@@ -407,8 +408,7 @@ describe("MessageStore", () => {
 			}
 		});
 
-		it("enforces outbox claim ownership for requeue and ack", () => {
-			store.registerPeerRoute("remote", "store:peer-a");
+		it("enforces per-link delivery ownership for requeue and ack", () => {
 			const sent = store.sendRouted("sender", "remote", "owned", "urgent", {
 				routeTag: "route-peer",
 			});
@@ -416,58 +416,70 @@ describe("MessageStore", () => {
 			expect(first).toHaveLength(1);
 			expect(first[0]).toMatchObject({
 				id: sent.id,
-				status: "inflight",
-				claimOwner: "owner-1",
 				metadata: { routeTag: "route-peer" },
 			});
+			// Same peer, second owner cannot re-claim while inflight.
 			expect(store.claimPeerOutbox("store:peer-a", "owner-2", 1)).toHaveLength(0);
+			// Requeue only honored by the owning claimant.
 			expect(store.requeuePeerOutbox([sent.id], "owner-2")).toBe(0);
 			expect(store.requeuePeerOutbox([sent.id], "owner-1")).toBe(1);
 			const second = store.claimPeerOutbox("store:peer-a", "owner-2", 1);
 			expect(second.map((message) => message.id)).toEqual([sent.id]);
+			// Ack only honored by the owning claimant.
 			expect(store.ackPeerOutbox([sent.id], "owner-1")).toBe(0);
 			expect(store.ackPeerOutbox([sent.id], "owner-2")).toBe(1);
-			expect(store.getPeerOutboxCounts()).toEqual({ pending: 0, inflight: 0, forwarded: 1, unresolved: 0 });
+			// One peer forwarded; message body remains for other peers.
+			expect(store.getPeerOutboxCounts("store:peer-a")).toEqual({
+				pending: 1,
+				inflight: 0,
+				forwarded: 1,
+				unresolved: 0,
+			});
 		});
 
-		it("reclaims stale inflight rows after a relay hard crash", () => {
+		it("reclaims stale inflight delivery rows after a relay hard crash", () => {
 			const crashStore = new MessageStore(join(dir, "crash-reclaim", "messages.db"), {
 				peerOutboxClaimTimeoutMs: 0,
 			});
 			try {
-				crashStore.registerPeerRoute("remote", "store:peer-a");
 				const sent = crashStore.sendRouted("sender", "remote", "survive relay crash");
 				expect(crashStore.claimPeerOutbox("store:peer-a", "dead-relay", 1)[0]?.id).toBe(sent.id);
 				const reclaimed = crashStore.claimPeerOutbox("store:peer-a", "replacement-relay", 1);
 				expect(reclaimed).toHaveLength(1);
-				expect(reclaimed[0]).toMatchObject({ id: sent.id, claimOwner: "replacement-relay" });
+				expect(reclaimed[0]).toMatchObject({ id: sent.id });
 			} finally {
 				crashStore.close();
 			}
 		});
 
-		it("backs off not-found rows without starving newer eligible messages", () => {
-			store.registerPeerRoute("missing", "store:stale-peer");
-			const stale = store.sendRouted("sender", "missing", "stale route");
-			expect(store.claimPeerOutbox("store:stale-peer", "relay-1", 1)[0]?.id).toBe(stale.id);
-			expect(store.requeuePeerOutbox([stale.id], "relay-1", { notFound: true })).toBe(1);
-			expect(store.listPeerRoutes()).toHaveLength(0);
-
-			const newer = store.sendRouted("sender", "other-missing", "eligible discovery");
-			const eligible = store.claimPeerOutbox("store:hub", "relay-2", 1, true);
-			expect(eligible.map((message) => message.id)).toEqual([newer.id]);
-
-			store.registerPeerRoute("missing", "store:new-peer");
-			const rerouted = store.claimPeerOutbox("store:new-peer", "relay-3", 1);
-			expect(rerouted).toHaveLength(1);
-			expect(rerouted[0]).toMatchObject({ id: stale.id, attemptCount: 0, targetPeerStoreId: "store:new-peer" });
+		it("pre-marks the ingress peer as delivered so a relayed message never echoes back", () => {
+			// A message relayed in from store:ingress must be claimable by every OTHER
+			// link, but never re-sent back toward store:ingress (the ingress delivery
+			// row is pre-marked forwarded).
+			const relay: FederatedMessageEnvelope = {
+				id: "m:echo-guard",
+				sender: "source",
+				recipient: "beyond",
+				content: "one hop",
+				createdAt: "2026-07-16T00:00:00.000Z",
+				priority: "urgent",
+			};
+			expect(store.acceptFederatedMessage(relay, "store:ingress")).toEqual({
+				id: relay.id,
+				disposition: "relay",
+			});
+			// The ingress peer's link must not re-claim the message.
+			expect(store.claimPeerOutbox("store:ingress", "ingress-relay", 10)).toHaveLength(0);
+			// Any other peer floods it onward.
+			const egress = store.claimPeerOutbox("store:egress", "egress-relay", 10);
+			expect(egress.map((m) => m.id)).toEqual([relay.id]);
+			expect(egress[0]).toMatchObject({ targetPeerStoreId: null });
 		});
 
 		it("moves a claimed envelope between stores without changing id or metadata", () => {
 			const remote = new MessageStore(join(dir, "remote-store", "messages.db"));
 			try {
 				remote.updatePresence("remote-recipient", "offline");
-				store.registerPeerRoute("remote-recipient", remote.storeId);
 				const sent = store.sendRouted("local-sender", "remote-recipient", "cross store", "urgent", {
 					routeTag: "route-cross-store",
 				});
@@ -509,31 +521,25 @@ describe("MessageStore", () => {
 			expect(drained[0]).toMatchObject({ id: envelope.id, metadata: envelope.metadata });
 		});
 
-		it("durably relays to a different peer and rejects unknown or ingress-loop routes", () => {
-			store.registerPeerRoute("beyond", "store:egress");
-			store.registerPeerRoute("back", "store:ingress");
+		it("durably relays non-local messages under pure gossip (no route table gate)", () => {
 			const relay: FederatedMessageEnvelope = {
 				id: "m:relay",
 				sender: "source",
 				recipient: "beyond",
-				content: "two hops",
+				content: "flood onward",
 				createdAt: "2026-07-16T00:00:00.000Z",
 				priority: "urgent",
 				metadata: { hop: 1 },
 			};
+			// Pure gossip: no peer_routes query, always relay if not local.
 			expect(store.acceptFederatedMessage(relay, "store:ingress")).toEqual({
 				id: relay.id,
 				disposition: "relay",
-				peerStoreId: "store:egress",
 			});
+			// Any peer except ingress can claim.
 			const claimed = store.claimPeerOutbox("store:egress", "relay-owner", 10);
 			expect(claimed).toHaveLength(1);
-			expect(claimed[0]).toMatchObject({ ...relay, targetPeerStoreId: "store:egress" });
-
-			const loop = { ...relay, id: "m:loop", recipient: "back" };
-			const missing = { ...relay, id: "m:missing", recipient: "missing" };
-			expect(store.acceptFederatedMessage(loop, "store:ingress").disposition).toBe("not_found");
-			expect(store.acceptFederatedMessage(missing, "store:ingress").disposition).toBe("not_found");
+			expect(claimed[0]).toMatchObject({ ...relay, targetPeerStoreId: null });
 		});
 	});
 

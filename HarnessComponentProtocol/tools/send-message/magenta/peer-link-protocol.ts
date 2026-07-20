@@ -9,6 +9,8 @@
 export const PEER_LINK_PROTOCOL_VERSION = 1;
 export const MAX_PEER_LINK_FRAME_BYTES = 64 * 1024;
 export const MAX_PEER_LINK_MESSAGE_BYTES = 24 * 1024;
+// Keep the V1 wire default at two hops so mixed-version peers accept normal
+// envelopes. Raising this bound requires protocol capability negotiation.
 export const DEFAULT_PEER_LINK_HOPS = 2;
 
 export type PeerLinkMetadata = Record<string, unknown>;

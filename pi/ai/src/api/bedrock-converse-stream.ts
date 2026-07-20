@@ -55,6 +55,7 @@ import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import { adjustMaxTokensForThinking, buildBaseOptions, clampReasoning } from "./simple-options.ts";
 import { transformMessages } from "./transform-messages.ts";
+import { normalizeBedrockTokenUsage } from "./usage-normalization.ts";
 
 export type BedrockThinkingDisplay = "summarized" | "omitted";
 
@@ -502,11 +503,7 @@ function handleMetadata(
 	output: AssistantMessage,
 ): void {
 	if (event.usage) {
-		output.usage.input = event.usage.inputTokens || 0;
-		output.usage.output = event.usage.outputTokens || 0;
-		output.usage.cacheRead = event.usage.cacheReadInputTokens || 0;
-		output.usage.cacheWrite = event.usage.cacheWriteInputTokens || 0;
-		output.usage.totalTokens = event.usage.totalTokens || output.usage.input + output.usage.output;
+		output.usage = normalizeBedrockTokenUsage(event.usage);
 		calculateCost(model, output.usage);
 	}
 }

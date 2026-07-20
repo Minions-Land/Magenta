@@ -75,7 +75,10 @@ describe("MessageStorePeerLinkAdapter", () => {
 				metadata: { routeTag: "route-1", relayState: "completed" },
 			});
 			expect(a.getPeerOutboxCounts().forwarded).toBe(1);
-			expect(hub.getPeerOutboxCounts().forwarded).toBe(1);
+			// Under pure gossip the hub's per-link delivery ledger holds two rows for
+			// this message: the A-link is pre-marked forwarded (ingress echo guard) and
+			// the B-link is forwarded on real delivery. Both count as forwarded.
+			expect(hub.getPeerOutboxCounts().forwarded).toBe(2);
 		} finally {
 			await Promise.all([
 				aHub.initiator.close(),

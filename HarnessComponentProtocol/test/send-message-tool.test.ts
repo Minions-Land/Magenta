@@ -68,13 +68,13 @@ describe("send_message HCP Tool", () => {
 			.createToolDefinition()
 			.execute("call", { to: "future-session", content: "queued" }, undefined, undefined);
 		expect(result.details).toMatchObject({
-			disposition: "unresolved_outbox",
+			disposition: "peer_outbox",
 			recipientPresence: "unknown",
 			wake: "unavailable",
 		});
 		const store = new MessageStore(dbPath);
 		try {
-			expect(store.getPeerOutboxCounts()).toMatchObject({ pending: 1, unresolved: 1 });
+			expect(store.getPeerOutboxCounts()).toMatchObject({ pending: 1, unresolved: 0 });
 		} finally {
 			store.close();
 		}

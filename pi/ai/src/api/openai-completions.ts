@@ -1111,9 +1111,15 @@ function parseChunkUsage(
 	},
 	model: Model<"openai-completions">,
 ): AssistantMessage["usage"] {
-	const promptTokens = rawUsage.prompt_tokens || 0;
-	const cacheReadTokens = rawUsage.prompt_tokens_details?.cached_tokens ?? rawUsage.prompt_cache_hit_tokens ?? 0;
-	const cacheWriteTokens = rawUsage.prompt_tokens_details?.cache_write_tokens || 0;
+	const promptTokens = Math.max(0, rawUsage.prompt_tokens || 0);
+	const cacheReadTokens = Math.min(
+		promptTokens,
+		Math.max(0, rawUsage.prompt_tokens_details?.cached_tokens ?? rawUsage.prompt_cache_hit_tokens ?? 0),
+	);
+	const cacheWriteTokens = Math.min(
+		promptTokens - cacheReadTokens,
+		Math.max(0, rawUsage.prompt_tokens_details?.cache_write_tokens || 0),
+	);
 
 	// Follow documented OpenAI/OpenRouter semantics: cached_tokens is cache-read
 	// tokens (hits). OpenAI does not document or emit cache_write_tokens, but
@@ -1123,7 +1129,7 @@ function parseChunkUsage(
 	// Do not subtract writes from cached_tokens, otherwise spec-compliant
 	// providers are under-reported. DS4 mirrors this contract too:
 	// https://github.com/antirez/ds4/pull/29
-	const input = Math.max(0, promptTokens - cacheReadTokens - cacheWriteTokens);
+	const input = promptTokens - cacheReadTokens - cacheWriteTokens;
 	// OpenAI completion_tokens already includes reasoning_tokens.
 	const outputTokens = rawUsage.completion_tokens || 0;
 	const usage: AssistantMessage["usage"] = {

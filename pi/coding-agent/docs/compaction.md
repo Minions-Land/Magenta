@@ -37,6 +37,8 @@ contextTokens > threshold
 
 By default, `reserveTokens` is 16384 tokens (configurable in `~/.magenta/agent/settings.json` or `<project-dir>/.magenta/settings.json`). This leaves room for the LLM's response. `maxContextFraction` is unset by default, so existing behavior is unchanged. Setting it to a value in `(0, 1]` (for example `0.9`) compacts earlier on large context windows, but may add summarization latency/cost and discard useful detail sooner. Treat it as a workload-specific safeguard, not a cache-hit optimization, and validate long-task quality before enabling it.
 
+Before a model switch is committed, Magenta also compares the current estimated context with the selected model's threshold. If auto-compaction is enabled and the context is over that threshold, Magenta compacts once with the current model, then commits and displays the new model. If compaction fails or is cancelled, the previous model remains selected.
+
 You can also trigger manually with `/compact [instructions]`, where optional instructions focus the summary.
 
 ### How It Works

@@ -3,7 +3,7 @@
 Standalone releases are published in the public [`Minions-Land/Magenta-CLI`](https://github.com/Minions-Land/Magenta-CLI/releases/latest) repository. A complete release installation requires:
 
 - one executable for the target platform;
-- `magenta-resources-universal.tar.gz`, containing runtime assets loaded beside the executable;
+- `magenta-resources-universal.tar.gz`, containing runtime assets and verified native integrations loaded beside the executable;
 - `SHA256SUMS`, covering both downloads.
 
 Do not install the executable alone. It may start, but packaged prompts, themes, skills, and Harness resources will be incomplete.
@@ -124,7 +124,7 @@ If `magenta --update` fails with verification errors or "Could not fetch latest 
 
 2. **Network or rate-limit issues**: GitHub API has a 60 requests/hour limit for unauthenticated clients. If you see "Rate limit exceeded", either wait for the reset time shown in the error, or set `MAGENTA_GITHUB_TOKEN` to a personal access token (no special scopes needed for public repositories). The API must be reachable directly; configure `MAGENTA_GITHUB_MIRROR` only to accelerate payloads as documented in the [China Network Guide](./CHINA_NETWORK.md).
 
-3. **Partial or interrupted installation**: If a previous update left incomplete resources, the binary may fail to start. Reinstall using the installation script to repair the runtime directory.
+3. **Partial or interrupted installation**: If a previous update left incomplete resources, the binary may fail to start or native features such as clipboard image paste may be unavailable. Reinstall using the installation script to repair the runtime directory.
 
 A source checkout is updated through Git and the workspace build, not the standalone updater:
 

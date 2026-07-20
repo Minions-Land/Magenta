@@ -411,9 +411,10 @@ export class AgentSession {
 	private _externalActivationSequence = 0;
 	private _externalActivationReceipts = new WeakMap<CustomMessage, ExternalActivationEntry>();
 
-	// Compaction state
+	// Compaction and model-switch state
 	private _compactionAbortController: AbortController | undefined = undefined;
 	private _autoCompactionAbortController: AbortController | undefined = undefined;
+	private _modelSwitchInProgress = false;
 	/**
 	 * Estimated context size captured when a long tool loop is stopped between
 	 * turns for threshold compaction. Presence also means the loop should resume
@@ -471,6 +472,7 @@ export class AgentSession {
 	private _backgroundEvents: BackgroundEventManager;
 	private _backgroundReminders: BackgroundReminderCoordinator;
 	private _externalActivations: ExternalActivationCoordinator;
+	private _releaseTurnBarrier: (() => Promise<void>) | undefined;
 	private _backgroundShell: BackgroundShellController;
 	private _HcpClientpackageloadcontroller: HcpClientpackageloadcontroller;
 	private _subAgents!: SubAgentRuntime;
@@ -1184,10 +1186,23 @@ export class AgentSession {
 			// Magenta feature: this session is now looping. Record presence so peers
 			// see it as active and know a message will be picked up soon.
 			this._peerMessages?.recordPresence("active");
+			// Hold followUp and nextTurn deliveries for the duration of this run while
+			// letting steer pass through as a mid-turn interrupt. The outermost release
+			// at agent_end commits the whole coalesced batch at the run's idle boundary.
+			this._releaseTurnBarrier = await this._externalActivations.acquireTurnBarrier();
 			await this._extensionRunner.emit({ type: "agent_start" });
 		} else if (event.type === "agent_end") {
 			// Magenta feature: loop finished; the process is alive but not looping.
 			this._peerMessages?.recordPresence("idle");
+			// Release the turn barrier acquired at agent_start, committing all followUp
+			// and nextTurn entries that accumulated during the run. The coordinator's
+			// release phase flushes them as one coalesced batch so staggered idle events
+			// that arrive close together wake the agent only once.
+			if (this._releaseTurnBarrier) {
+				const release = this._releaseTurnBarrier;
+				this._releaseTurnBarrier = undefined;
+				await release();
+			}
 			await this._extensionRunner.emit({ type: "agent_end", messages: event.messages });
 		} else if (event.type === "turn_start") {
 			// A turn boundary atomically drains mailbox claims and commits all external
@@ -2503,18 +2518,52 @@ export class AgentSession {
 		});
 	}
 
-	/**
-	 * Set model directly.
-	 * Validates that auth is configured, saves to session and settings.
-	 * @throws Error if no auth is configured for the model
-	 */
-	async setModel(model: Model<any>): Promise<void> {
-		if (!this._modelRegistry.hasConfiguredAuth(model)) {
-			throw new Error(`No API key for ${model.provider}/${model.id}`);
+	private _getModelSwitchContextTokens(): number | undefined {
+		return this.getContextUsage()?.tokens ?? undefined;
+	}
+
+	private async _runModelSwitch<T>(operation: () => Promise<T>): Promise<T> {
+		if (this._modelSwitchInProgress) {
+			throw new Error("A model switch is already in progress");
+		}
+		if (this.isCompacting) {
+			throw new Error("Wait for compaction to finish before switching models");
 		}
 
+		this._modelSwitchInProgress = true;
+		try {
+			return await operation();
+		} finally {
+			this._modelSwitchInProgress = false;
+		}
+	}
+
+	private async _compactBeforeModelSwitch(
+		nextModel: Model<any>,
+		previousModel: Model<any> | undefined,
+	): Promise<void> {
+		if (!previousModel || modelsAreEqual(previousModel, nextModel)) return;
+
+		const contextWindow = nextModel.contextWindow ?? 0;
+		if (contextWindow <= 0) return;
+
+		const settings = this.settingsManager.getCompactionSettings();
+		const contextTokens = this._getModelSwitchContextTokens();
+		if (contextTokens === undefined || !shouldCompact(contextTokens, contextWindow, settings)) return;
+
+		// Snapshot the old model so the summary request cannot move to the target
+		// model while the switch is awaiting compaction.
+		await this._compactContext(undefined, "threshold", previousModel);
+	}
+
+	private async _applyModelSwitch(
+		model: Model<any>,
+		source: "set" | "cycle",
+		executionProfile: ExecutionProfile,
+	): Promise<void> {
 		const previousModel = this.model;
-		const executionProfile = this._getExecutionProfileForModelSwitch();
+		await this._compactBeforeModelSwitch(model, previousModel);
+
 		this.agent.state.model = model;
 		this.sessionManager.appendModelChange(model.provider, model.id);
 		this.settingsManager.setDefaultModelAndProvider(model.provider, model.id);
@@ -2522,7 +2571,24 @@ export class AgentSession {
 		// Re-map the execution profile for the new model's native capabilities.
 		this.setExecutionProfile(executionProfile);
 
-		await this._emitModelSelect(model, previousModel, "set");
+		await this._emitModelSelect(model, previousModel, source);
+	}
+
+	/**
+	 * Set model directly.
+	 * Validates that auth is configured, compacts when the target threshold is exceeded,
+	 * then saves to session and settings.
+	 * @throws Error if no auth is configured for the model or pre-switch compaction fails
+	 */
+	async setModel(model: Model<any>): Promise<void> {
+		if (!this._modelRegistry.hasConfiguredAuth(model)) {
+			throw new Error(`No API key for ${model.provider}/${model.id}`);
+		}
+
+		await this._runModelSwitch(async () => {
+			const executionProfile = this._getExecutionProfileForModelSwitch();
+			await this._applyModelSwitch(model, "set", executionProfile);
+		});
 	}
 
 	/**
@@ -2532,10 +2598,12 @@ export class AgentSession {
 	 * @returns The new model info, or undefined if only one model available
 	 */
 	async cycleModel(direction: "forward" | "backward" = "forward"): Promise<ModelCycleResult | undefined> {
-		if (this._scopedModels.length > 0) {
-			return this._cycleScopedModel(direction);
-		}
-		return this._cycleAvailableModel(direction);
+		return this._runModelSwitch(async () => {
+			if (this._scopedModels.length > 0) {
+				return this._cycleScopedModel(direction);
+			}
+			return this._cycleAvailableModel(direction);
+		});
 	}
 
 	private async _cycleScopedModel(direction: "forward" | "backward"): Promise<ModelCycleResult | undefined> {
@@ -2551,17 +2619,9 @@ export class AgentSession {
 		const next = scopedModels[nextIndex];
 		const executionProfile = this._getExecutionProfileForModelSwitch(next.thinkingLevel);
 
-		// Apply model
-		this.agent.state.model = next.model;
-		this.sessionManager.appendModelChange(next.model.provider, next.model.id);
-		this.settingsManager.setDefaultModelAndProvider(next.model.provider, next.model.id);
-
-		// Apply execution profile.
-		// - Explicit scoped model profile overrides current session profile
-		// - Undefined scoped model profile inherits the current session preference
-		this.setExecutionProfile(executionProfile);
-
-		await this._emitModelSelect(next.model, currentModel, "cycle");
+		// Explicit scoped profiles override the session preference; an undefined
+		// profile inherits and is remapped to the target model's capabilities.
+		await this._applyModelSwitch(next.model, "cycle", executionProfile);
 
 		return {
 			model: next.model,
@@ -2584,14 +2644,7 @@ export class AgentSession {
 		const nextModel = availableModels[nextIndex];
 
 		const executionProfile = this._getExecutionProfileForModelSwitch();
-		this.agent.state.model = nextModel;
-		this.sessionManager.appendModelChange(nextModel.provider, nextModel.id);
-		this.settingsManager.setDefaultModelAndProvider(nextModel.provider, nextModel.id);
-
-		// Re-map the execution profile for the new model's native capabilities.
-		this.setExecutionProfile(executionProfile);
-
-		await this._emitModelSelect(nextModel, currentModel, "cycle");
+		await this._applyModelSwitch(nextModel, "cycle", executionProfile);
 
 		return {
 			model: nextModel,
@@ -2746,6 +2799,14 @@ export class AgentSession {
 	 * @param customInstructions Optional instructions for the compaction summary
 	 */
 	async compact(customInstructions?: string): Promise<CompactionResult> {
+		return this._compactContext(customInstructions, "manual", this.model);
+	}
+
+	private async _compactContext(
+		customInstructions: string | undefined,
+		reason: "manual" | "threshold",
+		model: Model<any> | undefined,
+	): Promise<CompactionResult> {
 		// Latch before aborting the current run. Returns/messages that arrived at the
 		// preceding boundary are reclaimed into the same held coordinator batch, and
 		// sources may continue durably registering while the summary is generated.
@@ -2757,13 +2818,13 @@ export class AgentSession {
 			await this.abort();
 			releaseBarrier = await barrier;
 			this._compactionAbortController = new AbortController();
-			this._emit({ type: "compaction_start", reason: "manual" });
-			this._emit({ type: "compaction_progress", reason: "manual", phase: "preparing" });
-			if (!this.model) {
+			this._emit({ type: "compaction_start", reason });
+			this._emit({ type: "compaction_progress", reason, phase: "preparing" });
+			if (!model) {
 				throw new Error(formatNoModelSelectedMessage());
 			}
 
-			const { apiKey, headers, env } = await this._getCompactionRequestAuth(this.model);
+			const { apiKey, headers, env } = await this._getCompactionRequestAuth(model);
 
 			const pathEntries = this.sessionManager.getBranch();
 			const settings = this.settingsManager.getCompactionSettings();
@@ -2783,13 +2844,13 @@ export class AgentSession {
 			let fromExtension = false;
 
 			if (this._extensionRunner.hasHandlers("session_before_compact")) {
-				this._emit({ type: "compaction_progress", reason: "manual", phase: "extensions" });
+				this._emit({ type: "compaction_progress", reason, phase: "extensions" });
 				const result = (await this._extensionRunner.emit({
 					type: "session_before_compact",
 					preparation,
 					branchEntries: pathEntries,
 					customInstructions,
-					reason: "manual",
+					reason,
 					willRetry: false,
 					signal: this._compactionAbortController.signal,
 				})) as SessionBeforeCompactResult | undefined;
@@ -2817,10 +2878,10 @@ export class AgentSession {
 				details = extensionCompaction.details;
 			} else {
 				// Generate compaction result
-				this._emit({ type: "compaction_progress", reason: "manual", phase: "summarizing" });
+				this._emit({ type: "compaction_progress", reason, phase: "summarizing" });
 				const result = await compact(
 					preparation,
-					this.model,
+					model,
 					apiKey,
 					headers,
 					customInstructions,
@@ -2829,7 +2890,7 @@ export class AgentSession {
 					this.agent.streamFn,
 					env,
 					compactionProvider,
-					(progress) => this._emit({ type: "compaction_progress", reason: "manual", ...progress }),
+					(progress) => this._emit({ type: "compaction_progress", reason, ...progress }),
 				);
 				summary = result.summary;
 				firstKeptEntryId = result.firstKeptEntryId;
@@ -2841,7 +2902,7 @@ export class AgentSession {
 				throw new Error("Compaction cancelled");
 			}
 
-			this._emit({ type: "compaction_progress", reason: "manual", phase: "persisting" });
+			this._emit({ type: "compaction_progress", reason, phase: "persisting" });
 			this.sessionManager.appendCompaction(summary, firstKeptEntryId, tokensBefore, details, fromExtension);
 			const newEntries = this.sessionManager.getEntries();
 			const sessionContext = this.sessionManager.buildSessionContext();
@@ -2858,7 +2919,7 @@ export class AgentSession {
 					type: "session_compact",
 					compactionEntry: savedCompactionEntry,
 					fromExtension,
-					reason: "manual",
+					reason,
 					willRetry: false,
 				});
 			}
@@ -2872,7 +2933,7 @@ export class AgentSession {
 			};
 			this._emit({
 				type: "compaction_end",
-				reason: "manual",
+				reason,
 				result: compactionResult,
 				aborted: false,
 				willRetry: false,
@@ -2891,11 +2952,13 @@ export class AgentSession {
 				(error instanceof CompactionError && error.code === "aborted");
 			this._emit({
 				type: "compaction_end",
-				reason: "manual",
+				reason,
 				result: undefined,
 				aborted,
 				willRetry: false,
-				errorMessage: aborted ? undefined : `Compaction failed: ${message}`,
+				errorMessage: aborted
+					? undefined
+					: `${reason === "manual" ? "Compaction" : "Auto-compaction"} failed: ${message}`,
 			});
 			throw error;
 		} finally {

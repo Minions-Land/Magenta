@@ -79,6 +79,74 @@ function createFakeAnthropicClient(response: Response): Anthropic {
 }
 
 describe("Anthropic raw SSE parsing", () => {
+	it("preserves message_start cache usage when message_delta reports explicit zeroes", async () => {
+		const model = getModel("anthropic", "claude-opus-4-8");
+		const context: Context = {
+			messages: [{ role: "user", content: "cache usage", timestamp: Date.now() }],
+		};
+		const response = createSseResponse([
+			{
+				event: "message_start",
+				data: JSON.stringify({
+					type: "message_start",
+					message: {
+						id: "msg_cache_usage",
+						usage: {
+							input_tokens: 3,
+							output_tokens: 0,
+							cache_read_input_tokens: 12_000,
+							cache_creation_input_tokens: 456,
+						},
+					},
+				}),
+			},
+			{
+				event: "content_block_start",
+				data: JSON.stringify({
+					type: "content_block_start",
+					index: 0,
+					content_block: { type: "text", text: "" },
+				}),
+			},
+			{
+				event: "content_block_delta",
+				data: JSON.stringify({
+					type: "content_block_delta",
+					index: 0,
+					delta: { type: "text_delta", text: "OK" },
+				}),
+			},
+			{
+				event: "content_block_stop",
+				data: JSON.stringify({ type: "content_block_stop", index: 0 }),
+			},
+			{
+				event: "message_delta",
+				data: JSON.stringify({
+					type: "message_delta",
+					delta: { stop_reason: "end_turn" },
+					usage: {
+						input_tokens: 0,
+						output_tokens: 2,
+						cache_read_input_tokens: 0,
+						cache_creation_input_tokens: 0,
+					},
+				}),
+			},
+			{ event: "message_stop", data: JSON.stringify({ type: "message_stop" }) },
+		]);
+
+		const result = await streamAnthropic(model, context, {
+			client: createFakeAnthropicClient(response),
+		}).result();
+
+		expect(result.usage.input).toBe(3);
+		expect(result.usage.output).toBe(2);
+		expect(result.usage.cacheRead).toBe(12_000);
+		expect(result.usage.cacheWrite).toBe(456);
+		expect(result.usage.totalTokens).toBe(12_461);
+	});
+
 	it("repairs malformed SSE JSON and malformed streamed tool JSON", async () => {
 		const model = getModel("anthropic", "claude-haiku-4-5");
 		const context: Context = {

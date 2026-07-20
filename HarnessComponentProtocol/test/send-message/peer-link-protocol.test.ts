@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+	DEFAULT_PEER_LINK_HOPS,
 	MAX_PEER_LINK_FRAME_BYTES,
 	type PeerLinkFrame,
 	parsePeerLinkFrame,
@@ -7,6 +8,10 @@ import {
 } from "../../tools/send-message/magenta/peer-link-protocol.ts";
 
 describe("peer link protocol", () => {
+	it("keeps normal V1 envelopes within the legacy two-hop bound", () => {
+		expect(DEFAULT_PEER_LINK_HOPS).toBe(2);
+	});
+
 	it("round-trips hello, message, and ack frames", () => {
 		const frames: PeerLinkFrame[] = [
 			{ type: "hello", protocol: 1, storeId: "store-a", sessions: ["session-a"] },
@@ -68,7 +73,7 @@ describe("peer link protocol", () => {
 						createdAt: "now",
 						priority: "urgent",
 						visitedStoreIds: ["store-a"],
-						hopsRemaining: 3,
+						hopsRemaining: DEFAULT_PEER_LINK_HOPS + 1,
 					},
 				}),
 			),

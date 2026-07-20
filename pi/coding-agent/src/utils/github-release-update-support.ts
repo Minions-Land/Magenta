@@ -24,12 +24,52 @@ export const RESOURCE_DIRECTORY_NAMES = [
 
 export const RESOURCE_FILE_NAMES = ["package.json", "README.md", "CHANGELOG.md"] as const;
 
-export const REQUIRED_RESOURCE_PATHS = [
+export const BASE_REQUIRED_RESOURCE_PATHS = [
 	"theme/dark.json",
 	"tools/read/read.toml",
 	"skills/paper-analysis/pi/SKILL.md",
 	"photon_rs_bg.wasm",
+	"runtime/node_modules/@mariozechner/clipboard/package.json",
+	"runtime/node_modules/@mariozechner/clipboard/index.js",
 ] as const;
+
+export const CLIPBOARD_NATIVE_RESOURCE_PATHS = {
+	darwin: [
+		"runtime/node_modules/@mariozechner/clipboard-darwin-universal/package.json",
+		"runtime/node_modules/@mariozechner/clipboard-darwin-universal/clipboard.darwin-universal.node",
+	],
+	linux: [
+		"runtime/node_modules/@mariozechner/clipboard-linux-x64-gnu/package.json",
+		"runtime/node_modules/@mariozechner/clipboard-linux-x64-gnu/clipboard.linux-x64-gnu.node",
+	],
+	win32: [
+		"runtime/node_modules/@mariozechner/clipboard-win32-x64-msvc/package.json",
+		"runtime/node_modules/@mariozechner/clipboard-win32-x64-msvc/clipboard.win32-x64-msvc.node",
+	],
+} as const;
+
+export const REQUIRED_RESOURCE_PATHS = [
+	...BASE_REQUIRED_RESOURCE_PATHS,
+	...CLIPBOARD_NATIVE_RESOURCE_PATHS.darwin,
+	...CLIPBOARD_NATIVE_RESOURCE_PATHS.linux,
+	...CLIPBOARD_NATIVE_RESOURCE_PATHS.win32,
+] as const;
+
+export function getInstalledRequiredResourcePaths(
+	runtimePlatform: NodeJS.Platform = process.platform,
+	runtimeArch: string = process.arch,
+): readonly string[] {
+	if (runtimePlatform === "darwin" && (runtimeArch === "arm64" || runtimeArch === "x64")) {
+		return [...BASE_REQUIRED_RESOURCE_PATHS, ...CLIPBOARD_NATIVE_RESOURCE_PATHS.darwin];
+	}
+	if (runtimePlatform === "linux" && runtimeArch === "x64") {
+		return [...BASE_REQUIRED_RESOURCE_PATHS, ...CLIPBOARD_NATIVE_RESOURCE_PATHS.linux];
+	}
+	if (runtimePlatform === "win32" && runtimeArch === "x64") {
+		return [...BASE_REQUIRED_RESOURCE_PATHS, ...CLIPBOARD_NATIVE_RESOURCE_PATHS.win32];
+	}
+	return BASE_REQUIRED_RESOURCE_PATHS;
+}
 
 export interface ReleaseAssetDescriptor {
 	name: string;
@@ -517,7 +557,7 @@ export async function currentReleaseResourcesAreValid(
 		for (const fileName of RESOURCE_FILE_NAMES) {
 			await assertRegularFile(join(resourceDirectory, fileName), fileName);
 		}
-		for (const requiredPath of REQUIRED_RESOURCE_PATHS) {
+		for (const requiredPath of getInstalledRequiredResourcePaths()) {
 			await assertRegularFile(join(resourceDirectory, ...requiredPath.split("/")), requiredPath);
 		}
 		return true;

@@ -797,18 +797,19 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 							output.errorMessage = stopReasonResult.errorMessage;
 						}
 					}
-					// Only update usage fields if present (not null).
-					// Preserves input_tokens from message_start when proxies omit it in message_delta.
-					if (event.usage.input_tokens != null) {
+					// Some Anthropic-compatible relays emit explicit zeroes in message_delta
+					// even when message_start contained the cumulative input/cache usage.
+					// Preserve those non-zero start values; output_tokens is still authoritative.
+					if (event.usage.input_tokens != null && event.usage.input_tokens > 0) {
 						output.usage.input = event.usage.input_tokens;
 					}
 					if (event.usage.output_tokens != null) {
 						output.usage.output = event.usage.output_tokens;
 					}
-					if (event.usage.cache_read_input_tokens != null) {
+					if (event.usage.cache_read_input_tokens != null && event.usage.cache_read_input_tokens > 0) {
 						output.usage.cacheRead = event.usage.cache_read_input_tokens;
 					}
-					if (event.usage.cache_creation_input_tokens != null) {
+					if (event.usage.cache_creation_input_tokens != null && event.usage.cache_creation_input_tokens > 0) {
 						output.usage.cacheWrite = event.usage.cache_creation_input_tokens;
 					}
 					// Anthropic doesn't provide total_tokens, compute from components
@@ -973,6 +974,10 @@ function createClient(
 
 	// OAuth: Bearer auth, Claude Code identity headers
 	if (apiKey && isOAuthToken(apiKey)) {
+		// Apply the same model-scoped affinity opt-in as the API-key branch below.
+		// The compat flag defaults to false because gateway semantics are provider-specific.
+		const sessionAffinityHeaders: ProviderHeaders =
+			sessionId && getAnthropicCompat(model).sendSessionAffinityHeaders ? { "x-session-affinity": sessionId } : {};
 		const client = new Anthropic({
 			apiKey: null,
 			authToken: apiKey,
@@ -986,6 +991,7 @@ function createClient(
 					"user-agent": `claude-cli/${claudeCodeVersion}`,
 					"x-app": "cli",
 				},
+				sessionAffinityHeaders,
 				model.headers,
 				optionsHeaders,
 			),

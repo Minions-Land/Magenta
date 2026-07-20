@@ -97,6 +97,10 @@ export class MessageStorePeerLinkAdapter {
 		return this.store.listRegisteredSessionIds();
 	}
 
+	listAdvertisableSessions(excludePeerStoreId?: string): string[] {
+		return this.store.listAdvertisableSessions(excludePeerStoreId);
+	}
+
 	replacePeerRoutes(peerStoreId: string, sessionIds: string[]): void {
 		this.store.replacePeerRoutes(peerStoreId, sessionIds);
 	}
@@ -113,6 +117,10 @@ export class MessageStorePeerLinkAdapter {
 
 	requeueOutbound(messageIds: string[], ownerId: string, options?: { notFound?: boolean }): void {
 		this.store.requeuePeerOutbox(messageIds, ownerId, options);
+	}
+
+	runMaintenance(): void {
+		this.store.purgeExpiredOutbox();
 	}
 
 	acceptIncoming(message: PeerLinkEnvelope, ingressPeerStoreId: string): PeerLinkAcceptResult {

@@ -138,4 +138,55 @@ process.stdin.resume();
 			.map((line) => JSON.parse(line));
 		expect(received).toContainEqual({ type: "extension_ui_response", id: "ui-123", confirmed: true });
 	});
+
+	test("can launch a child with an explicitly isolated environment", async () => {
+		const childScript = writeChildScript(`import { writeFileSync } from "node:fs";
+writeFileSync(__RPC_ENV_MARKER__, JSON.stringify({
+  inherited: process.env.RPC_PARENT_SECRET ?? null,
+  marker: process.env.RPC_CHILD_MARKER ?? null,
+}));
+process.stdout.write(JSON.stringify({ type: "runtime_manifest", protocolVersion: 1 }) + "\\n");
+let buffer = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => {
+  buffer += chunk;
+  while (buffer.includes("\\n")) {
+    const newline = buffer.indexOf("\\n");
+    const line = buffer.slice(0, newline);
+    buffer = buffer.slice(newline + 1);
+    if (!line) continue;
+    const command = JSON.parse(line);
+    if (command.type === "shutdown") {
+      process.stdout.write(JSON.stringify({ id: command.id, type: "response", command: "shutdown", success: true }) + "\\n");
+      process.exit(0);
+    }
+  }
+});
+process.stdin.resume();
+`);
+		const markerPath = `${childScript}.env`;
+		writeFileSync(
+			childScript,
+			readFileSync(childScript, "utf8").replace("__RPC_ENV_MARKER__", JSON.stringify(markerPath)),
+		);
+		const previous = process.env.RPC_PARENT_SECRET;
+		process.env.RPC_PARENT_SECRET = "must-not-cross-boundary";
+		try {
+			const client = new RpcClient({
+				cliPath: childScript,
+				inheritEnv: false,
+				env: { PATH: process.env.PATH ?? "", RPC_CHILD_MARKER: "explicit-only" },
+			});
+			await client.start();
+			await client.stop();
+			const observed = JSON.parse(readFileSync(markerPath, "utf8")) as {
+				inherited: string | null;
+				marker: string | null;
+			};
+			expect(observed).toEqual({ inherited: null, marker: "explicit-only" });
+		} finally {
+			if (previous === undefined) delete process.env.RPC_PARENT_SECRET;
+			else process.env.RPC_PARENT_SECRET = previous;
+		}
+	});
 });

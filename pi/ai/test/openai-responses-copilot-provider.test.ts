@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { stream as streamOpenAIResponses } from "../src/api/openai-responses.ts";
-import { getModel, streamSimple } from "../src/compat.ts";
+import { getModel, getSupportedThinkingLevels, streamSimple } from "../src/compat.ts";
 import type { Model } from "../src/types.ts";
 
 type CapturedHeaders = Headers | string[][] | Record<string, string | readonly string[]> | undefined;
@@ -165,38 +165,43 @@ describe("openai-responses provider defaults", () => {
 		},
 	);
 
-	it("sends max reasoning effort for GPT-5.6 Sol", async () => {
-		let capturedPayload: unknown;
-		vi.spyOn(globalThis, "fetch").mockResolvedValue(
-			new Response("data: [DONE]\n\n", {
-				status: 200,
-				headers: { "content-type": "text/event-stream" },
-			}),
-		);
+	it.each(["low", "medium", "high", "xhigh", "max"] as const)(
+		"sends %s reasoning effort for GPT-5.6 Sol",
+		async (reasoning) => {
+			let capturedPayload: unknown;
+			const model = getModel("openai", "gpt-5.6-sol");
+			vi.spyOn(globalThis, "fetch").mockResolvedValue(
+				new Response("data: [DONE]\n\n", {
+					status: 200,
+					headers: { "content-type": "text/event-stream" },
+				}),
+			);
 
-		const stream = streamSimple(
-			getModel("openai", "gpt-5.6-sol"),
-			{
-				systemPrompt: "sys",
-				messages: [{ role: "user", content: "hi", timestamp: Date.now() }],
-			},
-			{
-				apiKey: "test-key",
-				reasoning: "max",
-				onPayload: (payload) => {
-					capturedPayload = payload;
+			const stream = streamSimple(
+				model,
+				{
+					systemPrompt: "sys",
+					messages: [{ role: "user", content: "hi", timestamp: Date.now() }],
 				},
-			},
-		);
+				{
+					apiKey: "test-key",
+					reasoning,
+					onPayload: (payload) => {
+						capturedPayload = payload;
+					},
+				},
+			);
 
-		for await (const event of stream) {
-			if (event.type === "done" || event.type === "error") break;
-		}
+			for await (const event of stream) {
+				if (event.type === "done" || event.type === "error") break;
+			}
 
-		expect(capturedPayload).toMatchObject({
-			reasoning: { effort: "max" },
-		});
-	});
+			expect(getSupportedThinkingLevels(model)).toContain(reasoning);
+			expect(capturedPayload).toMatchObject({
+				reasoning: { effort: reasoning },
+			});
+		},
+	);
 
 	it("sets cache-affinity headers for official OpenAI Responses requests with a sessionId", async () => {
 		const captured = await captureOpenAIResponseHeaders({ sessionId: "session-123" });

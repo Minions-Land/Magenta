@@ -234,6 +234,16 @@ describe("ExternalActivationCoordinator", () => {
 		await expect(waiting).resolves.toBe(true);
 	});
 
+	test("waitForQuiescence yields to a scheduled turn-barrier release", async () => {
+		const release = await coordinator.acquireTurnBarrier();
+		coordinator.register(backgroundEntry("held-until-turn-end"));
+		setTimeout(() => void release(), 10);
+
+		await expect(coordinator.waitForQuiescence({ timeoutMs: 250 })).resolves.toBe(true);
+		expect(deliveries).toHaveLength(1);
+		expect(deliveries[0]?.map((entry) => entry.key)).toEqual(["bg-shell:held-until-turn-end"]);
+	});
+
 	test("waitForQuiescence respects its deadline", async () => {
 		let release!: () => void;
 		await coordinator.shutdown();
@@ -308,5 +318,115 @@ describe("ExternalActivationCoordinator", () => {
 		coordinator.register(backgroundEntry("after_shutdown", { onInjectionError: dropped }));
 		expect(dropped).toHaveBeenCalledOnce();
 		expect(deliveries).toHaveLength(0);
+	});
+
+	test("turn barrier holds followUp but lets steer pass through", async () => {
+		const release = await coordinator.acquireTurnBarrier();
+		coordinator.register(backgroundEntry("held"));
+		coordinator.register({
+			key: "peer:steer:urgent",
+			source: { kind: "peer", messageIds: ["urgent"] },
+			consumeIds: ["urgent"],
+			message: { customType: "magenta-peer-message", content: "urgent", display: true, details: {} },
+			delivery: "steer",
+			idlePolicy: "activate",
+		});
+
+		await waitForDebounce();
+		// steer flushed through the barrier; followUp stayed coalesced
+		expect(deliveries).toHaveLength(1);
+		expect(deliveries[0]?.map((e) => e.key)).toEqual(["peer:steer:urgent"]);
+
+		await release();
+		// release commits the held followUp
+		expect(deliveries).toHaveLength(2);
+		expect(deliveries[1]?.map((e) => e.key)).toEqual(["bg-shell:held"]);
+	});
+
+	test("turn barrier coalesces multiple followUps into one release batch", async () => {
+		const release = await coordinator.acquireTurnBarrier();
+		coordinator.register(backgroundEntry("e1"));
+		coordinator.register(backgroundEntry("e2"));
+		coordinator.register(backgroundEntry("e3"));
+		await waitForDebounce();
+		expect(deliveries).toHaveLength(0);
+
+		await release();
+		expect(deliveries).toHaveLength(1);
+		expect(deliveries[0]?.map((e) => e.key)).toEqual(["bg-shell:e1", "bg-shell:e2", "bg-shell:e3"]);
+	});
+
+	test("single followUp during a turn barrier still delivers on release (batch_size==1)", async () => {
+		const release = await coordinator.acquireTurnBarrier();
+		coordinator.register(backgroundEntry("solo"));
+		await waitForDebounce();
+		expect(deliveries).toHaveLength(0);
+		await release();
+		expect(deliveries).toHaveLength(1);
+		expect(deliveries[0]).toHaveLength(1);
+	});
+
+	test("nextTurn stays held by the turn barrier until release", async () => {
+		const release = await coordinator.acquireTurnBarrier();
+		coordinator.register(backgroundEntry("later", { delivery: "nextTurn", idlePolicy: "passive" }));
+		await waitForDebounce();
+		expect(deliveries).toHaveLength(0);
+		await release();
+		expect(deliveries).toHaveLength(1);
+		expect(deliveries[0]?.[0]?.delivery).toBe("nextTurn");
+	});
+
+	test("nested turn barriers only flush at the outermost release", async () => {
+		const releaseA = await coordinator.acquireTurnBarrier();
+		const releaseB = await coordinator.acquireTurnBarrier();
+		coordinator.register(backgroundEntry("nested"));
+		await releaseB();
+		expect(deliveries).toHaveLength(0);
+		await releaseA();
+		expect(deliveries).toHaveLength(1);
+		expect(deliveries[0]?.map((e) => e.key)).toEqual(["bg-shell:nested"]);
+	});
+
+	test("compaction barrier supersedes an active turn barrier", async () => {
+		const releaseTurn = await coordinator.acquireTurnBarrier();
+		coordinator.register(backgroundEntry("pre"));
+		// Compaction latches while a turn is in flight.
+		const releaseCompaction = await coordinator.acquireDeliveryBarrier();
+		coordinator.register(backgroundEntry("during"));
+		// The now-defunct turn release must not flush; compaction owns the batch.
+		await releaseTurn();
+		await waitForDebounce();
+		expect(deliveries).toHaveLength(0);
+
+		await releaseCompaction();
+		expect(deliveries).toHaveLength(1);
+		expect(deliveries[0]?.map((e) => e.key)).toEqual(["bg-shell:pre", "bg-shell:during"]);
+	});
+
+	test("steer is blocked by compaction barrier even though it passes a turn barrier", async () => {
+		await coordinator.acquireDeliveryBarrier();
+		coordinator.register({
+			key: "peer:steer:blocked",
+			source: { kind: "peer", messageIds: ["blocked"] },
+			consumeIds: ["blocked"],
+			message: { customType: "magenta-peer-message", content: "blocked", display: true, details: {} },
+			delivery: "steer",
+			idlePolicy: "activate",
+		});
+		await waitForDebounce();
+		expect(deliveries).toHaveLength(0);
+	});
+
+	test("waitForTurnBarrierReady resolves after release", async () => {
+		const release = await coordinator.acquireTurnBarrier();
+		let ready = false;
+		const waiter = coordinator.waitForTurnBarrierReady().then(() => {
+			ready = true;
+		});
+		await waitForDebounce(10);
+		expect(ready).toBe(false);
+		await release();
+		await waiter;
+		expect(ready).toBe(true);
 	});
 });

@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed
+- When auto-compaction is enabled, model switching now compacts once with the current model if the active context exceeds the target model's threshold, and only commits the new model after compaction succeeds
+
 ## [0.0.26] - 2026-07-19
 
 ### Changed

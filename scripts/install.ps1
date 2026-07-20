@@ -113,7 +113,15 @@ function Test-MagentaResourceArchive([string]$ArchivePath) {
         "theme/dark.json",
         "tools/read/read.toml",
         "skills/paper-analysis/pi/SKILL.md",
-        "photon_rs_bg.wasm"
+        "photon_rs_bg.wasm",
+        "runtime/node_modules/@mariozechner/clipboard/package.json",
+        "runtime/node_modules/@mariozechner/clipboard/index.js",
+        "runtime/node_modules/@mariozechner/clipboard-darwin-universal/package.json",
+        "runtime/node_modules/@mariozechner/clipboard-darwin-universal/clipboard.darwin-universal.node",
+        "runtime/node_modules/@mariozechner/clipboard-linux-x64-gnu/package.json",
+        "runtime/node_modules/@mariozechner/clipboard-linux-x64-gnu/clipboard.linux-x64-gnu.node",
+        "runtime/node_modules/@mariozechner/clipboard-win32-x64-msvc/package.json",
+        "runtime/node_modules/@mariozechner/clipboard-win32-x64-msvc/clipboard.win32-x64-msvc.node"
     )
     $normalizedPaths = New-Object "System.Collections.Generic.HashSet[string]"
     $caseFoldedPaths = New-Object "System.Collections.Generic.HashSet[string]"
@@ -369,6 +377,8 @@ try {
         "tools\read\read.toml",
         "skills\paper-analysis\pi\SKILL.md",
         "photon_rs_bg.wasm",
+        "runtime\node_modules\@mariozechner\clipboard\index.js",
+        "runtime\node_modules\@mariozechner\clipboard-win32-x64-msvc\clipboard.win32-x64-msvc.node",
         "magenta-release.json"
     )
     foreach ($relativePath in $requiredResources) {

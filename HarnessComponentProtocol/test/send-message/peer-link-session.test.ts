@@ -1,6 +1,11 @@
 import { PassThrough } from "node:stream";
 import { describe, expect, it } from "vitest";
-import { type PeerLinkEnvelope, serializePeerLinkFrame } from "../../tools/send-message/magenta/peer-link-protocol.ts";
+import {
+	MAX_PEER_LINK_FRAME_BYTES,
+	type PeerLinkEnvelope,
+	parsePeerLinkFrame,
+	serializePeerLinkFrame,
+} from "../../tools/send-message/magenta/peer-link-protocol.ts";
 import { PeerLinkSession, type PeerLinkStorage } from "../../tools/send-message/magenta/peer-link-session.ts";
 
 type OutboxRow = {
@@ -16,6 +21,7 @@ class MemoryPeerStore implements PeerLinkStorage {
 	readonly outbox: OutboxRow[] = [];
 	readonly inbox: PeerLinkEnvelope[] = [];
 	notFoundRequeues = 0;
+	maintenanceRuns = 0;
 	private readonly seen = new Set<string>();
 	private readonly storeId: string;
 	private readonly sessions: string[];
@@ -30,6 +36,11 @@ class MemoryPeerStore implements PeerLinkStorage {
 	}
 
 	listRegisteredSessionIds() {
+		return [...this.sessions];
+	}
+
+	listAdvertisableSessions(_excludePeerStoreId?: string): string[] {
+		// Memory store has no cross-peer route propagation; advertise local sessions.
 		return [...this.sessions];
 	}
 
@@ -70,6 +81,10 @@ class MemoryPeerStore implements PeerLinkStorage {
 				else delete row.retryAfter;
 			}
 		}
+	}
+
+	runMaintenance() {
+		this.maintenanceRuns++;
 	}
 
 	acceptIncoming(message: PeerLinkEnvelope, ingressPeerStoreId: string) {
@@ -139,6 +154,63 @@ async function waitFor(predicate: () => boolean, timeoutMs = 1_000): Promise<voi
 }
 
 describe("PeerLinkSession", () => {
+	it("bounds large V1 session advertisements instead of tearing down the link", async () => {
+		const sessions = Array.from(
+			{ length: 5000 },
+			(_, index) => `session-${index.toString().padStart(5, "0")}-${"x".repeat(32)}`,
+		);
+		const local = new MemoryPeerStore("store-a", sessions);
+		const input = new PassThrough();
+		const output = new PassThrough();
+		let wire = "";
+		output.on("data", (chunk) => {
+			wire += chunk.toString();
+		});
+		const link = new PeerLinkSession({ role: "initiator", input, output, storage: local });
+		try {
+			const started = link.start();
+			await waitFor(() => wire.includes("\n"));
+			const helloLine = wire.slice(0, wire.indexOf("\n"));
+			expect(Buffer.byteLength(helloLine, "utf8")).toBeLessThanOrEqual(MAX_PEER_LINK_FRAME_BYTES);
+			const hello = parsePeerLinkFrame(helloLine);
+			expect(hello.type).toBe("hello");
+			if (hello.type !== "hello") throw new Error("expected hello frame");
+			expect(hello.sessions.length).toBeLessThan(sessions.length);
+			expect(hello.sessions[0]).toBe(sessions[0]);
+			input.write(serializePeerLinkFrame({ type: "hello_ack", protocol: 1, storeId: "store-b", sessions: [] }));
+			await started;
+		} finally {
+			await link.close();
+		}
+	});
+
+	it("runs storage maintenance while a link stays attached", async () => {
+		const local = new MemoryPeerStore("store-a", ["session-a"]);
+		const remote = new MemoryPeerStore("store-b", ["session-b"]);
+		const initiatorToResponder = new PassThrough();
+		const responderToInitiator = new PassThrough();
+		const initiator = new PeerLinkSession({
+			role: "initiator",
+			input: responderToInitiator,
+			output: initiatorToResponder,
+			storage: local,
+			maintenanceIntervalMs: 5,
+		});
+		const responder = new PeerLinkSession({
+			role: "responder",
+			input: initiatorToResponder,
+			output: responderToInitiator,
+			storage: remote,
+			maintenanceIntervalMs: 5,
+		});
+		try {
+			await Promise.all([responder.start(), initiator.start()]);
+			await waitFor(() => local.maintenanceRuns > 0 && remote.maintenanceRuns > 0);
+		} finally {
+			await Promise.all([initiator.close(), responder.close()]);
+		}
+	});
+
 	it("requeues an entire claimed batch when the first message write fails", async () => {
 		class FailAfterHello extends PassThrough {
 			private writes = 0;
@@ -228,25 +300,42 @@ describe("PeerLinkSession", () => {
 	it("rejects a first-hop sender not owned by the advertised origin store", async () => {
 		const local = new MemoryPeerStore("store-a", ["session-a"]);
 		const remote = new MemoryPeerStore("store-b", ["session-b"]);
-		local.outbox.push(
-			{
-				message: envelope("m:spoofed", "forged-session", "session-b", "store-a"),
-				status: "pending",
-			},
-			{
-				message: {
-					...envelope("m:spoofed-relay", "victim-session", "session-b", "store:victim"),
-					visitedStoreIds: ["store:victim", "store-a"],
-					hopsRemaining: 1,
-				},
-				status: "pending",
-			},
-		);
+		// First-hop spoof: origin claims to be store-a (the ingress) but the sender
+		// session is not owned by store-a. Must be rejected as not_found.
+		local.outbox.push({
+			message: envelope("m:spoofed", "forged-session", "session-b", "store-a"),
+			status: "pending",
+		});
 		const link = linkedSessions(local, remote);
 		try {
 			await Promise.all([link.responder.start(), link.initiator.start()]);
-			await waitFor(() => local.notFoundRequeues >= 2);
+			await waitFor(() => local.notFoundRequeues >= 1);
 			expect(remote.inbox).toHaveLength(0);
+		} finally {
+			await Promise.all([link.initiator.close(), link.responder.close()]);
+		}
+	});
+
+	it("accepts a legitimate multi-hop relay whose origin differs from the ingress peer", async () => {
+		// Under pure gossip a message that originated elsewhere and was relayed in via
+		// the ingress peer is legitimate: the receiver trusts only the previous hop
+		// (ingress), not the claimed origin. This is the core relay case that lets a
+		// message reach an offline recipient across multiple hubs.
+		const local = new MemoryPeerStore("store-a", ["session-a"]);
+		const remote = new MemoryPeerStore("store-b", ["session-b"]);
+		local.outbox.push({
+			message: {
+				...envelope("m:relay", "victim-session", "session-b", "store:origin"),
+				visitedStoreIds: ["store:origin", "store-a"],
+				hopsRemaining: 2,
+			},
+			status: "pending",
+		});
+		const link = linkedSessions(local, remote);
+		try {
+			await Promise.all([link.responder.start(), link.initiator.start()]);
+			await waitFor(() => remote.inbox.length === 1);
+			expect(remote.inbox[0]?.id).toBe("m:relay");
 		} finally {
 			await Promise.all([link.initiator.close(), link.responder.close()]);
 		}

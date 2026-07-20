@@ -58,15 +58,21 @@ export type PeerRoute = {
 };
 
 export type PeerOutboxStatus = "pending" | "inflight" | "forwarded";
+export type PeerDeliveryStatus = "pending" | "inflight" | "forwarded";
 
 /** One durable outbox row, including the original transport envelope. */
 export type PeerOutboxMessage = FederatedMessageEnvelope & {
 	targetPeerStoreId: string | null;
-	status: PeerOutboxStatus;
+	receivedAt: string;
+};
+
+/** Per-link delivery tracking row. */
+export type PeerDeliveryRecord = {
+	messageId: string;
+	peerStoreId: string;
+	status: PeerDeliveryStatus;
 	claimOwner?: string;
 	claimedAt?: string;
-	nextAttemptAt?: string;
-	attemptCount: number;
 };
 
 export type RoutedSendResult = {
@@ -110,6 +116,8 @@ export type MessageStoreOptions = {
 	stalenessMs?: number;
 	/** Reclaim bridge claims older than this after relay process crashes. */
 	peerOutboxClaimTimeoutMs?: number;
+	/** Retention period for peer outbox messages (milliseconds). Default 7 days. */
+	peerOutboxRetentionMs?: number;
 	/** Optional fixed id for a new store. Must match when reopening it. */
 	storeId?: string;
 };
@@ -170,6 +178,8 @@ export type PeerMessage = {
  * a message can be stranded in `pending` after a mid-delivery crash.
  */
 const DEFAULT_STALENESS_MS = 30_000;
+/** Default retention period for peer outbox messages (7 days). */
+const DEFAULT_OUTBOX_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS messages (
@@ -218,15 +228,35 @@ CREATE TABLE IF NOT EXISTS peer_outbox (
     priority             TEXT NOT NULL DEFAULT 'normal',
     metadata_json        TEXT,
     target_peer_store_id TEXT,
+    -- Legacy global delivery columns remain for rollback/read compatibility.
+    -- Gossip uses peer_outbox_delivery for new claims.
     status               TEXT NOT NULL DEFAULT 'pending',
     claim_owner          TEXT,
     claimed_at           TEXT,
     forwarded_at         TEXT,
     next_attempt_at      TEXT,
-    attempt_count        INTEGER NOT NULL DEFAULT 0
+    attempt_count        INTEGER NOT NULL DEFAULT 0,
+    received_at          TEXT NOT NULL DEFAULT ''
 );
-CREATE INDEX IF NOT EXISTS idx_peer_outbox_claim
-    ON peer_outbox(status, target_peer_store_id, priority, created_at);
+-- NOTE: the legacy claim and retention indexes are created in migrate() after
+-- every compatibility column exists.
+-- The idx_peer_outbox_retention index on received_at is created in
+-- migrate(), NOT here. On an existing database, CREATE TABLE IF NOT EXISTS is a
+-- no-op and the pre-gossip peer_outbox has no received_at column, so creating
+-- the index here would fail ("no such column: received_at") and abort the whole
+-- SCHEMA batch before migrate() can ALTER the column in. migrate() adds the
+-- column first, then creates this index, so both fresh and upgraded DBs work.
+
+CREATE TABLE IF NOT EXISTS peer_outbox_delivery (
+    message_id      TEXT NOT NULL,
+    peer_store_id   TEXT NOT NULL,
+    status          TEXT NOT NULL DEFAULT 'pending',
+    claim_owner     TEXT,
+    claimed_at      TEXT,
+    PRIMARY KEY (message_id, peer_store_id)
+);
+CREATE INDEX IF NOT EXISTS idx_peer_outbox_delivery_claim
+    ON peer_outbox_delivery(peer_store_id, status);
 
 CREATE TABLE IF NOT EXISTS peer_endpoints (
     endpoint_id      TEXT PRIMARY KEY,
@@ -263,6 +293,7 @@ export class MessageStore {
 	private readonly db: InstanceType<typeof DatabaseSync>;
 	private readonly stalenessMs: number;
 	private readonly peerOutboxClaimTimeoutMs: number;
+	private readonly peerOutboxRetentionMs: number;
 	/** Stable identity persisted in the database and advertised to peer stores. */
 	readonly storeId: string;
 
@@ -277,9 +308,14 @@ export class MessageStore {
 		this.storeId = this.loadOrCreateStoreId(options?.storeId);
 		this.stalenessMs = options?.stalenessMs ?? DEFAULT_STALENESS_MS;
 		this.peerOutboxClaimTimeoutMs = options?.peerOutboxClaimTimeoutMs ?? 30_000;
+		this.peerOutboxRetentionMs = options?.peerOutboxRetentionMs ?? DEFAULT_OUTBOX_RETENTION_MS;
 		if (!Number.isFinite(this.peerOutboxClaimTimeoutMs) || this.peerOutboxClaimTimeoutMs < 0) {
 			this.db.close();
 			throw new TypeError("peer outbox claim timeout must be a non-negative finite number");
+		}
+		if (!Number.isFinite(this.peerOutboxRetentionMs) || this.peerOutboxRetentionMs < 0) {
+			this.db.close();
+			throw new TypeError("peer outbox retention must be a non-negative finite number");
 		}
 	}
 
@@ -301,43 +337,90 @@ export class MessageStore {
 	 * left untouched.
 	 */
 	private migrate(): void {
-		const msgCols = this.db.prepare(`PRAGMA table_info(messages)`).all() as Array<{ name: string }>;
-		if (!msgCols.some((c) => c.name === "drained_at")) {
-			this.db.exec(`ALTER TABLE messages ADD COLUMN drained_at TEXT`);
-		}
-		if (!msgCols.some((c) => c.name === "priority")) {
-			this.db.exec(`ALTER TABLE messages ADD COLUMN priority TEXT NOT NULL DEFAULT 'normal'`);
-		}
-		if (!msgCols.some((c) => c.name === "claim_owner")) {
-			this.db.exec(`ALTER TABLE messages ADD COLUMN claim_owner TEXT`);
-		}
-		if (!msgCols.some((c) => c.name === "claim_pid")) {
-			this.db.exec(`ALTER TABLE messages ADD COLUMN claim_pid INTEGER`);
-		}
-		if (!msgCols.some((c) => c.name === "metadata_json")) {
-			this.db.exec(`ALTER TABLE messages ADD COLUMN metadata_json TEXT`);
-		}
-		const presCols = this.db.prepare(`PRAGMA table_info(presence)`).all() as Array<{ name: string }>;
-		if (!presCols.some((c) => c.name === "pid")) {
-			this.db.exec(`ALTER TABLE presence ADD COLUMN pid INTEGER`);
-		}
-		if (!presCols.some((c) => c.name === "boot_id")) {
-			this.db.exec(`ALTER TABLE presence ADD COLUMN boot_id TEXT`);
-		}
-		if (!presCols.some((c) => c.name === "wake_path")) {
-			this.db.exec(`ALTER TABLE presence ADD COLUMN wake_path TEXT`);
-		}
-		const outboxCols = this.db.prepare(`PRAGMA table_info(peer_outbox)`).all() as Array<{ name: string }>;
-		if (!outboxCols.some((c) => c.name === "next_attempt_at")) {
-			this.db.exec(`ALTER TABLE peer_outbox ADD COLUMN next_attempt_at TEXT`);
-		}
-		if (!outboxCols.some((c) => c.name === "attempt_count")) {
-			this.db.exec(`ALTER TABLE peer_outbox ADD COLUMN attempt_count INTEGER NOT NULL DEFAULT 0`);
-		}
-		this.db.exec(`
-			INSERT OR IGNORE INTO peer_seen (message_id, first_seen_at, ingress_peer_store_id)
-			SELECT id, created_at, NULL FROM messages
+		// BEGIN IMMEDIATE serializes concurrent process startups before either one
+		// inspects table_info, and SQLite keeps the ALTER sequence atomic.
+		this.transaction(() => {
+			const msgCols = this.db.prepare(`PRAGMA table_info(messages)`).all() as Array<{ name: string }>;
+			if (!msgCols.some((c) => c.name === "drained_at")) {
+				this.db.exec(`ALTER TABLE messages ADD COLUMN drained_at TEXT`);
+			}
+			if (!msgCols.some((c) => c.name === "priority")) {
+				this.db.exec(`ALTER TABLE messages ADD COLUMN priority TEXT NOT NULL DEFAULT 'normal'`);
+			}
+			if (!msgCols.some((c) => c.name === "claim_owner")) {
+				this.db.exec(`ALTER TABLE messages ADD COLUMN claim_owner TEXT`);
+			}
+			if (!msgCols.some((c) => c.name === "claim_pid")) {
+				this.db.exec(`ALTER TABLE messages ADD COLUMN claim_pid INTEGER`);
+			}
+			if (!msgCols.some((c) => c.name === "metadata_json")) {
+				this.db.exec(`ALTER TABLE messages ADD COLUMN metadata_json TEXT`);
+			}
+			const presCols = this.db.prepare(`PRAGMA table_info(presence)`).all() as Array<{ name: string }>;
+			if (!presCols.some((c) => c.name === "pid")) {
+				this.db.exec(`ALTER TABLE presence ADD COLUMN pid INTEGER`);
+			}
+			if (!presCols.some((c) => c.name === "boot_id")) {
+				this.db.exec(`ALTER TABLE presence ADD COLUMN boot_id TEXT`);
+			}
+			if (!presCols.some((c) => c.name === "wake_path")) {
+				this.db.exec(`ALTER TABLE presence ADD COLUMN wake_path TEXT`);
+			}
+			const outboxCols = this.db.prepare(`PRAGMA table_info(peer_outbox)`).all() as Array<{ name: string }>;
+			if (!outboxCols.some((c) => c.name === "status")) {
+				this.db.exec(`ALTER TABLE peer_outbox ADD COLUMN status TEXT NOT NULL DEFAULT 'pending'`);
+			}
+			if (!outboxCols.some((c) => c.name === "claim_owner")) {
+				this.db.exec(`ALTER TABLE peer_outbox ADD COLUMN claim_owner TEXT`);
+			}
+			if (!outboxCols.some((c) => c.name === "claimed_at")) {
+				this.db.exec(`ALTER TABLE peer_outbox ADD COLUMN claimed_at TEXT`);
+			}
+			if (!outboxCols.some((c) => c.name === "forwarded_at")) {
+				this.db.exec(`ALTER TABLE peer_outbox ADD COLUMN forwarded_at TEXT`);
+			}
+			if (!outboxCols.some((c) => c.name === "next_attempt_at")) {
+				this.db.exec(`ALTER TABLE peer_outbox ADD COLUMN next_attempt_at TEXT`);
+			}
+			if (!outboxCols.some((c) => c.name === "attempt_count")) {
+				this.db.exec(`ALTER TABLE peer_outbox ADD COLUMN attempt_count INTEGER NOT NULL DEFAULT 0`);
+			}
+			this.db.exec(
+				`CREATE INDEX IF NOT EXISTS idx_peer_outbox_claim ON peer_outbox(status, target_peer_store_id, priority, created_at);`,
+			);
+			// Gossip flooding migration: outbox rows gain a received_at for time-based GC,
+			// and per-link delivery is tracked in a separate peer_outbox_delivery table.
+			// Legacy status/claim columns on peer_outbox are left in place (unused) so an
+			// older database opens without a destructive rewrite.
+			if (!outboxCols.some((c) => c.name === "received_at")) {
+				this.db.exec(`ALTER TABLE peer_outbox ADD COLUMN received_at TEXT NOT NULL DEFAULT ''`);
+			}
+			// Backfill received_at from created_at for any row still carrying the empty
+			// default. Run UNCONDITIONALLY (not just when the column was just added):
+			// under a mixed-version deployment an interim/old binary can INSERT into
+			// peer_outbox without supplying received_at (getting the '' default), and a
+			// later new-binary restart would otherwise skip these rows forever, leaking
+			// them past GC. This idempotent backfill heals them on every startup.
+			this.db.exec(`UPDATE peer_outbox SET received_at = created_at WHERE received_at = ''`);
+			this.db.exec(`
+			CREATE TABLE IF NOT EXISTS peer_outbox_delivery (
+				message_id      TEXT NOT NULL,
+				peer_store_id   TEXT NOT NULL,
+				status          TEXT NOT NULL DEFAULT 'pending',
+				claim_owner     TEXT,
+				claimed_at      TEXT,
+				PRIMARY KEY (message_id, peer_store_id)
+			);
 		`);
+			this.db.exec(
+				`CREATE INDEX IF NOT EXISTS idx_peer_outbox_delivery_claim ON peer_outbox_delivery(peer_store_id, status);`,
+			);
+			this.db.exec(`CREATE INDEX IF NOT EXISTS idx_peer_outbox_retention ON peer_outbox(received_at);`);
+			this.db.exec(`
+				INSERT OR IGNORE INTO peer_seen (message_id, first_seen_at, ingress_peer_store_id)
+				SELECT id, created_at, NULL FROM messages
+			`);
+		});
 	}
 
 	private loadOrCreateStoreId(requested?: string): string {
@@ -418,13 +501,18 @@ export class MessageStore {
 		return Number(result.changes) > 0;
 	}
 
-	private insertOutbox(envelope: FederatedMessageEnvelope, targetPeerStoreId: string | null): boolean {
+	private insertOutbox(
+		envelope: FederatedMessageEnvelope,
+		targetPeerStoreId: string | null,
+		ingressPeerStoreId?: string | null,
+	): boolean {
+		const receivedAt = new Date().toISOString();
 		const result = this.db
 			.prepare(
 				`INSERT OR IGNORE INTO peer_outbox
 				 (message_id, sender, recipient, content, created_at, priority, metadata_json,
-				  target_peer_store_id, status)
-				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
+				  target_peer_store_id, received_at)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			)
 			.run(
 				envelope.id,
@@ -435,8 +523,20 @@ export class MessageStore {
 				envelope.priority,
 				MessageStore.serializeMetadata(envelope.metadata),
 				targetPeerStoreId,
+				receivedAt,
 			) as { changes: number | bigint };
-		return Number(result.changes) > 0;
+		const inserted = Number(result.changes) > 0;
+		// Pre-mark ingress peer as delivered to prevent echo.
+		if (inserted && ingressPeerStoreId) {
+			this.db
+				.prepare(
+					`INSERT OR IGNORE INTO peer_outbox_delivery
+					 (message_id, peer_store_id, status)
+					 VALUES (?, ?, 'forwarded')`,
+				)
+				.run(envelope.id, ingressPeerStoreId);
+		}
+		return inserted;
 	}
 
 	private createEnvelope(
@@ -477,33 +577,11 @@ export class MessageStore {
 		return envelope.id;
 	}
 
-	/** Register or update the owning peer for one remote session. */
-	registerPeerRoute(sessionId: string, peerStoreId: string): void {
-		if (sessionId.length === 0 || peerStoreId.length === 0) throw new TypeError("peer route ids must not be empty");
-		if (peerStoreId === this.storeId) throw new Error("a peer route cannot target the local store");
-		const now = new Date().toISOString();
-		this.transaction(() => {
-			this.db
-				.prepare(
-					`INSERT INTO peer_routes (session_id, peer_store_id, updated_at) VALUES (?, ?, ?)
-					 ON CONFLICT(session_id) DO UPDATE SET
-					   peer_store_id = excluded.peer_store_id,
-					   updated_at = excluded.updated_at`,
-				)
-				.run(sessionId, peerStoreId, now);
-			this.db
-				.prepare(
-					`UPDATE peer_outbox SET target_peer_store_id = ?, next_attempt_at = NULL, attempt_count = 0
-					 WHERE recipient = ? AND target_peer_store_id IS NULL AND status = 'pending'`,
-				)
-				.run(peerStoreId, sessionId);
-		});
-	}
-
 	/**
-	 * Atomically replace all session advertisements from one peer. Routes owned by
-	 * other peers are left intact. Newly-known routes resolve matching pending
-	 * outbox rows that were originally queued as unresolved.
+	 * Atomically replace all session advertisements from one peer. Under pure
+	 * gossip, this is retained for observability (the route table is no longer
+	 * consulted for forwarding decisions), but session advertisement/sync still
+	 * happens during handshake. Routes pointing to local sessions are filtered out.
 	 */
 	replacePeerRoutes(peerStoreId: string, sessionIds: readonly string[]): void {
 		if (peerStoreId.length === 0) throw new TypeError("peer store id must not be empty");
@@ -521,14 +599,9 @@ export class MessageStore {
 				 WHERE peer_routes.peer_store_id = excluded.peer_store_id`,
 			);
 			const isLocal = this.db.prepare(`SELECT 1 AS found FROM presence WHERE agent_id = ?`);
-			const resolve = this.db.prepare(
-				`UPDATE peer_outbox SET target_peer_store_id = ?, next_attempt_at = NULL, attempt_count = 0
-				 WHERE recipient = ? AND target_peer_store_id IS NULL AND status = 'pending'`,
-			);
 			for (const sessionId of uniqueSessionIds) {
 				if (isLocal.get(sessionId)) continue;
-				const result = insert.run(sessionId, peerStoreId, now) as { changes: number | bigint };
-				if (Number(result.changes) > 0) resolve.run(peerStoreId, sessionId);
+				insert.run(sessionId, peerStoreId, now);
 			}
 		});
 	}
@@ -562,9 +635,37 @@ export class MessageStore {
 	}
 
 	/**
+	 * All sessions advertisable to a given peer: local presence sessions plus
+	 * sessions reachable through other peers. Excludes routes pointing back to
+	 * the excluded peer to prevent reflection loops. If excludePeerStoreId is
+	 * undefined, returns local sessions plus all peer routes (used for initial
+	 * hello before peer identity is known).
+	 */
+	listAdvertisableSessions(excludePeerStoreId?: string): string[] {
+		const local = this.listRegisteredSessionIds();
+		const peerRoutes = excludePeerStoreId
+			? (this.db
+					.prepare(
+						`SELECT DISTINCT session_id FROM peer_routes
+						 WHERE peer_store_id != ? ORDER BY session_id`,
+					)
+					.all(excludePeerStoreId) as Array<{ session_id: string }>)
+			: (this.db.prepare(`SELECT DISTINCT session_id FROM peer_routes ORDER BY session_id`).all() as Array<{
+					session_id: string;
+				}>);
+		const localSet = new Set(local);
+		// Keep locally-owned sessions first. PeerLinkSession may truncate a large
+		// observational route advertisement to the V1 frame budget, and first-hop
+		// sender ownership must never lose local sessions in favor of transitive ones.
+		return [...local, ...peerRoutes.map((row) => row.session_id).filter((sessionId) => !localSet.has(sessionId))];
+	}
+
+	/**
 	 * Route a newly-created message. A presence row establishes local ownership,
-	 * regardless of its current online state. Otherwise the current peer route is
-	 * snapshotted into the durable outbox; unknown recipients remain unresolved.
+	 * regardless of its current online state. Otherwise the message is queued in
+	 * the durable outbox with no target peer: pure gossip floods it to every
+	 * connected relay link, so no route table lookup is needed and there is no
+	 * "unresolved" state. Receiver-side `peer_seen` + `visitedStoreIds` converge it.
 	 */
 	sendRouted(
 		sender: string,
@@ -578,19 +679,14 @@ export class MessageStore {
 			const local = this.db.prepare(`SELECT 1 AS found FROM presence WHERE agent_id = ?`).get(recipient) as
 				| { found: number }
 				| undefined;
-			const route = this.db.prepare(`SELECT peer_store_id FROM peer_routes WHERE session_id = ?`).get(recipient) as
-				| { peer_store_id: string }
-				| undefined;
 			this.recordSeen(envelope.id, envelope.createdAt, null);
 			if (local) {
 				this.insertInbox(envelope);
 				return { id: envelope.id, createdAt: envelope.createdAt, disposition: "local" };
 			}
-			const peerStoreId = route?.peer_store_id ?? null;
-			this.insertOutbox(envelope, peerStoreId);
-			return peerStoreId === null
-				? { id: envelope.id, createdAt: envelope.createdAt, disposition: "unresolved" }
-				: { id: envelope.id, createdAt: envelope.createdAt, disposition: "peer", peerStoreId };
+			// Locally-originated: no ingress peer, floods to all links.
+			this.insertOutbox(envelope, null, null);
+			return { id: envelope.id, createdAt: envelope.createdAt, disposition: "peer" };
 		});
 	}
 
@@ -600,24 +696,23 @@ export class MessageStore {
 	 * recipient is delivered locally; a route to a different peer is relayed; an
 	 * unknown recipient or a route back to ingress is rejected as not found.
 	 */
+	/**
+	 * Accept one message received from a peer under pure gossip flooding. Accepted
+	 * ids are recorded in `peer_seen` in the same transaction as inbox/relay
+	 * insertion. Rules (no route table consulted):
+	 *  1. already in `peer_seen` -> duplicate
+	 *  2. local recipient -> deliver to inbox
+	 *  3. otherwise -> queue in outbox for onward flooding, pre-marking the ingress
+	 *     peer as already delivered so the message never echoes back the way it came
+	 * Loop and TTL bounds (self in visitedStoreIds, hopsRemaining exhausted) are
+	 * enforced by the transport layer before this is called.
+	 */
 	acceptFederatedMessage(envelope: FederatedMessageEnvelope, ingressPeerStoreId: string): FederatedAcceptResult {
 		return this.transaction(() => {
 			const seen = this.db.prepare(`SELECT 1 AS found FROM peer_seen WHERE message_id = ?`).get(envelope.id);
 			if (seen) return { id: envelope.id, disposition: "duplicate" };
 
 			const local = this.db.prepare(`SELECT 1 AS found FROM presence WHERE agent_id = ?`).get(envelope.recipient);
-			const route = this.db
-				.prepare(`SELECT peer_store_id FROM peer_routes WHERE session_id = ?`)
-				.get(envelope.recipient) as { peer_store_id: string } | undefined;
-			const relayPeerStoreId = route?.peer_store_id;
-			if (
-				!local &&
-				(relayPeerStoreId === undefined ||
-					relayPeerStoreId === ingressPeerStoreId ||
-					relayPeerStoreId === this.storeId)
-			) {
-				return { id: envelope.id, disposition: "not_found" };
-			}
 
 			if (!this.recordSeen(envelope.id, new Date().toISOString(), ingressPeerStoreId)) {
 				return { id: envelope.id, disposition: "duplicate" };
@@ -626,19 +721,22 @@ export class MessageStore {
 				if (!this.insertInbox(envelope)) return { id: envelope.id, disposition: "duplicate" };
 				return { id: envelope.id, disposition: "local" };
 			}
-			if (!this.insertOutbox(envelope, relayPeerStoreId ?? null)) {
+			// Not local: flood onward. target=NULL; pre-mark ingress delivered to avoid echo.
+			if (!this.insertOutbox(envelope, null, ingressPeerStoreId)) {
 				return { id: envelope.id, disposition: "duplicate" };
 			}
-			return { id: envelope.id, disposition: "relay", peerStoreId: relayPeerStoreId };
+			return { id: envelope.id, disposition: "relay" };
 		});
 	}
 
 	/**
-	 * Atomically claim pending rows for a bridge connected to `peerStoreId`.
-	 * `includeUnresolved` lets that bridge also attempt route discovery for rows
-	 * which had no known target. Each row can be owned by only one claimant.
+	 * Atomically claim outbox messages not yet delivered to `peerStoreId`. Uses
+	 * the per-link delivery ledger: returns messages that have no delivery row for
+	 * this peer, or whose delivery row is stale (crashed relay). Creates/updates
+	 * delivery rows to track inflight state per link. Pure gossip: all messages
+	 * flood to every link; `includeUnresolved` is ignored (kept for compat).
 	 */
-	claimPeerOutbox(peerStoreId: string, owner: string, limit = 100, includeUnresolved = false): PeerOutboxMessage[] {
+	claimPeerOutbox(peerStoreId: string, owner: string, limit = 100, _includeUnresolved = false): PeerOutboxMessage[] {
 		if (peerStoreId.length === 0 || owner.length === 0) {
 			throw new TypeError("peer store id and claim owner must not be empty");
 		}
@@ -648,7 +746,6 @@ export class MessageStore {
 		const claimedAt = new Date(nowMs).toISOString();
 		const staleBefore = new Date(nowMs - this.peerOutboxClaimTimeoutMs).toISOString();
 		type Row = {
-			rowid: number;
 			message_id: string;
 			sender: string;
 			recipient: string;
@@ -657,153 +754,124 @@ export class MessageStore {
 			priority: MessagePriority;
 			metadata_json: string | null;
 			target_peer_store_id: string | null;
-			status: PeerOutboxStatus;
-			claim_owner: string | null;
-			claimed_at: string | null;
-			next_attempt_at: string | null;
-			attempt_count: number;
+			received_at: string;
 		};
 		const rows = this.transaction(() => {
+			// Reclaim stale inflight delivery rows.
 			this.db
 				.prepare(
-					`UPDATE peer_outbox SET status = 'pending', claim_owner = NULL, claimed_at = NULL
-					 WHERE status = 'inflight' AND (claimed_at IS NULL OR claimed_at <= ?)`,
+					`UPDATE peer_outbox_delivery SET status = 'pending', claim_owner = NULL, claimed_at = NULL
+					 WHERE peer_store_id = ? AND status = 'inflight'
+					   AND (claimed_at IS NULL OR claimed_at <= ?)`,
 				)
-				.run(staleBefore);
-			return this.db
+				.run(peerStoreId, staleBefore);
+			// Select messages not yet forwarded to this peer.
+			const candidates = this.db
 				.prepare(
-					`UPDATE peer_outbox SET status = 'inflight', claim_owner = ?, claimed_at = ?
-					 WHERE status = 'pending' AND rowid IN (
-					   SELECT rowid FROM peer_outbox
-					    WHERE status = 'pending'
-					      AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
-					      AND (target_peer_store_id = ? OR (? = 1 AND target_peer_store_id IS NULL))
-					    ORDER BY (CASE priority WHEN 'urgent' THEN 0 ELSE 1 END), rowid
-					    LIMIT ?
-					 )
-					 RETURNING rowid, message_id, sender, recipient, content, created_at, priority,
-					           metadata_json, target_peer_store_id, status, claim_owner, claimed_at,
-					           next_attempt_at, attempt_count`,
+					`SELECT o.message_id, o.sender, o.recipient, o.content, o.created_at, o.priority,
+					        o.metadata_json, o.target_peer_store_id, o.received_at
+					 FROM peer_outbox o
+					 LEFT JOIN peer_outbox_delivery d
+					   ON o.message_id = d.message_id AND d.peer_store_id = ?
+					 WHERE d.status IS NULL OR d.status = 'pending'
+					 ORDER BY (CASE o.priority WHEN 'urgent' THEN 0 ELSE 1 END), o.rowid
+					 LIMIT ?`,
 				)
-				.all(owner, claimedAt, claimedAt, peerStoreId, includeUnresolved ? 1 : 0, normalizedLimit) as Row[];
+				.all(peerStoreId, normalizedLimit) as Row[];
+			// Mark them inflight in the delivery ledger.
+			const upsert = this.db.prepare(
+				`INSERT INTO peer_outbox_delivery (message_id, peer_store_id, status, claim_owner, claimed_at)
+				 VALUES (?, ?, 'inflight', ?, ?)
+				 ON CONFLICT(message_id, peer_store_id) DO UPDATE SET
+				   status = 'inflight', claim_owner = excluded.claim_owner, claimed_at = excluded.claimed_at`,
+			);
+			for (const row of candidates) {
+				upsert.run(row.message_id, peerStoreId, owner, claimedAt);
+			}
+			return candidates;
 		});
-		return rows
-			.slice()
-			.sort((a, b) => {
-				if (a.priority !== b.priority) return a.priority === "urgent" ? -1 : 1;
-				return a.rowid - b.rowid;
-			})
-			.map((row) => {
-				const metadata = MessageStore.parseMetadata(row.metadata_json);
-				return {
-					id: row.message_id,
-					sender: row.sender,
-					recipient: row.recipient,
-					content: row.content,
-					createdAt: row.created_at,
-					priority: row.priority,
-					targetPeerStoreId: row.target_peer_store_id,
-					status: row.status,
-					attemptCount: row.attempt_count,
-					...(metadata === undefined ? {} : { metadata }),
-					...(row.claim_owner === null ? {} : { claimOwner: row.claim_owner }),
-					...(row.claimed_at === null ? {} : { claimedAt: row.claimed_at }),
-					...(row.next_attempt_at === null ? {} : { nextAttemptAt: row.next_attempt_at }),
-				};
-			});
+		return rows.map((row) => {
+			const metadata = MessageStore.parseMetadata(row.metadata_json);
+			return {
+				id: row.message_id,
+				sender: row.sender,
+				recipient: row.recipient,
+				content: row.content,
+				createdAt: row.created_at,
+				priority: row.priority,
+				targetPeerStoreId: row.target_peer_store_id,
+				receivedAt: row.received_at,
+				...(metadata === undefined ? {} : { metadata }),
+			};
+		});
 	}
 
-	/** Mark owned in-flight outbox rows as durably forwarded. */
+	/** Mark per-link delivery rows as durably forwarded. All ack statuses stop retry. */
 	ackPeerOutbox(ids: readonly string[], owner: string): number {
 		if (ids.length === 0) return 0;
 		const placeholders = ids.map(() => "?").join(",");
 		const result = this.db
 			.prepare(
-				`UPDATE peer_outbox SET status = 'forwarded', claim_owner = NULL, claimed_at = NULL, forwarded_at = ?
+				`UPDATE peer_outbox_delivery SET status = 'forwarded', claim_owner = NULL, claimed_at = NULL
 				 WHERE status = 'inflight' AND claim_owner = ? AND message_id IN (${placeholders})`,
 			)
-			.run(new Date().toISOString(), owner, ...ids) as { changes: number | bigint };
+			.run(owner, ...ids) as { changes: number | bigint };
 		return Number(result.changes);
 	}
 
-	/** Return owned in-flight outbox rows to pending for another bridge attempt. */
+	/** Return per-link delivery rows to pending for retry. */
 	requeuePeerOutbox(ids: readonly string[], owner: string, options?: { notFound?: boolean }): number {
 		if (ids.length === 0) return 0;
 		const placeholders = ids.map(() => "?").join(",");
-		if (!options?.notFound) {
+		// Gossip: not_found means TTL/loop, not "wrong branch". Stop retry on that link.
+		if (options?.notFound) {
 			const result = this.db
 				.prepare(
-					`UPDATE peer_outbox SET
-					   status = 'pending',
-					   claim_owner = NULL,
-					   claimed_at = NULL,
-					   next_attempt_at = NULL,
-					   target_peer_store_id = COALESCE(
-					     (SELECT peer_store_id FROM peer_routes WHERE session_id = peer_outbox.recipient),
-					     target_peer_store_id
-					   )
+					`UPDATE peer_outbox_delivery SET status = 'forwarded', claim_owner = NULL, claimed_at = NULL
 					 WHERE status = 'inflight' AND claim_owner = ? AND message_id IN (${placeholders})`,
 				)
 				.run(owner, ...ids) as { changes: number | bigint };
 			return Number(result.changes);
 		}
-
-		return this.transaction(() => {
-			const rows = this.db
-				.prepare(
-					`SELECT message_id, recipient, target_peer_store_id, attempt_count FROM peer_outbox
-					 WHERE status = 'inflight' AND claim_owner = ? AND message_id IN (${placeholders})`,
-				)
-				.all(owner, ...ids) as Array<{
-				message_id: string;
-				recipient: string;
-				target_peer_store_id: string | null;
-				attempt_count: number;
-			}>;
-			const invalidateRoute = this.db.prepare(`DELETE FROM peer_routes WHERE session_id = ? AND peer_store_id = ?`);
-			const requeue = this.db.prepare(
-				`UPDATE peer_outbox SET status = 'pending', claim_owner = NULL, claimed_at = NULL,
-				   target_peer_store_id = NULL, next_attempt_at = ?, attempt_count = ?
-				 WHERE message_id = ? AND status = 'inflight' AND claim_owner = ?`,
-			);
-			let changed = 0;
-			const now = Date.now();
-			for (const row of rows) {
-				if (row.target_peer_store_id) invalidateRoute.run(row.recipient, row.target_peer_store_id);
-				const attemptCount = row.attempt_count + 1;
-				const delayMs = Math.min(30_000, 1_000 * 2 ** Math.min(row.attempt_count, 5));
-				const result = requeue.run(new Date(now + delayMs).toISOString(), attemptCount, row.message_id, owner) as {
-					changes: number | bigint;
-				};
-				changed += Number(result.changes);
-			}
-			return changed;
-		});
+		const result = this.db
+			.prepare(
+				`UPDATE peer_outbox_delivery SET status = 'pending', claim_owner = NULL, claimed_at = NULL
+				 WHERE status = 'inflight' AND claim_owner = ? AND message_id IN (${placeholders})`,
+			)
+			.run(owner, ...ids) as { changes: number | bigint };
+		return Number(result.changes);
 	}
 
-	/** Status totals, optionally for rows explicitly targeted at one peer. */
+	/**
+	 * Status totals for the outbox. Under gossip there is no per-message status;
+	 * `pending` counts messages still held in the outbox (the undelivered backlog),
+	 * while `inflight`/`forwarded` aggregate the per-link delivery ledger. `unresolved`
+	 * is always 0 (gossip has no unresolved state) and is kept for API compatibility.
+	 */
 	getPeerOutboxCounts(peerStoreId?: string): PeerOutboxCounts {
-		const predicate = peerStoreId === undefined ? "" : "WHERE target_peer_store_id = ?";
-		const row = this.db
-			.prepare(
-				`SELECT
-				   SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending,
-				   SUM(CASE WHEN status = 'inflight' THEN 1 ELSE 0 END) AS inflight,
-				   SUM(CASE WHEN status = 'forwarded' THEN 1 ELSE 0 END) AS forwarded,
-				   SUM(CASE WHEN status = 'pending' AND target_peer_store_id IS NULL THEN 1 ELSE 0 END) AS unresolved
-				 FROM peer_outbox ${predicate}`,
-			)
-			.get(...(peerStoreId === undefined ? [] : [peerStoreId])) as {
-			pending: number | null;
-			inflight: number | null;
-			forwarded: number | null;
-			unresolved: number | null;
-		};
+		const totalMessages = this.db.prepare(`SELECT COUNT(*) AS c FROM peer_outbox`).get() as { c: number };
+		const deliveryStats = peerStoreId
+			? (this.db
+					.prepare(
+						`SELECT
+						   SUM(CASE WHEN status = 'inflight' THEN 1 ELSE 0 END) AS inflight,
+						   SUM(CASE WHEN status = 'forwarded' THEN 1 ELSE 0 END) AS forwarded
+						 FROM peer_outbox_delivery WHERE peer_store_id = ?`,
+					)
+					.get(peerStoreId) as { inflight: number | null; forwarded: number | null })
+			: (this.db
+					.prepare(
+						`SELECT
+						   SUM(CASE WHEN status = 'inflight' THEN 1 ELSE 0 END) AS inflight,
+						   SUM(CASE WHEN status = 'forwarded' THEN 1 ELSE 0 END) AS forwarded
+						 FROM peer_outbox_delivery`,
+					)
+					.get() as { inflight: number | null; forwarded: number | null });
 		return {
-			pending: row.pending ?? 0,
-			inflight: row.inflight ?? 0,
-			forwarded: row.forwarded ?? 0,
-			unresolved: row.unresolved ?? 0,
+			pending: totalMessages.c ?? 0,
+			inflight: deliveryStats.inflight ?? 0,
+			forwarded: deliveryStats.forwarded ?? 0,
+			unresolved: 0,
 		};
 	}
 
@@ -1226,6 +1294,38 @@ export class MessageStore {
 			if (code === "EPERM") return true;
 			return false;
 		}
+	}
+
+	/**
+	 * Garbage-collect peer outbox messages older than the configured retention
+	 * period. A gossip hub never learns that "all peers received" a message, so
+	 * time-based retention is the only safe bound. The retention window is kept
+	 * long (default 7 days) so an offline recipient can still be served after a
+	 * multi-day absence. Delivery ledger rows are deleted alongside their message.
+	 * Returns the number of messages purged.
+	 */
+	purgeExpiredOutbox(nowMs: number = Date.now()): number {
+		const cutoff = new Date(nowMs - this.peerOutboxRetentionMs).toISOString();
+		return this.transaction(() => {
+			// Under a mixed-version deployment an interim/old binary may INSERT a row
+			// without received_at (empty '' default). Fall back to created_at for those
+			// rows so GC still reclaims them without waiting for a new-binary restart to
+			// backfill (Fix A heals on restart; this makes GC tolerant meanwhile).
+			const expired = this.db
+				.prepare(
+					`SELECT message_id FROM peer_outbox
+					 WHERE (CASE WHEN received_at = '' THEN created_at ELSE received_at END) <= ?`,
+				)
+				.all(cutoff) as Array<{ message_id: string }>;
+			if (expired.length === 0) return 0;
+			const deleteDelivery = this.db.prepare(`DELETE FROM peer_outbox_delivery WHERE message_id = ?`);
+			const deleteOutbox = this.db.prepare(`DELETE FROM peer_outbox WHERE message_id = ?`);
+			for (const row of expired) {
+				deleteDelivery.run(row.message_id);
+				deleteOutbox.run(row.message_id);
+			}
+			return expired.length;
+		});
 	}
 
 	close(): void {

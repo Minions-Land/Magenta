@@ -211,6 +211,7 @@ If your command is slow, expensive, rate-limited, or should keep using a previou
 Current behavior:
 - `/model`, `--list-models`, and the interactive footer display entries by model `id`.
 - The configured `name` is used for model matching and secondary model detail text. It does not replace the footer/status-bar model id.
+- Before switching, Magenta checks the current estimated context against the target model's compaction threshold. When auto-compaction is enabled and the threshold is exceeded, the current model compacts once before the new model is committed or displayed. A failed or cancelled compaction leaves the current model unchanged.
 
 ### Thinking Level Map
 

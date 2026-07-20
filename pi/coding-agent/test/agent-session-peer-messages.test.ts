@@ -143,7 +143,13 @@ describe("AgentSession peer messaging", () => {
 			expect(standardProperties.waitTimeoutSeconds).toBeUndefined();
 			expect(session.getActiveToolNames()).not.toContain("multiagent");
 
-			session.setExecutionProfile("ultra");
+			const cycledProfiles: string[] = [];
+			for (let i = 0; i < 10 && session.executionProfile !== "ultra"; i++) {
+				const profile = session.cycleThinkingLevel();
+				expect(profile).toBeDefined();
+				cycledProfiles.push(profile!);
+			}
+			expect(cycledProfiles.at(-1)).toBe("ultra");
 			const ultraSubAgent = session.getAllTools().find((tool) => tool.name === "sub_agent");
 			expect((ultraSubAgent?.parameters as any).properties.workflow).toBeDefined();
 			expect((ultraSubAgent?.parameters as any).properties.returnToMain).toBeUndefined();
