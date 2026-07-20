@@ -14,6 +14,7 @@ interface CapturedAzureClientOptions {
 interface CapturedAzureResponsesPayload {
 	prompt_cache_key?: string;
 	store?: boolean;
+	max_output_tokens?: number;
 }
 
 const azureMock = vi.hoisted(() => ({
@@ -163,6 +164,17 @@ describe("azure-openai-responses base URL normalization", () => {
 		}).result();
 
 		expect(azureMock.lastParams?.store).toBe(false);
+	});
+
+	it("clamps max_output_tokens to the provider minimum", async () => {
+		const model = getModel("azure-openai-responses", "gpt-4o-mini");
+		await streamAzureOpenAIResponses(model, context, {
+			apiKey: "test-api-key",
+			azureBaseUrl: "https://my-resource.openai.azure.com",
+			maxTokens: 1,
+		}).result();
+
+		expect(azureMock.lastParams?.max_output_tokens).toBe(16);
 	});
 
 	it("builds correct default URL from AZURE_OPENAI_RESOURCE_NAME", async () => {

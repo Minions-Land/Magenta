@@ -212,7 +212,7 @@ describe("AgentSession model and extension characterization", () => {
 		});
 	});
 
-	it("does not compact again when usage is unknown immediately after compaction", async () => {
+	it("rejects a smaller target when the freshly compacted summary still exceeds its threshold", async () => {
 		const harness = await createHarness({
 			settings: { compaction: { reserveTokens: 1, keepRecentTokens: 1 } },
 			models: [
@@ -237,9 +237,11 @@ describe("AgentSession model and extension characterization", () => {
 		const compactionStartsBeforeSwitch = harness.eventsOfType("compaction_start").length;
 
 		expect(harness.session.getContextUsage()?.tokens).toBeNull();
-		await harness.session.setModel(harness.getModel("faux-2")!);
+		await expect(harness.session.setModel(harness.getModel("faux-2")!)).rejects.toThrow(
+			"Compacted context is still too large",
+		);
 
-		expect(harness.session.model?.id).toBe("faux-2");
+		expect(harness.session.model?.id).toBe("faux-1");
 		expect(harness.eventsOfType("compaction_start")).toHaveLength(compactionStartsBeforeSwitch);
 		expect(harness.sessionManager.getEntries().filter((entry) => entry.type === "compaction")).toHaveLength(1);
 	});

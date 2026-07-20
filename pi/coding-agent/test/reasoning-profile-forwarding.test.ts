@@ -1,6 +1,6 @@
 import {
-	fauxAssistantMessage,
 	type Context,
+	fauxAssistantMessage,
 	type SimpleStreamOptions,
 	type StreamOptions,
 } from "@earendil-works/pi-ai";

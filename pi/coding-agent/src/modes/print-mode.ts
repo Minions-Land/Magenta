@@ -290,10 +290,7 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 			if (!quiet) {
 				return failTimeout(`Timed out after ${backgroundWaitTimeoutMs}ms settling external activations`);
 			}
-			if (
-				session.isStreaming &&
-				!(await waitForAgentIdleWithDeadline(() => session.agent.waitForIdle(), deadline))
-			) {
+			if (session.isStreaming && !(await waitForAgentIdleWithDeadline(() => session.waitForIdle(), deadline))) {
 				return failTimeout(`Timed out after ${backgroundWaitTimeoutMs}ms waiting for a background continuation`);
 			}
 			return true;

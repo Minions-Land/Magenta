@@ -10,20 +10,24 @@ import type {
 	OpenAIResponsesCompat,
 	ProviderEnv,
 	ProviderHeaders,
+	SessionAffinityFormat,
 	SimpleStreamOptions,
 	StreamFunction,
 	StreamOptions,
 	Usage,
 } from "../types.ts";
+import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
 import { convertResponsesMessages, convertResponsesTools, processResponsesStream } from "./openai-responses-shared.ts";
-import { buildBaseOptions } from "./simple-options.ts";
+import { buildBaseOptions, resolveMaxTokens } from "./simple-options.ts";
 
 const OPENAI_TOOL_CALL_PROVIDERS = new Set(["openai", "openai-codex", "opencode"]);
+// OpenAI Responses rejects max_output_tokens below 16.
+const OPENAI_RESPONSES_MIN_OUTPUT_TOKENS = 16;
 const OPENAI_PROMPT_CACHE_MODE_ENV = "PI_OPENAI_PROMPT_CACHE_MODE";
 
 type OpenAIPromptCacheMode = "implicit" | "explicit";
@@ -53,6 +57,24 @@ function getClientApiKey(provider: string, apiKey: string | undefined, headers: 
 	throw new Error(`No API key for provider: ${provider}`);
 }
 
+function detectSessionAffinityFormat(
+	model: Pick<Model<"openai-responses">, "provider" | "baseUrl">,
+): SessionAffinityFormat {
+	return model.provider === "openrouter" || model.baseUrl.includes("openrouter.ai") ? "openrouter" : "openai";
+}
+
+// Resolve the effective session-affinity format, honoring the deprecated
+// sendSessionIdHeader shim until the W9 catalog regen removes it: an explicit
+// sessionAffinityFormat wins; otherwise a legacy sendSessionIdHeader:false maps
+// to "openai-nosession" and true maps to "openai"; absent both, auto-detect.
+function resolveSessionAffinityFormat(model: Model<"openai-responses">): SessionAffinityFormat {
+	if (model.compat?.sessionAffinityFormat) return model.compat.sessionAffinityFormat;
+	if (model.compat?.sendSessionIdHeader !== undefined) {
+		return model.compat.sendSessionIdHeader ? "openai" : "openai-nosession";
+	}
+	return detectSessionAffinityFormat(model);
+}
+
 /**
  * Resolve cache retention preference.
  * Defaults to "short" and uses PI_CACHE_RETENTION for backward compatibility.
@@ -68,9 +90,12 @@ function resolveCacheRetention(cacheRetention?: CacheRetention, env?: ProviderEn
 }
 
 function getCompat(model: Model<"openai-responses">): Required<OpenAIResponsesCompat> {
+	const sessionAffinityFormat = resolveSessionAffinityFormat(model);
 	return {
 		supportsDeveloperRole: model.compat?.supportsDeveloperRole ?? true,
-		sendSessionIdHeader: model.compat?.sendSessionIdHeader ?? true,
+		// Deprecated shim, kept in sync with the resolved format for backward compat.
+		sendSessionIdHeader: model.compat?.sendSessionIdHeader ?? sessionAffinityFormat === "openai",
+		sessionAffinityFormat,
 		supportsLongCacheRetention: model.compat?.supportsLongCacheRetention ?? true,
 	};
 }
@@ -182,19 +207,7 @@ function applyPromptCacheBreakpoints(input: ResponseInput, mode: OpenAIPromptCac
 }
 
 function formatOpenAIResponsesError(error: unknown): string {
-	if (error instanceof Error) {
-		const status = (error as Error & { status?: unknown }).status;
-		const statusCode = typeof status === "number" ? status : undefined;
-		if (statusCode !== undefined) {
-			return `OpenAI API error (${statusCode}): ${error.message}`;
-		}
-		return error.message;
-	}
-	try {
-		return JSON.stringify(error);
-	} catch {
-		return String(error);
-	}
+	return formatProviderError(normalizeProviderError(error), "OpenAI API error");
 }
 
 // OpenAI Responses-specific options
@@ -202,6 +215,7 @@ export interface OpenAIResponsesOptions extends StreamOptions {
 	reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 	reasoningSummary?: "auto" | "detailed" | "concise" | null;
 	serviceTier?: ResponseCreateParamsStreaming["service_tier"];
+	toolChoice?: ResponseCreateParamsStreaming["tool_choice"];
 }
 
 /**
@@ -296,6 +310,7 @@ export const streamSimple: StreamFunction<"openai-responses", SimpleStreamOption
 	getClientApiKey(model.provider, options?.apiKey, { ...model.headers, ...options?.headers });
 
 	const base = buildBaseOptions(model, options, options?.apiKey);
+	base.maxTokens = resolveMaxTokens(context, model, options?.maxTokens);
 	const clampedReasoning = options?.reasoning ? clampThinkingLevel(model, options.reasoning) : undefined;
 	const reasoningEffort = clampedReasoning === "off" ? undefined : clampedReasoning;
 
@@ -324,10 +339,14 @@ function createClient(
 	}
 
 	if (sessionId) {
-		if (compat.sendSessionIdHeader) {
-			headers.session_id = sessionId;
+		if (compat.sessionAffinityFormat === "openrouter") {
+			headers["x-session-id"] = sessionId;
+		} else {
+			if (compat.sessionAffinityFormat === "openai") {
+				headers.session_id = sessionId;
+			}
+			headers["x-client-request-id"] = sessionId;
 		}
-		headers["x-client-request-id"] = sessionId;
 	}
 
 	// Merge options headers last so they can override defaults
@@ -361,7 +380,7 @@ function buildParams(model: Model<"openai-responses">, context: Context, options
 	};
 
 	if (options?.maxTokens) {
-		params.max_output_tokens = options?.maxTokens;
+		params.max_output_tokens = Math.max(options.maxTokens, OPENAI_RESPONSES_MIN_OUTPUT_TOKENS);
 	}
 
 	if (options?.temperature !== undefined) {
@@ -374,6 +393,10 @@ function buildParams(model: Model<"openai-responses">, context: Context, options
 
 	if (context.tools && context.tools.length > 0) {
 		params.tools = convertResponsesTools(context.tools);
+	}
+
+	if (options?.toolChoice !== undefined) {
+		params.tool_choice = options.toolChoice;
 	}
 
 	if (model.reasoning) {

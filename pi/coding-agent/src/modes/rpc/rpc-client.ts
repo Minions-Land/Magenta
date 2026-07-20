@@ -12,6 +12,7 @@ import type { BackgroundEventSnapshot } from "../../core/background-events.ts";
 import type { BashResult } from "../../core/bash-executor.ts";
 import type { CompactionResult } from "../../core/compaction/index.ts";
 import type { ExecutionProfile } from "../../core/execution-profile.ts";
+import type { SessionEntry, SessionTreeNode } from "../../core/session-manager.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.ts";
 import type {
 	RpcCommand,
@@ -493,6 +494,23 @@ export class RpcClient {
 	}
 
 	/**
+	 * Get session entries in append order.
+	 * @param since - Optional entry id cursor (strictly after semantics); returns entries added after this id.
+	 */
+	async getEntries(since?: string): Promise<{ entries: SessionEntry[]; leafId: string | null }> {
+		const response = await this.send({ type: "get_entries", since });
+		return this.getData<{ entries: SessionEntry[]; leafId: string | null }>(response);
+	}
+
+	/**
+	 * Get session tree structure.
+	 */
+	async getTree(): Promise<{ tree: SessionTreeNode[]; leafId: string | null }> {
+		const response = await this.send({ type: "get_tree" });
+		return this.getData<{ tree: SessionTreeNode[]; leafId: string | null }>(response);
+	}
+
+	/**
 	 * Get text of last assistant message.
 	 */
 	async getLastAssistantText(): Promise<string | null> {
@@ -528,8 +546,10 @@ export class RpcClient {
 	// =========================================================================
 
 	/**
-	 * Host-only event barrier. This waits in the external client process, not in
-	 * the child AgentLoop. Agent orchestration should subscribe to events instead.
+	 * Host-only event barrier. Waits for the agent to fully settle (agent_settled event):
+	 * no active run, retries complete, and queued continuations drained. This waits in the
+	 * external client process, not in the child AgentLoop. Agent orchestration should
+	 * subscribe to events instead.
 	 */
 	waitForIdle(timeout = 60000): Promise<void> {
 		return new Promise((resolve, reject) => {
@@ -539,7 +559,7 @@ export class RpcClient {
 			}, timeout);
 
 			const unsubscribe = this.onEvent((event) => {
-				if (event.type === "agent_end") {
+				if (event.type === "agent_settled") {
 					clearTimeout(timer);
 					unsubscribe();
 					resolve();
@@ -559,7 +579,7 @@ export class RpcClient {
 
 			const unsubscribe = this.onEvent((event) => {
 				events.push(event);
-				if (event.type === "agent_end") {
+				if (event.type === "agent_settled") {
 					clearTimeout(timer);
 					unsubscribe();
 					resolve(events);

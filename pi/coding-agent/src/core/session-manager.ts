@@ -1,6 +1,11 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ImageContent, Message, TextContent } from "@earendil-works/pi-ai";
-import { uuidv7 } from "@magenta/harness";
+import {
+	buildContextEntries as hcpBuildContextEntries,
+	sessionEntryToContextMessages as hcpSessionEntryToContextMessages,
+	type SessionTreeEntry,
+	uuidv7,
+} from "@magenta/harness";
 import { randomUUID } from "crypto";
 import {
 	appendFileSync,
@@ -20,13 +25,7 @@ import { createInterface } from "readline";
 import { StringDecoder } from "string_decoder";
 import { getAgentDir as getDefaultAgentDir, getSessionsDir } from "../config.ts";
 import { normalizePath, resolvePath } from "../utils/paths.ts";
-import {
-	type BashExecutionMessage,
-	type CustomMessage,
-	createBranchSummaryMessage,
-	createCompactionSummaryMessage,
-	createCustomMessage,
-} from "./messages.ts";
+import type { BashExecutionMessage, CustomMessage } from "./messages.ts";
 
 export const CURRENT_SESSION_VERSION = 3;
 
@@ -195,6 +194,7 @@ export type ReadonlySessionManager = Pick<
 	| "getEntry"
 	| "getLabel"
 	| "getBranch"
+	| "buildContextEntries"
 	| "getHeader"
 	| "getEntries"
 	| "getTree"
@@ -319,54 +319,56 @@ export function getLatestCompactionEntry(entries: SessionEntry[]): CompactionEnt
 }
 
 /**
- * Build the session context from entries using tree traversal.
- * If leafId is provided, walks from that entry to root.
- * Handles compaction and branch summaries along the path.
+ * Build a uuid index for entries. Reuses the provided index when available.
  */
-export function buildSessionContext(
+function buildEntryIndex(entries: SessionEntry[], byId?: Map<string, SessionEntry>): Map<string, SessionEntry> {
+	if (byId) return byId;
+	const index = new Map<string, SessionEntry>();
+	for (const entry of entries) {
+		index.set(entry.id, entry);
+	}
+	return index;
+}
+
+/**
+ * Walk from the selected leaf to the root, returning the root-to-leaf path.
+ * If leafId is explicitly null (navigated to before the first entry), returns [].
+ * If leafId is undefined, falls back to the last entry.
+ */
+function buildSessionPath(
 	entries: SessionEntry[],
 	leafId?: string | null,
 	byId?: Map<string, SessionEntry>,
-): SessionContext {
-	// Build uuid index if not available
-	if (!byId) {
-		byId = new Map<string, SessionEntry>();
-		for (const entry of entries) {
-			byId.set(entry.id, entry);
-		}
-	}
-
-	// Find leaf
+): SessionEntry[] {
+	const index = buildEntryIndex(entries, byId);
 	let leaf: SessionEntry | undefined;
 	if (leafId === null) {
-		// Explicitly null - return no messages (navigated to before first entry)
-		return { messages: [], thinkingLevel: "off", model: null };
+		return [];
 	}
 	if (leafId) {
-		leaf = byId.get(leafId);
+		leaf = index.get(leafId);
 	}
+	leaf ??= entries[entries.length - 1];
 	if (!leaf) {
-		// Fallback to last entry (when leafId is undefined)
-		leaf = entries[entries.length - 1];
+		return [];
 	}
 
-	if (!leaf) {
-		return { messages: [], thinkingLevel: "off", model: null };
-	}
-
-	// Walk from leaf to root, collecting path
 	const path: SessionEntry[] = [];
 	let current: SessionEntry | undefined = leaf;
 	while (current) {
 		path.push(current);
-		current = current.parentId ? byId.get(current.parentId) : undefined;
+		current = current.parentId ? index.get(current.parentId) : undefined;
 	}
 	path.reverse();
+	return path;
+}
 
-	// Extract settings and find compaction
+/**
+ * Extract the effective thinking level and model from a root-to-leaf path.
+ */
+function getSessionContextSettings(path: SessionEntry[]): Pick<SessionContext, "thinkingLevel" | "model"> {
 	let thinkingLevel = "off";
 	let model: { provider: string; modelId: string } | null = null;
-	let compaction: CompactionEntry | null = null;
 
 	for (const entry of path) {
 		if (entry.type === "thinking_level_change") {
@@ -375,61 +377,73 @@ export function buildSessionContext(
 			model = { provider: entry.provider, modelId: entry.modelId };
 		} else if (entry.type === "message" && entry.message.role === "assistant") {
 			model = { provider: entry.message.provider, modelId: entry.message.model };
-		} else if (entry.type === "compaction") {
-			compaction = entry;
 		}
 	}
 
-	// Build messages and collect corresponding entries
-	// When there's a compaction, we need to:
-	// 1. Emit summary first (entry = compaction)
-	// 2. Emit kept messages (from firstKeptEntryId up to compaction)
-	// 3. Emit messages after compaction
-	const messages: AgentMessage[] = [];
+	return { thinkingLevel, model };
+}
 
-	const appendMessage = (entry: SessionEntry) => {
-		if (entry.type === "message") {
-			messages.push(entry.message);
-		} else if (entry.type === "custom_message") {
-			messages.push(
-				createCustomMessage(entry.customType, entry.content, entry.display, entry.details, entry.timestamp),
-			);
-		} else if (entry.type === "branch_summary" && entry.summary) {
-			messages.push(createBranchSummaryMessage(entry.summary, entry.fromId, entry.timestamp));
+/**
+ * Project one selected session entry into LLM/runtime messages.
+ * Plain custom entries are display/state entries and do not participate in context.
+ *
+ * Delegates to HCP's sessionEntryToContextMessages for core projection logic,
+ * with Pi-specific null-content normalization for lax provider tolerance.
+ */
+export function sessionEntryToContextMessages(entry: SessionEntry): AgentMessage[] {
+	// Delegate to HCP for projection logic. Pi's SessionEntry is a structural subset of HCP's SessionTreeEntry.
+	const messages = hcpSessionEntryToContextMessages(entry as SessionTreeEntry, 0, [entry as SessionTreeEntry], {});
+
+	// Apply Pi-specific null-content normalization (lax-message-content.test.ts requirement)
+	return messages.map((msg) => {
+		if ((msg.role === "user" || msg.role === "assistant" || msg.role === "toolResult") && msg.content == null) {
+			return { ...msg, content: [] };
 		}
-	};
-
-	if (compaction) {
-		// Emit summary first
-		messages.push(createCompactionSummaryMessage(compaction.summary, compaction.tokensBefore, compaction.timestamp));
-
-		// Find compaction index in path
-		const compactionIdx = path.findIndex((e) => e.type === "compaction" && e.id === compaction.id);
-
-		// Emit kept messages (before compaction, starting from firstKeptEntryId)
-		let foundFirstKept = false;
-		for (let i = 0; i < compactionIdx; i++) {
-			const entry = path[i];
-			if (entry.id === compaction.firstKeptEntryId) {
-				foundFirstKept = true;
-			}
-			if (foundFirstKept) {
-				appendMessage(entry);
-			}
+		if (msg.role === "custom" && msg.content == null) {
+			return { ...msg, content: [] };
 		}
+		return msg;
+	});
+}
 
-		// Emit messages after compaction
-		for (let i = compactionIdx + 1; i < path.length; i++) {
-			const entry = path[i];
-			appendMessage(entry);
-		}
-	} else {
-		// No compaction - emit all messages, handle branch summaries and custom messages
-		for (const entry of path) {
-			appendMessage(entry);
-		}
-	}
+/**
+ * Build the active, compaction-aware session entry list.
+ *
+ * This follows the current leaf path. If the path contains compaction entries,
+ * the latest compaction is represented by the compaction entry itself, followed
+ * by the kept entries starting at firstKeptEntryId and all entries after the
+ * compaction entry. Older summarized entries are omitted.
+ *
+ * Delegates to HCP's buildContextEntries for compaction-selection logic.
+ */
+export function buildContextEntries(
+	entries: SessionEntry[],
+	leafId?: string | null,
+	byId?: Map<string, SessionEntry>,
+): SessionEntry[] {
+	// Build path using Pi's storage traversal
+	const path = buildSessionPath(entries, leafId, byId);
+	// Delegate compaction selection to HCP (eliminates duplicate defaultContextEntryTransform logic)
+	return hcpBuildContextEntries(path as SessionTreeEntry[], {}) as SessionEntry[];
+}
 
+/**
+ * Build the session context from entries using tree traversal.
+ * If leafId is provided, walks from that entry to root.
+ * Handles compaction and branch summaries along the path.
+ *
+ * Delegates to HCP for compaction selection, then projects using Pi's
+ * sessionEntryToContextMessages (which includes null-content normalization).
+ */
+export function buildSessionContext(
+	entries: SessionEntry[],
+	leafId?: string | null,
+	byId?: Map<string, SessionEntry>,
+): SessionContext {
+	const path = buildSessionPath(entries, leafId, byId);
+	const { thinkingLevel, model } = getSessionContextSettings(path);
+	// Use HCP for compaction selection, then Pi's projection for null-content tolerance
+	const messages = buildContextEntries(entries, leafId, byId).flatMap(sessionEntryToContextMessages);
 	return { messages, thinkingLevel, model };
 }
 
@@ -796,10 +810,13 @@ export class SessionManager {
 		if (existsSync(this.sessionFile)) {
 			this.fileEntries = loadEntriesFromFile(this.sessionFile);
 
-			// If file was empty or corrupted (no valid header), truncate and start fresh
-			// to avoid appending messages without a session header (which breaks the session)
+			// Empty explicit files are initialized. Invalid non-empty files are never
+			// overwritten at this session-open boundary.
 			if (this.fileEntries.length === 0) {
 				const explicitPath = this.sessionFile;
+				if (statSync(explicitPath).size > 0) {
+					throw new Error(`Session file is not a valid pi session: ${explicitPath}`);
+				}
 				this.newSession();
 				this.sessionFile = explicitPath;
 				this._rewriteFile();
@@ -840,6 +857,8 @@ export class SessionManager {
 		this.fileEntries = [header];
 		this.byId.clear();
 		this.labelsById.clear();
+		// CC-023: also clear label timestamp cache so stale timestamps do not leak into the new session
+		this.labelTimestampsById.clear();
 		this.leafId = null;
 		this.flushed = false;
 
@@ -1235,6 +1254,14 @@ export class SessionManager {
 	}
 
 	/**
+	 * Build the active, compaction-aware entry list for context/rendering.
+	 * Uses tree traversal from current leaf.
+	 */
+	buildContextEntries(): SessionEntry[] {
+		return buildContextEntries(this.getEntries(), this.leafId, this.byId);
+	}
+
+	/**
 	 * Build the session context (what gets sent to the LLM).
 	 * Uses tree traversal from current leaf.
 	 */
@@ -1504,8 +1531,8 @@ export class SessionManager {
 	}
 
 	/** Create an in-memory session (no file persistence) */
-	static inMemory(cwd: string = process.cwd()): SessionManager {
-		return new SessionManager(cwd, "", undefined, false);
+	static inMemory(cwd: string = process.cwd(), id?: string): SessionManager {
+		return new SessionManager(cwd, "", undefined, false, id !== undefined ? { id } : undefined);
 	}
 
 	/**

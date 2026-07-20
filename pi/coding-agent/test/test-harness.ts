@@ -28,7 +28,9 @@ import type {
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { AgentSession, type AgentSessionEvent } from "../src/core/agent-session.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
+import { createMagentaCredentialStore } from "../src/core/external-credential-adapter.ts";
 import { ModelRegistry } from "../src/core/model-registry.ts";
+import { ModelRuntime } from "../src/core/model-runtime.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import type { Settings } from "../src/core/settings-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
@@ -361,11 +363,11 @@ function createTempDir(): string {
 	return tempDir;
 }
 
-function createHarnessWithResourceLoader(
+async function createHarnessWithResourceLoader(
 	options: HarnessOptions,
 	resourceLoader: ResourceLoader,
 	tempDir: string,
-): Harness {
+): Promise<Harness> {
 	const baseModel = options.model ?? fauxModel;
 	const model: Model<any> = options.contextWindow ? { ...baseModel, contextWindow: options.contextWindow } : baseModel;
 
@@ -389,8 +391,13 @@ function createHarnessWithResourceLoader(
 	}
 
 	const authStorage = AuthStorage.create(join(tempDir, "auth.json"));
-	authStorage.setRuntimeApiKey(model.provider, "faux-key");
-	const modelRegistry = ModelRegistry.create(authStorage, tempDir);
+	const modelRuntime = await ModelRuntime.create({
+		credentials: createMagentaCredentialStore(authStorage),
+		modelsPath: null,
+		allowModelNetwork: false,
+	});
+	await modelRuntime.setRuntimeApiKey(model.provider, "faux-key");
+	const modelRegistry = new ModelRegistry(modelRuntime);
 
 	const session = new AgentSession({
 		agent,
@@ -401,6 +408,8 @@ function createHarnessWithResourceLoader(
 		// machine-global messages.db.
 		agentDir: tempDir,
 		modelRegistry,
+		modelRuntime,
+		authStorage,
 		resourceLoader,
 		baseToolsOverride: options.baseToolsOverride,
 	});
@@ -432,18 +441,18 @@ function createHarnessWithResourceLoader(
 	};
 }
 
-export function createHarness(options: HarnessOptions = {}): Harness {
+export async function createHarness(options: HarnessOptions = {}): Promise<Harness> {
 	if (options.extensionFactories?.length) {
 		throw new Error("createHarness does not support extensionFactories. Use createHarnessWithExtensions().");
 	}
 
 	const tempDir = createTempDir();
-	return createHarnessWithResourceLoader(options, options.resourceLoader ?? createTestResourceLoader(), tempDir);
+	return await createHarnessWithResourceLoader(options, options.resourceLoader ?? createTestResourceLoader(), tempDir);
 }
 
 export async function createHarnessWithExtensions(options: HarnessOptions = {}): Promise<Harness> {
 	const tempDir = createTempDir();
 	const extensionsResult = await createTestExtensionsResult(options.extensionFactories ?? [], tempDir);
 	const resourceLoader = options.resourceLoader ?? createTestResourceLoader({ extensionsResult });
-	return createHarnessWithResourceLoader(options, resourceLoader, tempDir);
+	return await createHarnessWithResourceLoader(options, resourceLoader, tempDir);
 }

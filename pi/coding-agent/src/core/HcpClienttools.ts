@@ -8,7 +8,7 @@ import {
 import { SessionManager } from "./session-manager.ts";
 import type { SettingsManager } from "./settings-manager.ts";
 import { createLocalBashOperations } from "./tools/bash.ts";
-import { createLocalReadOperations } from "./tools/read.ts";
+import { createLocalReadOperations, withImageReadOperations } from "./tools/read.ts";
 
 export type HcpClienttoolassemblyoptions = {
 	hcp: HcpClient;
@@ -44,7 +44,7 @@ export async function HcpClientassembletools(options: HcpClienttoolassemblyoptio
 			...statefulSettings,
 			"tools/read": {
 				autoResizeImages: options.settingsManager.getImageAutoResize(),
-				operations: sshOperations?.read ?? createLocalReadOperations(),
+				operations: sshOperations?.read ? withImageReadOperations(sshOperations.read) : createLocalReadOperations(),
 			},
 			"tools/bash": {
 				operations: sshOperations?.bash ?? createLocalBashOperations({ shellPath }),

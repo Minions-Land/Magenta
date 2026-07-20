@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { getModel, getModels, stream } from "../src/compat.ts";
+import { resolveModelCostRates } from "../src/models.ts";
 import type { Api, Context, Model, StreamOptions } from "../src/types.ts";
 
 type StreamOptionsWithExtras = StreamOptions & Record<string, unknown>;
@@ -76,7 +77,8 @@ async function testTokensOnAbort<TApi extends Api>(llm: Model<TApi>, options: St
 		expect(msg.usage.output).toBeGreaterThan(0);
 
 		// Some providers (Copilot) have zero cost rates
-		if (llm.cost.input > 0) {
+		const rates = resolveModelCostRates(llm.cost, msg.usage.input + msg.usage.cacheRead + msg.usage.cacheWrite);
+		if (rates.input > 0) {
 			expect(msg.usage.cost.input).toBeGreaterThan(0);
 			expect(msg.usage.cost.total).toBeGreaterThan(0);
 		}

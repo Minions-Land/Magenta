@@ -44,7 +44,14 @@ describe("provider usage normalization", () => {
 			totalTokenCount: 135,
 		});
 
-		expect(usage).toMatchObject({ input: 80, output: 15, cacheRead: 40, cacheWrite: 0, totalTokens: 135 });
+		expect(usage).toMatchObject({
+			input: 80,
+			output: 15,
+			reasoning: 5,
+			cacheRead: 40,
+			cacheWrite: 0,
+			totalTokens: 135,
+		});
 		expect(componentTotal(usage)).toBe(usage.totalTokens);
 	});
 
@@ -70,7 +77,14 @@ describe("provider usage normalization", () => {
 			thoughtsTokenCount: 3,
 		});
 
-		expect(usage).toMatchObject({ input: 40, output: 10, cacheRead: 20, cacheWrite: 0, totalTokens: 70 });
+		expect(usage).toMatchObject({
+			input: 40,
+			output: 10,
+			reasoning: 3,
+			cacheRead: 20,
+			cacheWrite: 0,
+			totalTokens: 70,
+		});
 		expect(componentTotal(usage)).toBe(usage.totalTokens);
 	});
 });

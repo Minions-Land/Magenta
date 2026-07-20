@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+- Extension entry renderers for persisted display-only session entries that are rendered in interactive mode without being sent to the model context
+
 ### Changed
 - When auto-compaction is enabled, model switching now compacts once with the current model if the active context exceeds the target model's threshold, and only commits the new model after compaction succeeds
 
@@ -34,6 +37,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Extension command contexts no longer expose the deadlock-prone `waitForIdle()` API; extensions inspect `isIdle()` and continue deferred work from `agent_end`, and RPC abort requests now acknowledge immediately
 
 ### Fixed
+- Custom session entries appended during assistant streaming now render before the live assistant message, matching persisted session order
 - Background shell cancellation and timeout now remain nonterminal until the owned process exits (or an adopted execution reports completion), so automatic terminal delivery cannot release a work lease while the command may still be writing
 - Interactive prompts can be withdrawn with Escape or Ctrl+C until the first renderable assistant text, thinking, or tool call; withdrawal restores the submitted draft and removes its user/aborted-assistant turn from agent state, session JSONL, and TUI history without a three-second deadline or `Operation aborted`
 - CLI release commands now version the active product brand, finalize only the coding-agent changelog, use annotated tags and lease-protected pushes, restore pre-commit failures, and reject unrelated file changes without modifying independent Pi package versions or refreshing online model catalogs

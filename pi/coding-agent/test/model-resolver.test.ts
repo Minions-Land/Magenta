@@ -1,10 +1,12 @@
 import type { Model } from "@earendil-works/pi-ai";
 import { describe, expect, test } from "vitest";
+import type { ModelRegistry } from "../src/core/model-registry.ts";
 import {
 	defaultModelPerProvider,
 	findInitialModel,
 	parseModelPattern,
 	resolveCliModel,
+	resolveModelScopeWithDiagnostics,
 } from "../src/core/model-resolver.ts";
 
 // Mock models for testing
@@ -596,5 +598,128 @@ describe("default model selection", () => {
 
 		expect(result.model?.provider).toBe("vercel-ai-gateway");
 		expect(result.model?.id).toBe("anthropic/claude-opus-4-6");
+	});
+
+	test("skips unauthenticated saved default and uses first available (CC-019)", async () => {
+		const savedModel: Model<"anthropic-messages"> = {
+			id: "saved-model",
+			name: "Saved Model",
+			api: "anthropic-messages",
+			provider: "saved-provider",
+			baseUrl: "https://saved.test",
+			reasoning: false,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 100000,
+			maxTokens: 4096,
+		};
+		const availableModel: Model<"anthropic-messages"> = {
+			id: "available-model",
+			name: "Available Model",
+			api: "anthropic-messages",
+			provider: "authenticated-provider",
+			baseUrl: "https://auth.test",
+			reasoning: false,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 100000,
+			maxTokens: 4096,
+		};
+
+		const registry = {
+			find: (provider: string, id: string) =>
+				provider === "saved-provider" && id === "saved-model" ? savedModel : undefined,
+			hasConfiguredAuth: (model: Model<"anthropic-messages">) => model.provider !== "saved-provider",
+			getAvailable: async () => [availableModel],
+		} as unknown as ModelRegistry;
+
+		const result = await findInitialModel({
+			scopedModels: [],
+			isContinuing: false,
+			defaultProvider: "saved-provider",
+			defaultModelId: "saved-model",
+			modelRegistry: registry,
+		});
+
+		// Should skip the unauthenticated saved default and use the first available.
+		expect(result.model?.provider).toBe("authenticated-provider");
+		expect(result.model?.id).toBe("available-model");
+	});
+
+	test("respects saved default when auth is configured (CC-019)", async () => {
+		const savedModel: Model<"anthropic-messages"> = {
+			id: "saved-model",
+			name: "Saved Model",
+			api: "anthropic-messages",
+			provider: "saved-provider",
+			baseUrl: "https://saved.test",
+			reasoning: false,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 100000,
+			maxTokens: 4096,
+		};
+
+		const registry = {
+			find: () => savedModel,
+			hasConfiguredAuth: () => true,
+			getAvailable: async () => [savedModel],
+		} as unknown as ModelRegistry;
+
+		const result = await findInitialModel({
+			scopedModels: [],
+			isContinuing: false,
+			defaultProvider: "saved-provider",
+			defaultModelId: "saved-model",
+			defaultThinkingLevel: "high",
+			modelRegistry: registry,
+		});
+
+		expect(result.model?.provider).toBe("saved-provider");
+		expect(result.model?.id).toBe("saved-model");
+		expect(result.thinkingLevel).toBe("high");
+	});
+});
+
+describe("resolveModelScopeWithDiagnostics (CC-015)", () => {
+	function registryWith(models: Model<"anthropic-messages">[]): ModelRegistry {
+		return { getAvailable: () => models } as unknown as ModelRegistry;
+	}
+
+	test("resolves exact model references without diagnostics", async () => {
+		const { scopedModels, diagnostics } = await resolveModelScopeWithDiagnostics(
+			["anthropic/claude-sonnet-4-5"],
+			registryWith(mockModels),
+		);
+		expect(scopedModels.map((s) => s.model.id)).toEqual(["claude-sonnet-4-5"]);
+		expect(diagnostics).toEqual([]);
+	});
+
+	test("expands glob patterns and preserves thinking-level suffix", async () => {
+		const { scopedModels, diagnostics } = await resolveModelScopeWithDiagnostics(
+			["*:high"],
+			registryWith(mockModels),
+		);
+		expect(scopedModels.length).toBe(2);
+		expect(scopedModels.every((s) => s.thinkingLevel === "high")).toBe(true);
+		expect(diagnostics).toEqual([]);
+	});
+
+	test("collects a warning diagnostic for a non-matching pattern instead of logging", async () => {
+		const { scopedModels, diagnostics } = await resolveModelScopeWithDiagnostics(
+			["no-such-model"],
+			registryWith(mockModels),
+		);
+		expect(scopedModels).toEqual([]);
+		expect(diagnostics).toHaveLength(1);
+		expect(diagnostics[0]).toMatchObject({ type: "warning", pattern: "no-such-model" });
+	});
+
+	test("deduplicates models matched by multiple patterns", async () => {
+		const { scopedModels } = await resolveModelScopeWithDiagnostics(
+			["anthropic/claude-sonnet-4-5", "*sonnet*"],
+			registryWith(mockModels),
+		);
+		expect(scopedModels.filter((s) => s.model.id === "claude-sonnet-4-5")).toHaveLength(1);
 	});
 });

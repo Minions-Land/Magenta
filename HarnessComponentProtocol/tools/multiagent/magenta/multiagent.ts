@@ -93,19 +93,37 @@ const multiagentSchema = Type.Object(
 	{
 		action: StringEnum(["start", "status", "interrupt", "stop", "resume", "integrate", "discard"] as const),
 		sessionId: Type.Optional(
-			Type.String({ minLength: 1, description: "Persistent teammate Session id for action=status/interrupt/stop/resume/integrate/discard. NOT used for action=start, which generates and returns a new sessionId." }),
+			Type.String({
+				minLength: 1,
+				description:
+					"Persistent teammate Session id for action=status/interrupt/stop/resume/integrate/discard. NOT used for action=start, which generates and returns a new sessionId.",
+			}),
 		),
 		label: Type.Optional(
 			Type.String({ minLength: 1, maxLength: 200, description: "Human-readable label for action=start." }),
 		),
 		cwd: Type.Optional(Type.String({ minLength: 1, description: "Working directory for action=start." })),
-		workspace: Type.Optional(StringEnum(["shared", "worktree"] as const, { description: "Workspace mode for action=start. 'shared' uses the main working directory; 'worktree' creates an isolated Git worktree." })),
-		tools: Type.Optional(
-			Type.Array(Type.String({ minLength: 1, maxLength: 100, description: "Tool name for action=start. Specifies which tools the teammate can use." }), {
-				maxItems: 64,
+		workspace: Type.Optional(
+			StringEnum(["shared", "worktree"] as const, {
+				description:
+					"Workspace mode for action=start. 'shared' uses the main working directory; 'worktree' creates an isolated Git worktree.",
 			}),
 		),
-		model: Type.Optional(Type.String({ description: "Optional model pattern or provider/model id for action=start." })),
+		tools: Type.Optional(
+			Type.Array(
+				Type.String({
+					minLength: 1,
+					maxLength: 100,
+					description: "Tool name for action=start. Specifies which tools the teammate can use.",
+				}),
+				{
+					maxItems: 64,
+				},
+			),
+		),
+		model: Type.Optional(
+			Type.String({ description: "Optional model pattern or provider/model id for action=start." }),
+		),
 		provider: Type.Optional(Type.String({ description: "Optional provider for action=start." })),
 		thinking: Type.Optional(StringEnum(THINKING_LEVELS, { description: "Thinking level for action=start." })),
 		message: Type.Optional(

@@ -23,6 +23,8 @@ export * from "./_magenta/packages/hcp-client-components.ts";
 export * from "./_magenta/packages/package-overlay-v2.ts";
 export * from "./_magenta/packages/runtime-magnet-loader.ts";
 export { initProcessToolsBinary } from "./_magenta/process-tools/embedded-binaries.ts";
+export { JsonlSessionStorage, loadJsonlSessionMetadata } from "./_magenta/session/pi/jsonl-storage.ts";
+export { InMemorySessionStorage } from "./_magenta/session/pi/memory-storage.ts";
 export * from "./_magenta/session/pi/repo-utils.ts";
 export * from "./_magenta/session/pi/session.ts";
 export { uuidv7 } from "./_magenta/session/pi/uuid.ts";

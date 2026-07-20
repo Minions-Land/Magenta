@@ -616,6 +616,29 @@ describe("AuthStorage", () => {
 			const secondDrain = authStorage.drainErrors();
 			expect(secondDrain).toHaveLength(0);
 		});
+
+		test("modify() throws on persist failure while set() records the error silently (CC-018)", async () => {
+			writeAuthJson({ anthropic: { type: "api_key", key: "anthropic-key" } });
+			authStorage = AuthStorage.create(authJsonPath);
+
+			const fs = await import("node:fs");
+			// Simulate a persist failure: make the auth file read-only.
+			fs.chmodSync(authJsonPath, 0o400);
+
+			try {
+				// set() swallows the persist error into the drainable error buffer.
+				authStorage.set("openai", { type: "api_key", key: "openai-key" });
+				expect(authStorage.drainErrors().length).toBeGreaterThan(0);
+
+				// modify() propagates the persist error so /login can report failure
+				// instead of claiming success before the credential is written.
+				await expect(
+					authStorage.modify("google", async () => ({ type: "api_key", key: "google-key" })),
+				).rejects.toThrow();
+			} finally {
+				fs.chmodSync(authJsonPath, 0o600);
+			}
+		});
 	});
 
 	describe("auth status", () => {

@@ -27,6 +27,22 @@ import {
 	toError,
 } from "../../types/types.ts";
 
+const MAX_TIMEOUT_MS = 2_147_483_647;
+const MAX_TIMEOUT_SECONDS = MAX_TIMEOUT_MS / 1000;
+
+function resolveTimeoutMs(timeout: number | undefined): Result<number | undefined, ExecutionError> {
+	if (timeout === undefined) return ok(undefined);
+	if (!Number.isFinite(timeout) || timeout <= 0) {
+		return err(new ExecutionError("timeout", "Invalid timeout: must be a finite number of seconds"));
+	}
+
+	const timeoutMs = timeout * 1000;
+	if (timeoutMs > MAX_TIMEOUT_MS) {
+		return err(new ExecutionError("timeout", `Invalid timeout: maximum is ${MAX_TIMEOUT_SECONDS} seconds`));
+	}
+	return ok(timeoutMs);
+}
+
 function resolvePath(cwd: string, path: string): string {
 	return isAbsolute(path) ? path : resolve(cwd, path);
 }
@@ -257,6 +273,9 @@ export class NodeExecutionEnv {
 		},
 	): Promise<Result<{ stdout: string; stderr: string; exitCode: number }, ExecutionError>> {
 		if (options?.abortSignal?.aborted) return err(new ExecutionError("aborted", "aborted"));
+		const timeoutMsResult = resolveTimeoutMs(options?.timeout);
+		if (!timeoutMsResult.ok) return err(timeoutMsResult.error);
+		const timeoutMs = timeoutMsResult.value;
 
 		const cwd = options?.cwd ? resolvePath(this.cwd, options.cwd) : this.cwd;
 		const shellConfig = await getShellConfig(this.shellPath);
@@ -309,13 +328,13 @@ export class NodeExecutionEnv {
 			}
 
 			timeoutId =
-				typeof options?.timeout === "number"
+				timeoutMs !== undefined
 					? setTimeout(() => {
 							timedOut = true;
 							if (child?.pid) {
 								killProcessTree(child.pid);
 							}
-						}, options.timeout * 1000)
+						}, timeoutMs)
 					: undefined;
 
 			if (options?.abortSignal) {

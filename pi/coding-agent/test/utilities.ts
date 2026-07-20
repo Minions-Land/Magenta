@@ -12,7 +12,9 @@ import { AuthStorage } from "../src/core/auth-storage.ts";
 import { createEventBus } from "../src/core/event-bus.ts";
 import type { Extension, ExtensionFactory, LoadExtensionsResult } from "../src/core/extensions/index.ts";
 import { createExtensionRuntime, loadExtensionFromFactory } from "../src/core/extensions/loader.ts";
+import { createMagentaCredentialStore } from "../src/core/external-credential-adapter.ts";
 import { ModelRegistry } from "../src/core/model-registry.ts";
+import { ModelRuntime } from "../src/core/model-runtime.ts";
 import type { ResourceLoader } from "../src/core/resource-loader.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
@@ -23,6 +25,21 @@ import { createCodingTools } from "../src/index.ts";
  * describe.skipIf(!API_KEY)
  */
 export const API_KEY = process.env.ANTHROPIC_OAUTH_TOKEN || process.env.ANTHROPIC_API_KEY;
+
+/**
+ * Create a test ModelRegistry (facade over ModelRuntime).
+ */
+export async function createTestModelRegistry(
+	authStorage: AuthStorage,
+	modelsPath?: string | null,
+): Promise<ModelRegistry> {
+	const runtime = await ModelRuntime.create({
+		credentials: createMagentaCredentialStore(authStorage),
+		modelsPath: modelsPath === null ? null : (modelsPath ?? null),
+		allowModelNetwork: false,
+	});
+	return new ModelRegistry(runtime);
+}
 
 /**
  * Create a minimal user message for testing.
@@ -134,7 +151,7 @@ export function createTestResourceLoader(options: CreateTestResourceLoaderOption
  * Create an AgentSession for testing with proper setup and cleanup.
  * Use this for e2e tests that need real LLM calls.
  */
-export function createTestSession(options: TestSessionOptions = {}): TestSessionContext {
+export async function createTestSession(options: TestSessionOptions = {}): Promise<TestSessionContext> {
 	const tempDir = join(tmpdir(), `pi-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 	mkdirSync(tempDir, { recursive: true });
 
@@ -156,7 +173,12 @@ export function createTestSession(options: TestSessionOptions = {}): TestSession
 	}
 
 	const authStorage = AuthStorage.create(join(tempDir, "auth.json"));
-	const modelRegistry = ModelRegistry.create(authStorage, tempDir);
+	const modelRuntime = await ModelRuntime.create({
+		credentials: createMagentaCredentialStore(authStorage),
+		modelsPath: null,
+		allowModelNetwork: false,
+	});
+	const modelRegistry = new ModelRegistry(modelRuntime);
 
 	const session = new AgentSession({
 		agent,
@@ -167,6 +189,8 @@ export function createTestSession(options: TestSessionOptions = {}): TestSession
 		// machine-global messages.db.
 		agentDir: tempDir,
 		modelRegistry,
+		modelRuntime,
+		authStorage,
 		resourceLoader: createTestResourceLoader(),
 	});
 

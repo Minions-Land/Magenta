@@ -17,6 +17,7 @@ function normalizeInclusivePromptUsage(options: {
 	cacheWriteTokens?: number;
 	cacheWrite1hTokens?: number;
 	additionalInputTokens?: number;
+	reasoningTokens?: number;
 	totalTokens?: number;
 }): Usage {
 	const promptTokens = nonNegative(options.promptTokens);
@@ -25,6 +26,7 @@ function normalizeInclusivePromptUsage(options: {
 	const cacheWrite1h = Math.min(cacheWrite, nonNegative(options.cacheWrite1hTokens));
 	const input = promptTokens - cacheRead - cacheWrite + nonNegative(options.additionalInputTokens);
 	const output = nonNegative(options.outputTokens);
+	const reasoning = Math.min(output, nonNegative(options.reasoningTokens));
 	const componentTotal = input + output + cacheRead + cacheWrite;
 	const reportedTotal = nonNegative(options.totalTokens);
 
@@ -34,6 +36,7 @@ function normalizeInclusivePromptUsage(options: {
 		cacheRead,
 		cacheWrite,
 		...(cacheWrite1h > 0 ? { cacheWrite1h } : {}),
+		...(reasoning > 0 ? { reasoning } : {}),
 		totalTokens: reportedTotal || componentTotal,
 		cost: emptyCost(),
 	};
@@ -60,6 +63,7 @@ export function normalizeGoogleTokenUsage(usage: GenerateContentResponseUsageMet
 		outputTokens: nonNegative(usage.candidatesTokenCount) + nonNegative(usage.thoughtsTokenCount),
 		cacheReadTokens: usage.cachedContentTokenCount,
 		additionalInputTokens: usage.toolUsePromptTokenCount,
+		reasoningTokens: usage.thoughtsTokenCount,
 		totalTokens: usage.totalTokenCount,
 	});
 }

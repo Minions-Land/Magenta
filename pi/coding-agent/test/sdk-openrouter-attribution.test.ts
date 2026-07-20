@@ -11,10 +11,10 @@ import {
 } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
-import { ModelRegistry } from "../src/core/model-registry.ts";
 import { createAgentSession } from "../src/core/sdk.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
+import { createTestModelRegistry } from "./utilities.ts";
 
 describe("createAgentSession provider attribution headers", () => {
 	let tempDir: string;
@@ -97,7 +97,7 @@ describe("createAgentSession provider attribution headers", () => {
 
 		const authStorage = AuthStorage.create(join(agentDir, "auth.json"));
 		authStorage.setRuntimeApiKey(model.provider, "test-api-key");
-		const modelRegistry = ModelRegistry.create(authStorage, join(agentDir, "models.json"));
+		const modelRegistry = await createTestModelRegistry(authStorage, join(agentDir, "models.json"));
 		const registeredProviders = ["capture-provider"];
 		let capturedOptions: SimpleStreamOptions | undefined;
 
@@ -197,11 +197,12 @@ describe("createAgentSession provider attribution headers", () => {
 		expect(headers?.["X-OpenRouter-Categories"]).toBe("provider-category");
 	});
 
-	it("adds default attribution headers for Vercel AI Gateway models", async () => {
+	it("does not add default attribution headers for Vercel AI Gateway models (CC-020)", async () => {
 		const headers = await captureHeaders(createModel("vercel-ai-gateway", "https://ai-gateway.vercel.sh/v1"));
 
-		expect(headers?.["http-referer"]).toBe("https://pi.dev");
-		expect(headers?.["x-title"]).toBe("pi");
+		// CC-020: Vercel AI Gateway attribution headers were removed for privacy/compat.
+		expect(headers?.["http-referer"]).toBeUndefined();
+		expect(headers?.["x-title"]).toBeUndefined();
 	});
 
 	it("adds default attribution headers for direct NVIDIA NIM endpoints", async () => {

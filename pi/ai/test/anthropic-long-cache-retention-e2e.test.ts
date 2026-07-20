@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { complete, getModels, getProviders } from "../src/compat.ts";
 import { getEnvApiKey } from "../src/env-api-keys.ts";
+import { resolveModelCostRates } from "../src/models.ts";
 import type { Api, KnownProvider, Model, ProviderStreamOptions } from "../src/types.ts";
 import { resolveApiKey } from "./oauth.ts";
 
@@ -36,7 +37,8 @@ const anthropicMessagesCases: AnthropicLongCacheRetentionE2ECase[] = getProvider
 
 function getProbePriority(model: Model<"anthropic-messages">): number {
 	const modelId = model.id.toLowerCase();
-	const cost = model.cost.input + model.cost.output;
+	const rates = resolveModelCostRates(model.cost, 0);
+	const cost = rates.input + rates.output;
 	let priority = cost;
 
 	if (modelId.includes("haiku") && (modelId.includes("4-5") || modelId.includes("4.5"))) {

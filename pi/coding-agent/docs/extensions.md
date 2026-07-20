@@ -306,7 +306,8 @@ user sends prompt ────────────────────�
   │   │                                            │       │
   │   └─► turn_end                                 │       │
   │                                                        │
-  └─► agent_end                                            │
+  ├─► agent_end                                            │
+  └─► agent_settled (no retry/compaction/follow-up left)   │
                                                            │
 user sends another prompt ◄────────────────────────────────┘
 
@@ -321,6 +322,9 @@ user sends another prompt ◄─────────────────
   ├─► session_shutdown
   ├─► session_start { reason: "fork", previousSessionFile }
   └─► resources_discover { reason: "startup" }
+
+/name or pi.setSessionName()
+  └─► session_info_changed
 
 /compact or auto-compaction
   ├─► session_before_compact (can cancel or customize)
@@ -392,6 +396,17 @@ pi.on("session_start", async (event, ctx) => {
   // event.reason - "startup" | "reload" | "new" | "resume" | "fork"
   // event.previousSessionFile - present for "new", "resume", and "fork"
   ctx.ui.notify(`Session: ${ctx.sessionManager.getSessionFile() ?? "ephemeral"}`, "info");
+});
+```
+
+#### session_info_changed
+
+Fired when the current session display name is set via `/name`, RPC, or `pi.setSessionName()`.
+
+```typescript
+pi.on("session_info_changed", async (event, ctx) => {
+  // event.name - current normalized name, or undefined if cleared
+  ctx.ui.notify(`Session renamed: ${event.name ?? "(none)"}`, "info");
 });
 ```
 
@@ -531,15 +546,19 @@ The `systemPromptOptions` field gives extensions access to the same structured d
 
 Inside `before_agent_start`, `event.systemPrompt` and `ctx.getSystemPrompt()` both reflect the chained system prompt as of the current handler. Later `before_agent_start` handlers can still modify it again.
 
-#### agent_start / agent_end
+#### agent_start / agent_end / agent_settled
 
-Fired once per user prompt.
+`agent_start` fires when a low-level agent run begins. `agent_end` fires when that run ends, but Pi may still auto-retry, auto-compact and retry, or continue with queued follow-up messages. Use `agent_settled` for status integrations that need to know Pi will not continue running automatically.
 
 ```typescript
 pi.on("agent_start", async (_event, ctx) => {});
 
 pi.on("agent_end", async (event, ctx) => {
-  // event.messages - messages from this prompt
+  // event.messages - messages from this low-level run
+});
+
+pi.on("agent_settled", async (_event, ctx) => {
+  // ctx.isIdle() is true here unless another extension started a new run.
 });
 ```
 
@@ -930,9 +949,10 @@ Read-only access to session state. See [Session Format](session-format.md) for t
 For `tool_call`, this state is synchronized through the current assistant message before handlers run. In parallel tool execution mode it is still not guaranteed to include sibling tool results from the same assistant message.
 
 ```typescript
-ctx.sessionManager.getEntries()       // All entries
-ctx.sessionManager.getBranch()        // Current branch
-ctx.sessionManager.getLeafId()        // Current leaf entry ID
+ctx.sessionManager.getEntries()             // All entries
+ctx.sessionManager.getBranch()              // Current branch
+ctx.sessionManager.buildContextEntries()    // Active branch entries with compaction applied
+ctx.sessionManager.getLeafId()              // Current leaf entry ID
 ```
 
 ### ctx.modelRegistry / ctx.model
@@ -966,7 +986,7 @@ pi.on("tool_result", async (event, ctx) => {
 
 ### ctx.isIdle() / ctx.abort() / ctx.hasPendingMessages()
 
-Control flow helpers.
+Control flow helpers. `ctx.isIdle()` is false while Pi is processing an agent run, automatic retry, auto-compaction retry, or queued continuation.
 
 ### ctx.shutdown()
 
@@ -1048,7 +1068,7 @@ This reports the current base prompt inputs. It does not include per-turn `befor
 
 ### Run settlement
 
-Command and event handlers must not wait for the active agent run to become idle. Extension handlers are part of that run's awaited event chain, so waiting for the same run would deadlock settlement. Inspect `ctx.isIdle()` for an immediate snapshot, request cancellation with `ctx.abort()`, and continue terminal bookkeeping from an `agent_end` event instead. `agent_end` is the final emitted run event, but its handlers still participate in settlement and must not call an idle barrier.
+Command and event handlers must not wait for the active agent run to become idle. Extension handlers are part of that run's awaited event chain, so waiting for the same run would deadlock settlement. Inspect `ctx.isIdle()` for an immediate snapshot, request cancellation with `ctx.abort()`, and continue terminal bookkeeping from an `agent_settled` event instead. `agent_settled` is the final emitted run event, but its handlers still participate in settlement and must not call an idle barrier.
 
 ```typescript
 let finishBookkeepingAtAgentEnd = false;
@@ -1063,7 +1083,7 @@ pi.registerCommand("my-cmd", {
   },
 });
 
-pi.on("agent_end", () => {
+pi.on("agent_settled", () => {
   if (!finishBookkeepingAtAgentEnd) return;
   finishBookkeepingAtAgentEnd = false;
   finishRunBookkeeping();
@@ -1242,7 +1262,7 @@ recompile-and-restart command.
 
 ```typescript
 pi.registerCommand("reload-runtime", {
-  description: "Reload extensions, skills, prompts, and themes",
+  description: "Reload extensions, skills, prompts, themes, and context files",
   handler: async (_args, ctx) => {
     await ctx.reload();
     return;
@@ -1270,7 +1290,7 @@ import { Type } from "typebox";
 
 export default function (pi: ExtensionAPI) {
   pi.registerCommand("reload-runtime", {
-    description: "Reload extensions, skills, prompts, and themes",
+    description: "Reload extensions, skills, prompts, themes, and context files",
     handler: async (_args, ctx) => {
       await ctx.reload();
       return;
@@ -1280,7 +1300,7 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "reload_runtime",
     label: "Reload Runtime",
-    description: "Reload extensions, skills, prompts, and themes",
+    description: "Reload extensions, skills, prompts, themes, and context files",
     parameters: Type.Object({}),
     async execute() {
       pi.sendUserMessage("/reload-runtime", { deliverAs: "followUp" });
@@ -1351,7 +1371,7 @@ pi.registerTool({
 
 ### pi.sendMessage(message, options?)
 
-Inject a custom message into the session.
+Inject a custom message into the session. Custom messages participate in LLM context. For durable TUI-only content that should not be sent to the LLM, use [`pi.appendEntry()`](#piappendentrycustomtype-data) with [`pi.registerEntryRenderer()`](#piregisterentryrenderercustomtype-renderer).
 
 ```typescript
 pi.sendMessage({
@@ -1402,10 +1422,11 @@ See [send-user-message.ts](../examples/extensions/send-user-message.ts) for a co
 
 ### pi.appendEntry(customType, data?)
 
-Persist extension state (does NOT participate in LLM context).
+Persist extension data. Custom entries do NOT participate in LLM context. In interactive mode, they can also render inside the chat transcript when paired with `pi.registerEntryRenderer()`.
 
 ```typescript
 pi.appendEntry("my-state", { count: 42 });
+pi.appendEntry("status-card", { title: "Indexed files", count: 17 });
 
 // Restore on reload
 pi.on("session_start", async (_event, ctx) => {
@@ -1523,7 +1544,27 @@ mode and would not execute if sent via `prompt`.
 
 ### pi.registerMessageRenderer(customType, renderer)
 
-Register a custom TUI renderer for messages with your `customType`. See [Custom UI](#custom-ui).
+Register a custom TUI renderer for custom messages with your `customType`. Custom messages are created with `pi.sendMessage()` and participate in LLM context. See [Custom UI](#custom-ui).
+
+### pi.registerEntryRenderer(customType, renderer)
+
+Register a custom TUI renderer for custom entries with your `customType`. Custom entries are created with `pi.appendEntry()` and do not participate in LLM context.
+
+```typescript
+import { Box, Text } from "@earendil-works/pi-tui";
+
+pi.registerEntryRenderer("status-card", (entry, { expanded }, theme) => {
+  const data = entry.data as { title: string; count: number };
+  const box = new Box(1, 1, (text) => theme.bg("customMessageBg", text));
+  box.addChild(new Text(`${theme.bold(data.title)}: ${data.count}`));
+  if (expanded) {
+    box.addChild(new Text(theme.fg("dim", JSON.stringify(data, null, 2))));
+  }
+  return box;
+});
+
+pi.appendEntry("status-card", { title: "Indexed files", count: 17 });
+```
 
 ### pi.registerShortcut(shortcut, options)
 
@@ -2528,9 +2569,9 @@ ctx.ui.setEditorComponent((tui, theme, keybindings) =>
 
 See [tui.md](tui.md) Pattern 7 for a complete example with mode indicator.
 
-### Message Rendering
+### Message and Entry Rendering
 
-Register a custom renderer for messages with your `customType`:
+Register a custom renderer for messages with your `customType`. Use message renderers for content that should participate in LLM context:
 
 ```typescript
 import { Text } from "@earendil-works/pi-tui";
@@ -2557,6 +2598,16 @@ pi.sendMessage({
   display: true,               // Show in TUI
   details: { ... },            // Available in renderer
 });
+```
+
+For TUI-only content that should not be sent to the LLM, render custom entries instead:
+
+```typescript
+pi.registerEntryRenderer("my-card", (entry, options, theme) => {
+  return new Text(theme.fg("accent", JSON.stringify(entry.data)));
+});
+
+pi.appendEntry("my-card", { status: "done" });
 ```
 
 ### Theme Colors

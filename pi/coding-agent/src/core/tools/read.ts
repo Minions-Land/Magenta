@@ -20,8 +20,8 @@ import type { Static } from "typebox";
 import { getReadmePath } from "../../config.ts";
 import { keyHint, keyText } from "../../modes/interactive/components/keybinding-hints.ts";
 import { getLanguageFromPath, highlightCode, type Theme } from "../../modes/interactive/theme/theme.ts";
-import { formatDimensionNote, resizeImage } from "../../utils/image-resize.ts";
-import { detectSupportedImageMimeTypeFromFile } from "../../utils/mime.ts";
+import { processImage } from "../../utils/image-process.ts";
+import { detectSupportedImageMimeType, detectSupportedImageMimeTypeFromFile } from "../../utils/mime.ts";
 import { formatPathRelativeToCwdOrAbsolute } from "../../utils/paths.ts";
 import type { ToolDefinition, ToolRenderResultOptions } from "../extensions/types.ts";
 import { resolveToCwd } from "./path-utils.ts";
@@ -37,21 +37,58 @@ export type { ReadToolInput, ReadToolDetails, ReadToolOptions, ReadOperations };
  * resize wiring that depends on pi-only utilities (worker threads + Photon WASM).
  * These are injected into the harness execute via {@link ReadToolOptions.operations}.
  */
-export function createLocalReadOperations(): ReadOperations {
+function createPiResizeOperation(): NonNullable<ReadOperations["resizeImage"]> {
+	return async (bytes, mimeType): Promise<ResizedImageResult | null> => {
+		const processed = await processImage(bytes, mimeType);
+		if (!processed.ok) return null;
+		return {
+			data: processed.data,
+			mimeType: processed.mimeType,
+			dimensionNote: processed.hints.length > 0 ? processed.hints.join("\n") : undefined,
+		};
+	};
+}
+
+/** Add byte-sniffed BMP normalization to any local or remote read implementation. */
+export function withImageReadOperations(operations: ReadOperations): ReadOperations {
+	const convertedByPath = new Map<string, Buffer>();
 	return {
+		...operations,
+		readFile: async (path) => {
+			const converted = convertedByPath.get(path);
+			if (converted) {
+				convertedByPath.delete(path);
+				return converted;
+			}
+			return operations.readFile(path);
+		},
+		detectImageMimeType: async (path) => {
+			const reportedMimeType = await operations.detectImageMimeType?.(path);
+			if (reportedMimeType && reportedMimeType !== "image/bmp") return reportedMimeType;
+			if (operations.detectImageMimeType && reportedMimeType !== "image/bmp" && !/\.(?:bmp|dib)$/i.test(path)) {
+				return reportedMimeType;
+			}
+
+			const bytes = await operations.readFile(path);
+			const sniffedMimeType = detectSupportedImageMimeType(bytes);
+			if (sniffedMimeType !== "image/bmp") return sniffedMimeType;
+
+			const processed = await processImage(bytes, sniffedMimeType, { autoResizeImages: false });
+			if (!processed.ok) return null;
+			convertedByPath.set(path, Buffer.from(processed.data, "base64"));
+			return processed.mimeType;
+		},
+		resizeImage: operations.resizeImage ?? createPiResizeOperation(),
+	};
+}
+
+export function createLocalReadOperations(): ReadOperations {
+	return withImageReadOperations({
 		readFile: (path) => fsReadFile(path),
 		access: (path) => fsAccess(path, constants.R_OK),
 		detectImageMimeType: detectSupportedImageMimeTypeFromFile,
-		resizeImage: async (bytes, mimeType): Promise<ResizedImageResult | null> => {
-			const resized = await resizeImage(bytes, mimeType);
-			if (!resized) return null;
-			return {
-				data: resized.data,
-				mimeType: resized.mimeType,
-				dimensionNote: formatDimensionNote(resized),
-			};
-		},
-	};
+		resizeImage: createPiResizeOperation(),
+	});
 }
 
 interface CompactReadClassification {
@@ -235,12 +272,12 @@ export function createReadToolDefinition(
 ): ToolDefinition<typeof readSchema, ReadToolDetails | undefined> {
 	const execute = createReadExecute(cwd, {
 		...options,
-		operations: options?.operations ?? createLocalReadOperations(),
+		operations: options?.operations ? withImageReadOperations(options.operations) : createLocalReadOperations(),
 	});
 	return {
 		name: "read",
 		label: "read",
-		description: `Read the contents of a file. Supports text files and images (jpg, png, gif, webp). Images are sent as attachments. For text files, output is truncated to ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). Use offset/limit for large files. When you need the full file, continue with offset until complete.`,
+		description: `Read the contents of a file. Supports text files and images (jpg, png, gif, webp, bmp). Images are sent as attachments. For text files, output is truncated to ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). Use offset/limit for large files. When you need the full file, continue with offset until complete.`,
 		promptSnippet: "Read file contents",
 		promptGuidelines: ["Use read to examine files instead of cat or sed."],
 		parameters: readSchema,

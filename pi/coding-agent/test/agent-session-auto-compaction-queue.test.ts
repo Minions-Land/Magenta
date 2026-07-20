@@ -8,10 +8,9 @@ import { Type } from "typebox";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AgentSession } from "../src/core/agent-session.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
-import { ModelRegistry } from "../src/core/model-registry.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
-import { createTestResourceLoader } from "./utilities.ts";
+import { createTestModelRegistry, createTestResourceLoader } from "./utilities.ts";
 
 describe("AgentSession auto-compaction queue resume", () => {
 	let session: AgentSession;
@@ -19,7 +18,7 @@ describe("AgentSession auto-compaction queue resume", () => {
 	let settingsManager: SettingsManager;
 	let tempDir: string;
 
-	beforeEach(() => {
+	beforeEach(async () => {
 		tempDir = join(tmpdir(), `pi-auto-compaction-queue-${Date.now()}`);
 		mkdirSync(tempDir, { recursive: true });
 		vi.useFakeTimers();
@@ -37,7 +36,7 @@ describe("AgentSession auto-compaction queue resume", () => {
 		settingsManager = SettingsManager.create(tempDir, tempDir);
 		const authStorage = AuthStorage.create(join(tempDir, "auth.json"));
 		authStorage.setRuntimeApiKey("anthropic", "test-key");
-		const modelRegistry = ModelRegistry.create(authStorage, tempDir);
+		const modelRegistry = await createTestModelRegistry(authStorage, tempDir);
 
 		session = new AgentSession({
 			agent,

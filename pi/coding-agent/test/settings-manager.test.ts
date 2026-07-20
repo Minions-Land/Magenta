@@ -453,4 +453,81 @@ describe("SettingsManager", () => {
 			expect(manager.getSessionDir()).toBe(join(homedir(), "sessions"));
 		});
 	});
+
+	describe("externalEditor", () => {
+		const originalVisual = process.env.VISUAL;
+		const originalEditor = process.env.EDITOR;
+		const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform");
+
+		function setEditorEnv(visual?: string, editor?: string): void {
+			if (visual === undefined) delete process.env.VISUAL;
+			else process.env.VISUAL = visual;
+			if (editor === undefined) delete process.env.EDITOR;
+			else process.env.EDITOR = editor;
+		}
+
+		afterEach(() => {
+			setEditorEnv(originalVisual, originalEditor);
+			if (originalPlatform) {
+				Object.defineProperty(process, "platform", originalPlatform);
+			}
+		});
+
+		it("should resolve editor commands by precedence", () => {
+			setEditorEnv("vim", "nano");
+			expect(SettingsManager.inMemory({ externalEditor: "code --wait" }).getExternalEditorCommand()).toBe(
+				"code --wait",
+			);
+			expect(SettingsManager.inMemory().getExternalEditorCommand()).toBe("vim");
+
+			setEditorEnv(undefined, "emacs");
+			expect(SettingsManager.inMemory().getExternalEditorCommand()).toBe("emacs");
+		});
+
+		it("should treat a blank externalEditor as unset", () => {
+			setEditorEnv("vim", undefined);
+			expect(SettingsManager.inMemory({ externalEditor: "   " }).getExternalEditorCommand()).toBe("vim");
+		});
+
+		it("should fall back to platform defaults", () => {
+			setEditorEnv();
+			Object.defineProperty(process, "platform", { value: "win32" });
+			expect(SettingsManager.inMemory().getExternalEditorCommand()).toBe("notepad");
+
+			Object.defineProperty(process, "platform", { value: "darwin" });
+			expect(SettingsManager.inMemory().getExternalEditorCommand()).toBe("nano");
+
+			Object.defineProperty(process, "platform", { value: "linux" });
+			expect(SettingsManager.inMemory().getExternalEditorCommand()).toBe("nano");
+		});
+	});
+
+	describe("getShellPath", () => {
+		it("should return undefined when not set", () => {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ theme: "dark" }));
+			const manager = SettingsManager.create(projectDir, agentDir);
+			expect(manager.getShellPath()).toBeUndefined();
+		});
+
+		it("should return an absolute shellPath unchanged", () => {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ shellPath: "/bin/zsh" }));
+			const manager = SettingsManager.create(projectDir, agentDir);
+			expect(manager.getShellPath()).toBe("/bin/zsh");
+		});
+
+		it("should expand ~ in shellPath", () => {
+			writeFileSync(
+				join(agentDir, "settings.json"),
+				JSON.stringify({ shellPath: "~/.local/bin/agent-shell-sandbox" }),
+			);
+			const manager = SettingsManager.create(projectDir, agentDir);
+			expect(manager.getShellPath()).toBe(join(homedir(), ".local/bin/agent-shell-sandbox"));
+		});
+
+		it("should expand a bare ~ in shellPath", () => {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ shellPath: "~" }));
+			const manager = SettingsManager.create(projectDir, agentDir);
+			expect(manager.getShellPath()).toBe(homedir());
+		});
+	});
 });

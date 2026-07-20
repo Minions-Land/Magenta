@@ -170,7 +170,7 @@ Common commands:
 | `/tree`, `/fork`, `/clone` | Navigate or branch session history |
 | `/compact [prompt]` | Compact the current context |
 | `/side`, `/btw`, `/s` | Browse this main session's Side/BTW history or start a no-tools conversation |
-| `/refresh` | Refresh settings, keybindings, extensions, skills, prompts, and themes in process |
+| `/refresh` | Refresh settings, keybindings, extensions, skills, prompts, themes, and context files in process |
 | `/reload` | Recompile Magenta and restart the TUI with the current session |
 | `/hotkeys` | Show all active keybindings |
 | `/quit` | Exit |

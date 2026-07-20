@@ -1,6 +1,8 @@
+import { Type } from "typebox";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { stream as streamOpenAIResponses } from "../src/api/openai-responses.ts";
 import { getModel, getSupportedThinkingLevels, streamSimple } from "../src/compat.ts";
+import { resolveModelCostRates } from "../src/models.ts";
 import type { Model } from "../src/types.ts";
 
 type CapturedHeaders = Headers | string[][] | Record<string, string | readonly string[]> | undefined;
@@ -24,11 +26,16 @@ function getHeader(headers: CapturedHeaders, name: string): string | null {
 async function captureOpenAIResponseHeaders(
 	options: Parameters<typeof streamOpenAIResponses>[2],
 	model: Model<"openai-responses"> = getModel("openai", "gpt-5.4"),
-): Promise<{ sessionId: string | null; clientRequestId: string | null }> {
-	const captured = { sessionId: null as string | null, clientRequestId: null as string | null };
+): Promise<{ sessionId: string | null; clientRequestId: string | null; xSessionId: string | null }> {
+	const captured = {
+		sessionId: null as string | null,
+		clientRequestId: null as string | null,
+		xSessionId: null as string | null,
+	};
 	vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
 		captured.sessionId = getHeader(init?.headers, "session_id");
 		captured.clientRequestId = getHeader(init?.headers, "x-client-request-id");
+		captured.xSessionId = getHeader(init?.headers, "x-session-id");
 		return new Response("data: [DONE]\n\n", {
 			status: 200,
 			headers: { "content-type": "text/event-stream" },
@@ -88,6 +95,53 @@ describe("openai-responses provider defaults", () => {
 		expect(capturedPayload).not.toBeNull();
 		expect(capturedPayload).not.toMatchObject({
 			reasoning: expect.anything(),
+		});
+	});
+
+	it("forwards required tool choice", async () => {
+		let capturedPayload: unknown;
+
+		vi.spyOn(globalThis, "fetch").mockResolvedValue(
+			new Response("data: [DONE]\n\n", {
+				status: 200,
+				headers: { "content-type": "text/event-stream" },
+			}),
+		);
+
+		const stream = streamOpenAIResponses(
+			getModel("openai", "gpt-5.4"),
+			{
+				messages: [
+					{
+						role: "user",
+						content: "Do not call ping. Respond with text instead.",
+						timestamp: Date.now(),
+					},
+				],
+				tools: [
+					{
+						name: "ping",
+						description: "Ping",
+						parameters: Type.Object({ value: Type.String() }),
+					},
+				],
+			},
+			{
+				apiKey: "test-key",
+				toolChoice: "required",
+				onPayload: (payload) => {
+					capturedPayload = payload;
+				},
+			},
+		);
+
+		for await (const event of stream) {
+			if (event.type === "done" || event.type === "error") break;
+		}
+
+		expect(capturedPayload).toMatchObject({
+			tool_choice: "required",
+			tools: [expect.objectContaining({ name: "ping" })],
 		});
 	});
 
@@ -206,7 +260,7 @@ describe("openai-responses provider defaults", () => {
 	it("sets cache-affinity headers for official OpenAI Responses requests with a sessionId", async () => {
 		const captured = await captureOpenAIResponseHeaders({ sessionId: "session-123" });
 
-		expect(captured).toEqual({ sessionId: "session-123", clientRequestId: "session-123" });
+		expect(captured).toEqual({ sessionId: "session-123", clientRequestId: "session-123", xSessionId: null });
 	});
 
 	it("clamps prompt_cache_key to OpenAI's 64-character limit", async () => {
@@ -249,7 +303,7 @@ describe("openai-responses provider defaults", () => {
 		};
 		const captured = await captureOpenAIResponseHeaders({ sessionId: "session-123" }, proxyModel);
 
-		expect(captured).toEqual({ sessionId: "session-123", clientRequestId: "session-123" });
+		expect(captured).toEqual({ sessionId: "session-123", clientRequestId: "session-123", xSessionId: null });
 	});
 
 	it("can omit the session_id header while preserving other cache-affinity headers", async () => {
@@ -261,7 +315,42 @@ describe("openai-responses provider defaults", () => {
 		};
 		const captured = await captureOpenAIResponseHeaders({ sessionId: "session-123" }, proxyModel);
 
-		expect(captured).toEqual({ sessionId: null, clientRequestId: "session-123" });
+		expect(captured).toEqual({ sessionId: null, clientRequestId: "session-123", xSessionId: null });
+	});
+
+	it("maps deprecated sendSessionIdHeader:true to the openai affinity format", async () => {
+		const proxyModel: Model<"openai-responses"> = {
+			...getModel("openai", "gpt-5.4"),
+			provider: "opencode",
+			baseUrl: "https://proxy.example.com/v1",
+			compat: { sendSessionIdHeader: true },
+		};
+		const captured = await captureOpenAIResponseHeaders({ sessionId: "session-123" }, proxyModel);
+
+		expect(captured).toEqual({ sessionId: "session-123", clientRequestId: "session-123", xSessionId: null });
+	});
+
+	it("uses openai-nosession format for opencode openai-responses models", async () => {
+		const opencodeModel: Model<"openai-responses"> = {
+			...getModel("openai", "gpt-5.4"),
+			provider: "opencode",
+			baseUrl: "https://opencode.ai/zen/v1",
+			compat: { sessionAffinityFormat: "openai-nosession" },
+		};
+		const captured = await captureOpenAIResponseHeaders({ sessionId: "session-123" }, opencodeModel);
+
+		expect(captured).toEqual({ sessionId: null, clientRequestId: "session-123", xSessionId: null });
+	});
+
+	it("uses x-session-id and auto-detects the openrouter format for OpenRouter endpoints", async () => {
+		const openrouterModel: Model<"openai-responses"> = {
+			...getModel("openai", "gpt-5.4"),
+			provider: "openrouter",
+			baseUrl: "https://openrouter.ai/api/v1",
+		};
+		const captured = await captureOpenAIResponseHeaders({ sessionId: "session-123" }, openrouterModel);
+
+		expect(captured).toEqual({ sessionId: null, clientRequestId: null, xSessionId: "session-123" });
 	});
 
 	it("lets explicit headers override the default OpenAI cache-affinity headers", async () => {
@@ -273,13 +362,42 @@ describe("openai-responses provider defaults", () => {
 			},
 		});
 
-		expect(captured).toEqual({ sessionId: "override-session", clientRequestId: "override-request" });
+		expect(captured).toEqual({
+			sessionId: "override-session",
+			clientRequestId: "override-request",
+			xSessionId: null,
+		});
 	});
 
 	it("omits OpenAI cache-affinity headers when cacheRetention is none", async () => {
 		const captured = await captureOpenAIResponseHeaders({ cacheRetention: "none", sessionId: "session-123" });
 
-		expect(captured).toEqual({ sessionId: null, clientRequestId: null });
+		expect(captured).toEqual({ sessionId: null, clientRequestId: null, xSessionId: null });
+	});
+
+	it("clamps max_output_tokens to the provider minimum", async () => {
+		const model = getModel("openai", "gpt-5.4");
+		let capturedPayload: unknown;
+		vi.spyOn(globalThis, "fetch").mockResolvedValue(
+			new Response("data: [DONE]\n\n", {
+				status: 200,
+				headers: { "content-type": "text/event-stream" },
+			}),
+		);
+
+		await streamOpenAIResponses(
+			model,
+			{ messages: [{ role: "user", content: "hi", timestamp: Date.now() }] },
+			{
+				apiKey: "test-key",
+				maxTokens: 1,
+				onPayload: (payload) => {
+					capturedPayload = payload;
+				},
+			},
+		).result();
+
+		expect(capturedPayload).toMatchObject({ max_output_tokens: 16 });
 	});
 
 	it.each([
@@ -322,8 +440,12 @@ describe("openai-responses provider defaults", () => {
 
 		const result = await stream.result();
 
-		expect(result.usage.cost.input).toBe(model.cost.input * multiplier);
-		expect(result.usage.cost.output).toBe(model.cost.output * multiplier);
-		expect(result.usage.cost.total).toBe((model.cost.input + model.cost.output) * multiplier);
+		const rates = resolveModelCostRates(
+			model.cost,
+			result.usage.input + result.usage.cacheRead + result.usage.cacheWrite,
+		);
+		expect(result.usage.cost.input).toBe(rates.input * multiplier);
+		expect(result.usage.cost.output).toBe(rates.output * multiplier);
+		expect(result.usage.cost.total).toBe((rates.input + rates.output) * multiplier);
 	});
 });

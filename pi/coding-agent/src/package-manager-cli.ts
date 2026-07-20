@@ -1,8 +1,10 @@
+import { join } from "node:path";
 import chalk from "chalk";
 import { selectConfig } from "./cli/config-selector.ts";
 import { createProjectTrustContext } from "./cli/project-trust.ts";
 import { APP_BINARY_NAME, APP_NAME, CONFIG_DIR_NAME, getAgentDir } from "./config.ts";
-import type { ExtensionFactory } from "./core/extensions/types.ts";
+import type { InlineExtension } from "./core/extensions/types.ts";
+import { ModelRuntime } from "./core/model-runtime.ts";
 import { DefaultPackageManager } from "./core/package-manager.ts";
 import { type AppMode, resolveProjectTrusted } from "./core/project-trust.ts";
 import { DefaultResourceLoader } from "./core/resource-loader.ts";
@@ -12,7 +14,7 @@ import { runMagentaSelfUpdate } from "./utils/unified-update-check.ts";
 
 export type PackageCommand = "install" | "remove" | "update" | "list";
 
-type UpdateTarget = { type: "all" } | { type: "self" } | { type: "extensions"; source?: string };
+type UpdateTarget = { type: "all" } | { type: "self" } | { type: "extensions"; source?: string } | { type: "models" };
 
 interface PackageCommandOptions {
 	command: PackageCommand;
@@ -46,7 +48,7 @@ function getPackageCommandUsage(command: PackageCommand): string {
 		case "remove":
 			return `${APP_BINARY_NAME} remove <source> [-l] [--approve|--no-approve]`;
 		case "update":
-			return `${APP_BINARY_NAME} update [source|self|${APP_BINARY_NAME}] [--self|--extensions|--all] [--extension <source>] [--approve|--no-approve] [--force]`;
+			return `${APP_BINARY_NAME} update [source|self|${APP_BINARY_NAME}] [--self|--extensions|--models|--all] [--extension <source>] [--approve|--no-approve] [--force]`;
 		case "list":
 			return `${APP_BINARY_NAME} list [--approve|--no-approve]`;
 	}
@@ -103,6 +105,7 @@ Options:
   --self                  Update ${APP_NAME} only (default when no target is given)
   --extensions            Update installed packages only
   --all                   Update ${APP_NAME} and installed packages
+  --models                Refresh model catalogs only
   --extension <source>    Update one package only
   -a, --approve           Trust project-local files for this command
   -na, --no-approve       Ignore project-local files for this command
@@ -111,6 +114,7 @@ Options:
 Short forms:
   ${APP_BINARY_NAME} update                Update ${APP_NAME} only
   ${APP_BINARY_NAME} update --all          Update ${APP_NAME} and all extensions
+  ${APP_BINARY_NAME} update --models       Refresh model catalogs only
   ${APP_BINARY_NAME} update <source>       Update one package
   ${APP_BINARY_NAME} update ${APP_BINARY_NAME}        Update ${APP_NAME} only (self works as alias to ${APP_BINARY_NAME})
 `);
@@ -154,6 +158,7 @@ function parsePackageCommand(args: string[]): PackageCommandOptions | undefined 
 	let selfFlag = false;
 	let extensionsFlag = false;
 	let allFlag = false;
+	let modelsFlag = false;
 	let extensionFlagSource: string | undefined;
 
 	for (let index = 0; index < rest.length; index++) {
@@ -193,6 +198,15 @@ function parsePackageCommand(args: string[]): PackageCommandOptions | undefined 
 		if (arg === "--all") {
 			if (command === "update") {
 				allFlag = true;
+			} else {
+				invalidOption = invalidOption ?? arg;
+			}
+			continue;
+		}
+
+		if (arg === "--models") {
+			if (command === "update") {
+				modelsFlag = true;
 			} else {
 				invalidOption = invalidOption ?? arg;
 			}
@@ -252,15 +266,24 @@ function parsePackageCommand(args: string[]): PackageCommandOptions | undefined 
 	let updateTarget: UpdateTarget | undefined;
 	let showExtensionsSkippedNote = false;
 	if (command === "update") {
-		if (allFlag && (selfFlag || extensionsFlag || extensionFlagSource)) {
+		if (allFlag && (selfFlag || extensionsFlag || modelsFlag || extensionFlagSource)) {
 			conflictingOptions =
-				conflictingOptions ?? "--all cannot be combined with --self, --extensions, or --extension";
+				conflictingOptions ?? "--all cannot be combined with --self, --extensions, --models, or --extension";
 		}
 		if (allFlag && source) {
 			conflictingOptions = conflictingOptions ?? "--all cannot be combined with a positional source";
 		}
 
-		if (extensionFlagSource) {
+		if (modelsFlag) {
+			if (selfFlag || extensionsFlag || allFlag || extensionFlagSource) {
+				conflictingOptions =
+					conflictingOptions ?? "--models cannot be combined with --self, --extensions, --all, or --extension";
+			}
+			if (source) {
+				conflictingOptions = conflictingOptions ?? "--models cannot be combined with a positional source";
+			}
+			updateTarget = { type: "models" };
+		} else if (extensionFlagSource) {
 			if (selfFlag || extensionsFlag || allFlag) {
 				conflictingOptions =
 					conflictingOptions ?? "--extension cannot be combined with --self, --extensions, or --all";
@@ -323,6 +346,39 @@ function updateTargetIncludesExtensions(target: UpdateTarget): boolean {
 	return target.type === "all" || target.type === "extensions";
 }
 
+/**
+ * CC-055: Force an immediate model catalog refresh from pi.dev overlays +
+ * builtin providers, using the same runtime refresh path as live UI updates.
+ * Does not touch package/GitHub acquisition or self-update. Throws on timeout
+ * or provider errors to report diagnostic context to the caller.
+ */
+async function refreshModelCatalogs(agentDir: string): Promise<void> {
+	const modelRuntime = await ModelRuntime.create({
+		authPath: join(agentDir, "auth.json"),
+		modelsPath: join(agentDir, "models.json"),
+		allowModelNetwork: false,
+	});
+	const controller = new AbortController();
+	const timeout = setTimeout(() => controller.abort(), 15_000);
+	try {
+		const result = await modelRuntime.refresh({
+			allowNetwork: true,
+			force: true,
+			signal: controller.signal,
+		});
+		if (result.aborted) {
+			throw new Error("Model catalog refresh timed out.");
+		}
+		if (result.errors.size > 0) {
+			const details = Array.from(result.errors, ([provider, error]) => `${provider}: ${error.message}`).join("; ");
+			throw new Error(`Could not refresh model catalogs: ${details}`);
+		}
+	} finally {
+		clearTimeout(timeout);
+	}
+	console.log(chalk.green("Model catalogs refreshed"));
+}
+
 function printMagentaSelfUpdateFailure(reason: string): void {
 	console.error(chalk.red(`Error: ${reason}`));
 }
@@ -340,7 +396,7 @@ function parseProjectTrustOverride(args: readonly string[]): boolean | undefined
 }
 
 export interface PackageCommandRuntimeOptions {
-	extensionFactories?: ExtensionFactory[];
+	extensionFactories?: InlineExtension[];
 }
 
 interface CommandSettingsResult {
@@ -363,7 +419,7 @@ async function createCommandSettingsManager(options: {
 	agentDir: string;
 	projectTrustOverride?: boolean;
 	useSavedProjectTrustOnly?: boolean;
-	extensionFactories?: ExtensionFactory[];
+	extensionFactories?: InlineExtension[];
 }): Promise<CommandSettingsResult> {
 	const settingsManager = SettingsManager.create(options.cwd, options.agentDir, { projectTrusted: false });
 	const projectTrustWarnings: string[] = [];
@@ -568,6 +624,13 @@ export async function handlePackageCommand(
 
 			case "update": {
 				const target = options.updateTarget ?? { type: "self" };
+				// CC-055: `magenta update --models` forces an immediate model catalog
+				// refresh only. It must not invoke package/GitHub acquisition or self-update,
+				// so it routes to the runtime refresh and returns before any other update path.
+				if (target.type === "models") {
+					await refreshModelCatalogs(getAgentDir());
+					return true;
+				}
 				if (options.showExtensionsSkippedNote) {
 					console.log(
 						chalk.dim(`Extensions are skipped. Run ${APP_BINARY_NAME} update --extensions to update extensions.`),

@@ -4,12 +4,12 @@
  * Replace everything - no discovery, explicit configuration.
  */
 
-import { getModel } from "@earendil-works/pi-ai/compat";
 import {
 	AuthStorage,
 	createAgentSession,
 	createExtensionRuntime,
 	ModelRegistry,
+	ModelRuntime,
 	type ResourceLoader,
 	SessionManager,
 	SettingsManager,
@@ -18,15 +18,19 @@ import {
 // Custom auth storage location
 const authStorage = AuthStorage.create("/tmp/my-agent/auth.json");
 
+// Model runtime with no custom models.json
+const modelRuntime = await ModelRuntime.create({
+	authPath: "/tmp/my-agent/auth.json",
+	modelsPath: null,
+});
+const modelRegistry = new ModelRegistry(modelRuntime);
+
 // Runtime API key override (not persisted)
 if (process.env.MY_ANTHROPIC_KEY) {
-	authStorage.setRuntimeApiKey("anthropic", process.env.MY_ANTHROPIC_KEY);
+	await modelRuntime.setRuntimeApiKey("anthropic", process.env.MY_ANTHROPIC_KEY);
 }
 
-// Model registry with no custom models.json
-const modelRegistry = ModelRegistry.inMemory(authStorage);
-
-const model = getModel("anthropic", "claude-sonnet-4-6");
+const model = modelRuntime.getModel("anthropic", "claude-sonnet-4-6");
 if (!model) throw new Error("Model not found");
 
 // In-memory settings with overrides
@@ -59,6 +63,7 @@ const { session } = await createAgentSession({
 	model,
 	thinkingLevel: "off",
 	authStorage,
+	modelRuntime,
 	modelRegistry,
 	resourceLoader,
 	tools: ["read", "bash"],

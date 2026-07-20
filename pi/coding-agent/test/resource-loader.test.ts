@@ -7,12 +7,16 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CONFIG_DIR_NAME } from "../src/config.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { ExtensionRunner } from "../src/core/extensions/runner.ts";
-import { ModelRegistry } from "../src/core/model-registry.ts";
-import { DefaultResourceLoader, type DefaultResourceLoaderOptions } from "../src/core/resource-loader.ts";
+import {
+	DefaultResourceLoader,
+	type DefaultResourceLoaderOptions,
+	loadProjectContextFiles,
+} from "../src/core/resource-loader.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 import { formatSkillsForPrompt, type Skill } from "../src/core/skills.ts";
 import { createSyntheticSourceInfo } from "../src/core/source-info.ts";
+import { createTestModelRegistry } from "./utilities.ts";
 
 function writeHarnessPackageFixture(repoRoot: string, packagesRoot = join(repoRoot, "packages")): void {
 	const packageDir = join(packagesRoot, "TestDomain");
@@ -1174,7 +1178,7 @@ export default function(pi) {
 
 			const sessionManager = SessionManager.inMemory();
 			const authStorage = AuthStorage.create(join(tempDir, "auth.json"));
-			const modelRegistry = ModelRegistry.create(authStorage);
+			const modelRegistry = await createTestModelRegistry(authStorage);
 			const runner = new ExtensionRunner(
 				extensionsResult.extensions,
 				extensionsResult.runtime,
@@ -1625,7 +1629,7 @@ export default function(pi: ExtensionAPI) {
 
 			const sessionManager = SessionManager.inMemory();
 			const authStorage = AuthStorage.create(join(tempDir, "auth-explicit.json"));
-			const modelRegistry = ModelRegistry.create(authStorage);
+			const modelRegistry = await createTestModelRegistry(authStorage);
 			const runner = new ExtensionRunner(
 				extensionsResult.extensions,
 				extensionsResult.runtime,
@@ -1814,5 +1818,53 @@ export default function(pi: ExtensionAPI) {
 			await new Promise((r) => setTimeout(r, 400));
 			expect(notified).toBe(0);
 		});
+	});
+});
+
+describe("loadProjectContextFiles", () => {
+	let root: string;
+	let agentDir: string;
+
+	beforeEach(() => {
+		root = join(tmpdir(), `ctx-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+		agentDir = join(root, "agent");
+		mkdirSync(agentDir, { recursive: true });
+	});
+
+	afterEach(() => {
+		rmSync(root, { recursive: true, force: true });
+	});
+
+	it("walks ancestors from cwd up to the filesystem root and orders them root-first", () => {
+		const nested = join(root, "a", "b", "c");
+		mkdirSync(nested, { recursive: true });
+		writeFileSync(join(root, "a", "AGENTS.md"), "top");
+		writeFileSync(join(root, "a", "b", "c", "AGENTS.md"), "leaf");
+
+		const files = loadProjectContextFiles({ cwd: nested, agentDir });
+		const contents = files.map((f) => f.content);
+		// Ancestor (top) must precede the deeper (leaf) file.
+		expect(contents).toContain("top");
+		expect(contents).toContain("leaf");
+		expect(contents.indexOf("top")).toBeLessThan(contents.indexOf("leaf"));
+	});
+
+	it("terminates at the root without hanging when no context files exist", () => {
+		const nested = join(root, "x", "y");
+		mkdirSync(nested, { recursive: true });
+		// Traversal must terminate (dirname self-fixpoint) rather than loop forever.
+		const files = loadProjectContextFiles({ cwd: nested, agentDir });
+		expect(Array.isArray(files)).toBe(true);
+	});
+
+	it("includes the global agentDir context file first", () => {
+		writeFileSync(join(agentDir, "AGENTS.md"), "global");
+		const cwd = join(root, "proj");
+		mkdirSync(cwd, { recursive: true });
+		writeFileSync(join(cwd, "AGENTS.md"), "project");
+
+		const files = loadProjectContextFiles({ cwd, agentDir });
+		expect(files[0]?.content).toBe("global");
+		expect(files.map((f) => f.content)).toContain("project");
 	});
 });

@@ -2,6 +2,7 @@ import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
 import { complete, getModels, getProviders } from "../src/compat.ts";
 import { getEnvApiKey } from "../src/env-api-keys.ts";
+import { resolveModelCostRates } from "../src/models.ts";
 import type { Api, KnownProvider, Model, ProviderStreamOptions, Tool } from "../src/types.ts";
 import { resolveApiKey } from "./oauth.ts";
 
@@ -47,7 +48,8 @@ const anthropicMessagesCases: AnthropicEagerE2ECase[] = getProviders().flatMap((
 
 function getProbePriority(model: Model<"anthropic-messages">): number {
 	const modelId = model.id.toLowerCase();
-	const cost = model.cost.input + model.cost.output;
+	const rates = resolveModelCostRates(model.cost, 0);
+	const cost = rates.input + rates.output;
 	let priority = cost;
 
 	// Prefer current Claude 4 Haiku routes when present: they are cheap and avoid

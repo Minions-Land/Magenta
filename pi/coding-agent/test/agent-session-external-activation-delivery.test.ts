@@ -196,6 +196,42 @@ describe("AgentSession external activation delivery", () => {
 		}
 	});
 
+	it("tracks a claimed-host continuation through waitForIdle and one settled event", async () => {
+		const harness = await createHarness({ initialActiveToolNames: [] });
+		harnesses.push(harness);
+		const releaseRunner = harness.session.claimExternalTurnRunner();
+		let finishContinuation!: () => void;
+		const continuationGate = new Promise<void>((resolve) => {
+			finishContinuation = resolve;
+		});
+
+		try {
+			await injectBatch(harness, [backgroundEntry("lifecycle", "followUp")]);
+			const continuation = vi
+				.spyOn(harness.session.agent, "continue")
+				.mockImplementationOnce(async () => continuationGate);
+			const settledBefore = harness.eventsOfType("agent_settled").length;
+			const running = harness.session.runExternalActivation();
+			await vi.waitFor(() => expect(continuation).toHaveBeenCalledOnce());
+
+			expect(harness.session.isIdle).toBe(false);
+			let idleResolved = false;
+			const waitingForIdle = harness.session.waitForIdle().then(() => {
+				idleResolved = true;
+			});
+			await Promise.resolve();
+			expect(idleResolved).toBe(false);
+
+			finishContinuation();
+			await running;
+			await waitingForIdle;
+			expect(harness.session.isIdle).toBe(true);
+			expect(harness.eventsOfType("agent_settled")).toHaveLength(settledBefore + 1);
+		} finally {
+			releaseRunner();
+		}
+	});
+
 	it("submits one atomic Agent batch per lane while streaming", async () => {
 		const harness = await createHarness({ initialActiveToolNames: [] });
 		harnesses.push(harness);

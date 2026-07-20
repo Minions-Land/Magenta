@@ -15,11 +15,10 @@ import { getModel } from "@earendil-works/pi-ai/compat";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AgentSession, type AgentSessionEvent } from "../src/core/agent-session.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
-import { ModelRegistry } from "../src/core/model-registry.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 import { createCodingTools } from "../src/index.ts";
-import { API_KEY, createTestResourceLoader } from "./utilities.ts";
+import { API_KEY, createTestModelRegistry, createTestResourceLoader } from "./utilities.ts";
 
 describe.skipIf(!API_KEY)("AgentSession compaction e2e", () => {
 	let session: AgentSession;
@@ -45,7 +44,7 @@ describe.skipIf(!API_KEY)("AgentSession compaction e2e", () => {
 		}
 	});
 
-	function createSession(inMemory = false) {
+	async function createSession(inMemory = false) {
 		const model = getModel("anthropic", "claude-sonnet-4-5")!;
 		const agent = new Agent({
 			getApiKey: () => API_KEY,
@@ -61,7 +60,7 @@ describe.skipIf(!API_KEY)("AgentSession compaction e2e", () => {
 		// Use minimal keepRecentTokens so small test conversations have something to summarize
 		settingsManager.applyOverrides({ compaction: { keepRecentTokens: 1 } });
 		const authStorage = AuthStorage.create(join(tempDir, "auth.json"));
-		const modelRegistry = ModelRegistry.create(authStorage);
+		const modelRegistry = await createTestModelRegistry(authStorage);
 
 		session = new AgentSession({
 			agent,
@@ -81,7 +80,7 @@ describe.skipIf(!API_KEY)("AgentSession compaction e2e", () => {
 	}
 
 	it("should trigger manual compaction via compact()", async () => {
-		createSession();
+		await createSession();
 
 		// Send a few prompts to build up history
 		await session.prompt("What is 2+2? Reply with just the number.");
@@ -107,7 +106,7 @@ describe.skipIf(!API_KEY)("AgentSession compaction e2e", () => {
 	}, 120000);
 
 	it("should maintain valid session state after compaction", async () => {
-		createSession();
+		await createSession();
 
 		// Build up history
 		await session.prompt("What is the capital of France? One word answer.");
@@ -132,7 +131,7 @@ describe.skipIf(!API_KEY)("AgentSession compaction e2e", () => {
 	}, 180000);
 
 	it("should persist compaction to session file", async () => {
-		createSession();
+		await createSession();
 
 		await session.prompt("Say hello");
 		await session.agent.waitForIdle();
@@ -160,7 +159,7 @@ describe.skipIf(!API_KEY)("AgentSession compaction e2e", () => {
 	}, 120000);
 
 	it("should work with --no-session mode (in-memory only)", async () => {
-		createSession(true); // in-memory mode
+		await createSession(true); // in-memory mode
 
 		// Send prompts
 		await session.prompt("What is 2+2? Reply with just the number.");
@@ -182,7 +181,7 @@ describe.skipIf(!API_KEY)("AgentSession compaction e2e", () => {
 	}, 120000);
 
 	it("should emit compaction events during manual compaction", async () => {
-		createSession();
+		await createSession();
 
 		// Build some history
 		await session.prompt("Say hello");

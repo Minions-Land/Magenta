@@ -20,4 +20,6 @@ description = "Bash command to execute"
 [parameters.properties.timeout]
 type = "number"
 optional = true
+exclusiveMinimum = 0
+maximum = 2147483.647
 description = "Timeout in seconds (optional, no default timeout)"

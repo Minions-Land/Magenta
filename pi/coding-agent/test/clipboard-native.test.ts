@@ -12,6 +12,7 @@ import {
 type ClipboardRequire = (id: string) => unknown;
 
 const fakeClipboard: ClipboardModule = {
+	getText: async () => "",
 	setText: async () => {},
 	hasImage: () => true,
 	getImageBinary: async () => [1, 2, 3],
@@ -45,7 +46,7 @@ describe("loadClipboardNative", () => {
 			await writeFile(join(packageRoot, "package.json"), '{"name":"@mariozechner/clipboard","main":"index.js"}\n');
 			await writeFile(
 				join(packageRoot, "index.js"),
-				"module.exports = { setText: async () => {}, hasImage: () => true, getImageBinary: async () => [4, 5, 6] };\n",
+				"module.exports = { getText: async () => '', setText: async () => {}, hasImage: () => true, getImageBinary: async () => [4, 5, 6] };\n",
 			);
 
 			const executableRequires = createExecutableClipboardRequires(join(root, "magenta"), "aix", "ppc64");

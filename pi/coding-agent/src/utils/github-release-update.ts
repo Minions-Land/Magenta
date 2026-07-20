@@ -254,36 +254,38 @@ export async function downloadReleaseAsset(
 
 		const webStream = response.body as unknown as Parameters<typeof Readable.fromWeb>[0];
 		const nodeStream = Readable.fromWeb(webStream);
-		
+
 		// Reset inactivity timer on each chunk
 		nodeStream.on("data", () => resetInactivityTimeout());
 
 		await pipeline(nodeStream, createWriteStream(destination, { flags: "wx" }));
 	} catch (error) {
 		if (inactivityTimer) clearTimeout(inactivityTimer);
-		
+
 		// Retry on abort/timeout/network errors, but not on permanent failures
-		const isRetryable = 
-			error instanceof Error && 
-			(error.name === "AbortError" || 
-			 error.message.includes("aborted") ||
-			 error.message.includes("timeout") ||
-			 error.message.includes("ECONNRESET") ||
-			 error.message.includes("ETIMEDOUT"));
-		
+		const isRetryable =
+			error instanceof Error &&
+			(error.name === "AbortError" ||
+				error.message.includes("aborted") ||
+				error.message.includes("timeout") ||
+				error.message.includes("ECONNRESET") ||
+				error.message.includes("ETIMEDOUT"));
+
 		if (isRetryable && attempt < DOWNLOAD_MAX_RETRIES) {
-			console.warn(`⚠️  Download interrupted for ${asset.name} (attempt ${attempt}/${DOWNLOAD_MAX_RETRIES}), retrying...`);
+			console.warn(
+				`⚠️  Download interrupted for ${asset.name} (attempt ${attempt}/${DOWNLOAD_MAX_RETRIES}), retrying...`,
+			);
 			// Remove any partial file so the next attempt's exclusive-create flag succeeds.
 			await rm(destination, { force: true }).catch(() => undefined);
-			await new Promise(resolve => setTimeout(resolve, 2000 * attempt)); // backoff
+			await new Promise((resolve) => setTimeout(resolve, 2000 * attempt)); // backoff
 			return downloadReleaseAsset(asset, destination, { ...options, attempt: attempt + 1 });
 		}
-		
+
 		// Provide clearer error message
 		if (error instanceof Error && (error.name === "AbortError" || error.message.includes("aborted"))) {
 			throw new Error(
 				`Download of ${asset.name} stalled (no data for ${DOWNLOAD_INACTIVITY_TIMEOUT_MS / 1000}s after ${attempt} attempts). ` +
-				`Check your network connection or try setting MAGENTA_GITHUB_MIRROR to use a download mirror.`
+					`Check your network connection or try setting MAGENTA_GITHUB_MIRROR to use a download mirror.`,
 			);
 		}
 		throw error;

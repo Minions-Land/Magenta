@@ -36,7 +36,7 @@ import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
-import { adjustMaxTokensForThinking, buildBaseOptions } from "./simple-options.ts";
+import { adjustMaxTokensForThinking, buildBaseOptions, resolveMaxTokens } from "./simple-options.ts";
 import { transformMessages } from "./transform-messages.ts";
 
 /**
@@ -269,6 +269,15 @@ function appendCacheMissDiagnostic(
 			details,
 		},
 	];
+}
+
+function setAnthropicReasoning(usage: AssistantMessage["usage"], rawUsage: unknown): void {
+	const details = (rawUsage as { output_tokens_details?: { thinking_tokens?: number } } | null | undefined)
+		?.output_tokens_details;
+	const thinking = details?.thinking_tokens;
+	if (typeof thinking === "number" && thinking > 0) {
+		usage.reasoning = thinking;
+	}
 }
 
 function getAnthropicCompat(
@@ -665,6 +674,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 					output.usage.cacheRead = event.message.usage.cache_read_input_tokens || 0;
 					output.usage.cacheWrite = event.message.usage.cache_creation_input_tokens || 0;
 					output.usage.cacheWrite1h = event.message.usage.cache_creation?.ephemeral_1h_input_tokens || 0;
+					setAnthropicReasoning(output.usage, event.message.usage);
 					// Anthropic doesn't provide total_tokens, compute from components
 					output.usage.totalTokens =
 						output.usage.input + output.usage.output + output.usage.cacheRead + output.usage.cacheWrite;
@@ -798,19 +808,22 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 						}
 					}
 					// Some Anthropic-compatible relays emit explicit zeroes in message_delta
-					// even when message_start contained the cumulative input/cache usage.
-					// Preserve those non-zero start values; output_tokens is still authoritative.
-					if (event.usage.input_tokens != null && event.usage.input_tokens > 0) {
-						output.usage.input = event.usage.input_tokens;
-					}
-					if (event.usage.output_tokens != null) {
-						output.usage.output = event.usage.output_tokens;
-					}
-					if (event.usage.cache_read_input_tokens != null && event.usage.cache_read_input_tokens > 0) {
-						output.usage.cacheRead = event.usage.cache_read_input_tokens;
-					}
-					if (event.usage.cache_creation_input_tokens != null && event.usage.cache_creation_input_tokens > 0) {
-						output.usage.cacheWrite = event.usage.cache_creation_input_tokens;
+					// even when message_start contained cumulative input/cache usage. Preserve
+					// those non-zero start values; output and reasoning remain authoritative.
+					if (event.usage) {
+						if (event.usage.input_tokens != null && event.usage.input_tokens > 0) {
+							output.usage.input = event.usage.input_tokens;
+						}
+						if (event.usage.output_tokens != null) {
+							output.usage.output = event.usage.output_tokens;
+						}
+						if (event.usage.cache_read_input_tokens != null && event.usage.cache_read_input_tokens > 0) {
+							output.usage.cacheRead = event.usage.cache_read_input_tokens;
+						}
+						if (event.usage.cache_creation_input_tokens != null && event.usage.cache_creation_input_tokens > 0) {
+							output.usage.cacheWrite = event.usage.cache_creation_input_tokens;
+						}
+						setAnthropicReasoning(output.usage, event.usage);
 					}
 					// Anthropic doesn't provide total_tokens, compute from components
 					output.usage.totalTokens =
@@ -892,6 +905,7 @@ export const streamSimple: StreamFunction<"anthropic-messages", SimpleStreamOpti
 
 	const base = buildBaseOptions(model, options, options?.apiKey);
 	if (!options?.reasoning) {
+		base.maxTokens = resolveMaxTokens(context, model, options?.maxTokens);
 		return stream(model, context, { ...base, thinkingEnabled: false } satisfies AnthropicOptions);
 	}
 
@@ -899,6 +913,7 @@ export const streamSimple: StreamFunction<"anthropic-messages", SimpleStreamOpti
 	// For older models: use budget-based thinking.
 	if (model.compat?.forceAdaptiveThinking === true) {
 		const effort = mapThinkingLevelToEffort(model, options.reasoning);
+		base.maxTokens = resolveMaxTokens(context, model, options?.maxTokens);
 		return stream(model, context, {
 			...base,
 			thinkingEnabled: true,
@@ -908,9 +923,10 @@ export const streamSimple: StreamFunction<"anthropic-messages", SimpleStreamOpti
 
 	// Undefined means the caller did not request an output cap; let the helper use the model cap.
 	// Do not coerce to 0 here, or the thinking budget would become the entire max_tokens value.
+	const contextAwareCap = resolveMaxTokens(context, model, undefined);
 	const adjusted = adjustMaxTokensForThinking(
 		base.maxTokens,
-		model.maxTokens,
+		contextAwareCap,
 		options.reasoning,
 		options.thinkingBudgets,
 	);
@@ -1220,11 +1236,13 @@ function convertMessages(
 						});
 						continue;
 					}
-					if (block.thinking.trim().length === 0) continue;
+					const thinkingSignature = block.thinkingSignature;
+					const hasThinkingSignature = !!thinkingSignature && thinkingSignature.trim().length > 0;
+					if (block.thinking.trim().length === 0 && !hasThinkingSignature) continue;
 					// If thinking signature is missing/empty (e.g., from aborted stream),
 					// convert to plain text for Anthropic. Some compatible providers emit
 					// and accept empty signatures, so let marked models preserve the block.
-					if (!block.thinkingSignature || block.thinkingSignature.trim().length === 0) {
+					if (!hasThinkingSignature) {
 						blocks.push(
 							allowEmptySignature
 								? {
@@ -1241,7 +1259,7 @@ function convertMessages(
 						blocks.push({
 							type: "thinking",
 							thinking: sanitizeSurrogates(block.thinking),
-							signature: block.thinkingSignature,
+							signature: thinkingSignature,
 						});
 					}
 				} else if (block.type === "toolCall") {
@@ -1334,20 +1352,30 @@ function convertTools(
 	if (!tools) return [];
 
 	return tools.map((tool, index) => {
-		const schema = tool.parameters as { properties?: unknown; required?: string[] };
+		// Anthropic accepts JSON Schema directly. Preserve every string-keyed schema
+		// keyword and nested definition while removing TypeBox's runtime symbol keys.
+		const inputSchema = stripSchemaSymbolKeys(tool.parameters) as Anthropic.Messages.Tool.InputSchema;
 
 		return {
 			name: isOAuthToken ? toClaudeCodeName(tool.name) : tool.name,
 			description: tool.description,
 			...(supportsEagerToolInputStreaming ? { eager_input_streaming: true } : {}),
-			input_schema: {
-				type: "object",
-				properties: schema.properties ?? {},
-				required: schema.required ?? [],
-			},
+			input_schema: inputSchema,
 			...(cacheControl && index === tools.length - 1 ? { cache_control: cacheControl } : {}),
 		};
 	});
+}
+
+function stripSchemaSymbolKeys(value: unknown): unknown {
+	if (Array.isArray(value)) return value.map((item) => stripSchemaSymbolKeys(item));
+	if (value && typeof value === "object") {
+		const result: Record<string, unknown> = {};
+		for (const [key, entry] of Object.entries(value)) {
+			result[key] = stripSchemaSymbolKeys(entry);
+		}
+		return result;
+	}
+	return value;
 }
 
 function mapStopReason(

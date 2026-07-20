@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 export type ClipboardModule = {
+	getText: () => Promise<string>;
 	setText: (text: string) => Promise<void>;
 	hasImage: () => boolean;
 	getImageBinary: () => Promise<Array<number>>;

@@ -13,11 +13,10 @@ import { AgentSession } from "../src/core/agent-session.ts";
 import type { AgentSessionRuntime } from "../src/core/agent-session-runtime.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import type { ExtensionFactory } from "../src/core/extensions/types.ts";
-import { ModelRegistry } from "../src/core/model-registry.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 import { runRpcMode } from "../src/modes/rpc/rpc-mode.ts";
-import { createTestExtensionsResult, createTestResourceLoader } from "./utilities.ts";
+import { createTestExtensionsResult, createTestModelRegistry, createTestResourceLoader } from "./utilities.ts";
 
 const DEFAULT_TEST_MODEL: Model<any> = {
 	id: "rpc-test-model",
@@ -146,7 +145,7 @@ async function createRuntimeHost(options: RuntimeOptions): Promise<{
 	const sessionManager = SessionManager.inMemory();
 	const settingsManager = SettingsManager.create(tempDir, tempDir);
 	const authStorage = AuthStorage.create(join(tempDir, "auth.json"));
-	const modelRegistry = ModelRegistry.create(authStorage, tempDir);
+	const modelRegistry = await createTestModelRegistry(authStorage, tempDir);
 	if (options.withAuth) {
 		authStorage.setRuntimeApiKey("anthropic", "test-key");
 	}

@@ -16,8 +16,9 @@ import type {
 	ProviderConfig,
 } from "../src/core/extensions/types.ts";
 import { KeybindingsManager, type KeyId } from "../src/core/keybindings.ts";
-import { ModelRegistry } from "../src/core/model-registry.ts";
+import type { ModelRegistry } from "../src/core/model-registry.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
+import { createTestModelRegistry } from "./utilities.ts";
 
 describe("ExtensionRunner", () => {
 	let tempDir: string;
@@ -26,13 +27,13 @@ describe("ExtensionRunner", () => {
 	let modelRegistry: ModelRegistry;
 	const defaultKeybindings = new KeybindingsManager().getEffectiveConfig();
 
-	beforeEach(() => {
+	beforeEach(async () => {
 		tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-runner-test-"));
 		extensionsDir = path.join(tempDir, "extensions");
 		fs.mkdirSync(extensionsDir);
 		sessionManager = SessionManager.inMemory();
 		const authStorage = AuthStorage.create(path.join(tempDir, "auth.json"));
-		modelRegistry = ModelRegistry.create(authStorage);
+		modelRegistry = await createTestModelRegistry(authStorage);
 	});
 
 	afterEach(() => {
@@ -573,7 +574,7 @@ describe("ExtensionRunner", () => {
 		});
 	});
 
-	describe("message renderers", () => {
+	describe("message and entry renderers", () => {
 		it("gets message renderer by type", async () => {
 			const extCode = `
 				export default function(pi) {
@@ -590,6 +591,21 @@ describe("ExtensionRunner", () => {
 
 			const missing = runner.getMessageRenderer("not-exists");
 			expect(missing).toBeUndefined();
+		});
+
+		it("gets entry renderer by type", async () => {
+			const extCode = `
+				export default function(pi) {
+					pi.registerEntryRenderer("my-entry", (entry, options, theme) => null);
+				}
+			`;
+			fs.writeFileSync(path.join(extensionsDir, "entry-renderer.ts"), extCode);
+
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+
+			expect(runner.getEntryRenderer("my-entry")).toBeDefined();
+			expect(runner.getEntryRenderer("not-exists")).toBeUndefined();
 		});
 	});
 
@@ -705,6 +721,79 @@ describe("ExtensionRunner", () => {
 				messages: undefined,
 				systemPrompt: "base\nfirst\nsecond",
 			});
+		});
+	});
+
+	describe("before_provider_headers (CC-027)", () => {
+		it("mutates headers in place, supports async handlers, and deletes with null", async () => {
+			const extCode1 = `
+				export default function(pi) {
+					pi.on("before_provider_headers", async (event) => {
+						await Promise.resolve();
+						event.headers["x-trace-id"] = "trace-123";
+					});
+				}
+			`;
+			const extCode2 = `
+				export default function(pi) {
+					pi.on("before_provider_headers", (event) => {
+						event.headers["x-remove-me"] = null;
+						event.headers["x-session"] = "sess-2";
+					});
+				}
+			`;
+			fs.writeFileSync(path.join(extensionsDir, "headers-1.ts"), extCode1);
+			fs.writeFileSync(path.join(extensionsDir, "headers-2.ts"), extCode2);
+
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			expect(result.errors).toEqual([]);
+			expect(result.extensions).toHaveLength(2);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			const errors: string[] = [];
+			runner.onError((error) => errors.push(error.error));
+			runner.bindCore(extensionActions, extensionContextActions);
+
+			expect(runner.hasHandlers("before_provider_headers")).toBe(true);
+
+			const headers = await runner.emitBeforeProviderHeaders({
+				"x-remove-me": "keep-out",
+				authorization: "Bearer secret",
+			});
+
+			expect(errors).toEqual([]);
+			expect(headers["x-trace-id"]).toBe("trace-123");
+			expect(headers["x-session"]).toBe("sess-2");
+			expect(headers["x-remove-me"]).toBeNull();
+			expect(headers.authorization).toBe("Bearer secret");
+		});
+
+		it("reports handler errors without aborting the request", async () => {
+			const extCode = `
+				export default function(pi) {
+					pi.on("before_provider_headers", () => {
+						throw new Error("header hook boom");
+					});
+				}
+			`;
+			fs.writeFileSync(path.join(extensionsDir, "headers-throw.ts"), extCode);
+
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			expect(result.errors).toEqual([]);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			const errors: string[] = [];
+			runner.onError((error) => errors.push(error.error));
+			runner.bindCore(extensionActions, extensionContextActions);
+
+			const headers = await runner.emitBeforeProviderHeaders({ authorization: "Bearer secret" });
+
+			expect(headers.authorization).toBe("Bearer secret");
+			expect(errors).toEqual([expect.stringContaining("header hook boom")]);
+		});
+
+		it("hasHandlers is false when no extension registers the hook", async () => {
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			expect(runner.hasHandlers("before_provider_headers")).toBe(false);
 		});
 	});
 

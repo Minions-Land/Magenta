@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { APP_BINARY_NAME, CONFIG_DIR_NAME, ENV_AGENT_DIR, PACKAGE_NAME, VERSION } from "../src/config.ts";
+import { ModelRuntime } from "../src/core/model-runtime.ts";
 import { ProjectTrustStore } from "../src/core/trust-manager.ts";
 import { main } from "../src/main.ts";
 import { handlePackageCommand } from "../src/package-manager-cli.ts";
@@ -617,6 +618,74 @@ if(args.includes("install")) process.exit(23);
 		} finally {
 			errorSpy.mockRestore();
 			logSpy.mockRestore();
+		}
+	});
+
+	it("refreshes only model catalogs with update --models (CC-055)", async () => {
+		const refresh = vi.fn(async () => ({ aborted: false, errors: new Map<string, Error>() }));
+		const create = vi.spyOn(ModelRuntime, "create").mockResolvedValue({ refresh } as unknown as ModelRuntime);
+		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+		try {
+			await expect(runPackageCommandDirectly(["update", "--models"])).resolves.toBeUndefined();
+
+			expect(create).toHaveBeenCalledWith({
+				authPath: join(agentDir, "auth.json"),
+				modelsPath: join(agentDir, "models.json"),
+				allowModelNetwork: false,
+			});
+			expect(refresh).toHaveBeenCalledWith({
+				allowNetwork: true,
+				force: true,
+				signal: expect.any(AbortSignal),
+			});
+			expect(logSpy.mock.calls.map(([message]) => String(message)).join("\n")).toContain("Model catalogs refreshed");
+			expect(errorSpy).not.toHaveBeenCalled();
+			expect(process.exitCode).toBeUndefined();
+		} finally {
+			create.mockRestore();
+			logSpy.mockRestore();
+			errorSpy.mockRestore();
+		}
+	});
+
+	it("reports an error when the model catalog refresh fails (CC-055)", async () => {
+		const refresh = vi.fn(async () => ({
+			aborted: false,
+			errors: new Map<string, Error>([["anthropic", new Error("network down")]]),
+		}));
+		const create = vi.spyOn(ModelRuntime, "create").mockResolvedValue({ refresh } as unknown as ModelRuntime);
+		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+		try {
+			await expect(runPackageCommandDirectly(["update", "--models"])).resolves.toBeUndefined();
+
+			expect(errorSpy.mock.calls.map(([message]) => String(message)).join("\n")).toContain("network down");
+			expect(process.exitCode).toBe(1);
+		} finally {
+			create.mockRestore();
+			logSpy.mockRestore();
+			errorSpy.mockRestore();
+		}
+	});
+
+	it("rejects update --models combined with another update target (CC-055)", async () => {
+		const create = vi.spyOn(ModelRuntime, "create");
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+		try {
+			await expect(runPackageCommandDirectly(["update", "--models", "--self"])).resolves.toBeUndefined();
+
+			expect(create).not.toHaveBeenCalled();
+			expect(errorSpy.mock.calls.map(([message]) => String(message)).join("\n")).toContain(
+				"--models cannot be combined with --self",
+			);
+			expect(process.exitCode).toBe(1);
+		} finally {
+			create.mockRestore();
+			errorSpy.mockRestore();
 		}
 	});
 });

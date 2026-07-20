@@ -102,6 +102,8 @@ export type Transport = "sse" | "websocket" | "websocket-cached" | "auto";
 /** Provider-scoped environment overrides. Values take precedence over process.env. */
 export type ProviderEnv = Record<string, string>;
 export type ProviderHeaders = Record<string, string | null>;
+/** Session affinity format for cache retention. "openai" sends all affinity headers; "openai-nosession" omits session_id; "openrouter" uses x-session-id. */
+export type SessionAffinityFormat = "openai" | "openai-nosession" | "openrouter";
 
 export interface ProviderResponse {
 	status: number;
@@ -364,6 +366,14 @@ export interface Usage {
 	cacheWrite: number;
 	/** Subset of `cacheWrite` written with 1h retention. Only Anthropic reports this split. */
 	cacheWrite1h?: number;
+	/**
+	 * Reasoning/thinking tokens the provider reports as part of `output`. This is
+	 * a subset of `output`, never an additional bucket: it is informational only
+	 * and must never be added to `totalTokens` or to any cost total (that would
+	 * double-count tokens already included in `output`). Left undefined by
+	 * providers that do not expose a reasoning-token breakdown.
+	 */
+	reasoning?: number;
 	totalTokens: number;
 	cost: {
 		input: number;
@@ -515,8 +525,10 @@ export interface OpenAICompletionsCompat {
 	supportsStrictMode?: boolean;
 	/** Cache control convention for prompt caching. "anthropic" applies Anthropic-style `cache_control` markers to the system prompt, last tool definition, and last user/assistant text content. */
 	cacheControlFormat?: "anthropic";
-	/** Whether to send known session-affinity headers (`session_id`, `x-client-request-id`, `x-session-affinity`) from `options.sessionId` when caching is enabled. Default: false. */
+	/** Whether to send known session-affinity headers from `options.sessionId` when caching is enabled. Default: false. */
 	sendSessionAffinityHeaders?: boolean;
+	/** Session-affinity header format: `openai` sends `session_id`, `x-client-request-id`, and `x-session-affinity`; `openai-nosession` sends `x-client-request-id` and `x-session-affinity`; `openrouter` sends `x-session-id`. Does not affect the `prompt_cache_key` body param, which is governed by cache retention. Default: auto-detected. */
+	sessionAffinityFormat?: SessionAffinityFormat;
 	/** Whether the provider supports long prompt cache retention (`prompt_cache_retention: "24h"` or Anthropic-style `cache_control.ttl: "1h"`, depending on format). Default: true. */
 	supportsLongCacheRetention?: boolean;
 }
@@ -525,8 +537,15 @@ export interface OpenAICompletionsCompat {
 export interface OpenAIResponsesCompat {
 	/** Whether the provider supports the `developer` role (vs `system`). Default: true. */
 	supportsDeveloperRole?: boolean;
-	/** Whether to send the OpenAI `session_id` cache-affinity header from `options.sessionId` when caching is enabled. Default: true. */
+	/**
+	 * @deprecated Use `sessionAffinityFormat` instead. This field is preserved for
+	 * backward compatibility until W9 catalog regeneration. When both are absent,
+	 * the format is auto-detected; when only this field is present, `false` maps to
+	 * `openai-nosession` and `true` maps to `openai`.
+	 */
 	sendSessionIdHeader?: boolean;
+	/** Session-affinity header format: `openai` sends `session_id` and `x-client-request-id`; `openai-nosession` sends `x-client-request-id`; `openrouter` sends `x-session-id`. Does not affect the `prompt_cache_key` body param, which is governed by cache retention. Default: auto-detected. */
+	sessionAffinityFormat?: SessionAffinityFormat;
 	/** Whether the provider supports `prompt_cache_retention: "24h"`. Default: true. */
 	supportsLongCacheRetention?: boolean;
 }
@@ -666,6 +685,35 @@ export interface VercelGatewayRouting {
 	order?: string[];
 }
 
+/**
+ * Model cost rates in $/million tokens.
+ * For volume-based tiered pricing, use the tiers field with threshold-based rates.
+ * For flat pricing, use the direct rate fields (backward compatible).
+ */
+export type ModelCost =
+	| {
+			input: number;
+			output: number;
+			cacheRead: number;
+			cacheWrite: number;
+	  }
+	| {
+			tiers: {
+				default: ModelCostRates;
+				scale: ModelCostRates;
+			};
+	  };
+
+/**
+ * Per-tier cost rates in $/million tokens.
+ */
+export interface ModelCostRates {
+	input: number;
+	output: number;
+	cacheRead: number;
+	cacheWrite: number;
+}
+
 // Model interface for the unified model system
 export interface Model<TApi extends Api> {
 	id: string;
@@ -680,12 +728,7 @@ export interface Model<TApi extends Api> {
 	 */
 	thinkingLevelMap?: ThinkingLevelMap;
 	input: ("text" | "image")[];
-	cost: {
-		input: number; // $/million tokens
-		output: number; // $/million tokens
-		cacheRead: number; // $/million tokens
-		cacheWrite: number; // $/million tokens
-	};
+	cost: ModelCost;
 	/** The provider chooses the concrete model/price at request time. */
 	variablePricing?: boolean;
 	contextWindow: number;

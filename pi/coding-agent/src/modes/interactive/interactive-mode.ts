@@ -74,6 +74,13 @@ import {
 	type SubmittedInput,
 } from "../../core/agent-session.ts";
 import { type AgentSessionRuntime, SessionImportFileNotFoundError } from "../../core/agent-session-runtime.ts";
+import {
+	CACHE_TTL_MS,
+	type CacheMiss,
+	collectCacheMisses,
+	computeCacheWaste,
+	detectCacheMiss,
+} from "../../core/cache-stats.ts";
 import { applyCommandAlias } from "../../core/command-aliases.ts";
 import type {
 	AutocompleteProviderFactory,
@@ -106,7 +113,7 @@ import { PendingImageController } from "../../core/pending-images.ts";
 import { BUILT_IN_PROVIDER_DISPLAY_NAMES } from "../../core/provider-display-names.ts";
 import type { ResourceDiagnostic } from "../../core/resource-loader.ts";
 import { formatMissingSessionCwdPrompt, MissingSessionCwdError } from "../../core/session-cwd.ts";
-import { type SessionContext, SessionManager } from "../../core/session-manager.ts";
+import { type SessionEntry, SessionManager, sessionEntryToContextMessages } from "../../core/session-manager.ts";
 import { BUILTIN_SLASH_COMMANDS } from "../../core/slash-commands.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
 import { isInstallTelemetryEnabled } from "../../core/telemetry.ts";
@@ -119,7 +126,7 @@ import {
 	ProjectTrustStore,
 } from "../../core/trust-manager.ts";
 import { getChangelogPath, getNewEntries, normalizeChangelogLinks, parseChangelog } from "../../utils/changelog.ts";
-import { copyToClipboard } from "../../utils/clipboard.ts";
+import { copyToClipboard, readClipboardText } from "../../utils/clipboard.ts";
 import { readClipboardImage } from "../../utils/clipboard-image.ts";
 import { parseGitUrl } from "../../utils/git.ts";
 import type { UpdateCheckResult } from "../../utils/github-release-update.ts";
@@ -154,6 +161,7 @@ import {
 import { CompactionSummaryMessageComponent } from "./components/compaction-summary-message.ts";
 import { CountdownTimer } from "./components/countdown-timer.ts";
 import { CustomEditor } from "./components/custom-editor.ts";
+import { CustomEntryComponent } from "./components/custom-entry.ts";
 import { CustomMessageComponent } from "./components/custom-message.ts";
 import { DaxnutsComponent } from "./components/daxnuts.ts";
 import { DynamicBorder } from "./components/dynamic-border.ts";
@@ -170,7 +178,7 @@ import {
 	FloatingOverlayContainer,
 } from "./components/floating-menu.ts";
 import { CENTER_FLOATING_OVERLAY } from "./components/floating-window.ts";
-import { FooterComponent } from "./components/footer.ts";
+import { FooterComponent, formatTokens } from "./components/footer.ts";
 import { formatKeyText, keyDisplayText, keyHint, keyText, rawKeyHint } from "./components/keybinding-hints.ts";
 import { LoginDialogComponent } from "./components/login-dialog.ts";
 import { ModelSelectorComponent } from "./components/model-selector.ts";
@@ -241,6 +249,12 @@ class ExpandableText extends Text implements Expandable {
 type CompactionQueuedMessage = SubmittedInput & {
 	mode: "steer" | "followUp";
 };
+
+type RenderSessionItem = AgentMessage | Extract<SessionEntry, { type: "custom" }>;
+
+function isCustomSessionEntry(item: RenderSessionItem): item is Extract<SessionEntry, { type: "custom" }> {
+	return "type" in item && item.type === "custom";
+}
 
 /**
  * Magenta feature: an activation is anything that drives the main interactive
@@ -463,6 +477,9 @@ export class InteractiveMode {
 	// Thinking block visibility state
 	private hideThinkingBlock = false;
 
+	// Horizontal padding for assistant/user output (outputPad setting)
+	private outputPad: 0 | 1 = 1;
+
 	// Skill commands: command name -> skill file path
 	private skillCommands = new Map<string, string>();
 
@@ -586,8 +603,7 @@ export class InteractiveMode {
 
 		// Load hide thinking block setting
 		this.hideThinkingBlock = this.settingsManager.getHideThinkingBlock();
-
-		// Register themes from resource loader and initialize
+		this.outputPad = this.settingsManager.getOutputPad();
 		setRegisteredThemes(this.session.resourceLoader.getThemes().themes);
 		this.themeController = new InteractiveThemeController(
 			this.ui,
@@ -650,6 +666,7 @@ export class InteractiveMode {
 		const slashCommands: SlashCommand[] = BUILTIN_SLASH_COMMANDS.map((command) => ({
 			name: command.name,
 			description: command.description,
+			...(command.argumentHint && { argumentHint: command.argumentHint }),
 		}));
 
 		const modelCommand = slashCommands.find((command) => command.name === "model");
@@ -680,6 +697,35 @@ export class InteractiveMode {
 					value: item.label,
 					label: item.id,
 					description: item.provider,
+				}));
+			};
+		}
+
+		// CC-028: /login <provider> autocomplete against provider-owned discovery.
+		const loginCommand = slashCommands.find((command) => command.name === "login");
+		if (loginCommand) {
+			loginCommand.getArgumentCompletions = (prefix: string): AutocompleteItem[] | null => {
+				// De-duplicate providers that support both oauth and api_key so the
+				// completion list shows one entry per provider id.
+				const byId = new Map<string, { id: string; name: string; authTypes: Set<string> }>();
+				for (const option of this.getLoginProviderOptions()) {
+					const existing = byId.get(option.id);
+					if (existing) {
+						existing.authTypes.add(option.authType);
+					} else {
+						byId.set(option.id, { id: option.id, name: option.name, authTypes: new Set([option.authType]) });
+					}
+				}
+				const providers = [...byId.values()];
+				if (providers.length === 0) return null;
+
+				const filtered = fuzzyFilter(providers, prefix, (p) => `${p.id} ${p.name}`);
+				if (filtered.length === 0) return null;
+
+				return filtered.map((provider) => ({
+					value: provider.id,
+					label: provider.id,
+					description: provider.name,
 				}));
 			};
 		}
@@ -859,7 +905,7 @@ export class InteractiveMode {
 				rawKeyHint("!!", "to run bash (no context)"),
 				hint("app.message.followUp", "to queue follow-up"),
 				rawKeyHint("↑/↓", "to edit/restore queued messages"),
-				hint("app.clipboard.pasteImage", "to paste image"),
+				hint("app.clipboard.pasteImage", "to paste image (with text fallback)"),
 				rawKeyHint("drop files", "to attach"),
 			].join("\n");
 			const compactInstructions = [
@@ -943,11 +989,19 @@ export class InteractiveMode {
 		void this.checkAndAutoUpdateMagenta();
 
 		// Start package update check asynchronously
-		this.checkForPackageUpdates().then((updates) => {
-			if (updates.length > 0) {
-				this.showPackageUpdateNotification(updates);
-			}
-		});
+		this.checkForPackageUpdates()
+			.then((updates) => {
+				if (updates.length > 0) {
+					this.showPackageUpdateNotification(updates);
+				}
+			})
+			.finally(() => {
+				// On Windows, npm can overwrite the shared console title while checking
+				// extension package versions. Restore Magenta's title after the startup check.
+				if (process.platform === "win32" && this.isInitialized) {
+					this.updateTerminalTitle();
+				}
+			});
 
 		// Check tmux keyboard setup asynchronously
 		this.checkTmuxKeyboardSetup().then((warning) => {
@@ -1801,7 +1855,7 @@ export class InteractiveMode {
 			},
 			shutdownHandler: () => {
 				this.shutdownRequested = true;
-				if (!this.session.isStreaming) {
+				if (this.session.isIdle) {
 					void this.shutdown();
 				}
 			},
@@ -1836,6 +1890,7 @@ export class InteractiveMode {
 		this.footer.setAutoCompactEnabled(this.session.autoCompactionEnabled);
 		this.footerDataProvider.setCwd(this.sessionManager.getCwd());
 		this.hideThinkingBlock = this.settingsManager.getHideThinkingBlock();
+		this.outputPad = this.settingsManager.getOutputPad();
 		this.ui.setShowHardwareCursor(this.settingsManager.getShowHardwareCursor());
 		this.ui.setClearOnShrink(this.settingsManager.getClearOnShrink());
 		const editorPaddingX = this.settingsManager.getEditorPaddingX();
@@ -1996,7 +2051,7 @@ export class InteractiveMode {
 			sessionManager: this.sessionManager,
 			modelRegistry: this.session.modelRegistry,
 			model: this.session.model,
-			isIdle: () => !this.session.isStreaming,
+			isIdle: () => this.session.isIdle,
 			isProjectTrusted: () => this.settingsManager.isProjectTrusted(),
 			signal: this.session.agent.signal,
 			abort: () => {
@@ -2546,6 +2601,8 @@ export class InteractiveMode {
 					this.hideExtensionEditor();
 					resolve(undefined);
 				},
+				undefined,
+				this.settingsManager.getExternalEditorCommand(),
 			);
 
 			this.editorContainer.clear();
@@ -2812,6 +2869,7 @@ export class InteractiveMode {
 		this.defaultEditor.onAction("app.tools.expand", () => this.toggleToolOutputExpansion());
 		this.defaultEditor.onAction("app.thinking.toggle", () => this.toggleThinkingBlockVisibility());
 		this.defaultEditor.onAction("app.editor.external", () => this.openExternalEditor());
+		this.defaultEditor.onAction("app.message.copy", () => void this.handleCopyCommand());
 		this.defaultEditor.onAction("app.message.followUp", () => this.handleFollowUp());
 		// Alt+Up dequeue is disabled: bare Up now restores queued messages via the
 		// defaultEditor.onDequeuePending handler wired above.
@@ -2831,7 +2889,8 @@ export class InteractiveMode {
 			this.syncCommandDockFromEditorText(text);
 		};
 
-		// Handle clipboard image paste (triggered on Ctrl+V)
+		// Handle clipboard paste (triggered on Ctrl+V). Images are attached by path or
+		// pending marker; when the clipboard holds no image, fall back to plain text.
 		this.defaultEditor.onPasteImage = () => {
 			const generation = this.clipboardImageDraftGeneration;
 			const targetEditor = this.editor;
@@ -2913,9 +2972,18 @@ export class InteractiveMode {
 			if (handledPath || !this.isClipboardImagePasteCurrent(generation, targetEditor)) return;
 
 			const image = await readClipboardImage();
-			if (!image || !this.isClipboardImagePasteCurrent(generation, targetEditor)) return;
-			const content = await this.prepareClipboardImage(image.bytes, image.mimeType);
-			if (content) this.insertPendingImage(content, targetEditor, generation);
+			if (!this.isClipboardImagePasteCurrent(generation, targetEditor)) return;
+			if (image) {
+				const content = await this.prepareClipboardImage(image.bytes, image.mimeType);
+				if (content) this.insertPendingImage(content, targetEditor, generation);
+				return;
+			}
+
+			// No image on the clipboard: fall back to plain text paste.
+			const text = await readClipboardText();
+			if (!text || !this.isClipboardImagePasteCurrent(generation, targetEditor)) return;
+			targetEditor.insertTextAtCursor?.(text);
+			this.ui.requestRender();
 		} catch {
 			// Clipboard access is best-effort and can be denied by the OS or terminal.
 		}
@@ -3042,9 +3110,10 @@ export class InteractiveMode {
 				this.editor.setText("");
 				return;
 			}
-			if (text === "/login") {
-				this.showOAuthSelector("login");
+			if (text === "/login" || text.startsWith("/login ")) {
+				const providerRef = text.startsWith("/login ") ? text.slice(7).trim() : undefined;
 				this.editor.setText("");
+				await this.handleLoginCommand(providerRef || undefined);
 				return;
 			}
 			if (text === "/logout") {
@@ -3213,6 +3282,13 @@ export class InteractiveMode {
 				this.ui.requestRender();
 				break;
 
+			case "entry_appended":
+				if (event.entry.type === "custom") {
+					this.addCustomEntryToChat(event.entry);
+					this.ui.requestRender();
+				}
+				break;
+
 			case "thinking_level_changed":
 			case "execution_profile_changed":
 				this.footer.invalidate();
@@ -3253,6 +3329,7 @@ export class InteractiveMode {
 						this.hideThinkingBlock,
 						this.getMarkdownThemeWithSettings(),
 						this.hiddenThinkingLabel,
+						this.outputPad,
 					);
 					this.streamingMessage = event.message;
 					this.chatContainer.addChild(this.streamingComponent);
@@ -3334,6 +3411,9 @@ export class InteractiveMode {
 								component.setArgsComplete();
 							}
 						}
+						if (this.streamingMessage) {
+							this.maybeShowCacheMissNotice(this.streamingMessage);
+						}
 					}
 					this.stopStreamingAnimation();
 					this.streamingComponent = undefined;
@@ -3402,9 +3482,13 @@ export class InteractiveMode {
 				this.clearPendingToolDisplays();
 				this.chatContainer.commitMutableTail?.();
 
-				await this.checkShutdownRequested();
-
 				this.ui.requestRender();
+				break;
+
+			case "agent_settled":
+				// The run (including retries and queued continuations) has fully drained.
+				// Check for shutdown request now.
+				await this.checkShutdownRequested();
 				break;
 
 			case "compaction_start": {
@@ -3671,11 +3755,16 @@ export class InteractiveMode {
 							const userComponent = new UserMessageComponent(
 								skillBlock.userMessage,
 								this.getMarkdownThemeWithSettings(),
+								this.outputPad,
 							);
 							this.chatContainer.addChild(userComponent);
 						}
 					} else {
-						const userComponent = new UserMessageComponent(textContent, this.getMarkdownThemeWithSettings());
+						const userComponent = new UserMessageComponent(
+							textContent,
+							this.getMarkdownThemeWithSettings(),
+							this.outputPad,
+						);
 						this.chatContainer.addChild(userComponent);
 					}
 					if (options?.populateHistory) {
@@ -3690,6 +3779,7 @@ export class InteractiveMode {
 					this.hideThinkingBlock,
 					this.getMarkdownThemeWithSettings(),
 					this.hiddenThinkingLabel,
+					this.outputPad,
 				);
 				this.chatContainer.addChild(assistantComponent);
 				break;
@@ -3717,25 +3807,36 @@ export class InteractiveMode {
 	}
 
 	/**
-	 * Render session context to chat. Used for initial load and rebuild after compaction.
-	 * @param sessionContext Session context to render
+	 * Render session items to chat. Used for initial load and rebuild after compaction.
+	 * @param items Session messages and custom entries to render
 	 * @param options.updateFooter Update footer state
 	 * @param options.populateHistory Add user messages to editor history
 	 */
-	private renderSessionContext(
-		sessionContext: SessionContext,
+	private renderSessionItems(
+		items: readonly RenderSessionItem[],
 		options: { updateFooter?: boolean; populateHistory?: boolean } = {},
 	): void {
 		this.clearPendingToolDisplays();
 		const renderedPendingTools = new Map<string, ToolExecutionComponent>();
 		const renderedPendingGroups = new Map<string, ToolExecutionGroupComponent>();
+		// Cache-miss notices are not persisted; re-derive them from the full entry
+		// list and re-inject after the assistant messages that paid for them.
+		const cacheMisses = this.settingsManager.getShowCacheMissNotices()
+			? collectCacheMisses(this.sessionManager.getEntries(), this.session.modelRegistry)
+			: new Map<AssistantMessage, CacheMiss>();
 
 		if (options.updateFooter) {
 			this.footer.invalidate();
 			this.updateEditorBorderColor();
 		}
 
-		for (const message of sessionContext.messages) {
+		for (const item of items) {
+			if (isCustomSessionEntry(item)) {
+				this.addCustomEntryToChat(item);
+				continue;
+			}
+
+			const message = item;
 			// Assistant messages need special handling for tool calls
 			if (message.role === "assistant") {
 				this.addMessageToChat(message);
@@ -3776,6 +3877,10 @@ export class InteractiveMode {
 						}
 					}
 				}
+				if (message.stopReason !== "aborted" && message.stopReason !== "error") {
+					const miss = cacheMisses.get(message);
+					if (miss) this.addCacheMissNotice(miss);
+				}
 			} else if (message.role === "toolResult") {
 				// Match tool results to pending tool components
 				const component = renderedPendingTools.get(message.toolCallId);
@@ -3803,10 +3908,50 @@ export class InteractiveMode {
 		this.ui.requestRender();
 	}
 
+	/**
+	 * Render session entries to chat. Used for initial load and rebuild after compaction.
+	 * @param entries Compaction-aware session entries to render
+	 * @param options.updateFooter Update footer state
+	 * @param options.populateHistory Add user messages to editor history
+	 */
+	private renderSessionEntries(
+		entries: SessionEntry[],
+		options: { updateFooter?: boolean; populateHistory?: boolean } = {},
+	): void {
+		const items = entries.flatMap((entry): RenderSessionItem[] => {
+			if (entry.type === "custom") {
+				return [entry];
+			}
+			return sessionEntryToContextMessages(entry);
+		});
+		this.renderSessionItems(items, options);
+	}
+
+	private addCustomEntryToChat(entry: Extract<SessionEntry, { type: "custom" }>): void {
+		const renderer = this.session.extensionRunner.getEntryRenderer(entry.customType);
+		if (!renderer) {
+			return;
+		}
+		const component = new CustomEntryComponent(entry, renderer);
+		component.setExpanded(this.toolOutputExpanded);
+		if (!component.hasContent()) {
+			return;
+		}
+
+		if (this.streamingComponent) {
+			const streamingIndex = this.chatContainer.children.indexOf(this.streamingComponent);
+			if (streamingIndex >= 0) {
+				this.chatContainer.children.splice(streamingIndex, 0, component);
+				return;
+			}
+		}
+
+		this.chatContainer.addChild(component);
+	}
+
 	renderInitialMessages(): void {
-		// Get aligned messages and entries from session context
-		const context = this.sessionManager.buildSessionContext();
-		this.renderSessionContext(context, {
+		const entries = this.sessionManager.buildContextEntries();
+		this.renderSessionEntries(entries, {
 			updateFooter: true,
 			populateHistory: true,
 		});
@@ -3839,6 +3984,35 @@ export class InteractiveMode {
 				0,
 			),
 		);
+	}
+
+	/**
+	 * Show a transcript notice when a completed assistant message paid for a
+	 * significant cache miss. Only states observable facts: the miss itself,
+	 * a model switch, or an idle gap past the cache TTL. Display-only; not persisted.
+	 */
+	private maybeShowCacheMissNotice(message: AssistantMessage): void {
+		if (!this.settingsManager.getShowCacheMissNotices()) return;
+
+		// Entries don't contain `message` yet: message_end fires before persistence.
+		const miss = detectCacheMiss(this.sessionManager.getEntries(), message, this.session.modelRegistry);
+		if (miss) this.addCacheMissNotice(miss);
+	}
+
+	private addCacheMissNotice(miss: CacheMiss): void {
+		if (miss.missedTokens < 20_000 && miss.missedCost < 0.1) return;
+
+		const cost = miss.missedCost >= 0.01 ? ` (~$${miss.missedCost.toFixed(2)})` : "";
+		const reBilled = `${formatTokens(miss.missedTokens)} tokens re-billed${cost}`;
+		let label = "Cache miss";
+		if (miss.modelChanged) {
+			label = "Cache miss after model switch";
+		} else if (miss.idleMs >= CACHE_TTL_MS) {
+			label = `Cache miss after ${Math.round(miss.idleMs / 60_000)}m idle`;
+		}
+		const text = theme.fg("warning", `${label}: ${reBilled}`);
+		this.chatContainer.addChild(new Spacer(1));
+		this.chatContainer.addChild(new Text(text, 1, 0));
 	}
 
 	async getUserInput(): Promise<string> {
@@ -3907,8 +4081,8 @@ export class InteractiveMode {
 		this.chatContainer.clear();
 		// Tracked expansion identities are invalidated by clearing the chat.
 		this.expandedChatOutputs = [];
-		const context = this.sessionManager.buildSessionContext();
-		this.renderSessionContext(context);
+		const context = this.sessionManager.buildContextEntries();
+		this.renderSessionEntries(context);
 	}
 
 	// =========================================================================
@@ -4399,10 +4573,10 @@ export class InteractiveMode {
 	}
 
 	private async openExternalEditor(): Promise<void> {
-		// Determine editor (respect $VISUAL, then $EDITOR)
-		const editorCmd = process.env.VISUAL || process.env.EDITOR;
+		// Resolve editor (externalEditor setting, then $VISUAL/$EDITOR, then platform default)
+		const editorCmd = this.settingsManager.getExternalEditorCommand();
 		if (!editorCmd) {
-			this.showWarning("No editor configured. Set $VISUAL or $EDITOR environment variable.");
+			this.showWarning("No editor configured. Set externalEditor in settings.json or $VISUAL/$EDITOR.");
 			return;
 		}
 
@@ -6726,6 +6900,7 @@ export class InteractiveMode {
 					terminalTheme: this.themeController.getTerminalTheme(),
 					availableThemes: getAvailableThemes(),
 					hideThinkingBlock: this.hideThinkingBlock,
+					showCacheMissNotices: this.settingsManager.getShowCacheMissNotices(),
 					collapseChangelog: this.settingsManager.getCollapseChangelog(),
 					enableInstallTelemetry: this.settingsManager.getEnableInstallTelemetry(),
 					doubleEscapeAction: this.settingsManager.getDoubleEscapeAction(),
@@ -6733,6 +6908,7 @@ export class InteractiveMode {
 					showHardwareCursor: this.settingsManager.getShowHardwareCursor(),
 					defaultProjectTrust: this.settingsManager.getDefaultProjectTrust(),
 					editorPaddingX: this.settingsManager.getEditorPaddingX(),
+					outputPad: this.settingsManager.getOutputPad(),
 					autocompleteMaxVisible: this.settingsManager.getAutocompleteMaxVisible(),
 					quietStartup: this.settingsManager.getQuietStartup(),
 					clearOnShrink: this.settingsManager.getClearOnShrink(),
@@ -6812,6 +6988,11 @@ export class InteractiveMode {
 						this.chatContainer.clear();
 						this.rebuildChatFromMessages();
 					},
+					onShowCacheMissNoticesChange: (shown) => {
+						this.settingsManager.setShowCacheMissNotices(shown);
+						this.chatContainer.clear();
+						this.rebuildChatFromMessages();
+					},
 					onCollapseChangelogChange: (collapsed) => {
 						this.settingsManager.setCollapseChangelog(collapsed);
 					},
@@ -6840,6 +7021,24 @@ export class InteractiveMode {
 						if (this.editor !== this.defaultEditor && this.editor.setPaddingX !== undefined) {
 							this.editor.setPaddingX(padding);
 						}
+					},
+					onOutputPadChange: (padding) => {
+						this.settingsManager.setOutputPad(padding);
+						this.outputPad = padding;
+						// While streaming, update live components in place to avoid disrupting animation.
+						if (this.streamingComponent || this.session.isStreaming) {
+							for (const child of this.chatContainer.children) {
+								if (child instanceof AssistantMessageComponent || child instanceof UserMessageComponent) {
+									child.setOutputPad(padding);
+								}
+							}
+							if (this.streamingComponent) {
+								this.streamingComponent.setOutputPad(padding);
+							}
+							this.ui.requestRender();
+							return;
+						}
+						this.rebuildChatFromMessages();
 					},
 					onAutocompleteMaxVisibleChange: (maxVisible) => {
 						this.settingsManager.setAutocompleteMaxVisible(maxVisible);
@@ -6930,7 +7129,7 @@ export class InteractiveMode {
 			return;
 		}
 
-		const storedCredential = this.session.modelRegistry.authStorage.get("anthropic");
+		const storedCredential = this.session.authStorage.get("anthropic");
 		if (storedCredential?.type === "oauth") {
 			this.anthropicSubscriptionWarningShown = true;
 			this.showWarning(ANTHROPIC_SUBSCRIPTION_AUTH_WARNING);
@@ -7141,19 +7340,17 @@ export class InteractiveMode {
 			const selector = new UserMessageSelectorComponent(
 				userMessages.map((m) => ({ id: m.entryId, text: m.text })),
 				async (entryId) => {
+					done();
 					try {
 						const result = await this.runtimeHost.fork(entryId);
 						if (result.cancelled) {
-							done();
 							this.ui.requestRender();
 							return;
 						}
 
 						this.editor.setText(result.selectedText ?? "");
-						done();
 						this.showStatus("Forked to new session");
 					} catch (error: unknown) {
-						done();
 						this.showError(error instanceof Error ? error.message : String(error));
 					}
 				},
@@ -7326,6 +7523,18 @@ export class InteractiveMode {
 				initialSelectedId,
 				initialFilterMode,
 			);
+			selector.onCopy = async (text) => {
+				if (!text) {
+					this.showError("Selected entry has no text to copy");
+					return;
+				}
+				try {
+					await copyToClipboard(text);
+					this.showStatus("Copied selected message to clipboard");
+				} catch (error) {
+					this.showError(error instanceof Error ? error.message : String(error));
+				}
+			};
 			return { component: selector, focus: selector };
 		});
 	}
@@ -7488,7 +7697,7 @@ export class InteractiveMode {
 	}
 
 	private getLoginProviderOptions(authType?: "oauth" | "api_key"): AuthSelectorProvider[] {
-		const authStorage = this.session.modelRegistry.authStorage;
+		const authStorage = this.session.authStorage;
 		const oauthProviders = authStorage.getOAuthProviders();
 		const oauthProviderIds = new Set(oauthProviders.map((provider) => provider.id));
 		const options: AuthSelectorProvider[] = oauthProviders.map((provider) => ({
@@ -7514,7 +7723,7 @@ export class InteractiveMode {
 	}
 
 	private getLogoutProviderOptions(): AuthSelectorProvider[] {
-		const authStorage = this.session.modelRegistry.authStorage;
+		const authStorage = this.session.authStorage;
 		const options: AuthSelectorProvider[] = [];
 
 		for (const providerId of authStorage.list()) {
@@ -7607,7 +7816,7 @@ export class InteractiveMode {
 		this.showSelector((done) => {
 			const selector = new OAuthSelectorComponent(
 				mode,
-				this.session.modelRegistry.authStorage,
+				this.session.authStorage,
 				providerOptions,
 				async (providerId: string) => {
 					done();
@@ -7618,7 +7827,7 @@ export class InteractiveMode {
 					}
 
 					try {
-						this.session.modelRegistry.authStorage.logout(providerOption.id);
+						this.session.authStorage.logout(providerOption.id);
 						this.session.modelRegistry.refresh();
 						await this.updateAvailableProviderCount();
 						const message =
@@ -7637,6 +7846,74 @@ export class InteractiveMode {
 			);
 			return { component: selector, focus: selector };
 		});
+	}
+
+	/**
+	 * CC-028: Handle /login <provider> with provider-owned auth discovery.
+	 * Fuzzy-matches the providerRef against available providers (OAuth + API key).
+	 */
+	private async handleLoginCommand(providerRef?: string): Promise<void> {
+		if (!providerRef) {
+			this.showLoginAuthTypeSelector();
+			return;
+		}
+
+		const providerOptions = this.findLoginProviderOptions(providerRef);
+		if (providerOptions.length === 0) {
+			this.showStatus(`Provider "${providerRef}" not found. Try /login to see available providers.`);
+			return;
+		}
+
+		if (providerOptions.length === 1) {
+			await this.startProviderLogin(providerOptions[0]!);
+			return;
+		}
+
+		// Multiple matches (e.g., "anthropic" returns both oauth + api_key).
+		// If they all have the same id, show auth-type selector for that provider.
+		const providerIds = new Set(providerOptions.map((provider) => provider.id));
+		if (providerIds.size === 1) {
+			this.showLoginAuthTypeSelector();
+			return;
+		}
+
+		// Multiple distinct providers matched; show ambiguous error.
+		const providerNames = providerOptions.map((p) => p.id).join(", ");
+		this.showStatus(`Ambiguous provider "${providerRef}". Matches: ${providerNames}`);
+	}
+
+	/**
+	 * Fuzzy-match providerRef against available login providers.
+	 * Searches both id and name fields.
+	 */
+	private findLoginProviderOptions(providerRef: string): AuthSelectorProvider[] {
+		const allOptions = this.getLoginProviderOptions();
+		const lowerRef = providerRef.toLowerCase();
+
+		// Exact id match (case-insensitive).
+		const exactId = allOptions.filter((option) => option.id.toLowerCase() === lowerRef);
+		if (exactId.length > 0) return exactId;
+
+		// Partial id match (case-insensitive).
+		const partialId = allOptions.filter((option) => option.id.toLowerCase().includes(lowerRef));
+		if (partialId.length > 0) return partialId;
+
+		// Partial name match (case-insensitive).
+		const partialName = allOptions.filter((option) => option.name.toLowerCase().includes(lowerRef));
+		return partialName;
+	}
+
+	/**
+	 * Launch the login flow for a specific provider option.
+	 */
+	private async startProviderLogin(providerOption: AuthSelectorProvider): Promise<void> {
+		if (providerOption.authType === "oauth") {
+			await this.showLoginDialog(providerOption.id, providerOption.name);
+		} else if (providerOption.id === BEDROCK_PROVIDER_ID) {
+			this.showBedrockSetupDialog(providerOption.id, providerOption.name);
+		} else {
+			await this.showApiKeyLoginDialog(providerOption.id, providerOption.name);
+		}
 	}
 
 	private async completeProviderAuthentication(
@@ -7750,7 +8027,15 @@ export class InteractiveMode {
 				throw new Error("API key cannot be empty.");
 			}
 
-			this.session.modelRegistry.authStorage.set(providerId, { type: "api_key", key: apiKey });
+			// CC-018: persist through the async modify() path so a write failure throws
+			// (surfaced by the catch below) instead of the fire-and-forget set() that
+			// swallows persistence errors. Do not report success before the credential
+			// is actually written to disk.
+			await this.session.authStorage.modify(providerId, async () => ({ type: "api_key", key: apiKey }));
+			const persistErrors = this.session.authStorage.drainErrors();
+			if (persistErrors.length > 0) {
+				throw new Error(persistErrors.map((error) => error.message).join("; "));
+			}
 
 			restoreEditor();
 			await this.completeProviderAuthentication(providerId, providerName, "api_key", previousModel);
@@ -7792,9 +8077,7 @@ export class InteractiveMode {
 	}
 
 	private async showLoginDialog(providerId: string, providerName: string): Promise<void> {
-		const providerInfo = this.session.modelRegistry.authStorage
-			.getOAuthProviders()
-			.find((provider) => provider.id === providerId);
+		const providerInfo = this.session.authStorage.getOAuthProviders().find((provider) => provider.id === providerId);
 		const previousModel = this.session.model;
 
 		// Providers that use callback servers (can paste redirect URL)
@@ -7833,7 +8116,7 @@ export class InteractiveMode {
 		};
 
 		try {
-			await this.session.modelRegistry.authStorage.login(providerId as OAuthProviderId, {
+			await this.session.authStorage.login(providerId as OAuthProviderId, {
 				onAuth: (info: { url: string; instructions?: string }) => {
 					dialog.showAuth(info.url, info.instructions);
 
@@ -8276,6 +8559,7 @@ export class InteractiveMode {
 	private handleSessionCommand(): void {
 		const stats = this.session.getSessionStats();
 		const sessionName = this.sessionManager.getSessionName();
+		const cacheWaste = computeCacheWaste(this.sessionManager.getEntries(), this.session.modelRegistry);
 
 		let info = `${theme.bold("Session Info")}\n\n`;
 		if (sessionName) {
@@ -8303,9 +8587,17 @@ export class InteractiveMode {
 		if (stats.costUnknown) {
 			info += `\n${theme.bold("Cost")}\n`;
 			info += `${theme.fg("dim", "Total:")} unknown (provider did not report a concrete price)`;
-		} else if (stats.cost > 0) {
+		} else if (stats.cost > 0 || cacheWaste.missedTokens > 0) {
 			info += `\n${theme.bold("Cost")}\n`;
 			info += `${theme.fg("dim", "Total:")} ${stats.cost.toFixed(4)}`;
+			if (cacheWaste.missedTokens > 0) {
+				const missLabel = cacheWaste.missCount === 1 ? "1 miss" : `${cacheWaste.missCount} misses`;
+				const detail = `${cacheWaste.missedTokens.toLocaleString()} tokens, ${missLabel}`;
+				info +=
+					cacheWaste.missedCost >= 0.0001
+						? `\n${theme.fg("dim", "Cache Re-billed:")} $${cacheWaste.missedCost.toFixed(3)} ${theme.fg("dim", `(${detail})`)}`
+						: `\n${theme.fg("dim", "Cache Re-billed:")} ${detail}`;
+			}
 		}
 
 		this.chatContainer.addChild(new Spacer(1));
@@ -8386,6 +8678,7 @@ export class InteractiveMode {
 		const expandTools = this.getAppKeyDisplay("app.tools.expand");
 		const toggleThinking = this.getAppKeyDisplay("app.thinking.toggle");
 		const externalEditor = this.getAppKeyDisplay("app.editor.external");
+		const copyMessage = this.getAppKeyDisplay("app.message.copy");
 		const cycleModelBackward = this.getAppKeyDisplay("app.model.cycleBackward");
 		const followUp = this.getAppKeyDisplay("app.message.followUp");
 		const pasteImage = this.getAppKeyDisplay("app.clipboard.pasteImage");
@@ -8429,10 +8722,11 @@ export class InteractiveMode {
 | \`${expandTools}\` | Toggle tool output expansion |
 | \`${toggleThinking}\` | Toggle thinking block visibility |
 | \`${externalEditor}\` | Edit message in external editor |
+| \`${copyMessage}\` | Copy last assistant message |
 | \`${followUp}\` | Queue follow-up message |
 | \`↑\` | Restore queued messages into editor (empty editor) |
 | \`↓\` | Re-queue the pulled-back draft (cursor at end) |
-| \`${pasteImage}\` | Paste image from clipboard |
+| \`${pasteImage}\` | Paste image or text from clipboard |
 | \`/\` | Slash commands |
 | \`!\` | Run bash command |
 | \`!!\` | Run bash command (excluded from context) |

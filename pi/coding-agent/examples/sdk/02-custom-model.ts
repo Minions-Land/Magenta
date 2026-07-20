@@ -4,15 +4,14 @@
  * Shows how to select a specific model and thinking level.
  */
 
-import { getModel } from "@earendil-works/pi-ai/compat";
-import { AuthStorage, createAgentSession, ModelRegistry } from "@earendil-works/pi-coding-agent";
+import { createAgentSession, ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
 
-// Set up auth storage and model registry
-const authStorage = AuthStorage.create();
-const modelRegistry = ModelRegistry.create(authStorage);
+// ModelRuntime owns models and credentials; ModelRegistry is its synchronous compatibility facade.
+const modelRuntime = await ModelRuntime.create();
+const modelRegistry = new ModelRegistry(modelRuntime);
 
 // Option 1: Find a specific built-in model by provider/id
-const opus = getModel("anthropic", "claude-opus-4-5");
+const opus = modelRuntime.getModel("anthropic", "claude-opus-4-5");
 if (opus) {
 	console.log(`Found model: ${opus.provider}/${opus.id}`);
 }
@@ -24,7 +23,7 @@ if (customModel) {
 }
 
 // Option 3: Pick from available models (have valid API keys)
-const available = await modelRegistry.getAvailable();
+const available = modelRegistry.getAvailable();
 console.log(
 	"Available models:",
 	available.map((m) => `${m.provider}/${m.id}`),
@@ -34,7 +33,7 @@ if (available.length > 0) {
 	const { session } = await createAgentSession({
 		model: available[0],
 		thinkingLevel: "medium", // off, low, medium, high
-		authStorage,
+		modelRuntime,
 		modelRegistry,
 	});
 

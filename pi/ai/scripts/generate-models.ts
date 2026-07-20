@@ -38,6 +38,11 @@ interface ModelsDevModel {
 		output?: number;
 		cache_read?: number;
 		cache_write?: number;
+	} | {
+		tiers?: {
+			default?: { input?: number; output?: number; cache_read?: number; cache_write?: number };
+			scale?: { input?: number; output?: number; cache_read?: number; cache_write?: number };
+		};
 	};
 	modalities?: {
 		input?: string[];
@@ -757,9 +762,20 @@ function assertGeneratedModelIntegrity(model: Model<any>, index: number): void {
 	if (model.baseUrl !== undefined && typeof model.baseUrl !== "string") {
 		throw new Error(`Generated model ${model.provider}/${model.id} has invalid baseUrl`);
 	}
-	for (const [field, value] of Object.entries(model.cost)) {
-		if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
-			throw new Error(`Generated model ${model.provider}/${model.id} has invalid cost.${field}`);
+	// Validate cost structure: flat or tiered.
+	if ("tiers" in model.cost) {
+		for (const [tier, rates] of Object.entries(model.cost.tiers)) {
+			for (const [field, value] of Object.entries(rates)) {
+				if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+					throw new Error(`Generated model ${model.provider}/${model.id} has invalid cost.tiers.${tier}.${field}`);
+				}
+			}
+		}
+	} else {
+		for (const [field, value] of Object.entries(model.cost)) {
+			if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+				throw new Error(`Generated model ${model.provider}/${model.id} has invalid cost.${field}`);
+			}
 		}
 	}
 	if (!Number.isFinite(model.contextWindow) || model.contextWindow <= 0) {
@@ -1588,6 +1604,13 @@ async function loadModelsDevData(): Promise<ModelsDevLoadResult> {
 					) {
 						compat = { ...compat, supportsLongCacheRetention: false };
 					}
+				}
+
+				// OpenCode's OpenAI Responses zen endpoint rejects the `session_id`
+				// affinity header. Omit it while still sending `x-client-request-id`.
+				// See upstream #6625 / #6645.
+				if (variant.provider === "opencode" && api === "openai-responses") {
+					compat = { ...(compat ?? {}), sessionAffinityFormat: "openai-nosession" };
 				}
 
 				models.push({

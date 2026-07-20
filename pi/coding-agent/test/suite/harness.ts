@@ -18,12 +18,14 @@ import { AgentSession, type AgentSessionEvent } from "../../src/core/agent-sessi
 import { AuthStorage } from "../../src/core/auth-storage.ts";
 import type { ExecutionProfile } from "../../src/core/execution-profile.ts";
 import type { ExtensionRunner } from "../../src/core/extensions/index.ts";
+import { createMagentaCredentialStore } from "../../src/core/external-credential-adapter.ts";
 import { convertToLlm } from "../../src/core/messages.ts";
 import { ModelRegistry } from "../../src/core/model-registry.ts";
+import { ModelRuntime } from "../../src/core/model-runtime.ts";
 import { SessionManager } from "../../src/core/session-manager.ts";
 import type { Settings } from "../../src/core/settings-manager.ts";
 import { SettingsManager } from "../../src/core/settings-manager.ts";
-import type { ExtensionFactory, ResourceLoader } from "../../src/index.ts";
+import type { InlineExtension, ResourceLoader } from "../../src/index.ts";
 import {
 	type CreateTestExtensionsResultInput,
 	createTestExtensionsResult,
@@ -71,7 +73,7 @@ export interface HarnessOptions {
 	allowedToolNames?: string[];
 	excludedToolNames?: string[];
 	resourceLoader?: ResourceLoader;
-	extensionFactories?: Array<ExtensionFactory | CreateTestExtensionsResultInput>;
+	extensionFactories?: Array<InlineExtension | CreateTestExtensionsResultInput>;
 	withConfiguredAuth?: boolean;
 }
 
@@ -114,10 +116,15 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 	const settingsManager = SettingsManager.inMemory(options.settings);
 
 	const authStorage = AuthStorage.inMemory();
+	const modelRuntime = await ModelRuntime.create({
+		credentials: createMagentaCredentialStore(authStorage),
+		modelsPath: null,
+		allowModelNetwork: false,
+	});
 	if (withConfiguredAuth) {
-		authStorage.setRuntimeApiKey(model.provider, "faux-key");
+		await modelRuntime.setRuntimeApiKey(model.provider, "faux-key");
 	}
-	const modelRegistry = ModelRegistry.inMemory(authStorage);
+	const modelRegistry = new ModelRegistry(modelRuntime);
 	if (withConfiguredAuth) {
 		modelRegistry.registerProvider(model.provider, {
 			baseUrl: model.baseUrl,
@@ -184,6 +191,7 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 		// concurrent suite tests pollute each other's presence/messages.
 		agentDir: tempDir,
 		modelRegistry,
+		modelRuntime,
 		resourceLoader,
 		baseToolsOverride: toolMap,
 		initialActiveToolNames: options.initialActiveToolNames,

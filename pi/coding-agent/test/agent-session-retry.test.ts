@@ -7,10 +7,9 @@ import { Type } from "typebox";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AgentSession } from "../src/core/agent-session.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
-import { ModelRegistry } from "../src/core/model-registry.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
-import { createTestResourceLoader } from "./utilities.ts";
+import { createTestModelRegistry, createTestResourceLoader } from "./utilities.ts";
 
 class MockAssistantStream extends EventStream<AssistantMessageEvent, AssistantMessage> {
 	constructor() {
@@ -54,7 +53,7 @@ describe("AgentSession retry", () => {
 	let session: AgentSession;
 	let tempDir: string;
 
-	beforeEach(() => {
+	beforeEach(async () => {
 		tempDir = join(tmpdir(), `pi-retry-test-${Date.now()}`);
 		mkdirSync(tempDir, { recursive: true });
 	});
@@ -68,7 +67,11 @@ describe("AgentSession retry", () => {
 		}
 	});
 
-	function createSession(options?: { failCount?: number; maxRetries?: number; delayAssistantMessageEndMs?: number }) {
+	async function createSession(options?: {
+		failCount?: number;
+		maxRetries?: number;
+		delayAssistantMessageEndMs?: number;
+	}) {
 		const failCount = options?.failCount ?? 1;
 		const maxRetries = options?.maxRetries ?? 3;
 		const delayAssistantMessageEndMs = options?.delayAssistantMessageEndMs ?? 0;
@@ -102,7 +105,7 @@ describe("AgentSession retry", () => {
 		const sessionManager = SessionManager.inMemory();
 		const settingsManager = SettingsManager.create(tempDir, tempDir);
 		const authStorage = AuthStorage.create(join(tempDir, "auth.json"));
-		const modelRegistry = ModelRegistry.create(authStorage, tempDir);
+		const modelRegistry = await createTestModelRegistry(authStorage, tempDir);
 		authStorage.setRuntimeApiKey("anthropic", "test-key");
 		settingsManager.applyOverrides({ retry: { enabled: true, maxRetries, baseDelayMs: 1 } });
 
@@ -130,7 +133,7 @@ describe("AgentSession retry", () => {
 	}
 
 	it("retries after a transient error and succeeds", async () => {
-		const created = createSession({ failCount: 1 });
+		const created = await createSession({ failCount: 1 });
 		const events: string[] = [];
 		created.session.subscribe((event) => {
 			if (event.type === "auto_retry_start") events.push(`start:${event.attempt}`);
@@ -145,7 +148,7 @@ describe("AgentSession retry", () => {
 	});
 
 	it("exhausts max retries and emits failure", async () => {
-		const created = createSession({ failCount: 99, maxRetries: 2 });
+		const created = await createSession({ failCount: 99, maxRetries: 2 });
 		const events: string[] = [];
 		created.session.subscribe((event) => {
 			if (event.type === "auto_retry_start") events.push(`start:${event.attempt}`);
@@ -162,7 +165,7 @@ describe("AgentSession retry", () => {
 	});
 
 	it("prompt waits for retry completion even when assistant message_end handling is delayed", async () => {
-		const created = createSession({ failCount: 1, delayAssistantMessageEndMs: 40 });
+		const created = await createSession({ failCount: 1, delayAssistantMessageEndMs: 40 });
 
 		await created.session.prompt("Test");
 
@@ -171,7 +174,7 @@ describe("AgentSession retry", () => {
 	});
 
 	it("retries provider network_error failures", async () => {
-		const created = createSession({ failCount: 0 });
+		const created = await createSession({ failCount: 0 });
 		let callCount = 0;
 		const streamFn = () => {
 			callCount++;
@@ -204,7 +207,7 @@ describe("AgentSession retry", () => {
 		const sessionManager = SessionManager.inMemory();
 		const settingsManager = SettingsManager.create(tempDir, tempDir);
 		const authStorage = AuthStorage.create(join(tempDir, "auth.json"));
-		const modelRegistry = ModelRegistry.create(authStorage, tempDir);
+		const modelRegistry = await createTestModelRegistry(authStorage, tempDir);
 		authStorage.setRuntimeApiKey("anthropic", "test-key");
 		settingsManager.applyOverrides({ retry: { enabled: true, maxRetries: 3, baseDelayMs: 1 } });
 		session = new AgentSession({
@@ -289,7 +292,7 @@ describe("AgentSession retry", () => {
 		const sessionManager = SessionManager.inMemory();
 		const settingsManager = SettingsManager.create(tempDir, tempDir);
 		const authStorage = AuthStorage.create(join(tempDir, "auth.json"));
-		const modelRegistry = ModelRegistry.create(authStorage, tempDir);
+		const modelRegistry = await createTestModelRegistry(authStorage, tempDir);
 		authStorage.setRuntimeApiKey("anthropic", "test-key");
 		settingsManager.applyOverrides({ retry: { enabled: true, maxRetries: 3, baseDelayMs: 1 } });
 

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { constants as bufferConstants } from "buffer";
 import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync, writeSync } from "fs";
 import { tmpdir } from "os";
@@ -268,28 +269,59 @@ describe("SessionManager.setSessionFile with corrupted files", () => {
 		expect(header.id).toBe(sm.getSessionId());
 	});
 
-	it("truncates and rewrites file without valid header", () => {
+	it("rejects and preserves a non-empty file without a valid header byte-for-byte", () => {
 		const noHeaderFile = join(tempDir, "no-header.jsonl");
-		// File with messages but no session header (corrupted state)
-		writeFileSync(
-			noHeaderFile,
-			'{"type":"message","id":"abc","parentId":"orphaned","timestamp":"2025-01-01T00:00:00Z","message":{"role":"assistant","content":"test"}}\n',
+		const original = Buffer.from(
+			'{"type":"message","id":"abc","parentId":"orphaned","timestamp":"2025-01-01T00:00:00Z","message":{"role":"assistant","content":"test"}}\r\ninvalid-tail\x00',
 		);
+		writeFileSync(noHeaderFile, original);
+		const digest = createHash("sha256").update(original).digest("hex");
 
-		const sm = SessionManager.open(noHeaderFile, tempDir);
+		expect(() => SessionManager.open(noHeaderFile, tempDir)).toThrow(
+			`Session file is not a valid pi session: ${noHeaderFile}`,
+		);
+		const preserved = readFileSync(noHeaderFile);
+		expect(createHash("sha256").update(preserved).digest("hex")).toBe(digest);
+		expect(preserved).toEqual(original);
+	});
 
-		// Should have created a new session with valid header
-		expect(sm.getSessionId()).toBeTruthy();
-		expect(sm.getHeader()).toBeTruthy();
-		expect(sm.getHeader()?.type).toBe("session");
+	it("rejects an invalid fork import without modifying its source bytes", () => {
+		const sourceFile = join(tempDir, "invalid-import.jsonl");
+		const original = Buffer.from("not a session\r\nwith binary tail\x00");
+		writeFileSync(sourceFile, original);
+		const digest = createHash("sha256").update(original).digest("hex");
 
-		// File should now contain only a valid header (old content truncated)
-		const content = readFileSync(noHeaderFile, "utf-8");
-		const lines = content.trim().split("\n").filter(Boolean);
-		expect(lines.length).toBe(1);
-		const header = JSON.parse(lines[0]);
-		expect(header.type).toBe("session");
-		expect(header.id).toBe(sm.getSessionId());
+		expect(() => SessionManager.forkFrom(sourceFile, tempDir, tempDir)).toThrow(/empty or invalid/);
+		const preserved = readFileSync(sourceFile);
+		expect(createHash("sha256").update(preserved).digest("hex")).toBe(digest);
+		expect(preserved).toEqual(original);
+	});
+
+	it("keeps tolerant line parsing for a valid append-only session", () => {
+		const sessionFile = join(tempDir, "valid-with-malformed-tail.jsonl");
+		const original = [
+			JSON.stringify({
+				type: "session",
+				version: 3,
+				id: "valid-session",
+				timestamp: "2025-01-01T00:00:00.000Z",
+				cwd: tempDir,
+			}),
+			"malformed append interrupted here",
+			JSON.stringify({
+				type: "message",
+				id: "message-1",
+				parentId: null,
+				timestamp: "2025-01-01T00:00:01.000Z",
+				message: { role: "user", content: "still readable", timestamp: 1 },
+			}),
+			"",
+		].join("\n");
+		writeFileSync(sessionFile, original);
+
+		const session = SessionManager.open(sessionFile, tempDir);
+		expect(session.getEntries()).toHaveLength(1);
+		expect(readFileSync(sessionFile, "utf8")).toBe(original);
 	});
 
 	it("preserves explicit session file path when recovering from corrupted file", () => {
@@ -302,16 +334,13 @@ describe("SessionManager.setSessionFile with corrupted files", () => {
 		expect(sm.getSessionFile()).toBe(explicitPath);
 	});
 
-	it("subsequent loads of recovered file work correctly", () => {
-		const corruptedFile = join(tempDir, "corrupted.jsonl");
-		writeFileSync(corruptedFile, "garbage content\n");
+	it("subsequent loads of an initialized empty file work correctly", () => {
+		const emptyFile = join(tempDir, "empty-reopened.jsonl");
+		writeFileSync(emptyFile, "");
 
-		// First open recovers the file
-		const sm1 = SessionManager.open(corruptedFile, tempDir);
+		const sm1 = SessionManager.open(emptyFile, tempDir);
 		const sessionId = sm1.getSessionId();
-
-		// Second open should load the recovered file successfully
-		const sm2 = SessionManager.open(corruptedFile, tempDir);
+		const sm2 = SessionManager.open(emptyFile, tempDir);
 		expect(sm2.getSessionId()).toBe(sessionId);
 		expect(sm2.getHeader()?.type).toBe("session");
 	});

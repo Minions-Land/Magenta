@@ -10,10 +10,10 @@ import {
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { type CacheRequestRecord, fingerprintProviderPayload } from "../src/core/cache-telemetry.ts";
-import { ModelRegistry } from "../src/core/model-registry.ts";
 import { createAgentSession } from "../src/core/sdk.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
+import { createTestModelRegistry } from "./utilities.ts";
 
 const INITIAL_SENTINEL = "initial-provider-payload-sentinel";
 const FINAL_SENTINEL = "final-extension-payload-sentinel";
@@ -55,7 +55,7 @@ describe("createAgentSession cache telemetry", () => {
 		};
 		const authStorage = AuthStorage.create(join(agentDir, "auth.json"));
 		authStorage.setRuntimeApiKey(model.provider, "test-api-key");
-		const modelRegistry = ModelRegistry.create(authStorage, join(agentDir, "models.json"));
+		const modelRegistry = await createTestModelRegistry(authStorage, join(agentDir, "models.json"));
 		const sessionManager = SessionManager.inMemory(cwd);
 		let capturedFinalPayload: unknown;
 		let capturedOptions: SimpleStreamOptions | undefined;

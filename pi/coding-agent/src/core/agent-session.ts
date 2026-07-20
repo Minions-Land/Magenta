@@ -23,6 +23,7 @@ import type {
 	AgentTool,
 	ThinkingLevel,
 } from "@earendil-works/pi-agent-core";
+import { isRetryableAssistantError } from "@earendil-works/pi-ai";
 import type { AssistantMessage, ImageContent, Message, Model, TextContent } from "@earendil-works/pi-ai/compat";
 import {
 	cleanupSessionResources,
@@ -57,6 +58,7 @@ import { getThemeByName, theme } from "../modes/interactive/theme/theme.ts";
 import { resolvePath } from "../utils/paths.ts";
 import { sleep } from "../utils/sleep.ts";
 import { formatNoApiKeyFoundMessage, formatNoModelSelectedMessage } from "./auth-guidance.ts";
+import type { AuthStorage } from "./auth-storage.ts";
 import { BackgroundEventManager, type BackgroundEventSnapshot } from "./background-events.ts";
 import { BackgroundReminderCoordinator } from "./background-reminder-coordinator.ts";
 import { type BashResult, executeBashWithOperations } from "./bash-executor.ts";
@@ -120,6 +122,7 @@ import { HcpClientpackageloadcontroller } from "./HcpClientpackageloadcontroller
 import { HcpClientassembletools } from "./HcpClienttools.ts";
 import type { BashExecutionMessage, CustomMessage } from "./messages.ts";
 import type { ModelRegistry } from "./model-registry.ts";
+import type { ModelRuntime } from "./model-runtime.ts";
 import { expandPromptTemplate, type PromptTemplate } from "./prompt-templates.ts";
 import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.ts";
 import {
@@ -127,6 +130,7 @@ import {
 	type CompactionEntry,
 	CURRENT_SESSION_VERSION,
 	getLatestCompactionEntry,
+	type SessionEntry,
 	type SessionHeader,
 	SessionManager,
 } from "./session-manager.ts";
@@ -185,6 +189,7 @@ export type AgentSessionEvent =
 			messages: AgentMessage[];
 			willRetry: boolean;
 	  }
+	| { type: "agent_settled" }
 	| {
 			type: "queue_update";
 			steering: readonly string[];
@@ -199,6 +204,7 @@ export type AgentSessionEvent =
 			totalBytes?: number;
 			completedChunks?: number;
 	  }
+	| { type: "entry_appended"; entry: SessionEntry }
 	| { type: "session_info_changed"; name: string | undefined }
 	| { type: "thinking_level_changed"; level: ThinkingLevel }
 	| { type: "execution_profile_changed"; profile: ExecutionProfile; thinkingLevel: ThinkingLevel }
@@ -252,6 +258,10 @@ export interface AgentSessionConfig {
 	sshTarget?: SshTarget;
 	/** Model registry for API key resolution and model discovery */
 	modelRegistry: ModelRegistry;
+	/** Model runtime (single owner of models and credentials). Defaults to the registry's runtime. */
+	modelRuntime?: ModelRuntime;
+	/** Credential storage backing the model runtime; used by interactive OAuth/API-key UI. */
+	authStorage?: AuthStorage;
 	/** Initial active built-in tool names. Default: [read, bash, edit, write] */
 	initialActiveToolNames?: string[];
 	/** Auto-activate newly loaded Package and user MCP tools. */
@@ -389,6 +399,11 @@ export class AgentSession {
 	// Event subscription state
 	private _unsubscribeAgent?: () => void;
 	private _eventListeners: AgentSessionEventListener[] = [];
+	// Settled-lifecycle state (D4): tracks whether an agent run (including retries,
+	// auto-compaction, and queued/run-owned continuations) is still in progress.
+	private _isAgentRunActive = false;
+	private _idleWaitPromise: Promise<void> | undefined;
+	private _resolveIdleWait: (() => void) | undefined;
 	private _activePromptWithdrawal?: PromptWithdrawalTransaction;
 
 	/** Tracks pending steering messages and attachments. Removed when delivered. */
@@ -486,8 +501,12 @@ export class AgentSession {
 	private _agentDirPath: string;
 	private _peerMessageDbPath: string;
 
-	// Model registry for API key resolution
+	// Model runtime (single owner of models and credentials)
+	private _modelRuntime: ModelRuntime;
+	// Model registry facade for extension compatibility
 	private _modelRegistry: ModelRegistry;
+	// Credential storage backing the runtime (interactive OAuth/API-key UI)
+	private _authStorage: AuthStorage | undefined;
 
 	// Tool registry for extension getTools/setTools
 	private _toolRegistry: Map<string, AgentTool> = new Map();
@@ -511,7 +530,12 @@ export class AgentSession {
 		this._cwd = config.cwd;
 		this._sshTarget = config.sshTarget;
 		this._sshOperations = this._sshTarget ? createSshToolOperations(this._sshTarget, this._cwd) : undefined;
+		if (config.modelRuntime && config.modelRuntime !== config.modelRegistry.modelRuntime) {
+			throw new Error("AgentSession modelRuntime must match modelRegistry.modelRuntime");
+		}
+		this._modelRuntime = config.modelRuntime ?? config.modelRegistry.modelRuntime;
 		this._modelRegistry = config.modelRegistry;
+		this._authStorage = config.authStorage;
 		this._extensionRunnerRef = config.extensionRunnerRef;
 		this._initialActiveToolNames = config.initialActiveToolNames;
 		this._autoActivateLoadedTools = config.autoActivateLoadedTools ?? config.initialActiveToolNames === undefined;
@@ -714,9 +738,22 @@ export class AgentSession {
 		});
 	}
 
-	/** Model registry for API key resolution and model discovery */
+	/** Model registry facade for extension compatibility. */
 	get modelRegistry(): ModelRegistry {
 		return this._modelRegistry;
+	}
+
+	/** Model runtime (single owner of models and credentials) */
+	get modelRuntime(): ModelRuntime {
+		return this._modelRuntime;
+	}
+
+	/** Credential storage backing the model runtime. */
+	get authStorage(): AuthStorage {
+		if (!this._authStorage) {
+			throw new Error("authStorage is not available on this session");
+		}
+		return this._authStorage;
 	}
 
 	private async _getRequiredRequestAuth(model: Model<any>): Promise<{
@@ -1159,6 +1196,23 @@ export class AgentSession {
 		return undefined;
 	}
 
+	/**
+	 * CC-007: Whether `agent.continue()` can safely run.
+	 *
+	 * `agent.continue()` throws "Cannot continue from message role: assistant" when the
+	 * last message is a completed assistant turn with no queued steering/follow-up work.
+	 * After a pre-prompt (aborted-response) compaction the retained context often ends on
+	 * exactly such an assistant message, so callers must gate the continuation instead of
+	 * assuming compaction always leaves a resumable tool-result tail.
+	 */
+	private _canContinueAfterCompaction(): boolean {
+		const messages = this.agent.state.messages;
+		const last = messages[messages.length - 1];
+		if (!last) return false;
+		if (last.role !== "assistant") return true;
+		return this.agent.hasQueuedMessages();
+	}
+
 	private _replaceMessageInPlace(target: AgentMessage, replacement: AgentMessage): void {
 		// Agent-core stores the finalized message object in its state before emitting message_end.
 		// SessionManager persistence happens later in _handleAgentEvent() with event.message.
@@ -1247,7 +1301,15 @@ export class AgentSession {
 			};
 			const replacement = await this._extensionRunner.emitMessageEnd(extensionEvent);
 			if (replacement) {
-				this._replaceMessageInPlace(event.message, replacement);
+				const normalized =
+					(replacement.role === "user" ||
+						replacement.role === "assistant" ||
+						replacement.role === "toolResult" ||
+						replacement.role === "custom") &&
+					replacement.content == null
+						? ({ ...replacement, content: [] } as AgentMessage)
+						: replacement;
+				this._replaceMessageInPlace(event.message, normalized);
 			}
 		} else if (event.type === "tool_execution_start") {
 			const extensionEvent: ToolExecutionStartEvent = {
@@ -1327,24 +1389,18 @@ export class AgentSession {
 		// run its safe-boundary continuation until the barrier has released every
 		// coalesced source against the post-compaction context.
 		await this._externalActivations.waitForDeliveryReady();
-		while (this.isStreaming && this._externalActivationPending) {
-			await this.agent.waitForIdle();
+		while (this._externalActivationPending) {
+			const streaming = this.isStreaming;
+			if (!streaming && this.isIdle) break;
+			if (streaming) await this.agent.waitForIdle();
+			else await this.waitForIdle();
 			// The competing run may have crossed another compaction barrier. Recheck it
 			// before retrying a payload that its agent_start did not consume.
 			await this._externalActivations.waitForDeliveryReady();
 		}
 		if (!this._externalActivationPending) return;
 		this._externalActivationPending = false;
-		try {
-			// The wake payload is already the last message in state, so a continuation
-			// runs a turn on it without appending anything new.
-			await this.agent.continue();
-			while (await this._handlePostAgentRun()) {
-				await this.agent.continue();
-			}
-		} finally {
-			this._flushPendingBashMessages();
-		}
+		await this._runAgentContinuation();
 	}
 
 	/**
@@ -1673,6 +1729,7 @@ export class AgentSession {
 	// =========================================================================
 
 	private async _runAgentPrompt(messages: AgentMessage | AgentMessage[]): Promise<void> {
+		this._isAgentRunActive = true;
 		try {
 			await this.agent.prompt(messages);
 			while (await this._handlePostAgentRun()) {
@@ -1680,6 +1737,22 @@ export class AgentSession {
 			}
 		} finally {
 			this._flushPendingBashMessages();
+			await this._emitAgentSettled();
+		}
+	}
+
+	private async _runAgentContinuation(): Promise<void> {
+		this._isAgentRunActive = true;
+		try {
+			// The wake payload is already the last message in state, so continuation
+			// runs a turn on it without appending another user/custom message.
+			await this.agent.continue();
+			while (await this._handlePostAgentRun()) {
+				await this.agent.continue();
+			}
+		} finally {
+			this._flushPendingBashMessages();
+			await this._emitAgentSettled();
 		}
 	}
 
@@ -1809,13 +1882,19 @@ export class AgentSession {
 			// Check if we need to compact before sending (catches aborted responses)
 			const lastAssistant = this._findLastAssistantMessage();
 			if (lastAssistant && (await this._checkCompaction(lastAssistant, false))) {
-				try {
-					await this.agent.continue();
-					while (await this._handlePostAgentRun()) {
+				// CC-007: only resume the loop when there is genuine continuation work.
+				// Pre-prompt compaction may retain a completed assistant tail, and
+				// agent.continue() throws "Cannot continue from message role: assistant"
+				// in that case. Skipping straight to the new user prompt is correct.
+				if (this._canContinueAfterCompaction()) {
+					try {
 						await this.agent.continue();
+						while (await this._handlePostAgentRun()) {
+							await this.agent.continue();
+						}
+					} finally {
+						this._flushPendingBashMessages();
 					}
-				} finally {
-					this._flushPendingBashMessages();
 				}
 			}
 
@@ -1856,7 +1935,7 @@ export class AgentSession {
 					messages.push({
 						role: "custom",
 						customType: msg.customType,
-						content: msg.content,
+						content: msg.content ?? [],
 						display: msg.display,
 						details: msg.details,
 						timestamp: Date.now(),
@@ -2344,7 +2423,7 @@ export class AgentSession {
 		const appMessage = {
 			role: "custom" as const,
 			customType: message.customType,
-			content: message.content,
+			content: message.content ?? [],
 			display: message.display,
 			details: message.details,
 			timestamp: Date.now(),
@@ -2497,7 +2576,53 @@ export class AgentSession {
 	 */
 	async abort(): Promise<void> {
 		this.requestAbort();
-		await this.agent.waitForIdle();
+		await this.waitForIdle();
+	}
+
+	/**
+	 * Wait for the agent to become fully idle (no active run, including retries and continuations).
+	 */
+	async waitForIdle(): Promise<void> {
+		if (this.isIdle) {
+			return;
+		}
+		await this._getIdleWaitPromise();
+	}
+
+	/**
+	 * Whether the agent is fully idle (no active run).
+	 */
+	get isIdle(): boolean {
+		return !this._isAgentRunActive;
+	}
+
+	private _getIdleWaitPromise(): Promise<void> {
+		if (!this._idleWaitPromise) {
+			this._idleWaitPromise = new Promise((resolve) => {
+				this._resolveIdleWait = resolve;
+			});
+		}
+		return this._idleWaitPromise;
+	}
+
+	private async _emitAgentSettled(): Promise<void> {
+		// Phase 1: the run has drained (agent_end handlers, retries, compaction, and
+		// run-owned continuations already completed in _runAgentPrompt). Mark inactive.
+		this._isAgentRunActive = false;
+		// Phase 2: notify listeners. Extension settled callbacks are awaited before the
+		// internal completion barrier (waitForIdle) resolves, so RPC promptAndWait only
+		// completes once same-run settled work is done.
+		try {
+			await this._extensionRunner.emit({ type: "agent_settled" });
+			this._emit({ type: "agent_settled" });
+		} finally {
+			if (this._resolveIdleWait) {
+				const resolve = this._resolveIdleWait;
+				this._resolveIdleWait = undefined;
+				this._idleWaitPromise = undefined;
+				resolve();
+			}
+		}
 	}
 
 	// =========================================================================
@@ -2519,7 +2644,12 @@ export class AgentSession {
 	}
 
 	private _getModelSwitchContextTokens(): number | undefined {
-		return this.getContextUsage()?.tokens ?? undefined;
+		const usage = this.getContextUsage();
+		if (!usage) return undefined;
+		// A just-compacted transcript may retain old assistant messages whose usage
+		// described the pre-compaction prompt. Estimate each retained message instead
+		// of trusting that stale cumulative usage record.
+		return usage.tokens ?? estimateMessagesTokens(this.messages);
 	}
 
 	private async _runModelSwitch<T>(operation: () => Promise<T>): Promise<T> {
@@ -2548,12 +2678,24 @@ export class AgentSession {
 		if (contextWindow <= 0) return;
 
 		const settings = this.settingsManager.getCompactionSettings();
+		const usage = this.getContextUsage();
 		const contextTokens = this._getModelSwitchContextTokens();
 		if (contextTokens === undefined || !shouldCompact(contextTokens, contextWindow, settings)) return;
+		if (usage?.tokens === null) {
+			throw new Error(
+				`Compacted context is still too large for ${nextModel.provider}/${nextModel.id}; choose a larger-context model`,
+			);
+		}
 
 		// Snapshot the old model so the summary request cannot move to the target
 		// model while the switch is awaiting compaction.
 		await this._compactContext(undefined, "threshold", previousModel);
+		const compactedTokens = this._getModelSwitchContextTokens();
+		if (compactedTokens !== undefined && shouldCompact(compactedTokens, contextWindow, settings)) {
+			throw new Error(
+				`Compacted context is still too large for ${nextModel.provider}/${nextModel.id}; choose a larger-context model`,
+			);
+		}
 	}
 
 	private async _applyModelSwitch(
@@ -3467,7 +3609,11 @@ export class AgentSession {
 					});
 				},
 				appendEntry: (customType, data) => {
-					this.sessionManager.appendCustomEntry(customType, data);
+					const entryId = this.sessionManager.appendCustomEntry(customType, data);
+					const entry = this.sessionManager.getEntry(entryId);
+					if (entry) {
+						this._emit({ type: "entry_appended", entry });
+					}
 				},
 				setSessionName: (name) => {
 					this.setSessionName(name);
@@ -3493,7 +3639,7 @@ export class AgentSession {
 			},
 			{
 				getModel: () => this.model,
-				isIdle: () => !this.isStreaming,
+				isIdle: () => this.isIdle,
 				isProjectTrusted: () => this.settingsManager.isProjectTrusted(),
 				getSignal: () => this.agent.signal,
 				abort: () => {
@@ -3899,29 +4045,19 @@ export class AgentSession {
 	// Auto-Retry
 	// =========================================================================
 
-	private _isNonRetryableProviderLimitError(errorMessage: string): boolean {
-		return /GoUsageLimitError|FreeUsageLimitError|Monthly usage limit reached|available balance|insufficient_quota|out of budget|quota exceeded|billing/i.test(
-			errorMessage,
-		);
-	}
-
 	/**
-	 * Check if an error is retryable (overloaded, rate limit, server errors).
+	 * Check if an error is retryable using the canonical pi-ai classifier.
 	 * Context overflow errors are NOT retryable (handled by compaction instead).
 	 */
 	private _isRetryableError(message: AssistantMessage): boolean {
-		if (message.stopReason !== "error" || !message.errorMessage) return false;
-
 		// Context overflow is handled by compaction, not retry
 		const contextWindow = this.model?.contextWindow ?? 0;
 		if (isContextOverflow(message, contextWindow)) return false;
 
-		const err = message.errorMessage;
-		if (this._isNonRetryableProviderLimitError(err)) return false;
-		// Match: overloaded_error, provider returned error, rate limit, 429, 500, 502, 503, 504, service unavailable, network/connection errors (including connection lost), WebSocket transport closes/errors, fetch failed, premature stream endings, HTTP/2 closed before response, terminated, retry delay exceeded
-		return /overloaded|provider.?returned.?error|rate.?limit|too many requests|429|500|502|503|504|service.?unavailable|server.?error|internal.?error|network.?error|connection.?error|connection.?refused|connection.?lost|websocket.?closed|websocket.?error|other side closed|fetch failed|upstream.?connect|reset before headers|socket hang up|ended without|stream ended before (?:message_stop|a terminal response event)|http2 request did not get a response|timed? out|timeout|terminated|retry delay/i.test(
-			err,
-		);
+		// Delegate to the canonical retry classifier from @earendil-works/pi-ai,
+		// which includes provider-specific transient errors, explicit retry guidance,
+		// and quota/billing exclusions.
+		return isRetryableAssistantError(message);
 	}
 
 	/**
@@ -4120,7 +4256,9 @@ export class AgentSession {
 	 */
 	setSessionName(name: string): void {
 		this.sessionManager.appendSessionInfo(name);
-		this._emit({ type: "session_info_changed", name: this.sessionManager.getSessionName() });
+		const event = { type: "session_info_changed", name: this.sessionManager.getSessionName() } as const;
+		this._emit(event);
+		void this._extensionRunner.emit(event);
 	}
 
 	// =========================================================================

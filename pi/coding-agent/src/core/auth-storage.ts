@@ -242,6 +242,52 @@ export class AuthStorage {
 		this.runtimeOverrides.delete(provider);
 	}
 
+	/**
+	 * Read a runtime API key override without consulting stored/ambient sources.
+	 * Exposes the in-memory --api-key overrides to credential-store adapters.
+	 */
+	getRuntimeApiKey(provider: string): string | undefined {
+		return this.runtimeOverrides.get(provider);
+	}
+
+	/**
+	 * List providers that currently have a runtime API key override.
+	 */
+	listRuntimeApiKeyProviders(): string[] {
+		return [...this.runtimeOverrides.keys()];
+	}
+
+	/**
+	 * Serialized read-modify-write for a single provider credential, matching
+	 * the pi-ai CredentialStore.modify() contract. `fn` sees the current stored
+	 * credential (re-read under the lock) and returns the new credential, or
+	 * undefined to leave the entry unchanged. The write and the in-memory cache
+	 * update happen atomically under the file lock so concurrent OAuth refreshes
+	 * cannot double-rotate a token. Resolves with the post-write credential.
+	 *
+	 * Rejections from `fn` propagate (so pi-ai can wrap them as ModelsError);
+	 * storage failures during commit propagate as well.
+	 */
+	async modify(
+		provider: string,
+		fn: (current: AuthCredential | undefined) => Promise<AuthCredential | undefined>,
+	): Promise<AuthCredential | undefined> {
+		return this.storage.withLockAsync(async (content) => {
+			const currentData = this.parseStorageData(content);
+			const next = await fn(currentData[provider]);
+			if (next === undefined) {
+				// No change: keep the in-memory cache aligned with disk and report current.
+				this.data = currentData;
+				this.loadError = null;
+				return { result: currentData[provider] };
+			}
+			const merged: AuthStorageData = { ...currentData, [provider]: next };
+			this.data = merged;
+			this.loadError = null;
+			return { result: next, next: JSON.stringify(merged, null, 2) };
+		});
+	}
+
 	private recordError(error: unknown): void {
 		const normalizedError = error instanceof Error ? error : new Error(String(error));
 		this.errors.push(normalizedError);

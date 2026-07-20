@@ -23,7 +23,11 @@ const replaceEditSchema = Type.Object(
 		}),
 		newText: Type.String({ description: "Replacement text for this targeted edit." }),
 	},
-	{ additionalProperties: false },
+	// Permissive per-item schema: some models emit extra replacement fields
+	// alongside oldText/newText. Accept them at the item level so a valid edit is
+	// not rejected; execute() only reads oldText/newText, so extra fields never
+	// reach the diff/patch logic. The top-level editSchema stays strict.
+	{ additionalProperties: true },
 );
 
 export const editSchema = Type.Object(

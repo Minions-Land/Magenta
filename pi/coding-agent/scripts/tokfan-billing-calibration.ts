@@ -281,8 +281,10 @@ function headerSafeError(status: number, body: string, secrets: Array<string | u
 class TokfanLedger {
 	private mode: "token" | "user" | undefined;
 	private readonly secrets: Array<string | undefined>;
+	private readonly config: CalibrationConfig;
 
-	constructor(private readonly config: CalibrationConfig) {
+	constructor(config: CalibrationConfig) {
+		this.config = config;
 		this.secrets = [config.apiKey, config.userAccessToken];
 	}
 

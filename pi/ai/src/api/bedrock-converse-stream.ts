@@ -47,13 +47,19 @@ import type {
 	ToolCall,
 	ToolResultMessage,
 } from "../types.ts";
+import { normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { providerHeadersToRecord } from "../utils/headers.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
 import { resolveHttpProxyUrlForTarget } from "../utils/node-http-proxy.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
-import { adjustMaxTokensForThinking, buildBaseOptions, clampReasoning } from "./simple-options.ts";
+import {
+	adjustMaxTokensForThinking,
+	buildBaseOptions,
+	clampReasoningForBudget,
+	resolveMaxTokens,
+} from "./simple-options.ts";
 import { transformMessages } from "./transform-messages.ts";
 import { normalizeBedrockTokenUsage } from "./usage-normalization.ts";
 
@@ -147,7 +153,10 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 		// Resolve bearer token for Bedrock API key auth.
 		const skipAuth = getProviderEnvValue("AWS_BEDROCK_SKIP_AUTH", options.env) === "1";
 		const bearerToken =
-			options.bearerToken || getProviderEnvValue("AWS_BEARER_TOKEN_BEDROCK", options.env) || undefined;
+			options.bearerToken ||
+			options.apiKey ||
+			getProviderEnvValue("AWS_BEARER_TOKEN_BEDROCK", options.env) ||
+			undefined;
 		const useBearerToken = bearerToken !== undefined && !skipAuth;
 
 		// in Node.js/Bun environment only
@@ -252,7 +261,11 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 				} else if (item.contentBlockStop) {
 					handleContentBlockStop(item.contentBlockStop, blocks, output, stream);
 				} else if (item.messageStop) {
-					output.stopReason = mapStopReason(item.messageStop.stopReason);
+					const { stopReason, errorMessage } = mapStopReason(item.messageStop.stopReason);
+					output.stopReason = stopReason;
+					if (errorMessage) {
+						output.errorMessage = errorMessage;
+					}
 				} else if (item.metadata) {
 					handleMetadata(item.metadata, model, output);
 				} else if (item.internalServerException) {
@@ -273,7 +286,7 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 			}
 
 			if (output.stopReason === "error" || output.stopReason === "aborted") {
-				throw new Error("An unknown error occurred");
+				throw new Error(output.errorMessage || "An unknown error occurred");
 			}
 
 			stream.push({ type: "done", reason: output.stopReason, message: output });
@@ -323,15 +336,22 @@ const BEDROCK_DATA_RETENTION_DOCS_URL = "https://docs.aws.amazon.com/bedrock/lat
  * detection) can distinguish error categories via simple string matching.
  */
 function formatBedrockError(error: unknown): string {
-	const message = error instanceof Error ? error.message : JSON.stringify(error);
-	const dataRetentionHint = /data retention mode/i.test(message)
+	const norm = normalizeProviderError(error);
+	// Surface the raw HTTP body (with status) when the SDK did not fold it into
+	// the message; otherwise fall back to the message. This is what stops a
+	// gateway 403 from collapsing to `Unknown: UnknownError`.
+	const core =
+		!norm.messageCarriesBody && norm.status !== undefined && norm.body !== undefined
+			? `${norm.status}: ${norm.body}`
+			: norm.message;
+	const dataRetentionHint = /data retention mode/i.test(core)
 		? ` See ${BEDROCK_DATA_RETENTION_DOCS_URL} for supported data retention modes.`
 		: "";
 	if (error instanceof BedrockRuntimeServiceException) {
 		const prefix = BEDROCK_ERROR_PREFIXES[error.name] ?? error.name;
-		return `${prefix}: ${message}${dataRetentionHint}`;
+		return `${prefix}: ${core}${dataRetentionHint}`;
 	}
-	return `${message}${dataRetentionHint}`;
+	return `${core}${dataRetentionHint}`;
 }
 
 /**
@@ -377,11 +397,13 @@ export const streamSimple: StreamFunction<"bedrock-converse-stream", SimpleStrea
 ): AssistantMessageEventStream => {
 	const base = buildBaseOptions(model, options, undefined);
 	if (!options?.reasoning) {
+		base.maxTokens = resolveMaxTokens(context, model, options?.maxTokens);
 		return stream(model, context, { ...base, reasoning: undefined } satisfies BedrockOptions);
 	}
 
 	if (isAnthropicClaudeModel(model)) {
 		if (supportsAdaptiveThinking(model.id, model.name)) {
+			base.maxTokens = resolveMaxTokens(context, model, options?.maxTokens);
 			return stream(model, context, {
 				...base,
 				reasoning: options.reasoning,
@@ -391,9 +413,10 @@ export const streamSimple: StreamFunction<"bedrock-converse-stream", SimpleStrea
 
 		// Undefined means the caller did not request an output cap; let the helper use the model cap.
 		// Do not coerce to 0 here, or the thinking budget would become the entire maxTokens value.
+		const contextAwareCap = resolveMaxTokens(context, model, undefined);
 		const adjusted = adjustMaxTokensForThinking(
 			base.maxTokens,
-			model.maxTokens,
+			contextAwareCap,
 			options.reasoning,
 			options.thinkingBudgets,
 		);
@@ -404,11 +427,12 @@ export const streamSimple: StreamFunction<"bedrock-converse-stream", SimpleStrea
 			reasoning: options.reasoning,
 			thinkingBudgets: {
 				...(options.thinkingBudgets || {}),
-				[clampReasoning(options.reasoning)!]: adjusted.thinkingBudget,
+				[clampReasoningForBudget(model, options.reasoning)!]: adjusted.thinkingBudget,
 			},
 		} satisfies BedrockOptions);
 	}
 
+	base.maxTokens = resolveMaxTokens(context, model, options?.maxTokens);
 	return stream(model, context, {
 		...base,
 		reasoning: options.reasoning,
@@ -906,18 +930,18 @@ function convertToolConfig(
 	return { tools: bedrockTools, toolChoice: bedrockToolChoice };
 }
 
-function mapStopReason(reason: string | undefined): StopReason {
+function mapStopReason(reason: string | undefined): { stopReason: StopReason; errorMessage?: string } {
 	switch (reason) {
 		case BedrockStopReason.END_TURN:
 		case BedrockStopReason.STOP_SEQUENCE:
-			return "stop";
+			return { stopReason: "stop" };
 		case BedrockStopReason.MAX_TOKENS:
 		case BedrockStopReason.MODEL_CONTEXT_WINDOW_EXCEEDED:
-			return "length";
+			return { stopReason: "length" };
 		case BedrockStopReason.TOOL_USE:
-			return "toolUse";
+			return { stopReason: "toolUse" };
 		default:
-			return "error";
+			return reason ? { stopReason: "error", errorMessage: reason } : { stopReason: "error" };
 	}
 }
 

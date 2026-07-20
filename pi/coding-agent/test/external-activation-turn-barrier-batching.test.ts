@@ -32,7 +32,6 @@ function externalCoordinator(harness: Harness) {
 	};
 }
 
-
 function peerSteerEntry(id: string): ExternalActivationEntry {
 	return {
 		key: `peer:steer:${id}`,
