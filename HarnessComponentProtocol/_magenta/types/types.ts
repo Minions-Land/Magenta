@@ -407,12 +407,12 @@ export type CustomEntryContextMessageProjector = (
  * options stack with per-call options: transforms are concatenated (constructor first), and
  * projectors merge by key with per-call projectors overriding same-name constructor defaults.
  */
-export interface SessionContextBuildOptions {
+export type SessionContextBuildOptions = {
 	/** Custom transforms applied after the default latest-compaction selection, in order. */
 	entryTransforms?: readonly ContextEntryTransform[];
 	/** Custom-entry projectors keyed by `customType`. */
 	entryProjectors?: Readonly<Record<string, CustomEntryContextMessageProjector>>;
-}
+};
 
 export type SessionMetadata = {
 	id: string;
