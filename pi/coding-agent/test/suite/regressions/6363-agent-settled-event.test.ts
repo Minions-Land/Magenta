@@ -1,7 +1,7 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createHarness, getUserTexts, type Harness } from "../harness.ts";
 
 function createWaitTool(released: Promise<void>): AgentTool {
@@ -87,6 +87,57 @@ describe("regression #6363: agent settled event and idle waiting", () => {
 		expect(harness.eventsOfType("agent_end")).toHaveLength(2);
 		expect(harness.eventsOfType("agent_settled")).toHaveLength(1);
 		expect(settledIdleStates).toEqual([true]);
+	});
+
+	it("keeps the host busy while a blocking settled handler finishes", async () => {
+		let enterSettled!: () => void;
+		let releaseSettled!: () => void;
+		const settledEntered = new Promise<void>((resolve) => {
+			enterSettled = resolve;
+		});
+		const settledRelease = new Promise<void>((resolve) => {
+			releaseSettled = resolve;
+		});
+		let settledCount = 0;
+		const handlerIdleStates: boolean[] = [];
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					pi.on("agent_settled", async (_event, ctx) => {
+						handlerIdleStates.push(ctx.isIdle());
+						settledCount += 1;
+						if (settledCount !== 1) return;
+						enterSettled();
+						await settledRelease;
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		harness.setResponses([fauxAssistantMessage("first"), fauxAssistantMessage("second")]);
+
+		const firstPrompt = harness.session.prompt("first prompt");
+		await settledEntered;
+
+		expect(handlerIdleStates).toEqual([true]);
+		expect(harness.session.isIdle).toBe(false);
+		let idleResolved = false;
+		const waitingForIdle = harness.session.waitForIdle().then(() => {
+			idleResolved = true;
+		});
+		const secondPrompt = harness.session.prompt("second prompt");
+		await vi.waitFor(() => expect(harness.eventsOfType("agent_start")).toHaveLength(1));
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(idleResolved).toBe(false);
+		expect(getUserTexts(harness)).toEqual(["first prompt"]);
+
+		releaseSettled();
+		await Promise.all([firstPrompt, waitingForIdle, secondPrompt]);
+
+		expect(getUserTexts(harness)).toEqual(["first prompt", "second prompt"]);
+		expect(harness.eventsOfType("agent_settled")).toHaveLength(2);
+		expect(handlerIdleStates).toEqual([true, true]);
+		expect(harness.session.isIdle).toBe(true);
 	});
 
 	it("session waitForIdle resolves only after the run has fully settled", async () => {

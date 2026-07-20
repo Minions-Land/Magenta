@@ -402,6 +402,7 @@ export class AgentSession {
 	// Settled-lifecycle state (D4): tracks whether an agent run (including retries,
 	// auto-compaction, and queued/run-owned continuations) is still in progress.
 	private _isAgentRunActive = false;
+	private _agentSettledInFlight = false;
 	private _idleWaitPromise: Promise<void> | undefined;
 	private _resolveIdleWait: (() => void) | undefined;
 	private _activePromptWithdrawal?: PromptWithdrawalTransaction;
@@ -1729,6 +1730,7 @@ export class AgentSession {
 	// =========================================================================
 
 	private async _runAgentPrompt(messages: AgentMessage | AgentMessage[]): Promise<void> {
+		if (this._agentSettledInFlight) await this.waitForIdle();
 		this._isAgentRunActive = true;
 		try {
 			await this.agent.prompt(messages);
@@ -1742,6 +1744,7 @@ export class AgentSession {
 	}
 
 	private async _runAgentContinuation(): Promise<void> {
+		if (this._agentSettledInFlight) await this.waitForIdle();
 		this._isAgentRunActive = true;
 		try {
 			// The wake payload is already the last message in state, so continuation
@@ -1798,6 +1801,9 @@ export class AgentSession {
 	 * @throws Error if no model selected or no API key available (when not streaming)
 	 */
 	async prompt(text: string, options?: PromptOptions): Promise<void> {
+		// A settled handler is part of the preceding run's externally visible
+		// lifecycle. Do not begin prompt preprocessing against that run's state.
+		if (this._agentSettledInFlight) await this.waitForIdle();
 		const expandPromptTemplates = options?.expandPromptTemplates ?? true;
 		const preflightResult = options?.preflightResult;
 		let messages: AgentMessage[] | undefined;
@@ -2593,7 +2599,7 @@ export class AgentSession {
 	 * Whether the agent is fully idle (no active run).
 	 */
 	get isIdle(): boolean {
-		return !this._isAgentRunActive;
+		return !this._isAgentRunActive && !this._agentSettledInFlight;
 	}
 
 	private _getIdleWaitPromise(): Promise<void> {
@@ -2606,16 +2612,16 @@ export class AgentSession {
 	}
 
 	private async _emitAgentSettled(): Promise<void> {
-		// Phase 1: the run has drained (agent_end handlers, retries, compaction, and
-		// run-owned continuations already completed in _runAgentPrompt). Mark inactive.
+		// The agent loop has drained, but the run remains externally busy until its
+		// blocking settled handlers finish. Extension ctx.isIdle() intentionally sees
+		// the drained loop state so handlers can use lifecycle APIs without self-deadlock.
 		this._isAgentRunActive = false;
-		// Phase 2: notify listeners. Extension settled callbacks are awaited before the
-		// internal completion barrier (waitForIdle) resolves, so RPC promptAndWait only
-		// completes once same-run settled work is done.
+		this._agentSettledInFlight = true;
 		try {
 			await this._extensionRunner.emit({ type: "agent_settled" });
 			this._emit({ type: "agent_settled" });
 		} finally {
+			this._agentSettledInFlight = false;
 			if (this._resolveIdleWait) {
 				const resolve = this._resolveIdleWait;
 				this._resolveIdleWait = undefined;
@@ -3239,20 +3245,25 @@ export class AgentSession {
 	 * Internal: Run auto-compaction with events.
 	 */
 	private async _runAutoCompaction(reason: "overflow" | "threshold", willRetry: boolean): Promise<boolean> {
+		// Establish compaction/model-switch exclusion before auth resolution, which
+		// may await provider credential helpers. The model and controller are owned by
+		// this attempt and must not be reread through mutable session state.
+		if (this._modelSwitchInProgress || this.isCompacting) return false;
+		const model = this.model;
+		if (!model) return false;
+		const abortController = new AbortController();
+		this._autoCompactionAbortController = abortController;
+
 		const settings = this.settingsManager.getCompactionSettings();
 		let started = false;
 		let releaseBarrier: (() => Promise<void>) | undefined;
 
 		try {
-			if (!this.model) {
-				return false;
-			}
-
 			let apiKey: string | undefined;
 			let headers: Record<string, string> | undefined;
 			let env: Record<string, string> | undefined;
 			if (this.agent.streamFn === streamSimple) {
-				const authResult = await this._modelRegistry.getApiKeyAndHeaders(this.model);
+				const authResult = await this._modelRegistry.getApiKeyAndHeaders(model);
 				if (!authResult.ok || !authResult.apiKey) {
 					return false;
 				}
@@ -3260,7 +3271,7 @@ export class AgentSession {
 				headers = authResult.headers;
 				env = authResult.env;
 			} else {
-				({ apiKey, headers, env } = await this._getCompactionRequestAuth(this.model));
+				({ apiKey, headers, env } = await this._getCompactionRequestAuth(model));
 			}
 
 			const pathEntries = this.sessionManager.getBranch();
@@ -3275,7 +3286,7 @@ export class AgentSession {
 			// compaction will actually start, reclaiming any external payload queued at
 			// the just-completed AgentLoop boundary before the summary snapshot is used.
 			releaseBarrier = await this._externalActivations.acquireDeliveryBarrier();
-			this._autoCompactionAbortController = new AbortController();
+			if (abortController.signal.aborted) return false;
 			started = true;
 			this._emit({ type: "compaction_start", reason });
 
@@ -3291,7 +3302,7 @@ export class AgentSession {
 					customInstructions: undefined,
 					reason,
 					willRetry,
-					signal: this._autoCompactionAbortController.signal,
+					signal: abortController.signal,
 				})) as SessionBeforeCompactResult | undefined;
 
 				if (extensionResult?.cancel) {
@@ -3327,11 +3338,11 @@ export class AgentSession {
 				this._emit({ type: "compaction_progress", reason, phase: "summarizing" });
 				const compactResult = await compact(
 					preparation,
-					this.model,
+					model,
 					apiKey,
 					headers,
 					undefined,
-					this._autoCompactionAbortController.signal,
+					abortController.signal,
 					this.thinkingLevel,
 					this.agent.streamFn,
 					env,
@@ -3344,7 +3355,7 @@ export class AgentSession {
 				details = compactResult.details;
 			}
 
-			if (this._autoCompactionAbortController.signal.aborted) {
+			if (abortController.signal.aborted) {
 				this._emit({
 					type: "compaction_end",
 					reason,
@@ -3423,7 +3434,9 @@ export class AgentSession {
 			}
 			return false;
 		} finally {
-			this._autoCompactionAbortController = undefined;
+			if (this._autoCompactionAbortController === abortController) {
+				this._autoCompactionAbortController = undefined;
+			}
 			// The release is deliberately after clearing compaction state. Its normal
 			// priority batch may queue a safe-boundary continuation into the still-live
 			// Agent run, but can never do so while compaction itself is active.
@@ -3639,7 +3652,9 @@ export class AgentSession {
 			},
 			{
 				getModel: () => this.model,
-				isIdle: () => this.isIdle,
+				// Settled handlers run after the agent loop drains. Report that loop state
+				// here while the host-facing session idle barrier remains closed.
+				isIdle: () => !this._isAgentRunActive,
 				isProjectTrusted: () => this.settingsManager.isProjectTrusted(),
 				getSignal: () => this.agent.signal,
 				abort: () => {

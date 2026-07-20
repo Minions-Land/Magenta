@@ -2,6 +2,7 @@ import { PassThrough } from "node:stream";
 import { describe, expect, it } from "vitest";
 import {
 	MAX_PEER_LINK_FRAME_BYTES,
+	PEER_LINK_CAPABILITY_GOSSIP_TRANSIT,
 	type PeerLinkEnvelope,
 	parsePeerLinkFrame,
 	serializePeerLinkFrame,
@@ -49,11 +50,22 @@ class MemoryPeerStore implements PeerLinkStorage {
 		for (const sessionId of sessionIds) this.routes.set(sessionId, peerStoreId);
 	}
 
-	claimOutbound(peerStoreId: string, ownerId: string, includeUnresolved: boolean, limit: number) {
+	claimOutbound(
+		peerStoreId: string,
+		ownerId: string,
+		includeUnresolved: boolean,
+		limit: number,
+		options?: { allowTransit?: boolean },
+	) {
 		const claimed: PeerLinkEnvelope[] = [];
 		for (const row of this.outbox) {
 			if (claimed.length >= limit) break;
 			if (row.status !== "pending" || (row.retryAfter ?? 0) > Date.now()) continue;
+			if (
+				options?.allowTransit === false &&
+				(row.message.originStoreId !== this.storeId || row.message.visitedStoreIds.length !== 1)
+			)
+				continue;
 			if (row.target !== peerStoreId && !(includeUnresolved && row.target === undefined)) continue;
 			row.status = "inflight";
 			row.owner = ownerId;
@@ -153,6 +165,73 @@ async function waitFor(predicate: () => boolean, timeoutMs = 1_000): Promise<voi
 	}
 }
 
+/**
+ * A wire-level model of the deployed origin/main V1 responder. It deliberately
+ * parses only the historical hello fields, emits a hello_ack with no capability
+ * field, and applies the old responderRelaySpoof check to every non-origin
+ * envelope (including legitimate transit).
+ */
+function attachOriginMainV1Responder(input: PassThrough, output: PassThrough) {
+	const probe: {
+		helloCapabilities?: unknown;
+		receivedMessages: PeerLinkEnvelope[];
+		acceptedMessages: PeerLinkEnvelope[];
+	} = { receivedMessages: [], acceptedMessages: [] };
+	let buffer = "";
+	let peerStoreId: string | undefined;
+	let remoteSessions = new Set<string>();
+	const writeAck = (messageId: string, status: "accepted" | "not_found", reason?: string) => {
+		output.write(`${JSON.stringify({ type: "ack", messageId, status, ...(reason ? { reason } : {}) })}\n`);
+	};
+	const onData = (chunk: string | Buffer) => {
+		buffer += chunk.toString();
+		while (true) {
+			const newline = buffer.indexOf("\n");
+			if (newline < 0) return;
+			const line = buffer.slice(0, newline);
+			buffer = buffer.slice(newline + 1);
+			if (!line) continue;
+			const raw = JSON.parse(line) as Record<string, unknown>;
+			if (raw.type === "hello") {
+				// The historical parser returned only these four fields. Unknown hello
+				// properties were ignored, which makes this optional extension rollback-safe.
+				peerStoreId = raw.storeId as string;
+				remoteSessions = new Set(raw.sessions as string[]);
+				probe.helloCapabilities = raw.capabilities;
+				output.write(
+					`${JSON.stringify({
+						type: "hello_ack",
+						protocol: 1,
+						storeId: "store-old",
+						sessions: ["session-old"],
+					})}\n`,
+				);
+				continue;
+			}
+			if (raw.type !== "message") continue;
+			const message = raw.message as PeerLinkEnvelope;
+			probe.receivedMessages.push(message);
+			const previousHop = message.visitedStoreIds.at(-1);
+			const invalidFirstHop = message.visitedStoreIds.length === 1 && message.originStoreId !== peerStoreId;
+			// This is intentionally the old unconditional responder check.
+			const responderRelaySpoof = message.originStoreId !== peerStoreId;
+			const unownedOriginSender = message.originStoreId === peerStoreId && !remoteSessions.has(message.sender);
+			if (previousHop !== peerStoreId || invalidFirstHop || responderRelaySpoof || unownedOriginSender) {
+				writeAck(message.id, "not_found", "invalid ingress ownership");
+				continue;
+			}
+			if (message.recipient !== "session-old") {
+				writeAck(message.id, "not_found");
+				continue;
+			}
+			probe.acceptedMessages.push(message);
+			writeAck(message.id, "accepted");
+		}
+	};
+	input.on("data", onData);
+	return { probe, stop: () => input.off("data", onData) };
+}
+
 describe("PeerLinkSession", () => {
 	it("bounds large V1 session advertisements instead of tearing down the link", async () => {
 		const sessions = Array.from(
@@ -181,6 +260,64 @@ describe("PeerLinkSession", () => {
 			await started;
 		} finally {
 			await link.close();
+		}
+	});
+
+	it("keeps transit retryable across an origin/main V1 responder while direct V1 delivery works", async () => {
+		const local = new MemoryPeerStore("store-new", ["session-new"]);
+		// Put transit first to prove direct-only claiming does not let an incompatible
+		// head-of-queue row starve a later direct message.
+		local.outbox.push({
+			message: {
+				...envelope("m:transit", "session-origin", "session-old", "store-origin"),
+				visitedStoreIds: ["store-origin", "store-new"],
+				hopsRemaining: 1,
+			},
+			target: "store-old",
+			status: "pending",
+		});
+		local.outbox.push({
+			message: envelope("m:direct-old", "session-new", "session-old", "store-new"),
+			target: "store-old",
+			status: "pending",
+		});
+
+		const toLegacy = new PassThrough();
+		const fromLegacy = new PassThrough();
+		const legacy = attachOriginMainV1Responder(toLegacy, fromLegacy);
+		const link = new PeerLinkSession({
+			role: "initiator",
+			input: fromLegacy,
+			output: toLegacy,
+			storage: local,
+			includeUnresolvedOutbound: true,
+			flushIntervalMs: 5,
+			sessionRefreshIntervalMs: 1_000,
+		});
+		try {
+			await link.start();
+			await waitFor(() => local.outbox[1]?.status === "forwarded");
+			await new Promise((resolve) => setTimeout(resolve, 25));
+			expect(legacy.probe.helloCapabilities).toEqual([PEER_LINK_CAPABILITY_GOSSIP_TRANSIT]);
+			expect(legacy.probe.receivedMessages.map((message) => message.id)).toEqual(["m:direct-old"]);
+			expect(legacy.probe.acceptedMessages.map((message) => message.id)).toEqual(["m:direct-old"]);
+			expect(local.outbox[0]?.status).toBe("pending");
+			expect(local.notFoundRequeues).toBe(0);
+		} finally {
+			await link.close();
+			legacy.stop();
+		}
+
+		// The same durable row becomes claimable as soon as the peer upgrades and
+		// advertises transit support on a fresh handshake.
+		const upgradedRemote = new MemoryPeerStore("store-old", ["session-old"]);
+		const upgraded = linkedSessions(local, upgradedRemote);
+		try {
+			await Promise.all([upgraded.responder.start(), upgraded.initiator.start()]);
+			await waitFor(() => upgradedRemote.inbox.some((message) => message.id === "m:transit"));
+			expect(local.outbox[0]?.status).toBe("forwarded");
+		} finally {
+			await Promise.all([upgraded.initiator.close(), upgraded.responder.close()]);
 		}
 	});
 

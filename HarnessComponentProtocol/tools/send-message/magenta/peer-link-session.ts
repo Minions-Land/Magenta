@@ -3,6 +3,7 @@ import type { Readable, Writable } from "node:stream";
 import { StringDecoder } from "node:string_decoder";
 import {
 	MAX_PEER_LINK_FRAME_BYTES,
+	PEER_LINK_CAPABILITY_GOSSIP_TRANSIT,
 	PEER_LINK_PROTOCOL_VERSION,
 	type PeerLinkEnvelope,
 	type PeerLinkFrame,
@@ -20,7 +21,13 @@ export type PeerLinkStorage = {
 	listRegisteredSessionIds(): string[];
 	listAdvertisableSessions(excludePeerStoreId?: string): string[];
 	replacePeerRoutes(peerStoreId: string, sessionIds: string[]): void;
-	claimOutbound(peerStoreId: string, ownerId: string, includeUnresolved: boolean, limit: number): PeerLinkEnvelope[];
+	claimOutbound(
+		peerStoreId: string,
+		ownerId: string,
+		includeUnresolved: boolean,
+		limit: number,
+		options?: { allowTransit?: boolean },
+	): PeerLinkEnvelope[];
 	ackOutbound(messageIds: string[], ownerId: string): void;
 	requeueOutbound(messageIds: string[], ownerId: string, options?: { notFound?: boolean }): void;
 	acceptIncoming(message: PeerLinkEnvelope, ingressPeerStoreId: string): PeerLinkAcceptResult;
@@ -53,6 +60,7 @@ export class PeerLinkSession {
 	private readonly localStoreId: string;
 	private peerStoreId?: string;
 	private remoteSessions = new Set<string>();
+	private remoteCapabilities = new Set<string>();
 	private started = false;
 	private ready = false;
 	private closed = false;
@@ -122,6 +130,7 @@ export class PeerLinkSession {
 					this.ownerId,
 					this.options.includeUnresolvedOutbound === true,
 					available,
+					{ allowTransit: this.remoteCapabilities.has(PEER_LINK_CAPABILITY_GOSSIP_TRANSIT) },
 				);
 				if (batch.length === 0) return;
 				// Claiming is atomic for the whole batch. Track every row before the
@@ -160,7 +169,13 @@ export class PeerLinkSession {
 	private helloFrame(type: "hello" | "hello_ack"): PeerLinkFrame {
 		const sessions = this.fitSessionsToFrame(type, this.options.storage.listRegisteredSessionIds().sort());
 		this.lastAdvertisedSessions = JSON.stringify(sessions);
-		return { type, protocol: PEER_LINK_PROTOCOL_VERSION, storeId: this.localStoreId, sessions };
+		return {
+			type,
+			protocol: PEER_LINK_PROTOCOL_VERSION,
+			storeId: this.localStoreId,
+			sessions,
+			capabilities: [PEER_LINK_CAPABILITY_GOSSIP_TRANSIT],
+		};
 	}
 
 	private fitSessionsToFrame(type: "hello" | "hello_ack" | "sessions", sessions: string[]): string[] {
@@ -168,7 +183,13 @@ export class PeerLinkSession {
 		const frameFor = (candidate: string[]): PeerLinkFrame =>
 			type === "sessions"
 				? { type, sessions: candidate }
-				: { type, protocol: PEER_LINK_PROTOCOL_VERSION, storeId: this.localStoreId, sessions: candidate };
+				: {
+						type,
+						protocol: PEER_LINK_PROTOCOL_VERSION,
+						storeId: this.localStoreId,
+						sessions: candidate,
+						capabilities: [PEER_LINK_CAPABILITY_GOSSIP_TRANSIT],
+					};
 		let lower = 0;
 		let upper = unique.length;
 		while (lower < upper) {
@@ -257,6 +278,7 @@ export class PeerLinkSession {
 			throw new Error(`peer link protocol mismatch: local=${PEER_LINK_PROTOCOL_VERSION} remote=${frame.protocol}`);
 		if (frame.storeId === this.localStoreId) throw new Error("peer link cannot connect a mailbox store to itself");
 		this.peerStoreId = frame.storeId;
+		this.remoteCapabilities = new Set(frame.capabilities ?? []);
 		this.replaceRemoteSessions(frame.storeId, frame.sessions);
 		if (this.options.role === "responder") await this.writeFrame(this.helloFrame("hello_ack"));
 		this.ready = true;

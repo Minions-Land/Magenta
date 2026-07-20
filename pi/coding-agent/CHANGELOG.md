@@ -7,10 +7,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
-- Extension entry renderers for persisted display-only session entries that are rendered in interactive mode without being sent to the model context
+- Durable SSH peer federation now floods messages across relays with per-link acknowledgements and retries, deduplication, bounded hop and advertisement frames, scheduled retention maintenance, mixed-schema compatibility, and automatic reconnect
+- An opt-in tok.fan billing calibration harness compares persistent Claude Code and Magenta sessions with randomized sequential pairing, consume-log attribution, finite-token quota enforcement, redacted reports, and dry-run defaults
+- Extension entry renderers can display persisted session entries in interactive mode without adding them to model context
 
 ### Changed
-- When auto-compaction is enabled, model switching now compacts once with the current model if the active context exceeds the target model's threshold, and only commits the new model after compaction succeeds
+- The upstream runtime through Pi v0.80.8 is integrated behind the ModelRuntime provider and credential facade while Magenta's independent workspace package versions remain at 0.80.2
+- Background, peer, sub-agent, workflow, and reminder completions share one turn-boundary activation coordinator, and claimed external turns participate in the same idle and settled lifecycle as user prompts
+- Provider usage is normalized into disjoint input, output, cache-read, cache-write, one-hour cache-write, and reasoning subsets for consistent context telemetry and cost calculation
+- `Shift+Tab` continues to expose Magenta's `ultra` execution profile while translating it to each provider's highest native effort instead of sending a literal `ultra` value
+- When auto-compaction is enabled, model switching compacts with the current model before committing a smaller target and rejects the switch if the fresh compacted transcript still exceeds that target
+
+### Fixed
+- Bun release binaries load packaged clipboard native bindings from explicit platform resource paths, and release archives now require every published macOS, Linux, and Windows binding
+- External activation quiescence yields to turn-barrier release instead of busy-looping, terminal sub-agent receipts retain deterministic registration order independent of completion timing, and asynchronous settled handlers remain part of the host-visible busy lifecycle
+- Automatic compaction locks model switching before credential resolution and uses one immutable model/authentication snapshot through summarization
+- Mixed-version peer links negotiate gossip transit support so legacy V1 peers continue direct delivery without permanently consuming unsupported transit messages, while bounded deduplication retention removes expired `peer_seen` state without deleting active delivery protection
+- Anthropic zero-value deltas no longer erase cumulative cache/input usage, Google reasoning stays an output subset, and Bedrock one-hour cache writes retain their distinct pricing tier
+
+### Security
+- Billing calibration isolates child environments, rejects ambiguous consume-log attribution, and requires a dedicated finite-quota tok.fan token plus an explicit real-spend confirmation before live execution
+- Release jobs validate and serialize immutable semantic-version tags, pin every action by commit, install the lockfile without lifecycle scripts, verify clipboard native tarballs against committed SHA-512 integrity, build checked-in model catalogs offline, and bind the installer, source commit, and all artifacts to one checksum receipt through Windows smoke testing and publication
 
 ## [0.0.26] - 2026-07-19
 

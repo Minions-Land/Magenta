@@ -241,7 +241,8 @@ if (!options.skipCheck) {
 
 for (const pkg of packages) {
 	run("npm", ["run", "clean"], { cwd: pkg.directory });
-	run("npm", ["run", "build"], { cwd: pkg.directory });
+	const buildScript = pkg.name === "@earendil-works/pi-ai" ? "build:offline" : "build";
+	run("npm", ["run", buildScript], { cwd: pkg.directory });
 }
 run("npm", ["run", "copy-binary-assets"], { cwd: "pi/coding-agent" });
 

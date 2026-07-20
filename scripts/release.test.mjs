@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -24,6 +24,34 @@ test("resolves product version bumps independently of workspace versions", () =>
 	assert.equal(resolveReleaseVersion("9.8.7", "major"), "10.0.0");
 	assert.equal(resolveReleaseVersion("0.80.2", "0.81.0"), "0.81.0");
 	assert.equal(compareVersions("0.0.24", "0.0.23"), 1);
+});
+
+test("release builds are pinned, offline, and receipt-bound", () => {
+	const codingPackage = JSON.parse(
+		readFileSync(new URL("../pi/coding-agent/package.json", import.meta.url), "utf8"),
+	);
+	const localRelease = readFileSync(new URL("./local-release.mjs", import.meta.url), "utf8");
+	const clipboardStage = readFileSync(new URL("./stage-release-clipboard.mjs", import.meta.url), "utf8");
+	const workflow = readFileSync(new URL("../.github/workflows/release.yml", import.meta.url), "utf8");
+
+	assert.match(codingPackage.scripts["build:release-all"], /\.\.\/ai run build:offline/u);
+	assert.doesNotMatch(codingPackage.scripts["build:release-all"], /\.\.\/ai run build &&/u);
+	assert.match(localRelease, /\? "build:offline" : "build"/u);
+	assert.match(workflow, /npm ci --ignore-scripts/u);
+	assert.match(workflow, /stage-release-clipboard\.mjs/u);
+	assert.match(clipboardStage, /assertTarballIntegrity\(tarball, pkg\.integrity/u);
+	assert.match(workflow, /checksum_manifest_sha256/u);
+	assert.match(workflow, /sha256sum -c SHA256SUMS/u);
+	assert.match(workflow, /install\.ps1 SOURCE_COMMIT > SHA256SUMS/u);
+	assert.match(workflow, /group: release-\$\{\{ inputs\.release_tag \|\| github\.ref_name \}\}/u);
+	assert.match(workflow, /\^v\[0-9\]\+\\\.\[0-9\]\+\\\.\[0-9\]\+\$/u);
+	assert.match(workflow, /gh release delete "\$RELEASE_TAG"[^\n]+--cleanup-tag/u);
+	assert.doesNotMatch(workflow, /gh release download \$\{\{ inputs\.release_tag/u);
+	assert.doesNotMatch(workflow, /gh release upload[^\n]+install\.ps1/u);
+
+	const actions = [...workflow.matchAll(/^\s*uses:\s*([^\s#]+)/gmu)].map((match) => match[1]);
+	assert.ok(actions.length > 0);
+	for (const action of actions) assert.match(action, /@[0-9a-f]{40}$/u);
 });
 
 test("rejects invalid, non-increasing, or unsafe release targets", () => {

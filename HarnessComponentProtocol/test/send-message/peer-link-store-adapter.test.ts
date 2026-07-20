@@ -44,6 +44,48 @@ describe("MessageStorePeerLinkAdapter", () => {
 		for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 	});
 
+	it("claims only direct rows for a legacy peer and leaves transit claimable after upgrade", () => {
+		const dir = mkdtempSync(join(tmpdir(), "peer-link-capability-"));
+		dirs.push(dir);
+		const hub = new MessageStore(join(dir, "hub.db"), { storeId: "store-hub" });
+		const adapter = new MessageStorePeerLinkAdapter(hub);
+		try {
+			// Persist transit first so a direct-only query must skip the queue head.
+			expect(
+				adapter.acceptIncoming(
+					{
+						id: "m:transit-pending",
+						originStoreId: "store-origin",
+						sender: "origin-session",
+						recipient: "session-old",
+						content: "relay after upgrade",
+						createdAt: "2026-07-20T00:00:00.000Z",
+						priority: "normal",
+						visitedStoreIds: ["store-origin", "store-hub"],
+						hopsRemaining: 1,
+					},
+					"store-origin",
+				),
+			).toEqual({ status: "accepted" });
+			const direct = hub.sendRouted("hub-session", "session-old", "direct to old peer");
+
+			const legacyClaim = adapter.claimOutbound("store-old", "legacy-owner", true, 10, {
+				allowTransit: false,
+			});
+			expect(legacyClaim.map((message) => message.id)).toEqual([direct.id]);
+			adapter.ackOutbound([direct.id], "legacy-owner");
+
+			// No delivery row was created for the skipped transit message. The same
+			// peer store can claim it immediately after advertising capability.
+			const upgradedClaim = adapter.claimOutbound("store-old", "upgraded-owner", true, 10, {
+				allowTransit: true,
+			});
+			expect(upgradedClaim.map((message) => message.id)).toEqual(["m:transit-pending"]);
+		} finally {
+			hub.close();
+		}
+	});
+
 	it("relays one source-generated id and structured metadata through a hub database", async () => {
 		const dir = mkdtempSync(join(tmpdir(), "peer-link-store-"));
 		dirs.push(dir);

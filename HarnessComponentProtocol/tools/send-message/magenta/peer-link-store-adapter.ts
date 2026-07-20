@@ -1,13 +1,12 @@
-import type {
-	FederatedMessageEnvelope,
-	MessageStore,
-	PeerMessageMetadata,
-	PeerOutboxMessage,
+import {
+	type FederatedMessageEnvelope,
+	type MessageStore,
+	PEER_FEDERATION_METADATA_KEY,
+	type PeerMessageMetadata,
+	type PeerOutboxMessage,
 } from "./message-store.ts";
 import { DEFAULT_PEER_LINK_HOPS, type PeerLinkEnvelope, type PeerLinkMetadata } from "./peer-link-protocol.ts";
 import type { PeerLinkAcceptResult } from "./peer-link-session.ts";
-
-const FEDERATION_METADATA_KEY = "_magentaPeerFederation";
 
 type FederationMetadata = {
 	originStoreId: string;
@@ -24,7 +23,7 @@ function splitMetadata(metadata?: PeerMessageMetadata): {
 	federation?: FederationMetadata;
 } {
 	if (!metadata) return {};
-	const { [FEDERATION_METADATA_KEY]: rawFederation, ...publicMetadata } = metadata;
+	const { [PEER_FEDERATION_METADATA_KEY]: rawFederation, ...publicMetadata } = metadata;
 	const federation =
 		isRecord(rawFederation) &&
 		typeof rawFederation.originStoreId === "string" &&
@@ -46,7 +45,7 @@ function splitMetadata(metadata?: PeerMessageMetadata): {
 function joinMetadata(metadata: PeerLinkMetadata | undefined, federation: FederationMetadata): PeerMessageMetadata {
 	return {
 		...(metadata ?? {}),
-		[FEDERATION_METADATA_KEY]: federation,
+		[PEER_FEDERATION_METADATA_KEY]: federation,
 	};
 }
 
@@ -105,9 +104,15 @@ export class MessageStorePeerLinkAdapter {
 		this.store.replacePeerRoutes(peerStoreId, sessionIds);
 	}
 
-	claimOutbound(peerStoreId: string, ownerId: string, includeUnresolved: boolean, limit: number): PeerLinkEnvelope[] {
+	claimOutbound(
+		peerStoreId: string,
+		ownerId: string,
+		includeUnresolved: boolean,
+		limit: number,
+		options?: { allowTransit?: boolean },
+	): PeerLinkEnvelope[] {
 		return this.store
-			.claimPeerOutbox(peerStoreId, ownerId, limit, includeUnresolved)
+			.claimPeerOutbox(peerStoreId, ownerId, limit, includeUnresolved, options)
 			.map((row) => toLinkEnvelope(row, this.store.getStoreId()));
 	}
 
@@ -120,7 +125,11 @@ export class MessageStorePeerLinkAdapter {
 	}
 
 	runMaintenance(): void {
-		this.store.purgeExpiredOutbox();
+		const now = Date.now();
+		// Outbox bodies and their delivery ledger must disappear before an associated
+		// dedup marker becomes eligible for collection.
+		this.store.purgeExpiredOutbox(now);
+		this.store.purgeExpiredPeerSeen(now);
 	}
 
 	acceptIncoming(message: PeerLinkEnvelope, ingressPeerStoreId: string): PeerLinkAcceptResult {

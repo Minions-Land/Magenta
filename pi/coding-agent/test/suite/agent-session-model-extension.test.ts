@@ -6,7 +6,7 @@ import {
 	type Model,
 } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BuildSystemPromptOptions, ExtensionAPI } from "../../src/index.ts";
 import { createHarness, getAssistantTexts, type Harness } from "./harness.ts";
 
@@ -291,6 +291,66 @@ describe("AgentSession model and extension characterization", () => {
 		expect(harness.session.model?.id).toBe("faux-2");
 		expect(harness.sessionManager.getEntries().filter((entry) => entry.type === "compaction")).toHaveLength(1);
 		expect(harness.sessionManager.getEntries().filter((entry) => entry.type === "model_change")).toHaveLength(1);
+	});
+
+	it("locks model switching and duplicate auto-compaction while auth resolves", async () => {
+		let markAuthRequested!: (model: Model<any>) => void;
+		let releaseAuth!: () => void;
+		const authRequested = new Promise<Model<any>>((resolve) => {
+			markAuthRequested = resolve;
+		});
+		const authRelease = new Promise<void>((resolve) => {
+			releaseAuth = resolve;
+		});
+		const harness = await createHarness({
+			settings: { compaction: { keepRecentTokens: 1 } },
+			models: [
+				{ id: "faux-1", contextWindow: 100_000 },
+				{ id: "faux-2", contextWindow: 100_000 },
+			],
+		});
+		harnesses.push(harness);
+		seedModelSwitchContext(harness, 90);
+		const compactionModelIds = useCompactionSummaryStream(harness, "stable model snapshot");
+		const registry = harness.session.modelRegistry;
+		const getAuth = registry.getApiKeyAndHeaders.bind(registry);
+		vi.spyOn(registry, "getApiKeyAndHeaders").mockImplementation(async (model) => {
+			markAuthRequested(model);
+			await authRelease;
+			return getAuth(model);
+		});
+		const hasConfiguredAuth = registry.hasConfiguredAuth.bind(registry);
+		vi.spyOn(registry, "hasConfiguredAuth").mockImplementation(
+			(model) => model.provider === "target-provider" || hasConfiguredAuth(model),
+		);
+		const targetModel = {
+			...harness.getModel("faux-2")!,
+			provider: "target-provider",
+		} satisfies Model<string>;
+		const internals = harness.session as unknown as {
+			_runAutoCompaction(reason: "overflow" | "threshold", willRetry: boolean): Promise<boolean>;
+		};
+
+		const autoCompaction = internals._runAutoCompaction("threshold", false);
+		const requestedModel = await authRequested;
+		try {
+			expect(requestedModel.id).toBe("faux-1");
+			expect(harness.session.isCompacting).toBe(true);
+			await expect(internals._runAutoCompaction("threshold", false)).resolves.toBe(false);
+			await expect(harness.session.setModel(targetModel)).rejects.toThrow(
+				"Wait for compaction to finish before switching models",
+			);
+		} finally {
+			releaseAuth();
+		}
+		await autoCompaction;
+
+		expect(harness.session.model?.provider).toBe("faux");
+		expect(harness.session.model?.id).toBe("faux-1");
+		expect(compactionModelIds.length).toBeGreaterThan(0);
+		expect(new Set(compactionModelIds)).toEqual(new Set(["faux-1"]));
+		expect(registry.getApiKeyAndHeaders).toHaveBeenCalledTimes(1);
+		expect(harness.sessionManager.getEntries().filter((entry) => entry.type === "compaction")).toHaveLength(1);
 	});
 
 	it("applies pre-switch compaction when cycling scoped models", async () => {

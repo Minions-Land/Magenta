@@ -12,6 +12,8 @@ export const MAX_PEER_LINK_MESSAGE_BYTES = 24 * 1024;
 // Keep the V1 wire default at two hops so mixed-version peers accept normal
 // envelopes. Raising this bound requires protocol capability negotiation.
 export const DEFAULT_PEER_LINK_HOPS = 2;
+/** Optional V1 hello capability: this peer safely accepts relayed envelopes. */
+export const PEER_LINK_CAPABILITY_GOSSIP_TRANSIT = "gossip-transit-v1";
 
 export type PeerLinkMetadata = Record<string, unknown>;
 
@@ -33,6 +35,8 @@ export type PeerLinkHelloFrame = {
 	protocol: number;
 	storeId: string;
 	sessions: string[];
+	/** Optional so deployed V1 peers can omit it and ignore it on receipt. */
+	capabilities?: string[];
 };
 
 export type PeerLinkFrame =
@@ -111,11 +115,18 @@ export function parsePeerLinkFrame(line: string): PeerLinkFrame {
 				throw new Error("peer link hello frame is invalid");
 			if (!isStringArray(value.sessions) && !(Array.isArray(value.sessions) && value.sessions.length === 0))
 				throw new Error("peer link hello sessions are invalid");
+			if (
+				value.capabilities !== undefined &&
+				!isStringArray(value.capabilities) &&
+				!(Array.isArray(value.capabilities) && value.capabilities.length === 0)
+			)
+				throw new Error("peer link hello capabilities are invalid");
 			return {
 				type: value.type,
 				protocol: value.protocol as number,
 				storeId: value.storeId,
 				sessions: value.sessions as string[],
+				...(value.capabilities === undefined ? {} : { capabilities: value.capabilities as string[] }),
 			};
 		case "sessions":
 			if (!isStringArray(value.sessions) && !(Array.isArray(value.sessions) && value.sessions.length === 0))

@@ -13,7 +13,7 @@
  *   c. dedup / loop guard  — a message seen once is rejected on re-entry
  *   d. TTL convergence     — hopsRemaining bound stops an over-long relay chain
  *   e. ingress echo guard  — the ingress link never re-claims what it delivered
- *   f. GC retention        — messages past the retention window are purged
+ *   f. GC retention        — outbox and bounded dedup state expire safely
  *   g. three-party relay   — A -> hub -> C end-to-end delivery
  */
 import { mkdtempSync, rmSync } from "node:fs";
@@ -23,6 +23,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { FederatedMessageEnvelope } from "../../tools/send-message/magenta/message-store.ts";
 import { MessageStore } from "../../tools/send-message/magenta/message-store.ts";
 import { DEFAULT_PEER_LINK_HOPS } from "../../tools/send-message/magenta/peer-link-protocol.ts";
+import { MessageStorePeerLinkAdapter } from "../../tools/send-message/magenta/peer-link-store-adapter.ts";
+import { DatabaseSync } from "../../tools/send-message/magenta/sqlite-adapter.ts";
 
 describe("gossip flooding (Route 1)", () => {
 	const dirs: string[] = [];
@@ -166,6 +168,96 @@ describe("gossip flooding (Route 1)", () => {
 		expect(counts.forwarded).toBe(0);
 		// The purged id was a real message id (body is gone; peer_seen is separate).
 		expect(fresh.id.startsWith("m:")).toBe(true);
+	});
+
+	it("GC: peer_seen retention cannot undercut the V1 delayed-flood window", () => {
+		const dir = mkdtempSync(join(tmpdir(), "gossip-seen-invalid-"));
+		dirs.push(dir);
+		expect(
+			() =>
+				new MessageStore(join(dir, "invalid.db"), {
+					peerOutboxRetentionMs: 10_000,
+					peerSeenRetentionMs: 19_999,
+				}),
+		).toThrow(/at least 20000ms/);
+	});
+
+	it("GC: scheduled maintenance bounds peer_seen without deleting active dedup state", () => {
+		const dir = mkdtempSync(join(tmpdir(), "gossip-seen-gc-"));
+		dirs.push(dir);
+		const path = join(dir, "seen.db");
+		const hub = new MessageStore(path, {
+			peerOutboxRetentionMs: 10_000,
+			peerSeenRetentionMs: 20_000,
+		});
+		stores.push(hub);
+		hub.updatePresence("local-recipient", "idle");
+		const localId = hub.send("alice", "local-recipient", "local body");
+		const routed = hub.sendRouted("alice", "remote-recipient", "remote body");
+		hub.claimPeerOutbox("store:leaf", "relay", 10);
+		const adapter = new MessageStorePeerLinkAdapter(hub);
+		const probe = new DatabaseSync(path);
+		try {
+			const now = Date.now();
+			const updateSeen = probe.prepare(`UPDATE peer_seen SET first_seen_at = ? WHERE message_id IN (?, ?)`);
+			const countSeen = probe.prepare(`SELECT COUNT(*) AS count FROM peer_seen WHERE message_id IN (?, ?)`);
+
+			// Fifteen seconds is outside the 10s outbox window but still inside the
+			// required 20s (two-hop) dedup window. Scheduled maintenance keeps both.
+			updateSeen.run(new Date(now - 15_000).toISOString(), localId, routed.id);
+			adapter.runMaintenance();
+			expect((countSeen.get(localId, routed.id) as { count: number }).count).toBe(2);
+
+			// Once the dedup window expires, an inbox-only marker can be reclaimed,
+			// while the marker for a still-live outbox body remains protected.
+			updateSeen.run(new Date(now - 25_000).toISOString(), localId, routed.id);
+			adapter.runMaintenance();
+			expect((countSeen.get(localId, localId) as { count: number }).count).toBe(0);
+			expect((countSeen.get(routed.id, routed.id) as { count: number }).count).toBe(1);
+			expect(hub.unreadCount("local-recipient")).toBe(1);
+
+			// The inbox primary key still rejects a replay and recreates its marker;
+			// reclaiming peer_seen never duplicates the durable inbox row.
+			expect(
+				hub.acceptFederatedMessage(
+					{
+						id: localId,
+						sender: "alice",
+						recipient: "local-recipient",
+						content: "local body",
+						createdAt: new Date(now).toISOString(),
+						priority: "normal",
+					},
+					"store:replay",
+				).disposition,
+			).toBe("duplicate");
+			expect(hub.unreadCount("local-recipient")).toBe(1);
+
+			// Once the outbox body expires, one maintenance pass deletes body,
+			// per-link delivery ledger, and its now-unprotected dedup marker.
+			probe
+				.prepare(`UPDATE peer_outbox SET received_at = ? WHERE message_id = ?`)
+				.run(new Date(now - 15_000).toISOString(), routed.id);
+			adapter.runMaintenance();
+			expect(
+				(
+					probe.prepare(`SELECT COUNT(*) AS count FROM peer_outbox WHERE message_id = ?`).get(routed.id) as {
+						count: number;
+					}
+				).count,
+			).toBe(0);
+			expect(
+				(
+					probe
+						.prepare(`SELECT COUNT(*) AS count FROM peer_outbox_delivery WHERE message_id = ?`)
+						.get(routed.id) as { count: number }
+				).count,
+			).toBe(0);
+			expect((countSeen.get(routed.id, routed.id) as { count: number }).count).toBe(0);
+			expect((countSeen.get(localId, localId) as { count: number }).count).toBe(1);
+		} finally {
+			probe.close();
+		}
 	});
 
 	// g. Three-party integration: A -> hub -> C end-to-end via store-level relay.

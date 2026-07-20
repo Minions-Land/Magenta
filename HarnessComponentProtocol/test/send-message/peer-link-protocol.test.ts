@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
 	DEFAULT_PEER_LINK_HOPS,
 	MAX_PEER_LINK_FRAME_BYTES,
+	PEER_LINK_CAPABILITY_GOSSIP_TRANSIT,
 	type PeerLinkFrame,
 	parsePeerLinkFrame,
 	serializePeerLinkFrame,
@@ -14,7 +15,13 @@ describe("peer link protocol", () => {
 
 	it("round-trips hello, message, and ack frames", () => {
 		const frames: PeerLinkFrame[] = [
-			{ type: "hello", protocol: 1, storeId: "store-a", sessions: ["session-a"] },
+			{
+				type: "hello",
+				protocol: 1,
+				storeId: "store-a",
+				sessions: ["session-a"],
+				capabilities: [PEER_LINK_CAPABILITY_GOSSIP_TRANSIT],
+			},
 			{
 				type: "message",
 				message: {
@@ -37,6 +44,11 @@ describe("peer link protocol", () => {
 			const line = serializePeerLinkFrame(frame);
 			expect(parsePeerLinkFrame(line.trimEnd())).toEqual(frame);
 		}
+	});
+
+	it("accepts a deployed V1 hello_ack with no capability field", () => {
+		const legacy = { type: "hello_ack", protocol: 1, storeId: "store-old", sessions: ["session-old"] };
+		expect(parsePeerLinkFrame(JSON.stringify(legacy))).toEqual(legacy);
 	});
 
 	it("rejects malformed, oversized, and over-hop message frames", () => {

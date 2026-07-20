@@ -29,6 +29,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { DEFAULT_PEER_LINK_HOPS } from "./peer-link-protocol.ts";
 import { DatabaseSync } from "./sqlite-adapter.ts";
 
 /** Liveness of an agent, as recorded in the `presence` table. */
@@ -39,6 +40,9 @@ export type MessagePriority = "urgent" | "normal";
 
 /** Structured metadata carried end-to-end with a peer message. */
 export type PeerMessageMetadata = Record<string, unknown>;
+
+/** Reserved metadata used to persist the peer-link envelope between relay hops. */
+export const PEER_FEDERATION_METADATA_KEY = "_magentaPeerFederation";
 
 /** A transport-neutral federated message. Relays preserve every field. */
 export type FederatedMessageEnvelope = {
@@ -118,6 +122,11 @@ export type MessageStoreOptions = {
 	peerOutboxClaimTimeoutMs?: number;
 	/** Retention period for peer outbox messages (milliseconds). Default 7 days. */
 	peerOutboxRetentionMs?: number;
+	/**
+	 * Deduplication retention for `peer_seen`. Defaults to outbox retention times
+	 * the V1 hop budget and cannot be configured below that delayed-flood window.
+	 */
+	peerSeenRetentionMs?: number;
 	/** Optional fixed id for a new store. Must match when reopening it. */
 	storeId?: string;
 };
@@ -276,6 +285,7 @@ CREATE TABLE IF NOT EXISTS peer_seen (
     first_seen_at         TEXT NOT NULL,
     ingress_peer_store_id TEXT
 );
+CREATE INDEX IF NOT EXISTS idx_peer_seen_retention ON peer_seen(first_seen_at);
 `;
 
 /**
@@ -294,6 +304,7 @@ export class MessageStore {
 	private readonly stalenessMs: number;
 	private readonly peerOutboxClaimTimeoutMs: number;
 	private readonly peerOutboxRetentionMs: number;
+	private readonly peerSeenRetentionMs: number;
 	/** Stable identity persisted in the database and advertised to peer stores. */
 	readonly storeId: string;
 
@@ -316,6 +327,12 @@ export class MessageStore {
 		if (!Number.isFinite(this.peerOutboxRetentionMs) || this.peerOutboxRetentionMs < 0) {
 			this.db.close();
 			throw new TypeError("peer outbox retention must be a non-negative finite number");
+		}
+		const minimumPeerSeenRetentionMs = this.peerOutboxRetentionMs * DEFAULT_PEER_LINK_HOPS;
+		this.peerSeenRetentionMs = options?.peerSeenRetentionMs ?? minimumPeerSeenRetentionMs;
+		if (!Number.isFinite(this.peerSeenRetentionMs) || this.peerSeenRetentionMs < minimumPeerSeenRetentionMs) {
+			this.db.close();
+			throw new TypeError(`peer seen retention must be a finite number at least ${minimumPeerSeenRetentionMs}ms`);
 		}
 	}
 
@@ -733,10 +750,19 @@ export class MessageStore {
 	 * Atomically claim outbox messages not yet delivered to `peerStoreId`. Uses
 	 * the per-link delivery ledger: returns messages that have no delivery row for
 	 * this peer, or whose delivery row is stale (crashed relay). Creates/updates
-	 * delivery rows to track inflight state per link. Pure gossip: all messages
-	 * flood to every link; `includeUnresolved` is ignored (kept for compat).
+	 * delivery rows to track inflight state per link. Pure gossip normally floods
+	 * every message to every link. When `allowTransit` is false, the durable query
+	 * claims only locally-originated first-hop rows; relayed rows get no delivery
+	 * record and remain eligible after the peer upgrades its advertised capability.
+	 * `includeUnresolved` is ignored (kept for compat).
 	 */
-	claimPeerOutbox(peerStoreId: string, owner: string, limit = 100, _includeUnresolved = false): PeerOutboxMessage[] {
+	claimPeerOutbox(
+		peerStoreId: string,
+		owner: string,
+		limit = 100,
+		_includeUnresolved = false,
+		options?: { allowTransit?: boolean },
+	): PeerOutboxMessage[] {
 		if (peerStoreId.length === 0 || owner.length === 0) {
 			throw new TypeError("peer store id and claim owner must not be empty");
 		}
@@ -745,6 +771,10 @@ export class MessageStore {
 		const nowMs = Date.now();
 		const claimedAt = new Date(nowMs).toISOString();
 		const staleBefore = new Date(nowMs - this.peerOutboxClaimTimeoutMs).toISOString();
+		const transitPredicate =
+			options?.allowTransit === false
+				? `AND json_extract(o.metadata_json, '$.${PEER_FEDERATION_METADATA_KEY}.originStoreId') IS NULL`
+				: "";
 		type Row = {
 			message_id: string;
 			sender: string;
@@ -765,7 +795,8 @@ export class MessageStore {
 					   AND (claimed_at IS NULL OR claimed_at <= ?)`,
 				)
 				.run(peerStoreId, staleBefore);
-			// Select messages not yet forwarded to this peer.
+			// Select messages not yet forwarded to this peer. Federation metadata is
+			// absent on locally-originated rows and present on every accepted relay row.
 			const candidates = this.db
 				.prepare(
 					`SELECT o.message_id, o.sender, o.recipient, o.content, o.created_at, o.priority,
@@ -773,7 +804,8 @@ export class MessageStore {
 					 FROM peer_outbox o
 					 LEFT JOIN peer_outbox_delivery d
 					   ON o.message_id = d.message_id AND d.peer_store_id = ?
-					 WHERE d.status IS NULL OR d.status = 'pending'
+					 WHERE (d.status IS NULL OR d.status = 'pending')
+					   ${transitPredicate}
 					 ORDER BY (CASE o.priority WHEN 'urgent' THEN 0 ELSE 1 END), o.rowid
 					 LIMIT ?`,
 				)
@@ -1326,6 +1358,29 @@ export class MessageStore {
 			}
 			return expired.length;
 		});
+	}
+
+	/**
+	 * Garbage-collect deduplication markers after the maximum delayed-flood
+	 * window. By default that is two outbox retention periods: one queue delay per
+	 * V1 hop. A marker whose outbox body is still active is retained regardless of
+	 * timestamp; maintenance deletes outbox bodies first, then calls this method.
+	 * Inbox rows need no such exception because their primary key still rejects a
+	 * replay and atomically recreates the marker.
+	 */
+	purgeExpiredPeerSeen(nowMs: number = Date.now()): number {
+		const cutoff = new Date(nowMs - this.peerSeenRetentionMs).toISOString();
+		const result = this.db
+			.prepare(
+				`DELETE FROM peer_seen
+				 WHERE first_seen_at <= ?
+				   AND NOT EXISTS (
+				     SELECT 1 FROM peer_outbox
+				      WHERE peer_outbox.message_id = peer_seen.message_id
+				   )`,
+			)
+			.run(cutoff) as { changes: number | bigint };
+		return Number(result.changes);
 	}
 
 	close(): void {
