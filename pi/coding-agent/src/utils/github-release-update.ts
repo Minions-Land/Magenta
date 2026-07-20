@@ -218,6 +218,22 @@ function buildGitHubHeaders(accept: string): Record<string, string> {
 	return headers;
 }
 
+/** @internal */
+export function isRetryableDownloadError(error: unknown): boolean {
+	if (!(error instanceof Error)) return false;
+	const message = error.message.toLowerCase();
+	return (
+		error.name === "AbortError" ||
+		message.includes("aborted") ||
+		message.includes("timeout") ||
+		message.includes("econnreset") ||
+		message.includes("etimedout") ||
+		message.includes("socket connection was closed") ||
+		message.includes("unable to connect") ||
+		message.includes("fetch failed")
+	);
+}
+
 /**
  * Download a release asset to `destination` with an inactivity-based timeout
  * and bounded retries. Exported for testing.
@@ -262,16 +278,8 @@ export async function downloadReleaseAsset(
 	} catch (error) {
 		if (inactivityTimer) clearTimeout(inactivityTimer);
 
-		// Retry on abort/timeout/network errors, but not on permanent failures
-		const isRetryable =
-			error instanceof Error &&
-			(error.name === "AbortError" ||
-				error.message.includes("aborted") ||
-				error.message.includes("timeout") ||
-				error.message.includes("ECONNRESET") ||
-				error.message.includes("ETIMEDOUT"));
-
-		if (isRetryable && attempt < DOWNLOAD_MAX_RETRIES) {
+		// Retry transient transport failures, but not permanent HTTP failures.
+		if (isRetryableDownloadError(error) && attempt < DOWNLOAD_MAX_RETRIES) {
 			console.warn(
 				`⚠️  Download interrupted for ${asset.name} (attempt ${attempt}/${DOWNLOAD_MAX_RETRIES}), retrying...`,
 			);

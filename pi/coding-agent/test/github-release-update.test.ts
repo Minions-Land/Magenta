@@ -11,6 +11,7 @@ import {
 	consumePreviousWindowsUpdateError,
 	downloadReleaseAsset,
 	ensureCurrentReleaseResources,
+	isRetryableDownloadError,
 	shouldSkipConcurrentUpdateTransaction,
 } from "../src/utils/github-release-update.ts";
 import {
@@ -683,6 +684,15 @@ describe("downloadReleaseAsset resilience", () => {
 		name,
 		downloadUrl: `https://github.com/Minions-Land/Magenta-CLI/releases/download/v999.0.0/${name}`,
 		sha256: "b".repeat(64),
+	});
+
+	it("classifies Bun transport failures as retryable without retrying permanent HTTP errors", () => {
+		expect(isRetryableDownloadError(new Error("The socket connection was closed unexpectedly."))).toBe(true);
+		expect(isRetryableDownloadError(new Error("Unable to connect. Is the computer able to access the url?"))).toBe(
+			true,
+		);
+		expect(isRetryableDownloadError(new Error("fetch failed"))).toBe(true);
+		expect(isRetryableDownloadError(new Error("Download failed for asset: 404 Not Found"))).toBe(false);
 	});
 
 	it("retries a transient abort and then succeeds", async () => {

@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Self-update retries Bun transport failures reported as closed sockets, unavailable connections, or generic fetch failures
+
 ## [0.0.27] - 2026-07-20
 
 ### Added
