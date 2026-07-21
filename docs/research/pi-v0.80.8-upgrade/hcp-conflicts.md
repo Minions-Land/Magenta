@@ -2,7 +2,7 @@
 
 ## 0. 审查范围与基准
 
-- Magenta current: `/Users/mjm/Magenta3` at `4a08f6305ed3fa88067d7dbd9a19ced606dcef0f`。
+- Magenta current: `$HOME/Magenta3` at `4a08f6305ed3fa88067d7dbd9a19ced606dcef0f`。
 - Upstream U2: tag/checkout `v0.80.2` at `0201806adfa825ab3d7957a4267d46e5030fd357`。
 - Upstream U8: tag/checkout `v0.80.8` at `fae7176cb9f7c4725a40d9d481d8d70b80f18086`。
 - Upstream Git evidence: `/tmp/magenta-pi-upstream-v0.80.8-20260717`。

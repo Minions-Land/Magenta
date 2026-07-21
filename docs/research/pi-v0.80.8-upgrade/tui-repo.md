@@ -5,7 +5,7 @@
 - Upstream range: `/tmp/magenta-pi-upstream-v0.80.8-20260717`, `v0.80.2..v0.80.8`.
 - Fixed trees: `U2=/tmp/magenta-pi-v0802`, `U8=/tmp/magenta-pi-v0808`.
 - Import snapshot: `/tmp/magenta-import-f1da4c` (plain tree, not a Git repository).
-- Magenta mapping target: `/Users/mjm/Magenta3` at `4a08f6305ed3fa88067d7dbd9a19ced606dcef0f`.
+- Magenta mapping target: `$HOME/Magenta3` at `4a08f6305ed3fa88067d7dbd9a19ced606dcef0f`.
 - Path-relevant upstream log: 99 commits when selecting `packages/tui`, `packages/orchestrator`, `.github`, `scripts`, `.pi`, and top-level build/dependency/release files. This deliberately includes merge commits, contributor metadata, release bumps, changelog cycle commits, and lock drift.
 - Final scoped tree delta: 42 files, 3,838 insertions, 174 deletions. `packages/tui` has 9 final changed files; `packages/orchestrator` is a new 18-file package; the rest is root/CI/build/release/dependency surface.
 

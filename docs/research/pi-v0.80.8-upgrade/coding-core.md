@@ -4,7 +4,7 @@
 
 - Owned scope: `packages/coding-agent/src/core/**`, `src/main.ts`, `src/index.ts`, `src/migrations.ts`, package exports/resources, and directly coupled tests/docs.
 - Upstream evidence was read from `/tmp/magenta-pi-upstream-v0.80.8-20260717` at tags `v0.80.2=0201806a`, `v0.80.3=a23abe4a`, `v0.80.4=912d0953`, `v0.80.5=cc62baa4`, `v0.80.6=2b3fda99`, `v0.80.7=818d6745`, `v0.80.8=fae7176c`. The checkout HEAD is newer, so every diff/log conclusion below is tag-bounded.
-- Comparison trees: U2 `/tmp/magenta-pi-v0802`; U8 `/tmp/magenta-pi-v0808` plus tag-bounded Git evidence; Magenta import I `/tmp/magenta-import-f1da4c/pi`; Magenta current C `/Users/mjm/Magenta3@4a08f63/pi`.
+- Comparison trees: U2 `/tmp/magenta-pi-v0802`; U8 `/tmp/magenta-pi-v0808` plus tag-bounded Git evidence; Magenta import I `/tmp/magenta-import-f1da4c/pi`; Magenta current C `$HOME/Magenta3@4a08f63/pi`.
 - `v0.80.5` has no coding-agent changelog content; its only scoped change is the package version release commit.
 - Classification: **ADOPTED** = behavior is present in C (possibly via a Magenta implementation); **PARTIAL** = some contract is present but not the upstream contract; **PORT** = absent and can be adapted; **CONFLICT** = absent or incompatible and requires architecture-aware redesign; **DEPENDENCY** = implementation is in pi-ai/pi-agent/TUI/modes but core consumes the contract; **NO-OP** = mechanical/release-only.
 

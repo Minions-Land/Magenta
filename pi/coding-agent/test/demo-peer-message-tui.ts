@@ -28,7 +28,7 @@ const mockSession = {
 		thinkingLevel: "off",
 	},
 	sessionManager: {
-		getCwd: () => "/Users/mjm/Magenta3",
+		getCwd: () => "/Users/test-user/Magenta3",
 		getSessionName: () => "",
 		getEntries: () => [],
 	},

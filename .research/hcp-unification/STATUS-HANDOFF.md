@@ -71,7 +71,7 @@ Contract + progress:
 - `.research/hcp-unification/progress.md` (status log)
 
 Sub-agent analysis:
-- `/Users/mjm/.magenta/agent/tmp/sub-agents/agent_00[1-6]-*.log` (contract review, P2/3/4/5/6 deep analysis)
+- `$HOME/.magenta/agent/tmp/sub-agents/agent_00[1-6]-*.log` (contract review, P2/3/4/5/6 deep analysis)
 
 ## Phase 5 plan (from agent_005 analysis)
 
@@ -127,18 +127,18 @@ Sub-agent analysis:
 
 ```bash
 # Harness
-cd /Users/mjm/Magenta3/harness
+cd $HOME/Magenta3/harness
 npm run build                    # tsc + copy assets
 npx vitest --run                 # 353 tests
 
 # Pi
-cd /Users/mjm/Magenta3/pi/coding-agent
+cd $HOME/Magenta3/pi/coding-agent
 npx tsc --noEmit                 # typecheck (2 pre-existing unrelated errors OK)
 npx vitest --run                 # 1633 tests (Phases 0-4 complete)
 npx vitest --run test/extensions-runner.test.ts  # 34 tests incl. hook-order
 
 # Full integration (after Phase 5)
-cd /Users/mjm/Magenta3/pi/coding-agent
+cd $HOME/Magenta3/pi/coding-agent
 npm run build
 cd ../../
 # Run real bash commands via TUI to verify execution parity

@@ -40,7 +40,11 @@ describe("tool-display helpers", () => {
 			summarizeToolCall(
 				{
 					name: "read",
-					args: { file_path: "/Users/mjm/Magenta3/pi/coding-agent/src/index.ts", start_line: 10, end_line: 20 },
+					args: {
+						file_path: "/Users/test-user/Magenta3/pi/coding-agent/src/index.ts",
+						start_line: 10,
+						end_line: 20,
+					},
 				},
 				34,
 			),
@@ -59,7 +63,8 @@ describe("tool-display helpers", () => {
 				{
 					name: "file_read",
 					args: {
-						file_path: "/Users/mjm/Magenta3/HarnessComponentProtocol/skills/research-orchestration/pi/SKILL.md",
+						file_path:
+							"/Users/test-user/Magenta3/HarnessComponentProtocol/skills/research-orchestration/pi/SKILL.md",
 					},
 				},
 				80,
@@ -81,11 +86,11 @@ describe("tool-display helpers", () => {
 			summarizeToolCall(
 				{
 					name: "find",
-					args: { path: "/Users/mjm/Magenta3", pattern: "**/*python*" },
+					args: { path: "/Users/test-user/Magenta3", pattern: "**/*python*" },
 				},
 				80,
 			),
-		).toBe("'**/*python*' in /Users/mjm/Magenta3");
+		).toBe("'**/*python*' in /Users/test-user/Magenta3");
 		expect(summarizeToolCall({ name: "find", args: { pattern: "*.ts" } }, 80)).toBe("'*.ts' in .");
 	});
 

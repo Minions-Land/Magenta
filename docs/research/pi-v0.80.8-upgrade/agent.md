@@ -5,7 +5,7 @@
 - Upstream baseline: `U2=/tmp/magenta-pi-v0802`, target: `U8=/tmp/magenta-pi-v0808`.
 - Authoritative Git history: `/tmp/magenta-pi-upstream-v0.80.8-20260717`, range `v0.80.2..v0.80.8`.
 - Imported Magenta snapshot: `/tmp/magenta-import-f1da4c`. Its `pi/agent/src/{agent,agent-loop,types}.ts` are byte-identical to U2. The snapshot does not contain the top-level `harness/` directory created by Magenta commit `f1da4c9`; where harness evidence is required, this report verifies the same import point through `git show f1da4c9:harness/...` in the current repository.
-- Current Magenta: `/Users/mjm/Magenta3` at `4a08f63`.
+- Current Magenta: `$HOME/Magenta3` at `4a08f63`.
 - Status vocabulary: `PRESENT`, `PARTIAL`, `SUPERSEDED`, `MISSING`, `CONFLICT`, `N/A`.
 - Exhaustiveness boundary: all 12 non-empty official `packages/agent/CHANGELOG.md` bullets in versions 0.80.3 through 0.80.8, plus the explicitly requested cross-package contracts for `Usage.reasoning`, post-compaction usage, and `Models`/`ModelRuntime`. Empty 0.80.5 and 0.80.8 sections are recorded in the appendix but create no semantic AG item.
 
@@ -29,7 +29,7 @@ Highest-risk gaps are AG-007 (length-truncated calls can execute, including Mage
 - **Upstream files/symbols:** `packages/agent/src/agent.ts`: `AgentOptions.prepareNextTurnWithContext`, `Agent.prepareNextTurnWithContext`, constructor assignment, `createLoopConfig()` dispatch; `packages/agent/test/agent.test.ts` and `CHANGELOG.md`.
 - **Contract/behavior:** stateful `Agent` users can receive `PrepareNextTurnContext` (`message`, `toolResults`, current context, new messages) and the active run abort signal. The old callback remains signal-only.
 - **Import evidence:** `/tmp/magenta-import-f1da4c/pi/agent/src/agent.ts` has only `prepareNextTurn(signal?)`; no `prepareNextTurnWithContext`.
-- **Current evidence:** `/Users/mjm/Magenta3/pi/agent/src/types.ts` still exposes low-level `AgentLoopConfig.prepareNextTurn(context)` and `/pi/agent/src/agent-loop.ts` invokes it, but `/pi/agent/src/agent.ts` exposes only the legacy signal callback and wraps it as `async () => this.prepareNextTurn(this.signal)`. There is no context-aware public wrapper API.
+- **Current evidence:** `$HOME/Magenta3/pi/agent/src/types.ts` still exposes low-level `AgentLoopConfig.prepareNextTurn(context)` and `/pi/agent/src/agent-loop.ts` invokes it, but `/pi/agent/src/agent.ts` exposes only the legacy signal callback and wraps it as `async () => this.prepareNextTurn(this.signal)`. There is no context-aware public wrapper API.
 - **Status:** **MISSING**. Low-level context support is not equivalent to the public `Agent` API.
 - **Migration action/dependencies:** add the separate option/property and select it first in `createLoopConfig`, preserving the legacy branch exactly. Incorporate Magenta's added `hasMoreToolCalls` field in `PrepareNextTurnContext`; do not copy U8's older context shape blindly.
 - **Tests:** port the context callback test and assert current context/model/tool results plus `signal === agent.signal`; also retain the legacy signal test and a case where both callbacks are supplied (context-aware wins).
@@ -41,7 +41,7 @@ Highest-risk gaps are AG-007 (length-truncated calls can execute, including Mage
 - **Upstream files/symbols:** `packages/agent/src/agent.ts:createLoopConfig`; `packages/agent/test/agent.test.ts` test “keeps legacy prepareNextTurn signal callback behavior”.
 - **Contract/behavior:** the legacy callback's first argument remains the active `AbortSignal`; adding a context API must not silently repurpose it.
 - **Import evidence:** U2/import already wrap the low-level callback and pass `this.signal`, so the final contract is present despite the transient upstream regression inside the range.
-- **Current evidence:** `/Users/mjm/Magenta3/pi/agent/src/agent.ts:createLoopConfig()` still calls `this.prepareNextTurn?.(this.signal)`.
+- **Current evidence:** `$HOME/Magenta3/pi/agent/src/agent.ts:createLoopConfig()` still calls `this.prepareNextTurn?.(this.signal)`.
 - **Status:** **PRESENT**.
 - **Migration action/dependencies:** no behavior change; AG-001 must be implemented as a distinct callback to avoid regressing this item.
 - **Tests:** current suite lacks U8's explicit legacy regression test; port it before AG-001.
@@ -53,7 +53,7 @@ Highest-risk gaps are AG-007 (length-truncated calls can execute, including Mage
 - **Upstream files/symbols:** `src/harness/session/session.ts`: `ContextEntryTransform`, `CustomEntryContextMessageProjector`, `SessionContextBuildOptions`, `defaultContextEntryTransform`, `buildContextEntries`, `sessionEntryToContextMessages`, `Session.buildContextEntries`, option merging; docs and `test/harness/session.test.ts`.
 - **Contract/behavior:** derive runtime state from the full active branch, then run the default latest-compaction selection, then stacked custom transforms, then project entries. `custom` entries remain in the entry sequence but are omitted from model messages unless a keyed projector returns messages. Constructor options stack with per-call transforms; per-call projectors override same-name defaults.
 - **Import evidence:** `git show f1da4c9:harness/session/session.ts` has monolithic `buildSessionContext()` and `Session(storage)` only.
-- **Current evidence:** `/Users/mjm/Magenta3/HarnessComponentProtocol/_magenta/session/pi/session.ts` retains that monolithic U2 shape; searches find no `entryTransforms`, `entryProjectors`, or `buildContextEntries` in HCP.
+- **Current evidence:** `$HOME/Magenta3/HarnessComponentProtocol/_magenta/session/pi/session.ts` retains that monolithic U2 shape; searches find no `entryTransforms`, `entryProjectors`, or `buildContextEntries` in HCP.
 - **Status:** **MISSING**.
 - **Migration action/dependencies:** port into the HCP session implementation and public types/barrel, adapting `AgentMessage` imports to the current package boundary. Ensure HCP's component context system is not confused with session-entry projection; they solve different layers.
 - **Tests:** port the three U8 cases: custom entry retained/omitted by default, keyed projector, transforms after default compaction. Add constructor+call stacking and projector override tests.

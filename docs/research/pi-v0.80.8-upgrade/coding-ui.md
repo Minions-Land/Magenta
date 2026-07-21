@@ -6,7 +6,7 @@
 - 上游终点 U8: `v0.80.8` / `fae7176cb9f7c4725a40d9d481d8d70b80f18086` / 2026-07-16。
 - 上游提交证据库: `/tmp/magenta-pi-upstream-v0.80.8-20260717`，其 HEAD 为 `216e672e7c9fc65682553394b74e483c0c9e47f7`；本文所有 SHA 均可在该库核验。
 - 初始导入快照: `/tmp/magenta-import-f1da4c/pi/coding-agent`，`package.json` 仍标记 `0.80.2`。目录本身不是 Git 仓库，`f1da4c` 是快照命名/来源标识，不把它误报成该目录可验证的 HEAD。
-- Magenta 当前基准: `/Users/mjm/Magenta3` @ `4a08f6305ed3fa88067d7dbd9a19ced606dcef0f`，实际路径 `pi/coding-agent`；依赖 `pi-ai/pi-agent-core/pi-tui` 仍标记 `0.80.2`，并已大幅引入 HCP、ExecutionProfile、后台事件、工具 renderer registry 等 Magenta 专有结构。
+- Magenta 当前基准: `$HOME/Magenta3` @ `4a08f6305ed3fa88067d7dbd9a19ced606dcef0f`，实际路径 `pi/coding-agent`；依赖 `pi-ai/pi-agent-core/pi-tui` 仍标记 `0.80.2`，并已大幅引入 HCP、ExecutionProfile、后台事件、工具 renderer registry 等 Magenta 专有结构。
 - 上游区间共 107 个非 merge、触及 `packages/coding-agent` 的提交；其中 70 个直接触及 `src/cli/**`、`src/modes/**`、`src/rpc-entry.ts`、docs/examples/tests。附录列出全部 107 个，避免仅凭 changelog 漏项。
 - 状态定义: `PRESENT` 等价行为已存在；`PARTIAL` 仅部分覆盖；`SUPERSEDED` 已由 Magenta 更高层设计替代且无需照搬；`MISSING` 不存在；`CONFLICT` 与 Magenta 架构/契约冲突，必须重设计；`N/A` 为 release/changelog/lockfile 或纯其他 package 行为。
 

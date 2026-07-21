@@ -1,6 +1,6 @@
 # packages/ai v0.80.2 -> v0.80.8 语义升级审计
 
-基准：upstream `v0.80.2`=`/tmp/magenta-pi-v0802`，upstream `v0.80.8`=`/tmp/magenta-pi-v0808`，历史仓库=`/tmp/magenta-pi-upstream-v0.80.8-20260717`；Magenta import=`/tmp/magenta-import-f1da4c`（包版本仍为 `0.80.2`），Magenta current=`/Users/mjm/Magenta3` @ `4a08f6305ed3fa88067d7dbd9a19ced606dcef0f`。本审计只读源码、tag diff、commit diff 和测试；未运行测试、未修改 Magenta3。
+基准：upstream `v0.80.2`=`/tmp/magenta-pi-v0802`，upstream `v0.80.8`=`/tmp/magenta-pi-v0808`，历史仓库=`/tmp/magenta-pi-upstream-v0.80.8-20260717`；Magenta import=`/tmp/magenta-import-f1da4c`（包版本仍为 `0.80.2`），Magenta current=`$HOME/Magenta3` @ `4a08f6305ed3fa88067d7dbd9a19ced606dcef0f`。本审计只读源码、tag diff、commit diff 和测试；未运行测试、未修改 Magenta3。
 
 ## 结论摘要
 

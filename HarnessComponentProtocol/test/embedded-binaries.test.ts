@@ -16,7 +16,9 @@ describe("Bun compiled-binary URL detection", () => {
 	});
 
 	it("does not classify a regular source URL as a compiled binary", () => {
-		expect(HcpClientisbunbinaryurl("file:///Users/mjm/Magenta3/HarnessComponentProtocol/HcpClient.ts")).toBe(false);
+		expect(HcpClientisbunbinaryurl("file:///Users/test-user/Magenta3/HarnessComponentProtocol/HcpClient.ts")).toBe(
+			false,
+		);
 	});
 });
 

@@ -31,10 +31,10 @@ describe("sub-agent renderer", () => {
 				{
 					type: "text",
 					text: `Started 3 sub-agents concurrently with automatic return to main agent:
-agent_001	running	msg-delivery	/Users/mjm/.magenta/agent/tmp/sub-agents/agent_001-2026-07-06T06-28-37-603Z.log
-agent_002	running	tree-branch	/Users/mjm/.magenta/agent/tmp/sub-agents/agent_002-2026-07-06T06-28-37-620Z.log
-agent_003	running	cross-session	/Users/mjm/.magenta/agent/tmp/sub-agents/agent_003-2026-07-06T06-28-37-624Z.log
-Parent progress: /Users/mjm/.magenta/agent/tmp/sub-agents/main-tool-progress.md
+agent_001	running	msg-delivery	/Users/test-user/.magenta/agent/tmp/sub-agents/agent_001-2026-07-06T06-28-37-603Z.log
+agent_002	running	tree-branch	/Users/test-user/.magenta/agent/tmp/sub-agents/agent_002-2026-07-06T06-28-37-620Z.log
+agent_003	running	cross-session	/Users/test-user/.magenta/agent/tmp/sub-agents/agent_003-2026-07-06T06-28-37-624Z.log
+Parent progress: /Users/test-user/.magenta/agent/tmp/sub-agents/main-tool-progress.md
 Delegation soft lease active for each running event: do not duplicate its scope. Continue only non-overlapping work, coordination, or integration preparation; after a terminal result, synthesize and independently verify it.`,
 				},
 			],

@@ -9,7 +9,7 @@ describe("parseCodexBaseUrl", () => {
 model = "gpt-5.5"
 model_reasoning_effort = "xhigh"
 
-[projects."/Users/mjm/foo"]
+[projects."/Users/test-user/foo"]
 trust_level = "trusted"
 
 [model_providers.custom]
@@ -17,7 +17,7 @@ name = "custom"
 wire_api = "responses"
 base_url = "https://tok.fan/v1"
 
-[projects."/Users/mjm/bar"]
+[projects."/Users/test-user/bar"]
 trust_level = "trusted"
 `;
 		expect(parseCodexBaseUrl(toml)).toBe("https://tok.fan/v1");
