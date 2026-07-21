@@ -7,7 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Fixed
+- Linux releases embed a static musl process-tools helper instead of requiring the build host's newer glibc symbols
+- Self-update executes the staged process-tools helper before atomic replacement so loader or ABI failures preserve the existing installation
 - Self-update retries Bun transport failures reported as closed sockets, unavailable connections, or generic fetch failures
+
+### Security
+- Release checks require exact SHA-256 receipts for process-tools, fd, and ripgrep prebuilts, and every GitHub Actions dependency is pinned to a commit
 
 ## [0.0.27] - 2026-07-20
 

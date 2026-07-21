@@ -242,7 +242,7 @@ export function isRetryableDownloadError(error: unknown): boolean {
 export async function downloadReleaseAsset(
 	asset: ReleaseAssetPlan[keyof ReleaseAssetPlan],
 	destination: string,
-	options: { useMirror?: boolean; attempt?: number } = {},
+	options: { useMirror?: boolean; attempt?: number; retryDelayMs?: number } = {},
 ): Promise<void> {
 	const attempt = options.attempt ?? 1;
 	const controller = new AbortController();
@@ -285,7 +285,7 @@ export async function downloadReleaseAsset(
 			);
 			// Remove any partial file so the next attempt's exclusive-create flag succeeds.
 			await rm(destination, { force: true }).catch(() => undefined);
-			await new Promise((resolve) => setTimeout(resolve, 2000 * attempt)); // backoff
+			await new Promise((resolve) => setTimeout(resolve, (options.retryDelayMs ?? 2000) * attempt)); // backoff
 			return downloadReleaseAsset(asset, destination, { ...options, attempt: attempt + 1 });
 		}
 
@@ -339,6 +339,23 @@ function assertBinaryHelp(binaryPath: string, packageDirectory: string): void {
 		throw new Error(
 			`Binary startup verification failed with exit code ${String(result.status)}${detail ? `: ${detail}` : ""}`,
 		);
+	}
+}
+
+/** @internal */
+export function assertPackagedProcessToolsStart(
+	packageDirectory: string,
+	runtimePlatform: NodeJS.Platform = platform(),
+): void {
+	const binaryName = runtimePlatform === "win32" ? "magenta-process-tools.exe" : "magenta-process-tools";
+	const binaryPath = join(packageDirectory, "_magenta", "process-tools", "target", "release", binaryName);
+	if (!existsSync(binaryPath)) throw new Error(`Staged process-tools binary is missing: ${binaryPath}`);
+
+	const result = runBinary(binaryPath, ["--help"], packageDirectory);
+	if (result.error) throw new Error(`Staged process-tools binary failed to start: ${result.error.message}`);
+	if (result.status !== 0) {
+		const detail = result.stderr.trim();
+		throw new Error(`Staged process-tools binary failed --help${detail ? `: ${detail}` : ""}`);
 	}
 }
 
@@ -622,6 +639,7 @@ export async function installUpdate(): Promise<UpdateInstallResult> {
 		if (platform() !== "win32") await chmod(stagedBinary, 0o755);
 		assertBinaryVersion(stagedBinary, checkResult.latestVersion, stagingDirectory);
 		assertBinaryHelp(stagedBinary, stagingDirectory);
+		assertPackagedProcessToolsStart(stagingDirectory);
 
 		if (platform() === "win32") {
 			await launchWindowsUpdateHelper(

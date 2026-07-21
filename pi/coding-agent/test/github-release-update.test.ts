@@ -1,12 +1,13 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { _clearMirrorCache } from "../src/utils/github-mirror.ts";
 import {
+	assertPackagedProcessToolsStart,
 	checkForUpdate,
 	consumePreviousWindowsUpdateError,
 	downloadReleaseAsset,
@@ -100,6 +101,28 @@ async function createValidResourceArchive(root: string, version = "0.0.12"): Pro
 	expect(tarResult.status, tarResult.stderr).toBe(0);
 	return archivePath;
 }
+
+describe("staged process-tools startup verification", () => {
+	it("executes the packaged helper and rejects a corrupt executable", async () => {
+		const root = await makeTemporaryDirectory();
+		const binaryName = process.platform === "win32" ? "magenta-process-tools.exe" : "magenta-process-tools";
+		const releaseDirectory = join(root, "_magenta", "process-tools", "target", "release");
+		const helperPath = join(releaseDirectory, binaryName);
+		await mkdir(releaseDirectory, { recursive: true });
+		if (process.platform === "win32") {
+			await copyFile(process.execPath, helperPath);
+		} else {
+			await symlink("/usr/bin/true", helperPath);
+		}
+
+		expect(() => assertPackagedProcessToolsStart(root)).not.toThrow();
+
+		await rm(helperPath, { force: true });
+		await writeFile(helperPath, "not an executable", "utf8");
+		if (process.platform !== "win32") await chmod(helperPath, 0o755);
+		expect(() => assertPackagedProcessToolsStart(root)).toThrow(/failed to start|failed --help/i);
+	});
+});
 
 afterEach(async () => {
 	vi.unstubAllGlobals();
@@ -710,7 +733,7 @@ describe("downloadReleaseAsset resilience", () => {
 		});
 		vi.stubGlobal("fetch", fetchMock);
 
-		await downloadReleaseAsset(makeAsset("magenta-macos-arm64"), destination);
+		await downloadReleaseAsset(makeAsset("magenta-macos-arm64"), destination, { retryDelayMs: 0 });
 
 		expect(calls).toBe(2);
 		expect(await readFile(destination, "utf8")).toBe("payload-bytes");
@@ -726,7 +749,9 @@ describe("downloadReleaseAsset resilience", () => {
 		});
 		vi.stubGlobal("fetch", fetchMock);
 
-		await expect(downloadReleaseAsset(makeAsset("magenta-linux-x64"), destination)).rejects.toThrow(/stalled/);
+		await expect(
+			downloadReleaseAsset(makeAsset("magenta-linux-x64"), destination, { retryDelayMs: 0 }),
+		).rejects.toThrow(/stalled/);
 		expect(fetchMock).toHaveBeenCalledTimes(3);
 	});
 

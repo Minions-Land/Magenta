@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -49,9 +49,14 @@ test("release builds are pinned, offline, and receipt-bound", () => {
 	assert.doesNotMatch(workflow, /gh release download \$\{\{ inputs\.release_tag/u);
 	assert.doesNotMatch(workflow, /gh release upload[^\n]+install\.ps1/u);
 
-	const actions = [...workflow.matchAll(/^\s*uses:\s*([^\s#]+)/gmu)].map((match) => match[1]);
-	assert.ok(actions.length > 0);
-	for (const action of actions) assert.match(action, /@[0-9a-f]{40}$/u);
+	const workflowDirectory = new URL("../.github/workflows/", import.meta.url);
+	for (const file of readdirSync(workflowDirectory).filter((name) => /\.ya?ml$/u.test(name))) {
+		const contents = readFileSync(new URL(file, workflowDirectory), "utf8");
+		const actions = [...contents.matchAll(/^\s*(?:-\s*)?uses:\s*([^\s#]+)/gmu)].map((match) => match[1]);
+		for (const action of actions) {
+			assert.match(action, /@[0-9a-f]{40}$/u, `${file} must pin ${action} to a commit`);
+		}
+	}
 });
 
 test("rejects invalid, non-increasing, or unsafe release targets", () => {

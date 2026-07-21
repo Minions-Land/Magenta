@@ -25,8 +25,15 @@ preferred over `prebuilt`. Bun-compiled releases continue to extract and hash
 verify their embedded platform binary before installing it into the runtime
 resource tree.
 
+The checked-in Linux x64 prebuilt is a static
+`x86_64-unknown-linux-musl` executable. Release checks reject a Linux helper
+that has a `PT_INTERP` segment or versioned `GLIBC_` symbols, so the helper does
+not inherit the GitHub runner's glibc baseline. The immutable build workflow
+writes `prebuilt/SHA256SUMS`; release builds verify that receipt before
+embedding any helper.
+
 Source/provenance:
 
 - origin: `magenta1-general-harness`
 - relationship: `migrated/adapted`
-- original path: `/Users/mjm/Magenta/general-harness/bins/process-tools`
+- original path: `general-harness/bins/process-tools`
