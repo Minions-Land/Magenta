@@ -4,7 +4,7 @@ All notable changes to Magenta CLI are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## [Unreleased]
+## [0.0.28] - 2026-07-21
 
 ### Fixed
 - Linux releases embed a static musl process-tools helper instead of requiring the build host's newer glibc symbols

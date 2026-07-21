@@ -9,7 +9,7 @@ export const BRAND_CONFIG: BrandConfig = {
 	name: "Magenta",
 
 	/** Product version (independent of infrastructure versions) */
-	version: "0.0.27",
+	version: "0.0.28",
 
 	/** NPM package scope for product-specific packages */
 	packageScope: "@magenta",
