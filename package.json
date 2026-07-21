@@ -62,6 +62,8 @@
 	},
 	"version": "0.0.1",
 	"overrides": {
+		"brace-expansion": "5.0.7",
+		"protobufjs": "7.6.5",
 		"rimraf": "6.1.2",
 		"gaxios": {
 			"rimraf": "6.1.2"

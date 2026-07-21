@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Security
+- Pinned patched transitive releases for brace-expansion and protobufjs to remove their published denial-of-service advisories
+
 ## [0.0.28] - 2026-07-21
 
 ### Fixed
