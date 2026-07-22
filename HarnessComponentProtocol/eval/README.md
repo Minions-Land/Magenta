@@ -8,8 +8,9 @@ deciding whether to add or prune a component.
 
 This directory is the measurement half of the assumption workflow described in
 `docs/assumption-metadata.md`. Each component's `[assumption].eval_scenarios`
-points here; each scenario measures one component's contribution by running the
-same task with the component on and off and comparing a signal.
+points here. A `comparison` scenario requests the same task with its target
+component on and off; a `smoke` scenario checks one declared runtime contract
+without claiming component lift.
 
 ## Layout
 
@@ -22,6 +23,8 @@ eval/
   fixtures/               - prompts/specs referenced by scenarios
   runner/
     run.mjs               - execute bounded headless runs and retain artifacts
+    artifacts.mjs         - stream private bounded output and prune old results
+    execution-gate.mjs    - reject real runs with unresolved isolation
     plan.mjs              - turn scenario TOML into discrete process arguments
     contract.mjs          - validate JSONL and produce normalized summaries
     *.test.mjs            - dependency-free Node tests
@@ -31,20 +34,33 @@ eval/
 ## How a scenario maps to real runs
 
 The runner drives the built headless CLI (`pi/coding-agent/dist/cli.js`), which
-already exposes component-toggle flags. A scenario variant declares which
-components are on; the runner translates that into flags:
+already exposes component-toggle flags. A scenario variant declares boolean
+component states; the runner translates known controls into flags. Unknown
+component names and non-boolean states fail closed, including unknown truthy
+states:
 
 | Component      | "off" flag                         |
 |----------------|------------------------------------|
 | skills         | `--no-skills`                      |
 | prompt-templates | `--no-prompt-templates`          |
 | context        | `--no-context-files`               |
+| workflows      | `--harness-workflows` / `--no-harness-workflows` |
+| multiagent     | `--harness-teammates` / `--no-harness-teammates` |
 | (default)      | component on = no flag             |
 
-Compaction has no first-class CLI off-switch today; the
-`long-horizon-coherence` scenario documents the manual setup needed to force it
-on/off (a large `--session` history vs. a fresh one) until a flag exists. This
-is called out in the scenario file rather than hidden in the runner.
+`kind = "comparison"` is the default. Every variant must explicitly declare
+`targets_component`, and the variants must contain both `true` and `false`
+target states before a real run is allowed. Single-arm contracts must declare
+`kind = "smoke"`; their output is never presented as A/B evidence.
+
+Compaction has no first-class CLI off-switch today, so
+`long-horizon-coherence` is currently a planning-only scenario, not a completed
+or executable A/B. Its dry-run plan reports
+`executionGate.unresolvedManualIsolation` for `compaction-off`. A real run
+fails before reading the prompt, calling a model, or creating a result
+directory. A `manual_note` documents the missing isolation but never bypasses
+the gate; when an actual CLI off-switch exists it must be mapped in
+`runner/plan.mjs` so the requested state is present in the spawned argv.
 
 Runs use `--print -p <prompt> --mode json --no-session` so output is
 machine-readable and ephemeral. Arguments are passed as an array directly to
@@ -102,25 +118,57 @@ node eval/runner/run.mjs ultra-orchestration-smoke --model provider/model --json
 node --test eval/runner/*.test.mjs
 ```
 
-`--dry-run` prints the exact argument arrays and scoring plan and exits 0.
+`--dry-run` prints the exact argument arrays, scoring plan, and structured
+execution gate and exits 0, including when manual isolation remains unresolved.
 With `--json`, dry-run output is one machine-readable resolved plan. A real run
-writes `plan.json`, raw `<variant>.stdout.jsonl` and `<variant>.stderr.log`, a
+writes no artifacts and exits nonzero if any requested component-off state has
+no executable CLI switch. Otherwise, it writes `plan.json`, raw
+`<variant>.stdout.jsonl` and `<variant>.stderr.log`, a
 normalized `<variant>.summary.json`, and aggregate `summary.json` under
-`results/<scenario>-<timestamp>/`. `--json` prints the aggregate summary as a
-single JSON line. Any invalid variant makes the runner exit nonzero; raw streams
-and summaries are still retained for diagnosis.
+`results/<scenario>-<timestamp>-<pid>-<id>/`. `--json` prints the aggregate
+summary as a single JSON line. Each variant reports `contractValid` separately
+from `executionSucceeded`; a structurally consistent nonzero child exit remains
+diagnosable but is not a valid eval arm. Any failed arm, invalid contract, or
+unexecuted configured scorer makes the runner exit nonzero; raw streams and
+summaries are still retained for diagnosis.
+
+Variants currently run once, in declaration order, against the same agent
+directory, working tree, and provider cache. The plan and summary therefore set
+`comparisonClaimAllowed = false`: these runs are diagnostics, not isolated A/B
+evidence. Do not infer component lift until a benchmark driver supplies isolated
+environments, counterbalanced order, repetitions, and an executed scorer.
+
+Real-run directories are created with mode `0700`, and every artifact is
+created with mode `0600`. Stdout and stderr are streamed to disk with
+backpressure while the child is running; each stream's file and in-memory
+contract input, as well as every structured plan and summary, are capped at 16
+MiB. Crossing a stream cap records retained and observed byte counts, marks the
+stream truncated, and invalidates the variant instead of treating a partial
+terminal contract as complete. An oversized structured artifact fails before
+file creation.
+
+At real-run startup and completion, the runner removes recognized result
+artifacts older than seven days and prunes oldest artifacts until the results
+tree is at most 200 files and 256 MiB. A private PID marker protects every live
+concurrent run from cleanup. Traversal ignores symlink files and directories,
+and unknown files under `results/` are not treated as disposable eval output.
+Live output can temporarily exceed a tree budget; it becomes eligible for the
+next cleanup only after its active marker is released.
 
 ## Scoring
 
-A scenario declares its intended method in the `[scoring]` block. The current
-runner records that plan but does not execute scoring automatically. Apply the
-Harness `multiagent` verifier patterns (`adversarial_verify` / `tournament`)
-where a judgement call is needed, and inspect plain signals such as completion,
-token count, or early wrap-up where a mechanical check suffices.
+A scenario declares its intended method in the `[scoring]` block.
+`method = "headless-contract"` is scored automatically from contract validity
+and successful execution. Other methods, including `evaluator-agent`, are
+recorded as `status = "not_run"`; the runner exits nonzero rather than presenting
+an unexecuted scorer as a result. Apply the Harness `multiagent` verifier
+patterns (`adversarial_verify` / `tournament`) in a separate, provenance-aware
+benchmark driver where a judgement call is needed.
 
 ## Adding a scenario
 
-1. Write `scenarios/<name>.toml` (copy the closest existing scenario).
+1. Write `scenarios/<name>.toml` (copy the closest existing scenario); declare
+   `kind = "smoke"` only for a deliberately non-comparative contract.
 2. Add any prompt/spec to `fixtures/`.
 3. Add `[expect]` checks for every capability/tool the task depends on.
 4. Reference `<name>` from the target component's

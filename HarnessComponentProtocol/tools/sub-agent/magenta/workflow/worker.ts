@@ -15,6 +15,8 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
+import { DEFAULT_LOG_MAX_BYTES } from "../../../../_magenta/log-retention.ts";
+import { validateNodeTimeoutMs } from "../../../../_magenta/timeout.ts";
 import type { Isolation, WorkerResult, WorkerSlot, WorkerUsage } from "../workflow-types.ts";
 
 /** Default tools handed to a worker when none are specified: read-only. */
@@ -88,7 +90,7 @@ export type SpawnWorkerOptions = {
 	isolation?: Isolation;
 	/** Stable id for this worker (for result correlation). */
 	workerId: string;
-	/** Optional explicit hard wall-clock timeout in milliseconds. */
+	/** Optional explicit hard wall-clock timeout in milliseconds. Omit for no deadline. */
 	timeoutMs?: number;
 };
 
@@ -245,9 +247,20 @@ export async function spawnWorker(
 			error: `refused: isolation "${options.isolation}" is not implemented; only "process" isolation is supported`,
 		};
 	}
+	let timeoutMs: number | undefined;
+	try {
+		timeoutMs = validateNodeTimeoutMs(options.timeoutMs, "workflow worker timeoutMs");
+	} catch (error) {
+		return {
+			workerId: options.workerId,
+			text: "",
+			durationMs: 0,
+			success: false,
+			error: `refused: ${error instanceof Error ? error.message : String(error)}`,
+		};
+	}
 
 	const tools = sanitizeWorkerTools(options.tools);
-	const timeoutMs = options.timeoutMs;
 
 	// Headless, sessionless, no extensions (prevents recursive sub-agent spawning),
 	// structured NDJSON output.
@@ -267,7 +280,9 @@ export async function spawnWorker(
 	args.push(options.prompt);
 
 	const messages: PiMessage[] = [];
-	let stderr = "";
+	let retainedMessageBytes = 0;
+	const stderrChunks: Buffer[] = [];
+	let stderrBytes = 0;
 	let totalTokens = 0;
 	// Accumulate usage across all assistant turns
 	const usage: WorkerUsage = {
@@ -278,6 +293,7 @@ export async function spawnWorker(
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 	};
 	let errorMessage: string | undefined;
+	let collectorError: string | undefined;
 	let timedOut = false;
 
 	try {
@@ -291,8 +307,49 @@ export async function spawnWorker(
 				env: { ...process.env, PI_SUB_AGENT: "1", [DEPTH_ENV]: String(currentDepth() + 1) },
 			});
 
-			let buffer = "";
-			const processLine = (line: string) => {
+			let stdoutFrameChunks: Buffer[] = [];
+			let stdoutFrameBytes = 0;
+			let killed = false;
+			let escalationTimer: NodeJS.Timeout | undefined;
+			let timeoutTimer: NodeJS.Timeout | undefined;
+			let finished = false;
+
+			// Kill the whole detached process group (negative pid) so pi's own
+			// children die too, not just the pi parent.
+			const killProc = () => {
+				if (killed) return;
+				killed = true;
+				const pid = child.pid;
+				try {
+					if (pid) process.kill(-pid, "SIGTERM");
+					else child.kill("SIGTERM");
+				} catch {
+					try {
+						child.kill("SIGTERM");
+					} catch {
+						// Process already exited.
+					}
+				}
+				escalationTimer = setTimeout(() => {
+					try {
+						if (pid) process.kill(-pid, "SIGKILL");
+						else if (!child.killed) child.kill("SIGKILL");
+					} catch {
+						// Process already exited.
+					}
+				}, TERM_GRACE_MS);
+				escalationTimer.unref?.();
+			};
+
+			const failCollector = (message: string) => {
+				if (collectorError) return;
+				collectorError = message;
+				if (!finished) killProc();
+			};
+
+			const processLine = (lineBuffer: Buffer) => {
+				if (collectorError) return;
+				const line = lineBuffer.toString("utf8");
 				if (!line.trim()) return;
 				let event: { type?: string; message?: PiMessage };
 				try {
@@ -302,8 +359,15 @@ export async function spawnWorker(
 				}
 				if ((event.type === "message_end" || event.type === "tool_result_end") && event.message) {
 					const msg = event.message;
-					messages.push(msg);
 					if (msg.role === "assistant") {
+						if (retainedMessageBytes + lineBuffer.length > DEFAULT_LOG_MAX_BYTES) {
+							failCollector(
+								`workflow worker retained assistant messages exceeded ${DEFAULT_LOG_MAX_BYTES} bytes`,
+							);
+							return;
+						}
+						messages.push(msg);
+						retainedMessageBytes += lineBuffer.length;
 						if (msg.usage) {
 							// Sum usage across all assistant turns
 							usage.input += msg.usage.input ?? 0;
@@ -325,51 +389,75 @@ export async function spawnWorker(
 				}
 			};
 
-			child.stdout?.on("data", (data: Buffer) => {
-				buffer += data.toString();
-				const lines = buffer.split("\n");
-				buffer = lines.pop() ?? "";
-				for (const line of lines) processLine(line);
-			});
-			child.stderr?.on("data", (data: Buffer) => {
-				stderr += data.toString();
-			});
-			child.on("close", (code) => {
-				if (buffer.trim()) processLine(buffer);
-				resolve(code ?? 0);
-			});
-			child.on("error", () => resolve(1));
-
-			// Kill the whole detached process group (negative pid) so pi's own
-			// children die too, not just the pi parent.
-			let killed = false;
-			const killProc = () => {
-				if (killed) return;
-				killed = true;
-				const pid = child.pid;
-				try {
-					if (pid) process.kill(-pid, "SIGTERM");
-					else child.kill("SIGTERM");
-				} catch {
-					child.kill("SIGTERM");
-				}
-				setTimeout(() => {
-					try {
-						if (pid) process.kill(-pid, "SIGKILL");
-						else if (!child.killed) child.kill("SIGKILL");
-					} catch {
-						/* already gone */
+			const processStdout = (data: Buffer) => {
+				if (collectorError) return;
+				let start = 0;
+				for (let index = 0; index < data.length; index++) {
+					if (data[index] !== 0x0a) continue;
+					const segment = data.subarray(start, index);
+					const lineBytes = stdoutFrameBytes + segment.length;
+					if (lineBytes > DEFAULT_LOG_MAX_BYTES) {
+						failCollector(`workflow worker stdout NDJSON frame exceeded ${DEFAULT_LOG_MAX_BYTES} bytes`);
+						return;
 					}
-				}, TERM_GRACE_MS);
+					const line =
+						stdoutFrameChunks.length === 0 ? segment : Buffer.concat([...stdoutFrameChunks, segment], lineBytes);
+					stdoutFrameChunks = [];
+					stdoutFrameBytes = 0;
+					processLine(line);
+					if (collectorError) return;
+					start = index + 1;
+				}
+
+				if (start < data.length) {
+					const remainder = data.subarray(start);
+					if (stdoutFrameBytes + remainder.length > DEFAULT_LOG_MAX_BYTES) {
+						failCollector(`workflow worker stdout NDJSON frame exceeded ${DEFAULT_LOG_MAX_BYTES} bytes`);
+						return;
+					}
+					stdoutFrameChunks.push(remainder);
+					stdoutFrameBytes += remainder.length;
+				}
 			};
 
+			child.stdout?.on("data", (data: Buffer) => {
+				processStdout(data);
+			});
+			child.stderr?.on("data", (data: Buffer) => {
+				if (collectorError) return;
+				const remaining = DEFAULT_LOG_MAX_BYTES - stderrBytes;
+				if (data.length > remaining) {
+					if (remaining > 0) {
+						stderrChunks.push(data.subarray(0, remaining));
+						stderrBytes += remaining;
+					}
+					failCollector(`workflow worker stderr exceeded ${DEFAULT_LOG_MAX_BYTES} bytes`);
+					return;
+				}
+				stderrChunks.push(data);
+				stderrBytes += data.length;
+			});
+
+			const finish = (code: number | null, flushFrame: boolean) => {
+				if (finished) return;
+				finished = true;
+				if (timeoutTimer) clearTimeout(timeoutTimer);
+				if (escalationTimer) clearTimeout(escalationTimer);
+				signal?.removeEventListener("abort", killProc);
+				if (!collectorError && flushFrame && stdoutFrameBytes > 0) {
+					processLine(Buffer.concat(stdoutFrameChunks, stdoutFrameBytes));
+				}
+				resolve(code ?? 0);
+			};
+			child.on("close", (code) => finish(code, true));
+			child.on("error", () => finish(1, false));
+
 			if (timeoutMs !== undefined) {
-				const timer = setTimeout(() => {
+				timeoutTimer = setTimeout(() => {
 					timedOut = true;
 					killProc();
 				}, timeoutMs);
-				timer.unref?.();
-				child.on("close", () => clearTimeout(timer));
+				timeoutTimer.unref?.();
 			}
 
 			if (signal) {
@@ -379,7 +467,8 @@ export async function spawnWorker(
 		});
 
 		const text = finalAssistantText(messages);
-		const success = exitCode === 0 && !errorMessage && !timedOut;
+		const stderr = Buffer.concat(stderrChunks, stderrBytes).toString("utf8");
+		const success = exitCode === 0 && !errorMessage && !timedOut && !collectorError;
 		return {
 			workerId: options.workerId,
 			text,
@@ -390,9 +479,10 @@ export async function spawnWorker(
 			success,
 			error: success
 				? undefined
-				: timedOut
-					? `worker timed out after ${timeoutMs!}ms`
-					: errorMessage || stderr.trim() || `exit code ${exitCode}`,
+				: (collectorError ??
+					(timedOut
+						? `worker timed out after ${timeoutMs!}ms`
+						: errorMessage || stderr.trim() || `exit code ${exitCode}`)),
 		};
 	} catch (err) {
 		return {

@@ -1,8 +1,18 @@
 import { type ChildProcess, spawn } from "node:child_process";
-import { createWriteStream, type WriteStream } from "node:fs";
-import { mkdir } from "node:fs/promises";
+import { createWriteStream, type Dirent } from "node:fs";
+import { mkdir, readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { StringEnum } from "@earendil-works/pi-ai";
+import {
+	type BoundedLogState,
+	BufferedBoundedLog,
+	cleanupLogTree,
+	createBoundedLogState,
+	DEFAULT_LOG_MAX_AGE_MS,
+	DEFAULT_LOG_MAX_BYTES,
+	DEFAULT_LOG_MAX_FILES,
+	DEFAULT_LOG_MAX_TOTAL_BYTES,
+} from "@magenta/harness";
 import { type Static, Type } from "typebox";
 import { getAgentDir } from "../../config.ts";
 import type { BackgroundEventManager } from "../background-events.ts";
@@ -28,9 +38,40 @@ import {
 import type { ExtensionContext, ToolDefinition } from "../extensions/types.ts";
 import type { ExternalActivationReceipt } from "../external-activation-coordinator.ts";
 
-const LOG_DIR = join(getAgentDir(), "tmp", "background-shell");
+const DEFAULT_LOG_DIR = join(getAgentDir(), "tmp", "background-shell");
+const ACTIVE_LOG_PATHS = new Set<string>();
 const TERM_GRACE_MS = 3000;
 const MAX_TIMEOUT_SECONDS = 2_147_483_647 / 1000;
+
+function isProcessAlive(pid: number): boolean {
+	if (!Number.isInteger(pid) || pid <= 0) return false;
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch (error) {
+		return (error as NodeJS.ErrnoException).code === "EPERM";
+	}
+}
+
+async function liveProcessLogPaths(logDir: string): Promise<string[]> {
+	let entries: Dirent[];
+	try {
+		entries = await readdir(logDir, { withFileTypes: true });
+	} catch {
+		return [];
+	}
+	return (
+		entries
+			.filter((entry) => entry.isFile() && !entry.isSymbolicLink())
+			.map((entry) => ({ entry, pid: Number.parseInt(entry.name.split("-", 1)[0] ?? "", 10) }))
+			// ACTIVE_LOG_PATHS precisely protects this process's open streams. Only
+			// preserve PID-owned files here when another live Magenta process may
+			// still be writing them; otherwise a long-lived process would protect all
+			// of its own completed logs forever.
+			.filter(({ pid }) => pid !== process.pid && isProcessAlive(pid))
+			.map(({ entry }) => join(logDir, entry.name))
+	);
+}
 /**
  * Cap on how many finished (non-running) background-shell events are retained.
  * Prevents the events Map from growing without bound over a long interactive
@@ -61,7 +102,9 @@ type BackgroundShellEvent = {
 	/** Present for spawned events; absent for an adopted (promoted) bash execution. */
 	child?: ChildProcess;
 	/** Present for spawned events; absent for an adopted execution that streams elsewhere. */
-	log?: WriteStream;
+	log?: BufferedBoundedLog;
+	logState: BoundedLogState;
+	maxLogBytes: number;
 	/** Cancellation for adopted executions with no owned child process. */
 	cancel?: () => void;
 	startedAt: number;
@@ -250,14 +293,14 @@ function createOutputDecoders(): Record<BackgroundShellOutputStream, Utf8TailDec
 function appendOutput(event: BackgroundShellEvent, stream: BackgroundShellOutputStream, data: Buffer): void {
 	if (event.status !== "running") return;
 	const decoded = event.outputDecoders[stream].write(data);
-	if (decoded && event.log && !event.log.writableEnded && !event.log.destroyed) event.log.write(decoded);
+	if (decoded && event.log) event.log.write(decoded);
 	appendDecodedTail(event, decoded);
 }
 
 function flushOutput(event: BackgroundShellEvent): void {
 	for (const decoder of Object.values(event.outputDecoders)) {
 		const decoded = decoder.end();
-		if (decoded && event.log && !event.log.writableEnded && !event.log.destroyed) event.log.write(decoded);
+		if (decoded && event.log) event.log.write(decoded);
 		appendDecodedTail(event, decoded);
 	}
 }
@@ -316,6 +359,7 @@ function requestTermination(
 	error: string,
 ): boolean {
 	if (event.status !== "running" || event.termination) return false;
+	event.log?.flush();
 	event.termination = { status, signal: "SIGTERM", error };
 	event.activityPhase = "terminating";
 	if (event.timeout) {
@@ -349,7 +393,7 @@ function finishEvent(
 	if (event.terminationTimer) clearTimeout(event.terminationTimer);
 	event.timeout = undefined;
 	event.terminationTimer = undefined;
-	if (event.log && !event.log.writableEnded && !event.log.destroyed) event.log.end();
+	event.log?.end();
 	// Release the ChildProcess reference (and its attached data/error/close
 	// listeners) so a retained finished event no longer pins the process object.
 	event.child = undefined;
@@ -431,7 +475,7 @@ function summarizeEventForModel(
 
 /**
  * Plain-data view of an event, safe to pass through structuredClone/postMessage.
- * The live event holds a ChildProcess, a WriteStream, a Timer, and waiter
+ * The live event holds a ChildProcess, a buffered log, a Timer, and waiter
  * callbacks — none of which are cloneable — so message payloads must only carry
  * this snapshot, never the event itself.
  */
@@ -492,6 +536,12 @@ export class BackgroundShellController {
 	private monitor: { update: (ctx?: ExtensionContext) => void };
 	private registerReturn: BackgroundShellRegisterReturn;
 	private maxRetainedFinishedEvents = MAX_RETAINED_FINISHED_EVENTS;
+	private readonly logDir: string;
+	private readonly maxLogBytes: number;
+	private readonly maxLogTotalBytes: number;
+	private readonly maxLogFiles: number;
+	private readonly maxLogAgeMs: number;
+	private cleanupChain: Promise<void> = Promise.resolve();
 
 	constructor(
 		manager: BackgroundEventManager,
@@ -499,9 +549,25 @@ export class BackgroundShellController {
 			registerReturn: BackgroundShellRegisterReturn;
 			/** Override the finished-event retention cap (primarily for tests). */
 			maxRetainedFinishedEvents?: number;
+			/** Override the diagnostic log namespace (primarily for embedders/tests). */
+			logDir?: string;
+			/** Override log limits for embedders/tests. */
+			maxLogBytes?: number;
+			maxLogTotalBytes?: number;
+			maxLogFiles?: number;
+			maxLogAgeMs?: number;
 		},
 	) {
 		this.registerReturn = options.registerReturn;
+		this.logDir = options.logDir ?? DEFAULT_LOG_DIR;
+		this.maxLogBytes =
+			typeof options.maxLogBytes === "number" && Number.isFinite(options.maxLogBytes) && options.maxLogBytes >= 0
+				? options.maxLogBytes
+				: DEFAULT_LOG_MAX_BYTES;
+		this.maxLogTotalBytes = options.maxLogTotalBytes ?? DEFAULT_LOG_MAX_TOTAL_BYTES;
+		this.maxLogFiles = options.maxLogFiles ?? DEFAULT_LOG_MAX_FILES;
+		this.maxLogAgeMs = options.maxLogAgeMs ?? DEFAULT_LOG_MAX_AGE_MS;
+		void this.cleanupLogs().catch(() => undefined);
 		if (options.maxRetainedFinishedEvents !== undefined && options.maxRetainedFinishedEvents >= 0) {
 			this.maxRetainedFinishedEvents = options.maxRetainedFinishedEvents;
 		}
@@ -543,6 +609,22 @@ export class BackgroundShellController {
 		});
 	}
 
+	private cleanupLogs(): Promise<void> {
+		const cleanup = this.cleanupChain.then(async () => {
+			const liveLogs = await liveProcessLogPaths(this.logDir);
+			await cleanupLogTree({
+				root: this.logDir,
+				fileFilter: (path) => path.endsWith(".log"),
+				protectedPaths: [...ACTIVE_LOG_PATHS, ...liveLogs],
+				maxAgeMs: this.maxLogAgeMs,
+				maxTotalBytes: this.maxLogTotalBytes,
+				maxFiles: this.maxLogFiles,
+			});
+		});
+		this.cleanupChain = cleanup.catch(() => undefined);
+		return cleanup;
+	}
+
 	/**
 	 * Adopt an already-running execution (e.g. a foreground bash tool call promoted
 	 * to the background after exceeding its inline deadline). No child process is
@@ -576,6 +658,8 @@ export class BackgroundShellController {
 			label: options.label,
 			logPath: options.logPath ?? "",
 			cancel: options.cancel,
+			logState: createBoundedLogState(),
+			maxLogBytes: this.maxLogBytes,
 			startedAt: options.startedAt,
 			status: "running",
 			exitCode: null,
@@ -704,7 +788,7 @@ export class BackgroundShellController {
 					logPath: event.logPath,
 					instruction: boundedInstruction,
 					// A plain-data snapshot only — the live event holds a ChildProcess,
-					// WriteStream, Timer, and waiter callbacks that cannot be structured-cloned
+					// buffered log, Timer, and waiter callbacks that cannot be structured-cloned
 					// when this message is delivered to the main agent.
 					eventData: serializableEventSnapshot(event),
 				},
@@ -793,19 +877,34 @@ export class BackgroundShellController {
 				details: { action: "start", status: "cancelled" },
 			};
 
-		await mkdir(LOG_DIR, { recursive: true });
+		await this.cleanupLogs().catch(() => undefined);
+		await mkdir(this.logDir, { recursive: true, mode: 0o700 });
 
 		const id = `bg_${String(this.nextEventNumber++).padStart(3, "0")}`;
 		const cwd = resolve(ctx.cwd, params.cwd ?? ".");
-		const logPath = join(LOG_DIR, `${id}-${timestampForFile()}.log`);
-		const log = createWriteStream(logPath, { flags: "a" });
+		const logPath = join(this.logDir, `${process.pid}-${id}-${timestampForFile()}.log`);
+		const logState = createBoundedLogState();
+		const logStream = createWriteStream(logPath, { flags: "a", mode: 0o600 });
+		const log = new BufferedBoundedLog(logStream, { state: logState, maxBytes: this.maxLogBytes });
+		ACTIVE_LOG_PATHS.add(logPath);
+		logStream.once("close", () => ACTIVE_LOG_PATHS.delete(logPath));
+		// A session can be disposed while the asynchronous open is still pending
+		// (for example during shutdown cleanup). Keep that filesystem failure from
+		// becoming an uncaught EventEmitter error.
+		logStream.on("error", () => {});
 		const shell = process.env.SHELL || "/bin/bash";
-		const child = spawn(shell, ["-lc", params.command], {
-			cwd,
-			detached: true,
-			stdio: ["ignore", "pipe", "pipe"],
-			env: process.env,
-		});
+		let child: ChildProcess;
+		try {
+			child = spawn(shell, ["-lc", params.command], {
+				cwd,
+				detached: true,
+				stdio: ["ignore", "pipe", "pipe"],
+				env: process.env,
+			});
+		} catch (error) {
+			log.end();
+			throw error;
+		}
 
 		const startedAt = Date.now();
 		const event: BackgroundShellEvent = {
@@ -816,6 +915,8 @@ export class BackgroundShellController {
 			logPath,
 			child,
 			log,
+			logState,
+			maxLogBytes: this.maxLogBytes,
 			startedAt,
 			status: "running",
 			exitCode: null,

@@ -49,7 +49,7 @@ export type WorkerSlot = {
 	packages?: string[];
 	/** Thinking level for this worker (optional). */
 	thinking?: ThinkingLevel;
-	/** Per-worker wall-clock timeout in seconds (optional). */
+	/** Per-worker hard wall-clock deadline in seconds. Omit for no deadline; maximum 2147483.647 seconds. */
 	timeoutSeconds?: number;
 };
 
@@ -219,7 +219,7 @@ export type ScriptAgentOptions = {
 	packages?: string[];
 	/** A guard string prepended to the system prompt (the pattern's soul step). */
 	guard?: string;
-	/** Per-call wall-clock timeout in seconds. */
+	/** Per-call hard wall-clock deadline in seconds. Omit for no deadline; maximum 2147483.647 seconds. */
 	timeoutSeconds?: number;
 };
 

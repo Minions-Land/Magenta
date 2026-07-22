@@ -109,15 +109,15 @@ export class MessageStorePeerLinkAdapter {
 		ownerId: string,
 		includeUnresolved: boolean,
 		limit: number,
-		options?: { allowTransit?: boolean },
+		options?: { allowTransit?: boolean; reclaimUnsettledForwarded?: boolean },
 	): PeerLinkEnvelope[] {
 		return this.store
 			.claimPeerOutbox(peerStoreId, ownerId, limit, includeUnresolved, options)
 			.map((row) => toLinkEnvelope(row, this.store.getStoreId()));
 	}
 
-	ackOutbound(messageIds: string[], ownerId: string): void {
-		this.store.ackPeerOutbox(messageIds, ownerId);
+	ackOutbound(messageIds: string[], ownerId: string, options: { durableCustody: boolean }): void {
+		this.store.ackPeerOutbox(messageIds, ownerId, options);
 	}
 
 	requeueOutbound(messageIds: string[], ownerId: string, options?: { notFound?: boolean }): void {
@@ -125,15 +125,11 @@ export class MessageStorePeerLinkAdapter {
 	}
 
 	runMaintenance(): void {
-		const now = Date.now();
-		// Outbox bodies and their delivery ledger must disappear before an associated
-		// dedup marker becomes eligible for collection.
-		this.store.purgeExpiredOutbox(now);
-		this.store.purgeExpiredPeerSeen(now);
+		this.store.maybeRunMaintenance();
 	}
 
 	acceptIncoming(message: PeerLinkEnvelope, ingressPeerStoreId: string): PeerLinkAcceptResult {
-		const local = this.store.listRegisteredSessionIds().includes(message.recipient);
+		const local = this.store.hasRegisteredSession(message.recipient);
 		if (!local && message.hopsRemaining === 0) return { status: "not_found" };
 		const accepted = this.store.acceptFederatedMessage(toStoredEnvelope(message), ingressPeerStoreId);
 		switch (accepted.disposition) {

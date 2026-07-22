@@ -62,7 +62,7 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 	} = options;
 	const tools = selectedTools ?? ["read", "bash", "edit", "write"];
 	const promptCwd = cwd.replace(/\\/g, "/");
-	const date = formatDate(options.currentDate);
+	const date = options.currentDate === undefined ? undefined : formatDate(options.currentDate);
 
 	let prompt: string;
 	if (customPrompt) {
@@ -134,7 +134,9 @@ Agent collaboration principles:
 		});
 	}
 
-	prompt += `\nCurrent date: ${date}`;
+	if (date !== undefined) {
+		prompt += `\nCurrent date: ${date}`;
+	}
 	prompt += `\nCurrent working directory: ${promptCwd}`;
 	return prompt;
 }
@@ -189,12 +191,11 @@ function buildOperationalFragment(tools: string[], enabled: boolean): string {
 	return lines.join("\n");
 }
 
-function formatDate(value: string | Date | undefined): string {
+function formatDate(value: string | Date): string {
 	if (typeof value === "string") return value;
-	const date = value ?? new Date();
-	const year = date.getFullYear();
-	const month = String(date.getMonth() + 1).padStart(2, "0");
-	const day = String(date.getDate()).padStart(2, "0");
+	const year = value.getFullYear();
+	const month = String(value.getMonth() + 1).padStart(2, "0");
+	const day = String(value.getDate()).padStart(2, "0");
 	return `${year}-${month}-${day}`;
 }
 

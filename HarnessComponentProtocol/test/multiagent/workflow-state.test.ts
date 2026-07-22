@@ -3,7 +3,12 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { MultiAgentOrchestrator, type WorkerRunner } from "../../tools/sub-agent/magenta/workflow/orchestrator.ts";
+import { DEFAULT_LOG_MAX_BYTES } from "../../_magenta/log-retention.ts";
+import {
+	cleanupWorkflowArtifacts,
+	MultiAgentOrchestrator,
+	type WorkerRunner,
+} from "../../tools/sub-agent/magenta/workflow/orchestrator.ts";
 import type { SpawnWorkerOptions } from "../../tools/sub-agent/magenta/workflow/worker.ts";
 import type { WorkerResult } from "../../tools/sub-agent/magenta/workflow-types.ts";
 
@@ -44,7 +49,11 @@ afterEach(() => {
 
 describe("workflow state persistence", () => {
 	it("writes log.jsonl, per-node outputs, and result.json under .magenta/tmp/<id>", async () => {
-		const orch = new MultiAgentOrchestrator({ cwd: tmpCwd, runner: fakeRunner() });
+		const orch = new MultiAgentOrchestrator({
+			cwd: tmpCwd,
+			runner: fakeRunner(),
+			stateRoot: path.join(tmpCwd, ".magenta", "tmp"),
+		});
 		const result = await orch.orchestrate({
 			pattern: "script",
 			scriptPath: SAMPLE,
@@ -83,7 +92,11 @@ describe("workflow state persistence", () => {
 	});
 
 	it("writes error.json when the workflow module cannot be loaded", async () => {
-		const orch = new MultiAgentOrchestrator({ cwd: tmpCwd, runner: fakeRunner() });
+		const orch = new MultiAgentOrchestrator({
+			cwd: tmpCwd,
+			runner: fakeRunner(),
+			stateRoot: path.join(tmpCwd, ".magenta", "tmp"),
+		});
 		const result = await orch.orchestrate({
 			pattern: "script",
 			scriptPath: path.join(here, "fixtures", "nonexistent-workflow.ts"),
@@ -96,5 +109,63 @@ describe("workflow state persistence", () => {
 		expect(fs.existsSync(errorPath)).toBe(true);
 		const err = JSON.parse(fs.readFileSync(errorPath, "utf8")) as { error: string };
 		expect(err.error).toBeTruthy();
+	});
+
+	it("reclaims completed same-process runs but preserves incomplete and unknown artifacts", async () => {
+		const stateRoot = path.join(tmpCwd, ".magenta", "tmp");
+		const completed = path.join(stateRoot, `wf-${process.pid}-1-completed`);
+		const withUnknown = path.join(stateRoot, "wf-999999-1-unknown");
+		const incomplete = path.join(stateRoot, `wf-${process.pid}-1-running`);
+		const knownFiles = [
+			path.join(completed, "log.jsonl"),
+			path.join(completed, "result.json"),
+			path.join(completed, "nodes", "worker", "output.json"),
+			path.join(withUnknown, "log.jsonl"),
+			path.join(withUnknown, "result.json"),
+		];
+		for (const file of knownFiles) {
+			fs.mkdirSync(path.dirname(file), { recursive: true });
+			fs.writeFileSync(file, "{}\n");
+			fs.utimesSync(file, new Date(0), new Date(0));
+		}
+		const unknown = path.join(withUnknown, "keep.bin");
+		fs.writeFileSync(unknown, "keep");
+		const incompleteLog = path.join(incomplete, "log.jsonl");
+		fs.mkdirSync(incomplete, { recursive: true });
+		fs.writeFileSync(incompleteLog, "running\n");
+		fs.utimesSync(incompleteLog, new Date(0), new Date(0));
+
+		await cleanupWorkflowArtifacts(stateRoot, { maxAgeMs: 1, now: Date.now() });
+
+		expect(fs.existsSync(completed)).toBe(false);
+		expect(fs.readFileSync(unknown, "utf8")).toBe("keep");
+		expect(fs.existsSync(path.join(withUnknown, "result.json"))).toBe(false);
+		expect(fs.readFileSync(incompleteLog, "utf8")).toBe("running\n");
+	});
+
+	it("keeps oversized node and result artifacts bounded and valid JSON", async () => {
+		const huge = "x".repeat(DEFAULT_LOG_MAX_BYTES + 1024);
+		const runner: WorkerRunner = {
+			spawn: async (options) => ({
+				workerId: options.workerId,
+				text: huge,
+				durationMs: 1,
+				success: true,
+			}),
+			parallel: async () => [],
+		};
+		const source = "export default async (_args, ctx) => ctx.agent('oversized', { label: 'oversized' });";
+		const scriptPath = `data:text/javascript;base64,${Buffer.from(source, "utf8").toString("base64")}`;
+		const stateRoot = path.join(tmpCwd, ".magenta", "tmp");
+		const orch = new MultiAgentOrchestrator({ cwd: tmpCwd, runner, stateRoot });
+		const result = await orch.orchestrate({ pattern: "script", scriptPath, args: {} });
+		const workflowId = result.outcome?.workerId as string;
+		const nodePath = path.join(stateRoot, workflowId, "nodes", "oversized", "output.json");
+		const resultPath = path.join(stateRoot, workflowId, "result.json");
+
+		for (const artifact of [nodePath, resultPath]) {
+			expect(fs.statSync(artifact).size).toBeLessThanOrEqual(DEFAULT_LOG_MAX_BYTES);
+			expect(JSON.parse(fs.readFileSync(artifact, "utf8"))).toMatchObject({ truncated: true });
+		}
 	});
 });

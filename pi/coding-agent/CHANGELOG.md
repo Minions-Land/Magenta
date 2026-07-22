@@ -6,6 +6,48 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+- Long-running sub-agent and workflow work has no implicit one-hour deadline when timeout is omitted; explicit deadlines share one validated Node timer range, and persistent teammate RPC commands allow five minutes without limiting Session lifetime
+- Machine-global peer mailboxes now migrate unread inbox messages, unsettled relay outbox payloads and delivery ledgers, offline Session ownership, and endpoint on/off state from the legacy agent-local database; verified target imports commit before source settlement, and the source remains available for late writes from old versions
+
+### Changed
+- Diagnostic output for background shells, sub-agents, workflows, teammates, and opt-in cache telemetry now has private permissions plus finite per-file, file-count, age, and total-size retention; high-frequency main-tool progress updates are coalesced to one trailing write per second
+- Streaming sub-agent, workflow, teammate RPC, background-shell, and retained bash full-output logs now batch small chunks for up to 100 ms or 64 KiB while keeping live status and tails immediate, reducing disk-write frequency without losing output at completion, cancellation, timeout, failure, or shutdown
+- Harness eval output now streams into private, size-bounded artifacts; truncated streams invalidate the result, oversized structured plans and summaries fail before file creation, while age, file-count, and total-size cleanup preserves active runs and never follows symlinks
+- Harness eval summaries now distinguish contract validity, execution success, scorer status, and comparison-evidence eligibility; fixed-order runs sharing one environment and a single repetition are diagnostic only and cannot pass as A/B evidence
+- Release preparation now always replaces ignored build output with a clean offline build before version validation, checks, tests, packaging, or publication; local archives are rebuilt and verified file-for-file from complete staged resources, prior archives survive replacement failures, incomplete automatic output is removed, and failed explicit `--out` output is retained with a marker
+- Completed local macOS binaries are ad-hoc re-signed and strictly verified before archival; public macOS assets still require Developer ID signing and notarization
+- SSH gossip relays stay alive independently of an interactive Session, use endpoint locks instead of relay PIDs for ownership, and adopt a newly installed executable generation after the current lock owner exits
+
+### Fixed
+- Rolling mailbox upgrades no longer hand outbound messages to transit-only v0.0.29 peers whose age-based retention cannot guarantee custody; upgraded durable peers recover ambiguous forwarded payloads without echoing ingress traffic or retrying terminal rejections, and orphan deduplication markers can no longer produce false custody acknowledgements
+- Harness evals now refuse real runs before model calls or result creation when any requested component is unknown, non-boolean, undeclared in an arm, unvaried across a comparison, or cannot map to executable isolation; failed arms and unexecuted scorers can no longer produce a successful runner result
+- The default system prompt no longer embeds the wall-clock date, preserving provider prompt-cache prefixes across midnight while still allowing HCP callers to supply an explicit date
+- Tools activated during a tool call now reach the next provider request in the same run, and additive run-scoped system-prompt overrides are rebased onto the new tool prompt without retaining stale tool guidance
+- API keys imported from Codex and Claude Code now carry their explicitly active local or proxy base URL into the actual Anthropic, Google, and OpenAI provider request; Codex configurations without `model_provider` no longer guess an endpoint from inactive provider tables
+- Ambient and Claude Code `ANTHROPIC_AUTH_TOKEN` credentials now reach Anthropic requests with Bearer authentication, and Codex ChatGPT OAuth access tokens are no longer misrouted to the public OpenAI API as API keys
+- Codex and Claude Code configuration and credential files are now strict read-only sources: credential discovery plus Magenta login and logout modify only Magenta's own auth store and leave those external files unchanged
+- Windows installation and binary self-update now use an isolated offline staged startup to initialize and verify process-tools while keeping plain `--help` read-only; self-update atomically replaces and rolls back the version-matched `_magenta` helper tree and rejects architectures with no published binary
+- Binary self-update and startup resource repair now use a private, durable transaction journal and one installation lock, recover interrupted staging or rollback work before any new activation, and keep the executable path atomically populated across Unix and Windows replacement
+- Unix resource extraction now discards archived numeric ownership, so privileged installs stage files as the installing user and can pass the updater's ownership checks
+- Compiled Bun relays now remove Bun's virtual executable entry from successor arguments, so an installed-binary handoff relaunches `_peer relay` instead of accidentally entering the ordinary CLI
+- The standalone Windows installer now shares the built-in updater's per-installation lock, durably journals every activation phase, atomically replaces `magenta.exe`, restores or safely completes interrupted binary/resource transactions on the next run, and refuses install or uninstall mutation when `InstallDir` contains unmanaged top-level data
+- Linux process-tools CI now fails explicitly when a release binary gains an interpreter or glibc dependency instead of relying on negated pipelines that bypass shell errexit
+- Idle gossip polling no longer takes a SQLite write lock when a peer has no claimable outbox work, and bounded hourly maintenance removes only read inbox rows, acknowledged relay payloads, and inactive deduplication history without aging out unread or unacknowledged messages
+- Mixed-version mailbox supervisors no longer overwrite an active relay's executable generation or trust a reusable PID without its endpoint lock; relays hand off to the installed executable after releasing the lock, while retained legacy stores import late inbox and outbox writes without a commit-to-delete data-loss window
+- Legacy mailbox migration now rebases transit envelopes to the machine-global store identity, restores missing locally originated senders as offline ownership, and rolls back the complete target import without settling source rows when federation metadata is malformed
+- SSH mailbox links now resolve an explicit `--remote-binary` or the remote non-interactive shell's installed Magenta path, retain bounded SSH startup diagnostics, restart both relay and responder processes after executable replacement, and retry failed lock handoffs without requiring another interactive Session
+- Internal teammate RPC traces suppress cumulative token-level message updates, avoiding quadratic pipe, memory, and disk amplification during long responses
+- Workflow workers now terminate with an explicit failure when one NDJSON frame, retained assistant history, or stderr exceeds the shared diagnostic byte cap, preventing timeout-free workflows from exhausting parent-process memory
+- Background-shell and persistent-teammate cleanup now protects only genuinely open or foreign-live logs, so repeated work in one long-running Magenta process cannot bypass file-count, age, and total-size retention
+- Opt-in cache telemetry now uses process-isolated active logs to avoid cross-process rotation races, retires each Session's active log on shutdown so long-lived processes remain subject to retention, and reports unsupported provider payload shapes as `unclassified_payload` instead of a false cache-miss cause
+- `magenta --version` and plain `--help` return before migrations, settings, updates, or embedded-resource repair, so metadata probes do not write to the user profile or access the network
+- Release publication now requires a complete changelog section for the exact release version and fails before publishing when release notes are missing, empty, or still represented only by `Unreleased`
+
+### Security
+- Destructive binary and local-release output replacement rejects repositories, ancestors, unowned directories, marker symlinks, and parent-symlink path escapes, then revalidates the canonical destination immediately before deletion
+- Release publication now waits for native Linux, macOS arm64, macOS Intel, and Windows smoke jobs plus fail-closed macOS signing and source-owned Unix-installer hand-offs; every staged macOS Mach-O must carry a valid Developer ID signature, the outer binaries must also pass Apple notarization and Gatekeeper checks, the Unix installer must be receipt-bound and provide shared-lock journaled full rollback, and an existing draft or published release is preserved and blocks an automatic same-tag retry with recovery guidance
+
 ## [0.0.29] - 2026-07-21
 
 ### Security

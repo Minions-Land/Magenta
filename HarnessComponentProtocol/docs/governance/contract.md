@@ -51,7 +51,7 @@ These directories are not Modules or Sources. They own no `HcpServer`, never ent
 
 ### System Prompt Boundary
 
-The selected `capability:system-prompt` owns deterministic composition of the already-resolved base prompt sections. Its input may include the active tools and snippets, host-selected default or custom prompt content, append content, project context, skills, documentation paths, bundled-feature flags, working directory, and date. Supplying an explicit date makes identical inputs produce identical output.
+The selected `capability:system-prompt` owns deterministic composition of the already-resolved base prompt sections. Its input may include the active tools and snippets, host-selected default or custom prompt content, append content, project context, skills, documentation paths, bundled-feature flags, working directory, and an optional explicitly supplied date. Default composition must not read the host wall clock, so identical inputs remain stable across midnight.
 
 The application host still owns discovery and precedence: CLI/file/Package prompt selection, extension contributions, active-tool selection, context and skill loading, installed documentation locations, and whether bundled resources are enabled. The Capability must not scan the filesystem, inspect Package manifests, resolve extensions, or introduce another precedence service.
 

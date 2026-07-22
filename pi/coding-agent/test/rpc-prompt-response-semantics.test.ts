@@ -15,7 +15,7 @@ import { AuthStorage } from "../src/core/auth-storage.ts";
 import type { ExtensionFactory } from "../src/core/extensions/types.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
-import { runRpcMode } from "../src/modes/rpc/rpc-mode.ts";
+import { INTERNAL_RPC_SUPPRESS_MESSAGE_UPDATES_ENV, runRpcMode } from "../src/modes/rpc/rpc-mode.ts";
 import { createTestExtensionsResult, createTestModelRegistry, createTestResourceLoader } from "./utilities.ts";
 
 const DEFAULT_TEST_MODEL: Model<any> = {
@@ -110,6 +110,7 @@ function sleep(ms: number): Promise<void> {
 interface RuntimeOptions {
 	withAuth: boolean;
 	responseDelayMs: number;
+	emitStreamingDelta?: boolean;
 	model?: Model<any>;
 	extensionFactory?: ExtensionFactory;
 }
@@ -133,7 +134,12 @@ async function createRuntimeHost(options: RuntimeOptions): Promise<{
 		streamFn: (_model, _context, _options) => {
 			const stream = new MockAssistantStream();
 			queueMicrotask(() => {
-				stream.push({ type: "start", partial: createAssistantMessage("") });
+				const partial = createAssistantMessage("");
+				stream.push({ type: "start", partial });
+				if (options.emitStreamingDelta) {
+					partial.content = [{ type: "text", text: "streamed" }];
+					stream.push({ type: "text_delta", contentIndex: 0, delta: "streamed", partial });
+				}
 				setTimeout(() => {
 					stream.push({ type: "done", reason: "stop", message: createAssistantMessage("done") });
 				}, options.responseDelayMs);
@@ -382,6 +388,45 @@ describe("RPC prompt response semantics", () => {
 			});
 		} finally {
 			await cleanup();
+		}
+	});
+
+	it("keeps message_update events enabled for ordinary RPC clients", async () => {
+		const { lineHandler, cleanup } = await startRpcMode({
+			withAuth: true,
+			responseDelayMs: 0,
+			emitStreamingDelta: true,
+		});
+		try {
+			lineHandler(JSON.stringify({ id: "ordinary-stream", type: "prompt", message: "Hello" }));
+			await vi.waitFor(() => {
+				expect(parseOutputLines(rpcIo.outputLines).some((record) => record.type === "message_update")).toBe(true);
+			});
+		} finally {
+			await cleanup();
+		}
+	});
+
+	it("suppresses message_update events only for the internal multiagent RPC child", async () => {
+		const previous = process.env[INTERNAL_RPC_SUPPRESS_MESSAGE_UPDATES_ENV];
+		process.env[INTERNAL_RPC_SUPPRESS_MESSAGE_UPDATES_ENV] = "1";
+		let started: Awaited<ReturnType<typeof startRpcMode>> | undefined;
+		try {
+			started = await startRpcMode({ withAuth: true, responseDelayMs: 0, emitStreamingDelta: true });
+		} finally {
+			if (previous === undefined) delete process.env[INTERNAL_RPC_SUPPRESS_MESSAGE_UPDATES_ENV];
+			else process.env[INTERNAL_RPC_SUPPRESS_MESSAGE_UPDATES_ENV] = previous;
+		}
+
+		try {
+			started!.lineHandler(JSON.stringify({ id: "multiagent-stream", type: "prompt", message: "Hello" }));
+			await vi.waitFor(() => {
+				const records = parseOutputLines(rpcIo.outputLines);
+				expect(records.some((record) => record.type === "agent_end")).toBe(true);
+				expect(records.some((record) => record.type === "message_update")).toBe(false);
+			});
+		} finally {
+			await started?.cleanup();
 		}
 	});
 

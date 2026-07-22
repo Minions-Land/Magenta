@@ -1,5 +1,16 @@
 import { createHmac, randomBytes } from "node:crypto";
-import { appendFileSync, chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+	appendFileSync,
+	chmodSync,
+	lstatSync,
+	mkdirSync,
+	readdirSync,
+	readFileSync,
+	renameSync,
+	statSync,
+	unlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import type {
 	Api,
@@ -15,6 +26,13 @@ const TELEMETRY_VERSION = 2;
 const MAX_BREAKPOINTS_RECORDED = 16;
 const MAX_PREVIOUS_REQUESTS = 64;
 const CACHE_ELIGIBILITY_MIN_TOKENS = 1024;
+export const CACHE_TELEMETRY_MAX_FILE_BYTES = 8 * 1024 * 1024;
+export const CACHE_TELEMETRY_MAX_TOTAL_BYTES = 64 * 1024 * 1024;
+export const CACHE_TELEMETRY_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const CACHE_TELEMETRY_ARCHIVE_PATTERN = /^events\.(\d+)\.\d+\.[a-f0-9]+\.jsonl$/;
+const CACHE_TELEMETRY_ACTIVE_PATTERN = /^events\.active\.(\d+)\.(\d+)\.[a-f0-9]+\.jsonl$/;
+const CACHE_TELEMETRY_LEGACY_LOG = "events.jsonl";
+const LIVE_CACHE_TELEMETRY_LOGS = new Set<string>();
 const VOLATILE_CONFIG_FIELDS = new Set(["diagnostics", "previous_response_id"]);
 const SAFE_BREAKPOINT_PATH_KEYS = new Set([
 	"system",
@@ -74,6 +92,7 @@ export interface CacheEpochDiff {
 	previousObserved: boolean;
 	epochReason:
 		| "first_observed"
+		| "unclassified_payload"
 		| "model_changed"
 		| "config_changed"
 		| "system_changed"
@@ -163,6 +182,7 @@ type InternalPayloadFingerprint = {
 	systemHash?: string;
 	toolsHash?: string;
 	messageItemHashes: string[];
+	segmentsClassified: boolean;
 };
 
 type PreviousRequestFingerprint = InternalPayloadFingerprint & {
@@ -175,9 +195,29 @@ type RecordedRequest = {
 	epoch: CacheEpochDiff;
 };
 
+export type CacheTelemetryRetentionOptions = {
+	maxFileBytes?: number;
+	maxTotalBytes?: number;
+	maxAgeMs?: number;
+	now?: () => number;
+};
+
+type CacheTelemetryLogFile = {
+	path: string;
+	size: number;
+	startedAt: number;
+	protected: boolean;
+};
+
 function isTruthy(value: string | undefined): boolean {
 	if (!value) return false;
 	return value === "1" || value.toLowerCase() === "true" || value.toLowerCase() === "yes";
+}
+
+function retentionLimit(value: number | undefined, fallback: number, name: string): number {
+	if (value === undefined) return fallback;
+	if (!Number.isFinite(value) || value < 0) throw new TypeError(`${name} must be a non-negative finite number`);
+	return Math.floor(value);
 }
 
 function isRecord(value: unknown): value is JsonRecord {
@@ -318,14 +358,16 @@ function splitPayload(
 	messages?: unknown;
 	config: JsonRecord;
 	cacheKey?: string;
+	segmentsClassified: boolean;
 } {
-	if (!isRecord(payload)) return { config: { payloadType: typeof payload } };
+	if (!isRecord(payload)) return { config: { payloadType: typeof payload }, segmentsClassified: false };
 	const config: JsonRecord = {};
 	const excluded = new Set<string>();
 	let system: unknown;
 	let tools: unknown;
 	let messages: unknown;
 
+	let segmentsClassified = true;
 	if (api === "anthropic-messages") {
 		system = payload.system;
 		tools = payload.tools;
@@ -346,6 +388,8 @@ function splitPayload(
 		messages = payload.messages;
 		excluded.add("tools");
 		excluded.add("messages");
+	} else {
+		segmentsClassified = false;
 	}
 
 	for (const [key, value] of Object.entries(payload)) {
@@ -357,6 +401,7 @@ function splitPayload(
 		messages,
 		config,
 		cacheKey: typeof payload.prompt_cache_key === "string" ? payload.prompt_cache_key : undefined,
+		segmentsClassified,
 	};
 }
 
@@ -407,6 +452,7 @@ function buildFingerprint(payload: unknown, model: Model<Api>, key: Buffer): Int
 		systemHash: system?.public.hash,
 		toolsHash: tools?.public.hash,
 		messageItemHashes: messages?.itemHashes ?? [],
+		segmentsClassified: sections.segmentsClassified,
 	};
 }
 
@@ -444,6 +490,7 @@ function diffFingerprint(
 	const appendOnly = commonMessages === previous.messageItemHashes.length;
 	let epochReason: CacheEpochDiff["epochReason"];
 	if (changed.model) epochReason = "model_changed";
+	else if (!previous.segmentsClassified || !current.segmentsClassified) epochReason = "unclassified_payload";
 	else if (changed.config) epochReason = "config_changed";
 	else if (changed.system) epochReason = "system_changed";
 	else if (changed.tools) epochReason = "tools_changed";
@@ -505,6 +552,8 @@ function copyCost(cost: Usage["cost"]): Usage["cost"] {
 }
 
 function readKey(path: string): Buffer {
+	const info = lstatSync(path);
+	if (!info.isFile() || info.isSymbolicLink()) throw new Error("Invalid cache telemetry HMAC key");
 	const encoded = readFileSync(path, "utf8").trim();
 	if (!/^[a-f0-9]{64}$/i.test(encoded)) throw new Error("Invalid cache telemetry HMAC key");
 	return Buffer.from(encoded, "hex");
@@ -512,6 +561,10 @@ function readKey(path: string): Buffer {
 
 function loadOrCreateKey(directory: string): Buffer {
 	mkdirSync(directory, { recursive: true, mode: 0o700 });
+	const directoryInfo = lstatSync(directory);
+	if (!directoryInfo.isDirectory() || directoryInfo.isSymbolicLink()) {
+		throw new Error("Cache telemetry directory must be a real directory");
+	}
 	try {
 		chmodSync(directory, 0o700);
 	} catch {
@@ -638,8 +691,16 @@ export class CacheTelemetryRequest {
 
 export class CacheTelemetryRecorder {
 	private readonly key: Buffer;
-	private readonly logPath: string;
+	private readonly directory: string;
+	private logPath: string;
+	private activeToken: string;
+	private readonly maxFileBytes: number;
+	private readonly maxTotalBytes: number;
+	private readonly maxAgeMs: number;
+	private readonly now: () => number;
+	private activeStartedAt: number;
 	private readonly previous = new Map<string, PreviousRequestFingerprint>();
+	private closed = false;
 
 	static fromEnvironment(
 		agentDir: string,
@@ -653,11 +714,69 @@ export class CacheTelemetryRecorder {
 		}
 	}
 
-	constructor(directory: string) {
+	constructor(directory: string, retention: CacheTelemetryRetentionOptions = {}) {
 		this.key = loadOrCreateKey(directory);
-		this.logPath = join(directory, "events.jsonl");
-		appendFileSync(this.logPath, "", { encoding: "utf8", mode: 0o600 });
-		chmodSync(this.logPath, 0o600);
+		this.directory = directory;
+		this.maxFileBytes = retentionLimit(
+			retention.maxFileBytes,
+			CACHE_TELEMETRY_MAX_FILE_BYTES,
+			"cache telemetry maxFileBytes",
+		);
+		this.maxTotalBytes = retentionLimit(
+			retention.maxTotalBytes,
+			CACHE_TELEMETRY_MAX_TOTAL_BYTES,
+			"cache telemetry maxTotalBytes",
+		);
+		this.maxAgeMs = retentionLimit(retention.maxAgeMs, CACHE_TELEMETRY_MAX_AGE_MS, "cache telemetry maxAgeMs");
+		this.now = retention.now ?? Date.now;
+		this.activeStartedAt = this.currentTime();
+		const active = this.createActiveLog(this.activeStartedAt);
+		this.logPath = active.path;
+		this.activeToken = active.token;
+		LIVE_CACHE_TELEMETRY_LOGS.add(this.logPath);
+		try {
+			this.enforceRetention(this.currentTime());
+		} catch (error) {
+			LIVE_CACHE_TELEMETRY_LOGS.delete(this.logPath);
+			try {
+				unlinkSync(this.logPath);
+			} catch {
+				// Preserve the constructor error; a later retention pass can prune the orphan.
+			}
+			throw error;
+		}
+	}
+
+	/** Retire this recorder's active log without creating a replacement. */
+	close(): void {
+		if (this.closed) return;
+		this.closed = true;
+		const activePath = this.logPath;
+		LIVE_CACHE_TELEMETRY_LOGS.delete(activePath);
+		try {
+			const size = statSync(activePath).size;
+			if (size > 0) {
+				const archive = join(
+					this.directory,
+					`events.${Math.floor(this.activeStartedAt)}.${process.pid}.${this.activeToken}.jsonl`,
+				);
+				renameSync(activePath, archive);
+				chmodSync(archive, 0o600);
+			} else {
+				unlinkSync(activePath);
+			}
+		} catch {
+			try {
+				unlinkSync(activePath);
+			} catch {
+				// Telemetry cleanup is best effort and must not affect Session disposal.
+			}
+		}
+		try {
+			this.enforceRetention(this.currentTime());
+		} catch {
+			// A later recorder will retry retention.
+		}
 	}
 
 	start(model: Model<Api>, sessionId?: string): CacheTelemetryRequest {
@@ -863,10 +982,152 @@ export class CacheTelemetryRecorder {
 	}
 
 	private append(record: CacheRequestRecord | CacheResultRecord): void {
+		if (this.closed) return;
 		try {
-			appendFileSync(this.logPath, `${JSON.stringify(record)}\n`, { encoding: "utf8", mode: 0o600 });
+			const line = `${JSON.stringify(record)}\n`;
+			const bytes = Buffer.byteLength(line, "utf8");
+			if (!this.prepareAppend(bytes)) return;
+			appendFileSync(this.logPath, line, { encoding: "utf8", mode: 0o600 });
 		} catch {
 			// Telemetry must never affect a provider request.
 		}
+	}
+
+	private currentTime(): number {
+		const now = this.now();
+		if (!Number.isFinite(now)) throw new TypeError("cache telemetry clock must return a finite timestamp");
+		return now;
+	}
+
+	private prepareAppend(bytes: number): boolean {
+		if (bytes <= 0 || bytes > this.maxFileBytes || bytes > this.maxTotalBytes || this.maxAgeMs === 0) {
+			return false;
+		}
+		const now = this.currentTime();
+		let activeSize = statSync(this.logPath).size;
+		if (now - this.activeStartedAt >= this.maxAgeMs) {
+			this.rotateActive(now);
+			activeSize = 0;
+		}
+		let total = this.enforceRetention(now, bytes);
+		if (activeSize + bytes > this.maxFileBytes) {
+			this.rotateActive(now);
+			activeSize = 0;
+			total = this.enforceRetention(now, bytes);
+		}
+
+		if (total + bytes <= this.maxTotalBytes) return true;
+		if (activeSize > 0) {
+			this.rotateActive(now);
+			total = this.enforceRetention(now, bytes);
+		}
+		return total + bytes <= this.maxTotalBytes;
+	}
+
+	private rotateActive(now: number): void {
+		const previousPath = this.logPath;
+		try {
+			const size = statSync(this.logPath).size;
+			if (size > 0) {
+				const archive = join(
+					this.directory,
+					`events.${Math.floor(this.activeStartedAt)}.${process.pid}.${this.activeToken}.jsonl`,
+				);
+				renameSync(this.logPath, archive);
+				chmodSync(archive, 0o600);
+			} else {
+				unlinkSync(this.logPath);
+			}
+		} finally {
+			LIVE_CACHE_TELEMETRY_LOGS.delete(previousPath);
+		}
+		this.activeStartedAt = now;
+		const active = this.createActiveLog(now);
+		this.logPath = active.path;
+		this.activeToken = active.token;
+		LIVE_CACHE_TELEMETRY_LOGS.add(this.logPath);
+	}
+
+	private createActiveLog(startedAt: number): { path: string; token: string } {
+		for (let attempt = 0; attempt < 8; attempt++) {
+			const token = randomBytes(6).toString("hex");
+			const path = join(this.directory, `events.active.${Math.floor(startedAt)}.${process.pid}.${token}.jsonl`);
+			try {
+				writeFileSync(path, "", { encoding: "utf8", flag: "wx", mode: 0o600 });
+				chmodSync(path, 0o600);
+				return { path, token };
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+			}
+		}
+		throw new Error("Could not allocate a unique cache telemetry log");
+	}
+
+	/** Remove expired/oversized archives and reserve space for the next atomic line append. */
+	private enforceRetention(now: number, reserveBytes = 0): number {
+		const logs: CacheTelemetryLogFile[] = [];
+		for (const entry of readdirSync(this.directory, { withFileTypes: true })) {
+			if (!entry.isFile() || entry.isSymbolicLink()) continue;
+			const archiveMatch = CACHE_TELEMETRY_ARCHIVE_PATTERN.exec(entry.name);
+			const activeMatch = CACHE_TELEMETRY_ACTIVE_PATTERN.exec(entry.name);
+			if (!archiveMatch && !activeMatch && entry.name !== CACHE_TELEMETRY_LEGACY_LOG) continue;
+			const path = join(this.directory, entry.name);
+			let info: ReturnType<typeof lstatSync>;
+			try {
+				info = lstatSync(path);
+			} catch {
+				continue;
+			}
+			if (!info.isFile() || info.isSymbolicLink()) continue;
+			const startedAt = archiveMatch
+				? Number(archiveMatch[1])
+				: activeMatch
+					? Number(activeMatch[1])
+					: info.birthtimeMs || info.mtimeMs;
+			const ownerPid = activeMatch ? Number(activeMatch[2]) : undefined;
+			const protectedLog =
+				ownerPid !== undefined &&
+				(ownerPid === process.pid ? LIVE_CACHE_TELEMETRY_LOGS.has(path) : processIsAlive(ownerPid));
+			if (
+				(!protectedLog && info.size > this.maxFileBytes) ||
+				(!protectedLog && info.size > this.maxTotalBytes) ||
+				(!protectedLog && !Number.isFinite(startedAt)) ||
+				(!protectedLog && now - startedAt >= this.maxAgeMs)
+			) {
+				try {
+					unlinkSync(path);
+				} catch {
+					// Another recorder may have pruned the same closed file.
+				}
+				continue;
+			}
+			logs.push({ path, size: info.size, startedAt, protected: protectedLog });
+		}
+
+		logs.sort((left, right) => left.startedAt - right.startedAt || left.path.localeCompare(right.path));
+		let total = logs.reduce((sum, file) => sum + file.size, 0);
+		const budget = Math.max(0, this.maxTotalBytes - reserveBytes);
+		for (const log of logs) {
+			if (total <= budget) break;
+			if (log.protected) continue;
+			try {
+				unlinkSync(log.path);
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code !== "ENOENT") continue;
+			}
+			total -= log.size;
+		}
+		return total;
+	}
+}
+
+function processIsAlive(pid: number): boolean {
+	if (!Number.isSafeInteger(pid) || pid <= 0) return false;
+	if (pid === process.pid) return true;
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch (error) {
+		return (error as NodeJS.ErrnoException).code === "EPERM";
 	}
 }

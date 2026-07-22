@@ -95,6 +95,33 @@ describe("legacy schema upgrade (gossip migration)", () => {
 		return path;
 	}
 
+	function seedV029ForwardedDb(): string {
+		const path = seedLegacyDb();
+		const db = new DatabaseSync(path);
+		db.exec(`
+			ALTER TABLE peer_outbox ADD COLUMN received_at TEXT NOT NULL DEFAULT '';
+			CREATE TABLE peer_outbox_delivery (
+				message_id   TEXT NOT NULL,
+				peer_store_id TEXT NOT NULL,
+				status       TEXT NOT NULL DEFAULT 'pending',
+				claim_owner  TEXT,
+				claimed_at   TEXT,
+				PRIMARY KEY (message_id, peer_store_id)
+			);
+		`);
+		db.prepare(`UPDATE peer_outbox SET received_at = created_at WHERE message_id = ?`).run("m:legacy-outbox");
+		db.prepare(`INSERT INTO peer_seen (message_id, first_seen_at, ingress_peer_store_id) VALUES (?, ?, NULL)`).run(
+			"m:legacy-outbox",
+			"2026-07-11T00:00:00.000Z",
+		);
+		db.prepare(`INSERT INTO peer_outbox_delivery (message_id, peer_store_id, status) VALUES (?, ?, 'forwarded')`).run(
+			"m:legacy-outbox",
+			"store:v029-peer",
+		);
+		db.close();
+		return path;
+	}
+
 	it("opens a pre-gossip database, auto-migrates, and preserves legacy data", () => {
 		const path = seedLegacyDb();
 
@@ -123,15 +150,100 @@ describe("legacy schema upgrade (gossip migration)", () => {
 		}
 	});
 
-	it("backfills received_at from created_at so legacy rows remain GC-able", () => {
+	it("backfills received_at without aging out an unacknowledged legacy payload", () => {
 		const path = seedLegacyDb();
 		const store = new MessageStore(path, { peerOutboxRetentionMs: 7 * 24 * 60 * 60 * 1000 });
 		try {
-			// The legacy row was created 2026-07-11. received_at was backfilled from
-			// created_at, so GC using a "now" far in the future purges it.
+			const probe = new DatabaseSync(path);
+			try {
+				expect(
+					probe
+						.prepare(`SELECT received_at, settled_at FROM peer_outbox WHERE message_id = ?`)
+						.get("m:legacy-outbox"),
+				).toEqual({ received_at: "2026-07-11T00:00:00.000Z", settled_at: null });
+			} finally {
+				probe.close();
+			}
+			// Queue age alone is never custody proof, even far beyond retention.
 			const farFuture = Date.parse("2026-08-01T00:00:00.000Z");
-			expect(store.purgeExpiredOutbox(farFuture)).toBe(1);
-			expect(store.getPeerOutboxCounts().pending).toBe(0);
+			expect(store.purgeExpiredOutbox(farFuture)).toBe(0);
+			expect(store.getPeerOutboxCounts().pending).toBe(1);
+		} finally {
+			store.close();
+		}
+	});
+
+	it("recovers a v0.0.29 forwarded delivery after the peer advertises durable custody", () => {
+		const path = seedV029ForwardedDb();
+		const store = new MessageStore(path, { peerOutboxRetentionMs: 1_000 });
+		try {
+			const probe = new DatabaseSync(path);
+			try {
+				expect(
+					probe
+						.prepare(
+							`SELECT o.status, o.forwarded_at, o.settled_at, d.status AS delivery_status
+							   FROM peer_outbox o
+							   JOIN peer_outbox_delivery d ON d.message_id = o.message_id
+							  WHERE o.message_id = ? AND d.peer_store_id = ?`,
+						)
+						.get("m:legacy-outbox", "store:v029-peer"),
+				).toEqual({ status: "pending", forwarded_at: null, settled_at: null, delivery_status: "forwarded" });
+				expect(store.purgeExpiredOutbox(Date.parse("2026-08-01T00:00:00.000Z"))).toBe(0);
+				expect(store.claimPeerOutbox("store:v029-peer", "ordinary", 10)).toHaveLength(0);
+
+				const recovered = store.claimPeerOutbox("store:v029-peer", "durable", 10, false, {
+					allowTransit: true,
+					reclaimUnsettledForwarded: true,
+				});
+				expect(recovered.map((message) => message.id)).toEqual(["m:legacy-outbox"]);
+				expect(store.ackPeerOutbox(["m:legacy-outbox"], "durable", { durableCustody: true })).toBe(1);
+				expect(
+					probe.prepare(`SELECT settled_at FROM peer_outbox WHERE message_id = ?`).get("m:legacy-outbox"),
+				).toEqual({ settled_at: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/) });
+			} finally {
+				probe.close();
+			}
+		} finally {
+			store.close();
+		}
+	});
+
+	it("reaccepts a v0.0.29 seen marker whose age-purged outbox body is gone", () => {
+		const path = seedV029ForwardedDb();
+		const old = new DatabaseSync(path);
+		old.prepare(`DELETE FROM peer_outbox_delivery WHERE message_id = ?`).run("m:legacy-outbox");
+		old.prepare(`DELETE FROM peer_outbox WHERE message_id = ?`).run("m:legacy-outbox");
+		old.close();
+
+		const store = new MessageStore(path);
+		try {
+			expect(
+				store.acceptFederatedMessage(
+					{
+						id: "m:legacy-outbox",
+						sender: "alice",
+						recipient: "haofeng",
+						content: "queued before upgrade",
+						createdAt: "2026-07-11T00:00:00.000Z",
+						priority: "urgent",
+					},
+					"store:durable-source",
+				).disposition,
+			).toBe("relay");
+			const probe = new DatabaseSync(path);
+			try {
+				expect(
+					probe.prepare(`SELECT content FROM peer_outbox WHERE message_id = ?`).get("m:legacy-outbox"),
+				).toEqual({
+					content: "queued before upgrade",
+				});
+				expect(
+					probe.prepare(`SELECT ingress_peer_store_id FROM peer_seen WHERE message_id = ?`).get("m:legacy-outbox"),
+				).toEqual({ ingress_peer_store_id: "store:durable-source" });
+			} finally {
+				probe.close();
+			}
 		} finally {
 			store.close();
 		}
@@ -152,11 +264,24 @@ describe("legacy schema upgrade (gossip migration)", () => {
 
 				const cols = probe.prepare(`PRAGMA table_info(peer_outbox)`).all() as Array<{ name: string }>;
 				expect(cols.some((c) => c.name === "received_at")).toBe(true);
+				expect(cols.some((c) => c.name === "settled_at")).toBe(true);
 
-				const idx = probe
-					.prepare(`SELECT name FROM sqlite_master WHERE type='index' AND name='idx_peer_outbox_retention'`)
+				const indexes = probe
+					.prepare(
+						`SELECT name FROM sqlite_master
+						  WHERE type = 'index' AND name IN ('idx_peer_outbox_retention', 'idx_peer_outbox_settled_retention')`,
+					)
 					.all() as Array<{ name: string }>;
-				expect(idx).toHaveLength(1);
+				expect(new Set(indexes.map((index) => index.name))).toEqual(
+					new Set(["idx_peer_outbox_retention", "idx_peer_outbox_settled_retention"]),
+				);
+				expect(
+					probe
+						.prepare(
+							`SELECT name FROM sqlite_master WHERE type = 'trigger' AND name = 'protect_unsettled_peer_outbox'`,
+						)
+						.get(),
+				).toEqual({ name: "protect_unsettled_peer_outbox" });
 			} finally {
 				probe.close();
 			}
@@ -197,7 +322,8 @@ describe("legacy schema upgrade (gossip migration)", () => {
 	});
 
 	// Mixed-version deployment scenarios: an interim/old binary inserting without
-	// received_at (empty '' default) must not leak rows past GC.
+	// received_at (empty '' default) is healed for observability, but still cannot
+	// lose a payload before a successful acknowledgement.
 	it("idempotent backfill heals empty received_at on restart (Fix A)", () => {
 		const path = seedLegacyDb();
 		const s1 = new MessageStore(path, { peerOutboxRetentionMs: 1000 });
@@ -218,7 +344,7 @@ describe("legacy schema upgrade (gossip migration)", () => {
 		// New binary restarts: migrate() runs the unconditional backfill.
 		const s2 = new MessageStore(path, { peerOutboxRetentionMs: 1000 });
 		try {
-			// The '' row is healed to created_at, making it GC-able.
+			// The '' row is healed to created_at without inventing custody proof.
 			const healed = new DatabaseSync(path);
 			const after = healed.prepare("SELECT received_at FROM peer_outbox WHERE message_id='m:oldbinary'").get() as {
 				received_at: string;
@@ -226,16 +352,15 @@ describe("legacy schema upgrade (gossip migration)", () => {
 			expect(after.received_at).toBe("2020-01-01T00:00:00.000Z");
 			healed.close();
 
-			// Both ancient rows (2020 oldbinary + 2026-07-11 seed legacy-outbox) are now
-			// older than the 1s retention window, so GC reclaims both.
-			expect(s2.purgeExpiredOutbox(Date.now())).toBe(2);
-			expect(s2.getPeerOutboxCounts().pending).toBe(0);
+			// Both ancient rows remain unacknowledged and therefore durable.
+			expect(s2.purgeExpiredOutbox(Date.now())).toBe(0);
+			expect(s2.getPeerOutboxCounts().pending).toBe(2);
 		} finally {
 			s2.close();
 		}
 	});
 
-	it("GC COALESCE fallback purges empty received_at without restart (Fix B)", () => {
+	it("protects an empty received_at row from current and old-style age deletion", () => {
 		const path = seedLegacyDb();
 		const s1 = new MessageStore(path, { peerOutboxRetentionMs: 1000 });
 		s1.close();
@@ -253,21 +378,48 @@ describe("legacy schema upgrade (gossip migration)", () => {
 		// This proves the GC query itself tolerates '' (Fix B), independent of Fix A.
 		const s2 = new MessageStore(path, { peerOutboxRetentionMs: 1000 });
 		try {
-			// Force the row back to '' AFTER migrate() has run, so only the GC-time
-			// COALESCE fallback can reclaim it (Fix A's startup backfill already passed).
+			// Force the row back to '' AFTER migrate() has run, modeling a concurrent
+			// older binary that does not know about settled_at.
 			const poke = new DatabaseSync(path);
 			poke.exec(`UPDATE peer_outbox SET received_at = '' WHERE message_id = 'm:oldbinary2'`);
+			const oldDelete = poke
+				.prepare(
+					`DELETE FROM peer_outbox
+					  WHERE COALESCE(NULLIF(received_at, ''), created_at) <= ?`,
+				)
+				.run(new Date().toISOString()) as { changes: number | bigint };
+			expect(Number(oldDelete.changes)).toBe(0);
 			poke.close();
 
-			// No restart / no re-migrate: GC still purges the '' row via COALESCE fallback.
-			const purged = s2.purgeExpiredOutbox(Date.now());
-			expect(purged).toBeGreaterThanOrEqual(1);
+			expect(s2.purgeExpiredOutbox(Date.now())).toBe(0);
 			const probe = new DatabaseSync(path);
-			const gone = probe.prepare("SELECT message_id FROM peer_outbox WHERE message_id='m:oldbinary2'").get();
-			expect(gone).toBeUndefined();
-			probe.close();
+			try {
+				expect(probe.prepare("SELECT message_id FROM peer_outbox WHERE message_id='m:oldbinary2'").get()).toEqual({
+					message_id: "m:oldbinary2",
+				});
+			} finally {
+				probe.close();
+			}
 		} finally {
 			s2.close();
+		}
+	});
+
+	it("backfills legacy forwarded_at as custody proof for retention", () => {
+		const path = seedLegacyDb();
+		const raw = new DatabaseSync(path);
+		raw.prepare(`UPDATE peer_outbox SET status = 'forwarded', forwarded_at = ? WHERE message_id = ?`).run(
+			"2026-07-12T00:00:00.000Z",
+			"m:legacy-outbox",
+		);
+		raw.close();
+
+		const store = new MessageStore(path, { peerOutboxRetentionMs: 1_000 });
+		try {
+			expect(store.purgeExpiredOutbox(Date.parse("2026-08-01T00:00:00.000Z"))).toBe(1);
+			expect(store.getPeerOutboxCounts().pending).toBe(0);
+		} finally {
+			store.close();
 		}
 	});
 });

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
 	DEFAULT_PEER_LINK_HOPS,
 	MAX_PEER_LINK_FRAME_BYTES,
+	PEER_LINK_CAPABILITY_DURABLE_CUSTODY,
 	PEER_LINK_CAPABILITY_GOSSIP_TRANSIT,
 	type PeerLinkFrame,
 	parsePeerLinkFrame,
@@ -20,7 +21,7 @@ describe("peer link protocol", () => {
 				protocol: 1,
 				storeId: "store-a",
 				sessions: ["session-a"],
-				capabilities: [PEER_LINK_CAPABILITY_GOSSIP_TRANSIT],
+				capabilities: [PEER_LINK_CAPABILITY_GOSSIP_TRANSIT, PEER_LINK_CAPABILITY_DURABLE_CUSTODY],
 			},
 			{
 				type: "message",

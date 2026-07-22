@@ -1,18 +1,23 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, copyFile, lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { _clearMirrorCache } from "../src/utils/github-mirror.ts";
 import {
 	assertPackagedProcessToolsStart,
+	assertStagedBinaryStartup,
 	checkForUpdate,
 	consumePreviousWindowsUpdateError,
 	downloadReleaseAsset,
 	ensureCurrentReleaseResources,
+	getBinaryAssetName,
+	getReleaseArchiveExtractArgs,
+	getUpdateTransactionResourceNames,
 	isRetryableDownloadError,
+	lockInstallMutation,
 	shouldSkipConcurrentUpdateTransaction,
 } from "../src/utils/github-release-update.ts";
 import {
@@ -28,10 +33,12 @@ import {
 	RELEASE_CHECKSUMS_ASSET_NAME,
 	RELEASE_RESOURCE_MARKER_NAME,
 	RELEASE_RESOURCES_ASSET_NAME,
+	RELEASE_UPDATE_JOURNAL_NAME,
 	REQUIRED_RESOURCE_PATHS,
 	RESOURCE_DIRECTORY_NAMES,
 	RESOURCE_FILE_NAMES,
 	type ReleaseArchiveEntry,
+	recoverInterruptedReleaseUpdateTransaction,
 	resolveReleaseAssetPlan,
 	shouldUseMirrorForReleaseAsset,
 	validateExtractedReleaseResources,
@@ -40,6 +47,8 @@ import {
 	verifyReleaseAssetDigest,
 } from "../src/utils/github-release-update-support.ts";
 
+const RESOURCE_UPDATE_OPERATION_ID = "a".repeat(32);
+const BINARY_UPDATE_OPERATION_ID = "b".repeat(32);
 const temporaryDirectories: string[] = [];
 
 async function makeTemporaryDirectory(): Promise<string> {
@@ -122,6 +131,37 @@ describe("staged process-tools startup verification", () => {
 		if (process.platform !== "win32") await chmod(helperPath, 0o755);
 		expect(() => assertPackagedProcessToolsStart(root)).toThrow(/failed to start|failed --help/i);
 	});
+
+	it.skipIf(process.platform === "win32")(
+		"initializes the staged helper through an isolated offline startup",
+		async () => {
+			const root = await makeTemporaryDirectory();
+			const binaryPath = join(root, "magenta");
+			await writeFile(
+				binaryPath,
+				`#!/bin/sh
+set -eu
+test "$1" = "--help"
+test "$2" = "--offline"
+test "$3" = "smoke"
+test "$(pwd -P)" = "$(cd "$PI_PACKAGE_DIR" && pwd -P)"
+test "$HOME" = "$PI_PACKAGE_DIR/.magenta-smoke-home"
+test "$USERPROFILE" = "$HOME"
+test "$MAGENTA_CODING_AGENT_DIR" = "$HOME/agent"
+test "$MAGENTA_PEER_MESSAGE_DB" = "$HOME/messages.db"
+helper_dir="$PI_PACKAGE_DIR/_magenta/process-tools/target/release"
+mkdir -p "$helper_dir" "$MAGENTA_CODING_AGENT_DIR"
+printf '#!/bin/sh\nexit 0\n' > "$helper_dir/magenta-process-tools"
+chmod +x "$helper_dir/magenta-process-tools"
+`,
+				"utf8",
+			);
+			await chmod(binaryPath, 0o755);
+
+			expect(() => assertStagedBinaryStartup(binaryPath, root)).not.toThrow();
+			expect(existsSync(join(root, ".magenta-smoke-home", "agent"))).toBe(true);
+		},
+	);
 });
 
 afterEach(async () => {
@@ -134,6 +174,25 @@ afterEach(async () => {
 });
 
 describe("release asset planning", () => {
+	it("maps only architectures published by the release workflow", () => {
+		expect(getBinaryAssetName("darwin", "arm64")).toBe("magenta-macos-arm64");
+		expect(getBinaryAssetName("darwin", "x64")).toBe("magenta-macos-x64");
+		expect(getBinaryAssetName("linux", "x64")).toBe("magenta-linux-x64");
+		expect(getBinaryAssetName("win32", "x64")).toBe("magenta-windows-x64.exe");
+
+		expect(() => getBinaryAssetName("linux", "arm64")).toThrow(/no published binary for linux arm64/i);
+		expect(() => getBinaryAssetName("win32", "arm64")).toThrow(/no published binary for win32 arm64/i);
+		expect(() => getBinaryAssetName("freebsd", "x64")).toThrow(/no published binary for freebsd x64/i);
+	});
+
+	it("commits the staged process-tools tree with every binary update", () => {
+		expect(getUpdateTransactionResourceNames(["theme", RELEASE_RESOURCE_MARKER_NAME])).toEqual([
+			"theme",
+			RELEASE_RESOURCE_MARKER_NAME,
+			"_magenta",
+		]);
+	});
+
 	it("requires the binary, resources, and checksums from one release response", () => {
 		const assets = [
 			{ name: "magenta-windows-x64.exe", browser_download_url: "https://example.test/v1/magenta.exe" },
@@ -241,6 +300,31 @@ describe("release checksums", () => {
 });
 
 describe("release resource archive validation", () => {
+	it("extracts Unix resources as the installing user instead of an archived numeric owner", () => {
+		const archivePath = "/tmp/magenta-resources.tar.gz";
+		const stagingDirectory = "/tmp/magenta-staging";
+		expect(getReleaseArchiveExtractArgs(archivePath, stagingDirectory, "linux")).toEqual([
+			"--no-same-owner",
+			"-xzf",
+			archivePath,
+			"-C",
+			stagingDirectory,
+		]);
+		expect(getReleaseArchiveExtractArgs(archivePath, stagingDirectory, "darwin")).toEqual([
+			"--no-same-owner",
+			"-xzf",
+			archivePath,
+			"-C",
+			stagingDirectory,
+		]);
+		expect(getReleaseArchiveExtractArgs(archivePath, stagingDirectory, "win32")).toEqual([
+			"-xzf",
+			archivePath,
+			"-C",
+			stagingDirectory,
+		]);
+	});
+
 	it("accepts the complete release resource layout", () => {
 		const topLevelNames = validateReleaseArchiveEntries(makeValidArchiveEntries());
 		expect(topLevelNames).toEqual(expect.arrayContaining([...RESOURCE_DIRECTORY_NAMES, ...RESOURCE_FILE_NAMES]));
@@ -398,8 +482,8 @@ describe("startup resource bootstrap", () => {
 	it("rolls back a resource-only startup repair when verification fails", async () => {
 		const root = await makeTemporaryDirectory();
 		const installDirectory = join(root, "install");
-		const stagingDirectory = join(installDirectory, ".resource-staging");
-		const backupDirectory = join(installDirectory, ".resource-backup");
+		const stagingDirectory = join(installDirectory, `.magenta-resource-staging-${RESOURCE_UPDATE_OPERATION_ID}`);
+		const backupDirectory = join(installDirectory, `.magenta-resource-backup-${RESOURCE_UPDATE_OPERATION_ID}`);
 		await writeText(join(installDirectory, "theme", "dark.json"), "old theme");
 		await writeText(join(installDirectory, RELEASE_RESOURCE_MARKER_NAME), '{"version":"0.0.11"}\n');
 		await writeText(join(installDirectory, "other-program"), "do not touch");
@@ -409,6 +493,7 @@ describe("startup resource bootstrap", () => {
 		await expect(
 			applyResourceUpdateTransaction({
 				installDirectory,
+				operationId: RESOURCE_UPDATE_OPERATION_ID,
 				stagingDirectory,
 				backupDirectory,
 				resourceNames: ["theme", RELEASE_RESOURCE_MARKER_NAME],
@@ -452,32 +537,53 @@ describe("Unix update transaction", () => {
 	it("replaces the binary and resources while leaving unrelated programs untouched", async () => {
 		const root = await makeTemporaryDirectory();
 		const installDirectory = join(root, "bin");
-		const stagingDirectory = join(installDirectory, ".magenta-update-staging-test");
-		const backupDirectory = join(installDirectory, ".magenta-update-backup-test");
+		const stagingDirectory = join(installDirectory, `.magenta-update-staging-${BINARY_UPDATE_OPERATION_ID}`);
+		const backupDirectory = join(installDirectory, `.magenta-update-backup-${BINARY_UPDATE_OPERATION_ID}`);
 		const currentBinary = join(installDirectory, "magenta");
 		await mkdir(stagingDirectory, { recursive: true });
 		await writeText(currentBinary, "old binary");
 		await writeText(join(installDirectory, "theme", "dark.json"), "old theme");
 		await writeText(join(installDirectory, "package.json"), "old package");
+		await writeText(
+			join(installDirectory, "_magenta", "process-tools", "target", "release", "magenta-process-tools"),
+			"old helper",
+		);
 		await writeText(join(installDirectory, "other-program"), "do not touch");
 		await writeText(join(stagingDirectory, "magenta"), "new binary");
 		await writeText(join(stagingDirectory, "theme", "dark.json"), "new theme");
 		await writeText(join(stagingDirectory, "package.json"), "new package");
+		await writeText(
+			join(stagingDirectory, "_magenta", "process-tools", "target", "release", "magenta-process-tools"),
+			"new helper",
+		);
 
 		const cleanupWarnings = await applyUnixUpdateTransaction({
 			currentBinary,
+			operationId: BINARY_UPDATE_OPERATION_ID,
 			stagingDirectory,
 			backupDirectory,
-			resourceNames: ["theme", "package.json"],
+			resourceNames: ["theme", "package.json", "_magenta"],
 			verifyInstalled: async () => {
 				expect(await readFile(currentBinary, "utf8")).toBe("new binary");
 				expect(await readFile(join(installDirectory, "theme", "dark.json"), "utf8")).toBe("new theme");
+				expect(
+					await readFile(
+						join(installDirectory, "_magenta", "process-tools", "target", "release", "magenta-process-tools"),
+						"utf8",
+					),
+				).toBe("new helper");
 			},
 		});
 
 		expect(cleanupWarnings).toEqual([]);
 		expect(await readFile(currentBinary, "utf8")).toBe("new binary");
 		expect(await readFile(join(installDirectory, "package.json"), "utf8")).toBe("new package");
+		expect(
+			await readFile(
+				join(installDirectory, "_magenta", "process-tools", "target", "release", "magenta-process-tools"),
+				"utf8",
+			),
+		).toBe("new helper");
 		expect(await readFile(join(installDirectory, "other-program"), "utf8")).toBe("do not touch");
 		expect(existsSync(stagingDirectory)).toBe(false);
 		expect(existsSync(backupDirectory)).toBe(false);
@@ -486,8 +592,8 @@ describe("Unix update transaction", () => {
 	it("restores every old item when a resource rename fails", async () => {
 		const root = await makeTemporaryDirectory();
 		const installDirectory = join(root, "bin");
-		const stagingDirectory = join(installDirectory, ".magenta-update-staging-test");
-		const backupDirectory = join(installDirectory, ".magenta-update-backup-test");
+		const stagingDirectory = join(installDirectory, `.magenta-update-staging-${BINARY_UPDATE_OPERATION_ID}`);
+		const backupDirectory = join(installDirectory, `.magenta-update-backup-${BINARY_UPDATE_OPERATION_ID}`);
 		const currentBinary = join(installDirectory, "magenta");
 		await mkdir(stagingDirectory, { recursive: true });
 		await writeText(currentBinary, "old binary");
@@ -500,6 +606,7 @@ describe("Unix update transaction", () => {
 		await expect(
 			applyUnixUpdateTransaction({
 				currentBinary,
+				operationId: BINARY_UPDATE_OPERATION_ID,
 				stagingDirectory,
 				backupDirectory,
 				resourceNames: ["theme", "package.json"],
@@ -525,22 +632,31 @@ describe("Unix update transaction", () => {
 	it("rolls back a fully switched update when installed binary verification fails", async () => {
 		const root = await makeTemporaryDirectory();
 		const installDirectory = join(root, "bin");
-		const stagingDirectory = join(installDirectory, ".magenta-update-staging-test");
-		const backupDirectory = join(installDirectory, ".magenta-update-backup-test");
+		const stagingDirectory = join(installDirectory, `.magenta-update-staging-${BINARY_UPDATE_OPERATION_ID}`);
+		const backupDirectory = join(installDirectory, `.magenta-update-backup-${BINARY_UPDATE_OPERATION_ID}`);
 		const currentBinary = join(installDirectory, "magenta");
 		await mkdir(stagingDirectory, { recursive: true });
 		await writeText(currentBinary, "old binary");
 		await writeText(join(installDirectory, "theme", "dark.json"), "old theme");
+		await writeText(
+			join(installDirectory, "_magenta", "process-tools", "target", "release", "magenta-process-tools"),
+			"old helper",
+		);
 		await writeText(join(stagingDirectory, "magenta"), "bad binary");
 		await writeText(join(stagingDirectory, "theme", "dark.json"), "new theme");
 		await writeText(join(stagingDirectory, "package.json"), "new package");
+		await writeText(
+			join(stagingDirectory, "_magenta", "process-tools", "target", "release", "magenta-process-tools"),
+			"new helper",
+		);
 
 		await expect(
 			applyUnixUpdateTransaction({
 				currentBinary,
+				operationId: BINARY_UPDATE_OPERATION_ID,
 				stagingDirectory,
 				backupDirectory,
-				resourceNames: ["theme", "package.json"],
+				resourceNames: ["theme", "package.json", "_magenta"],
 				verifyInstalled: () => {
 					throw new Error("version mismatch");
 				},
@@ -549,7 +665,162 @@ describe("Unix update transaction", () => {
 
 		expect(await readFile(currentBinary, "utf8")).toBe("old binary");
 		expect(await readFile(join(installDirectory, "theme", "dark.json"), "utf8")).toBe("old theme");
+		expect(
+			await readFile(
+				join(installDirectory, "_magenta", "process-tools", "target", "release", "magenta-process-tools"),
+				"utf8",
+			),
+		).toBe("old helper");
 		expect(existsSync(join(installDirectory, "package.json"))).toBe(false);
+	});
+
+	for (const [index, faultPoint] of [
+		"journal:prepared",
+		"resource-backup:theme",
+		"resource-install:theme",
+		"binary-backup:complete",
+		"binary-install:complete",
+		"verification:complete",
+		"journal:committed",
+	].entries()) {
+		it(`recovers idempotently after a simulated process stop at ${faultPoint}`, async () => {
+			const root = await makeTemporaryDirectory();
+			const installDirectory = join(root, "bin");
+			const operationId = (index + 1).toString(16).padStart(32, "0");
+			const stagingDirectory = join(installDirectory, `.magenta-update-staging-${operationId}`);
+			const backupDirectory = join(installDirectory, `.magenta-update-backup-${operationId}`);
+			const currentBinary = join(installDirectory, "magenta");
+			await writeText(currentBinary, "old binary");
+			await writeText(join(installDirectory, "theme"), "old theme");
+			await writeText(join(installDirectory, "unrelated"), "keep me");
+			await writeText(join(stagingDirectory, "magenta"), "new binary");
+			await writeText(join(stagingDirectory, "theme"), "new theme");
+
+			await expect(
+				applyUnixUpdateTransaction({
+					currentBinary,
+					operationId,
+					stagingDirectory,
+					backupDirectory,
+					resourceNames: ["theme"],
+					verifyInstalled: () => undefined,
+					testFaultInjector(point) {
+						if (point === faultPoint) throw new Error(`stop at ${point}`);
+					},
+				}),
+			).rejects.toThrow(/stop at/);
+
+			// The executable path is populated before and after the one atomic replacement.
+			expect((await lstat(currentBinary)).isFile()).toBe(true);
+			if (process.platform !== "win32") {
+				expect((await lstat(join(installDirectory, RELEASE_UPDATE_JOURNAL_NAME))).mode & 0o077).toBe(0);
+			}
+			await expect(recoverInterruptedReleaseUpdateTransaction(installDirectory)).resolves.toBe(true);
+			await expect(recoverInterruptedReleaseUpdateTransaction(installDirectory)).resolves.toBe(false);
+
+			const committed = faultPoint === "journal:committed";
+			expect(await readFile(currentBinary, "utf8")).toBe(committed ? "new binary" : "old binary");
+			expect(await readFile(join(installDirectory, "theme"), "utf8")).toBe(committed ? "new theme" : "old theme");
+			expect(await readFile(join(installDirectory, "unrelated"), "utf8")).toBe("keep me");
+			expect(existsSync(stagingDirectory)).toBe(false);
+			expect(existsSync(backupDirectory)).toBe(false);
+			expect(existsSync(join(installDirectory, RELEASE_UPDATE_JOURNAL_NAME))).toBe(false);
+		});
+	}
+
+	it("uses the durable journal when a same-operation phase temp was fsynced but not renamed", async () => {
+		const root = await makeTemporaryDirectory();
+		const installDirectory = join(root, "bin");
+		const operationId = "c".repeat(32);
+		const stagingDirectory = join(installDirectory, `.magenta-update-staging-${operationId}`);
+		const backupDirectory = join(installDirectory, `.magenta-update-backup-${operationId}`);
+		const currentBinary = join(installDirectory, "magenta");
+		const journalPath = join(installDirectory, RELEASE_UPDATE_JOURNAL_NAME);
+		const temporaryJournalPath = `${journalPath}.tmp`;
+		await writeText(currentBinary, "old binary");
+		await writeText(join(installDirectory, "theme"), "old theme");
+		await writeText(join(stagingDirectory, "magenta"), "new binary");
+		await writeText(join(stagingDirectory, "theme"), "new theme");
+
+		await expect(
+			applyUnixUpdateTransaction({
+				currentBinary,
+				operationId,
+				stagingDirectory,
+				backupDirectory,
+				resourceNames: ["theme"],
+				verifyInstalled: () => undefined,
+				testFaultInjector(point) {
+					if (point === "verification:complete") throw new Error("stop before journal phase rename");
+				},
+			}),
+		).rejects.toThrow(/phase rename/);
+		const durableJournal = JSON.parse(await readFile(journalPath, "utf8")) as Record<string, unknown>;
+		await writeFile(temporaryJournalPath, `${JSON.stringify({ ...durableJournal, phase: "committed" })}\n`, {
+			mode: 0o600,
+		});
+
+		await expect(recoverInterruptedReleaseUpdateTransaction(installDirectory)).resolves.toBe(true);
+		expect(await readFile(currentBinary, "utf8")).toBe("old binary");
+		expect(await readFile(join(installDirectory, "theme"), "utf8")).toBe("old theme");
+		expect(existsSync(journalPath)).toBe(false);
+		expect(existsSync(temporaryJournalPath)).toBe(false);
+	});
+
+	it("fails closed when durable and temporary journals identify different operations", async () => {
+		const installDirectory = await makeTemporaryDirectory();
+		const durableJournal = {
+			version: 1,
+			operationId: "d".repeat(32),
+			kind: "resources",
+			binaryName: null,
+			targetVersion: null,
+			resourceNames: [],
+			originalResourceNames: [],
+			phase: "staging",
+		};
+		const journalPath = join(installDirectory, RELEASE_UPDATE_JOURNAL_NAME);
+		await writeFile(journalPath, `${JSON.stringify(durableJournal)}\n`, { mode: 0o600 });
+		await writeFile(`${journalPath}.tmp`, `${JSON.stringify({ ...durableJournal, operationId: "e".repeat(32) })}\n`, {
+			mode: 0o600,
+		});
+
+		await expect(recoverInterruptedReleaseUpdateTransaction(installDirectory)).rejects.toThrow(/disagree/i);
+		expect(existsSync(journalPath)).toBe(true);
+		expect(existsSync(`${journalPath}.tmp`)).toBe(true);
+	});
+
+	it("fails closed on a corrupted journal without touching unrelated paths", async () => {
+		const installDirectory = await makeTemporaryDirectory();
+		await writeText(join(installDirectory, "unrelated"), "keep me");
+		await writeFile(join(installDirectory, RELEASE_UPDATE_JOURNAL_NAME), "{broken", { mode: 0o600 });
+
+		await expect(recoverInterruptedReleaseUpdateTransaction(installDirectory)).rejects.toThrow(/corrupted/i);
+		expect(await readFile(join(installDirectory, "unrelated"), "utf8")).toBe("keep me");
+	});
+
+	it.skipIf(process.platform === "win32")("refuses to recover through a journal symlink", async () => {
+		const root = await makeTemporaryDirectory();
+		const installDirectory = join(root, "install");
+		await mkdir(installDirectory);
+		const external = join(root, "external-journal");
+		await writeFile(external, "do not touch", { mode: 0o600 });
+		await symlink(external, join(installDirectory, RELEASE_UPDATE_JOURNAL_NAME));
+
+		await expect(recoverInterruptedReleaseUpdateTransaction(installDirectory)).rejects.toThrow(/symbolic link/i);
+		expect(await readFile(external, "utf8")).toBe("do not touch");
+	});
+
+	it("serializes mutations for the same installation target", async () => {
+		const installDirectory = await makeTemporaryDirectory();
+		const releaseFirst = await lockInstallMutation(installDirectory, { retries: 0 });
+		try {
+			await expect(lockInstallMutation(installDirectory, { retries: 0 })).rejects.toMatchObject({ code: "ELOCKED" });
+		} finally {
+			await releaseFirst();
+		}
+		const releaseSecond = await lockInstallMutation(installDirectory, { retries: 0 });
+		await releaseSecond();
 	});
 });
 
@@ -557,12 +828,13 @@ describe("Windows update helper", () => {
 	it("waits for the current PID and includes resource, binary, verification, and rollback steps", () => {
 		const script = buildWindowsUpdateScript({
 			parentProcessId: 4242,
+			operationId: BINARY_UPDATE_OPERATION_ID,
 			currentBinary: "/Users/O'Brien/Magenta/magenta.exe",
-			stagingDirectory: "/Users/O'Brien/Magenta/.staging",
-			backupDirectory: "/Users/O'Brien/Magenta/.backup",
-			resourceNames: ["theme", "tools", "package.json", "photon_rs_bg.wasm"],
+			stagingDirectory: `/Users/O'Brien/Magenta/.magenta-update-staging-${BINARY_UPDATE_OPERATION_ID}`,
+			backupDirectory: `/Users/O'Brien/Magenta/.magenta-update-backup-${BINARY_UPDATE_OPERATION_ID}`,
+			resourceNames: ["theme", "tools", "package.json", "photon_rs_bg.wasm", "_magenta"],
 			targetVersion: "0.0.12",
-			scriptPath: "/Users/O'Brien/Magenta/.update.ps1",
+			scriptPath: `/Users/O'Brien/Magenta/.magenta-update-${BINARY_UPDATE_OPERATION_ID}.ps1`,
 			errorLogPath: "/Users/O'Brien/Magenta/.update-error.log",
 		});
 
@@ -572,7 +844,27 @@ describe("Windows update helper", () => {
 		expect(script).toContain(".magenta-install-update.lock");
 		expect(script).toContain("New-Item -ItemType Directory -Path $lockDirectory");
 		expect(script).toContain("Timed out waiting for another Magenta install/update transaction");
+		expect(script).toContain("Try-Remove-MagentaStaleLock");
+		expect(script).toContain("Update-MagentaLockHeartbeat");
+		expect(script).toContain("Start-MagentaBackgroundHeartbeat");
+		expect(script).toContain("Register-ObjectEvent");
+		expect(script).toContain("$script:lockHeartbeatTimer.Interval = 10000");
+		expect(script).toContain("Release-MagentaInstallLock");
+		expect(script).toContain("[IO.Directory]::Delete($lockDirectory, $false)");
+		expect(script).not.toContain("Remove-Item -LiteralPath $lockDirectory -Recurse");
+		expect(script).toContain("Get-MagentaOwnerSid");
+		expect(script).toContain("WindowsIdentity]::GetCurrent().User.Value");
+		expect(script).toContain("Read-MagentaValidatedJournal");
+		expect(script).toContain("Installed resources no longer match the journal snapshot");
+		expect(script).toContain("[IO.FileOptions]::WriteThrough");
+		expect(script).toContain("$journalStream.Flush($true)");
+		expect(script).not.toContain("[IO.File]::WriteAllText($journalTempPath");
+		expect(script).toContain("Remove-MagentaSafeTree $backupDirectory");
+		expect(script).toContain("Refusing to remove a reparse point from the update transaction");
+		expect(script).not.toContain("Remove-Item -LiteralPath $backupDirectory -Recurse");
+		expect(script).not.toContain("Remove-Item -LiteralPath $stagingDirectory -Recurse");
 		expect(script).toContain("$requiredResourceDirectories");
+		expect(script).toContain("    '_magenta'");
 		expect(script).toContain(
 			"runtime/node_modules/@mariozechner/clipboard-win32-x64-msvc/clipboard.win32-x64-msvc.node",
 		);
@@ -582,7 +874,8 @@ describe("Windows update helper", () => {
 		expect(script).toContain("if ($currentResourcesValid)");
 		expect(script).toContain("refusing to overwrite it with older $targetVersion");
 		expect(script).toContain("Move-Item -LiteralPath $stagedPath -Destination $installedPath");
-		expect(script).toContain("Move-Item -LiteralPath $stagedBinary -Destination $currentBinary");
+		expect(script).toContain("[IO.File]::Replace($stagedBinary, $currentBinary, $backupBinary, $true)");
+		expect(script).toContain('Write-MagentaUpdateJournalPhase "committed"');
 		expect(script).toContain("$env:PI_PACKAGE_DIR = $installDirectory");
 		expect(script).toContain("for ($index = $movedNewResources.Count - 1; $index -ge 0; $index--)");
 		expect(script).toContain("for ($index = $movedOldResources.Count - 1; $index -ge 0; $index--)");
@@ -591,6 +884,54 @@ describe("Windows update helper", () => {
 
 	it("quotes PowerShell single-quoted path literals", () => {
 		expect(quotePowerShellLiteral("C:\\Users\\O'Brien\\Magenta")).toBe("'C:\\Users\\O''Brien\\Magenta'");
+	});
+
+	it("abandons lock ownership before a heartbeat failure can enter rollback", () => {
+		const script = buildWindowsUpdateScript({
+			parentProcessId: 4242,
+			operationId: BINARY_UPDATE_OPERATION_ID,
+			currentBinary: "/Users/owner/Magenta/magenta.exe",
+			stagingDirectory: `/Users/owner/Magenta/.magenta-update-staging-${BINARY_UPDATE_OPERATION_ID}`,
+			backupDirectory: `/Users/owner/Magenta/.magenta-update-backup-${BINARY_UPDATE_OPERATION_ID}`,
+			resourceNames: ["theme"],
+			targetVersion: "0.0.12",
+			scriptPath: `/Users/owner/Magenta/.magenta-update-${BINARY_UPDATE_OPERATION_ID}.ps1`,
+			errorLogPath: "/Users/owner/Magenta/magenta.exe.update-error.log",
+		});
+		const heartbeatBody = script.slice(
+			script.indexOf("function Update-MagentaLockHeartbeat"),
+			script.indexOf("function Start-MagentaBackgroundHeartbeat"),
+		);
+		expect(heartbeatBody).toMatch(
+			/} catch \{\s*\$heartbeatError = \$_\s*\$script:lockAcquired = \$false\s*Stop-MagentaBackgroundHeartbeat\s*throw \$heartbeatError/s,
+		);
+		const rollbackBody = script.slice(script.indexOf("$rollbackIntentPersisted = $false"));
+		expect(rollbackBody).toMatch(/if \(\$lockAcquired\) \{[\s\S]*Write-MagentaUpdateJournalPhase "rolling_back"/);
+		expect(rollbackBody).toMatch(/if \(\$rollbackIntentPersisted\) \{[\s\S]*\[IO\.File\]::Replace\(\$backupBinary/);
+	});
+
+	it("validates every Windows journal field type before coercion or mutation", () => {
+		const script = buildWindowsUpdateScript({
+			parentProcessId: 4242,
+			operationId: BINARY_UPDATE_OPERATION_ID,
+			currentBinary: "/Users/owner/Magenta/magenta.exe",
+			stagingDirectory: `/Users/owner/Magenta/.magenta-update-staging-${BINARY_UPDATE_OPERATION_ID}`,
+			backupDirectory: `/Users/owner/Magenta/.magenta-update-backup-${BINARY_UPDATE_OPERATION_ID}`,
+			resourceNames: ["theme"],
+			targetVersion: "0.0.12",
+			scriptPath: `/Users/owner/Magenta/.magenta-update-${BINARY_UPDATE_OPERATION_ID}.ps1`,
+			errorLogPath: "/Users/owner/Magenta/magenta.exe.update-error.log",
+		});
+		expect(script).toContain("$journal.version -is [System.Int32]");
+		expect(script).toContain("$journal.version -is [System.Int64]");
+		expect(script).toContain("$journal.$stringProperty -is [string]");
+		expect(script).toContain("$journal.resourceNames -is [System.Array]");
+		expect(script).toContain("$journal.originalResourceNames -is [System.Array]");
+		expect(script).toContain("$resourceValue -is [string]");
+		expect(script).toContain("Compare-Object $expectedProperties $actualProperties -CaseSensitive");
+		expect(script.indexOf('Read-MagentaValidatedJournal $journalPath "prepared" $true')).toBeLessThan(
+			script.indexOf("Move-Item -LiteralPath $installedPath -Destination $backupPath"),
+		);
 	});
 
 	it("reports and clears a failed asynchronous helper on the next launch", async () => {

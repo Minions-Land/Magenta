@@ -16,6 +16,7 @@ import {
 import { tmpdir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
+import { nodeTimeoutSecondsToMs } from "../../timeout.ts";
 import {
 	ExecutionError,
 	err,
@@ -27,20 +28,12 @@ import {
 	toError,
 } from "../../types/types.ts";
 
-const MAX_TIMEOUT_MS = 2_147_483_647;
-const MAX_TIMEOUT_SECONDS = MAX_TIMEOUT_MS / 1000;
-
 function resolveTimeoutMs(timeout: number | undefined): Result<number | undefined, ExecutionError> {
-	if (timeout === undefined) return ok(undefined);
-	if (!Number.isFinite(timeout) || timeout <= 0) {
-		return err(new ExecutionError("timeout", "Invalid timeout: must be a finite number of seconds"));
+	try {
+		return ok(nodeTimeoutSecondsToMs(timeout));
+	} catch (error) {
+		return err(new ExecutionError("timeout", error instanceof Error ? error.message : String(error)));
 	}
-
-	const timeoutMs = timeout * 1000;
-	if (timeoutMs > MAX_TIMEOUT_MS) {
-		return err(new ExecutionError("timeout", `Invalid timeout: maximum is ${MAX_TIMEOUT_SECONDS} seconds`));
-	}
-	return ok(timeoutMs);
 }
 
 function resolvePath(cwd: string, path: string): string {

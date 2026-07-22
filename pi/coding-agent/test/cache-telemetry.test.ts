@@ -1,7 +1,8 @@
-import { mkdtempSync, readFileSync, statSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AssistantMessage, Model } from "@earendil-works/pi-ai";
+import type { AssistantMessage, AssistantMessageEvent, Model } from "@earendil-works/pi-ai";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import {
@@ -115,14 +116,260 @@ function assistantMessage(): AssistantMessage {
 	};
 }
 
+const EVENT_LOG_PATTERN = /^(?:events\.jsonl|events(?:\.active)?\.\d+\.\d+\.[a-f0-9]+\.jsonl)$/;
+
+function eventLogNames(directory: string): string[] {
+	return readdirSync(directory).filter((name) => EVENT_LOG_PATTERN.test(name));
+}
+
+function activeLogNames(directory: string): string[] {
+	return eventLogNames(directory).filter((name) => name.startsWith("events.active."));
+}
+
+function readTelemetryText(directory: string): string {
+	return eventLogNames(directory)
+		.map((name) => readFileSync(join(directory, name), "utf8"))
+		.join("");
+}
+
 function readRecords(directory: string): Array<CacheRequestRecord | CacheResultRecord> {
-	return readFileSync(join(directory, "events.jsonl"), "utf8")
-		.trim()
-		.split("\n")
-		.map((line) => JSON.parse(line) as CacheRequestRecord | CacheResultRecord);
+	return eventLogNames(directory).flatMap((name) => {
+		const raw = readFileSync(join(directory, name), "utf8").trim();
+		return raw ? raw.split("\n").map((line) => JSON.parse(line) as CacheRequestRecord | CacheResultRecord) : [];
+	});
+}
+
+function readAllRecords(directory: string): Array<CacheRequestRecord | CacheResultRecord> {
+	return eventLogNames(directory).flatMap((name) => {
+		const raw = readFileSync(join(directory, name), "utf8").trim();
+		return raw ? raw.split("\n").map((line) => JSON.parse(line) as CacheRequestRecord | CacheResultRecord) : [];
+	});
+}
+
+function runTelemetryChild(directory: string, worker: number, requests: number): Promise<void> {
+	const moduleUrl = new URL("../src/core/cache-telemetry.ts", import.meta.url).href;
+	const source = `
+		const { CacheTelemetryRecorder } = await import(process.argv[1]);
+		const directory = process.argv[2];
+		const worker = Number(process.argv[3]);
+		const requests = Number(process.argv[4]);
+		const recorder = new CacheTelemetryRecorder(directory, {
+			maxFileBytes: 4096,
+			maxTotalBytes: 2 * 1024 * 1024,
+			maxAgeMs: 60000,
+		});
+		const model = {
+			id: "claude-test",
+			name: "Claude Test",
+			api: "anthropic-messages",
+			provider: "anthropic",
+			baseUrl: "https://api.anthropic.com",
+			reasoning: false,
+			input: ["text"],
+			cost: { input: 1, output: 5, cacheRead: 0.1, cacheWrite: 1.25 },
+			contextWindow: 200000,
+			maxTokens: 4096,
+		};
+		for (let index = 0; index < requests; index++) {
+			recorder.start(model, "worker-" + worker + "-session-" + index).observeFinalPayload({
+				model: model.id,
+				system: [{ type: "text", text: "stable" }],
+				messages: [{ role: "user", content: "worker-" + worker + "-message-" + index }],
+			});
+		}
+	`;
+	return new Promise((resolve, reject) => {
+		const child = spawn(
+			process.execPath,
+			[
+				"--experimental-strip-types",
+				"--input-type=module",
+				"-e",
+				source,
+				moduleUrl,
+				directory,
+				String(worker),
+				String(requests),
+			],
+			{ stdio: ["ignore", "ignore", "pipe"] },
+		);
+		let stderr = "";
+		child.stderr.setEncoding("utf8");
+		child.stderr.on("data", (chunk) => {
+			stderr += chunk;
+		});
+		child.once("error", reject);
+		child.once("close", (code, signal) => {
+			if (code === 0) resolve();
+			else reject(new Error(`telemetry child failed (code=${String(code)}, signal=${String(signal)}): ${stderr}`));
+		});
+	});
 }
 
 describe("cache telemetry", () => {
+	it("does not create telemetry state when the opt-in is absent", () => {
+		const root = mkdtempSync(join(tmpdir(), "magenta-cache-telemetry-disabled-"));
+		const agentDirectory = join(root, "agent");
+
+		expect(CacheTelemetryRecorder.fromEnvironment(agentDirectory, "")).toBeUndefined();
+		expect(existsSync(agentDirectory)).toBe(false);
+	});
+
+	it("does not write token-level stream events", () => {
+		const directory = mkdtempSync(join(tmpdir(), "magenta-cache-telemetry-"));
+		const recorder = new CacheTelemetryRecorder(directory);
+		const request = recorder.start(model(), "stream-session");
+		request.observeFinalPayload(payload([{ role: "user", content: "stream" }]));
+
+		request.observeEvent({ type: "text_start" } as AssistantMessageEvent);
+		for (let index = 0; index < 10_000; index++) {
+			request.observeEvent({ type: "text_delta" } as AssistantMessageEvent);
+		}
+		expect(readRecords(directory).map((record) => record.type)).toEqual(["cache_request"]);
+
+		request.finish(assistantMessage());
+		expect(readRecords(directory).map((record) => record.type)).toEqual(["cache_request", "cache_result"]);
+	});
+
+	it("retires its active log idempotently and ignores late request completion", () => {
+		const directory = mkdtempSync(join(tmpdir(), "magenta-cache-telemetry-close-"));
+		const recorder = new CacheTelemetryRecorder(directory);
+		const request = recorder.start(model(), "closing-session");
+		request.observeFinalPayload(payload([{ role: "user", content: "before close" }]));
+		expect(activeLogNames(directory)).toHaveLength(1);
+
+		recorder.close();
+		const closedText = readTelemetryText(directory);
+		expect(activeLogNames(directory)).toEqual([]);
+		expect(eventLogNames(directory).some((name) => /^events\.\d+\./.test(name))).toBe(true);
+		expect(() => recorder.close()).not.toThrow();
+		expect(() => request.finish(assistantMessage())).not.toThrow();
+
+		const lateRequest = recorder.start(model(), "late-session");
+		expect(() => lateRequest.observeFinalPayload(payload([{ role: "user", content: "after close" }]))).not.toThrow();
+		expect(() => lateRequest.finish(assistantMessage())).not.toThrow();
+		expect(readTelemetryText(directory)).toBe(closedText);
+	});
+
+	it("closes only its own active log while another recorder in the process remains writable", () => {
+		const directory = mkdtempSync(join(tmpdir(), "magenta-cache-telemetry-shared-process-"));
+		const first = new CacheTelemetryRecorder(directory);
+		const second = new CacheTelemetryRecorder(directory);
+		expect(activeLogNames(directory)).toHaveLength(2);
+
+		first.start(model(), "first-session").observeFinalPayload(payload([{ role: "user", content: "first" }]));
+		const firstPath = activeLogNames(directory).find((name) => statSync(join(directory, name)).size > 0);
+		const secondPath = activeLogNames(directory).find((name) => name !== firstPath);
+		expect(firstPath).toBeDefined();
+		expect(secondPath).toBeDefined();
+
+		first.close();
+		expect(activeLogNames(directory)).toEqual([secondPath]);
+		second.start(model(), "second-session").observeFinalPayload(payload([{ role: "user", content: "second" }]));
+		expect(statSync(join(directory, secondPath!)).size).toBeGreaterThan(0);
+
+		second.close();
+		expect(activeLogNames(directory)).toEqual([]);
+	});
+
+	it("enforces total retention across repeated recorder lifecycles in one process", () => {
+		const directory = mkdtempSync(join(tmpdir(), "magenta-cache-telemetry-lifecycles-"));
+		const maxTotalBytes = 8_192;
+		for (let index = 0; index < 24; index++) {
+			const recorder = new CacheTelemetryRecorder(directory, {
+				maxFileBytes: 4_096,
+				maxTotalBytes,
+				maxAgeMs: 60_000,
+			});
+			const request = recorder.start(model(), `lifecycle-${index}`);
+			request.observeFinalPayload(payload([{ role: "user", content: `message-${index}` }]));
+			request.finish(assistantMessage());
+			recorder.close();
+			expect(activeLogNames(directory)).toEqual([]);
+		}
+
+		const logs = eventLogNames(directory);
+		expect(logs.length).toBeLessThan(24);
+		expect(logs.reduce((total, name) => total + statSync(join(directory, name)).size, 0)).toBeLessThanOrEqual(
+			maxTotalBytes,
+		);
+		expect(() => readAllRecords(directory)).not.toThrow();
+	});
+
+	it("rotates cache telemetry under strict per-file and total byte limits", () => {
+		const directory = mkdtempSync(join(tmpdir(), "magenta-cache-telemetry-"));
+		const maxFileBytes = 2_048;
+		const maxTotalBytes = 4_096;
+		const recorder = new CacheTelemetryRecorder(directory, {
+			maxFileBytes,
+			maxTotalBytes,
+			maxAgeMs: 60_000,
+		});
+		for (let index = 0; index < 30; index++) {
+			recorder
+				.start(model(), `session-${index}`)
+				.observeFinalPayload(payload([{ role: "user", content: `message-${index}` }]));
+		}
+
+		const logs = eventLogNames(directory);
+		expect(logs.length).toBeGreaterThan(1);
+		const sizes = logs.map((name) => statSync(join(directory, name)).size);
+		expect(sizes.every((size) => size <= maxFileBytes)).toBe(true);
+		expect(sizes.reduce((sum, size) => sum + size, 0)).toBeLessThanOrEqual(maxTotalBytes);
+		expect(() => readAllRecords(directory)).not.toThrow();
+	});
+
+	it("keeps concurrent process logs isolated through rotation", async () => {
+		const directory = mkdtempSync(join(tmpdir(), "magenta-cache-telemetry-multiprocess-"));
+		const workers = 6;
+		const requestsPerWorker = 24;
+
+		await Promise.all(
+			Array.from({ length: workers }, (_, worker) => runTelemetryChild(directory, worker, requestsPerWorker)),
+		);
+
+		const logs = eventLogNames(directory);
+		expect(logs.filter((name) => name.startsWith("events.active.")).length).toBeGreaterThanOrEqual(workers);
+		expect(logs.every((name) => statSync(join(directory, name)).size <= 4_096)).toBe(true);
+		const records = readAllRecords(directory).filter(
+			(record): record is CacheRequestRecord => record.type === "cache_request",
+		);
+		expect(records).toHaveLength(workers * requestsPerWorker);
+		expect(new Set(records.map((record) => record.requestId)).size).toBe(records.length);
+	});
+
+	it("expires an active telemetry window by age without affecting the next request", () => {
+		const directory = mkdtempSync(join(tmpdir(), "magenta-cache-telemetry-"));
+		let now = Date.now();
+		const recorder = new CacheTelemetryRecorder(directory, {
+			maxFileBytes: 8_192,
+			maxTotalBytes: 16_384,
+			maxAgeMs: 1_000,
+			now: () => now,
+		});
+		const expired = recorder.start(model(), "expired-session");
+		expired.observeFinalPayload(payload([{ role: "user", content: "expired" }]));
+		now += 1_001;
+		const current = recorder.start(model(), "current-session");
+		expect(() => current.observeFinalPayload(payload([{ role: "user", content: "current" }]))).not.toThrow();
+
+		const records = readAllRecords(directory);
+		expect(records.some((record) => record.requestId === expired.requestId)).toBe(false);
+		expect(records.some((record) => record.requestId === current.requestId)).toBe(true);
+	});
+
+	it("drops a telemetry line larger than its hard cap without affecting the request", () => {
+		const directory = mkdtempSync(join(tmpdir(), "magenta-cache-telemetry-"));
+		const recorder = new CacheTelemetryRecorder(directory, {
+			maxFileBytes: 64,
+			maxTotalBytes: 64,
+			maxAgeMs: 60_000,
+		});
+		const request = recorder.start(model(), "session");
+		expect(() => request.observeFinalPayload(payload([{ role: "user", content: "safe" }]))).not.toThrow();
+		expect(eventLogNames(directory).every((name) => statSync(join(directory, name)).size === 0)).toBe(true);
+	});
+
 	it("records final-payload hashes, append epochs, usage, and timing without plaintext", async () => {
 		const directory = mkdtempSync(join(tmpdir(), "magenta-cache-telemetry-"));
 		const recorder = new CacheTelemetryRecorder(directory);
@@ -163,14 +410,16 @@ describe("cache telemetry", () => {
 		const thirdRequest = recorder.start(model(), "session-secret");
 		thirdRequest.observeFinalPayload(payload(firstMessages, "changed system"));
 
-		const rawLog = readFileSync(join(directory, "events.jsonl"), "utf8");
+		const rawLog = readTelemetryText(directory);
 		expect(rawLog).not.toContain(SENTINEL_SYSTEM);
 		expect(rawLog).not.toContain(SENTINEL_TOOL);
 		expect(rawLog).not.toContain(SENTINEL_MESSAGE);
 		expect(rawLog).not.toContain("provider output is not written by cache telemetry");
 		expect(rawLog).not.toContain(SENTINEL_DIAGNOSTIC);
 		expect(statSync(join(directory, "hmac.key")).mode & 0o777).toBe(0o600);
-		expect(statSync(join(directory, "events.jsonl")).mode & 0o777).toBe(0o600);
+		expect(eventLogNames(directory).every((name) => (statSync(join(directory, name)).mode & 0o777) === 0o600)).toBe(
+			true,
+		);
 
 		const records = readRecords(directory);
 		const requests = records.filter((record): record is CacheRequestRecord => record.type === "cache_request");
@@ -309,6 +558,38 @@ describe("cache telemetry", () => {
 		});
 	});
 
+	it("fails closed for provider payload shapes that have not been structurally classified", () => {
+		const directory = mkdtempSync(join(tmpdir(), "magenta-cache-telemetry-"));
+		const recorder = new CacheTelemetryRecorder(directory);
+		const googleModel = {
+			...model(),
+			api: "google-generative-ai",
+			provider: "google",
+			id: "gemini-test",
+		} as Model<"google-generative-ai">;
+		const first = recorder.start(googleModel, "google-session");
+		first.observeFinalPayload({
+			model: "gemini-test",
+			contents: [{ role: "user", parts: [{ text: "first" }] }],
+			config: { systemInstruction: "stable" },
+		});
+		const second = recorder.start(googleModel, "google-session");
+		second.observeFinalPayload({
+			model: "gemini-test",
+			contents: [
+				{ role: "user", parts: [{ text: "first" }] },
+				{ role: "model", parts: [{ text: "answer" }] },
+				{ role: "user", parts: [{ text: "next" }] },
+			],
+			config: { systemInstruction: "stable" },
+		});
+
+		const requests = readRecords(directory).filter(
+			(record): record is CacheRequestRecord => record.type === "cache_request",
+		);
+		expect(requests[1].epoch.epochReason).toBe("unclassified_payload");
+	});
+
 	it("normalizes untrusted breakpoint paths and values before persistence", () => {
 		const directory = mkdtempSync(join(tmpdir(), "magenta-cache-telemetry-"));
 		const recorder = new CacheTelemetryRecorder(directory);
@@ -320,7 +601,7 @@ describe("cache telemetry", () => {
 			prompt_cache_options: { mode: "private-mode", ttl: "private-ttl" },
 		});
 
-		const raw = readFileSync(join(directory, "events.jsonl"), "utf8");
+		const raw = readTelemetryText(directory);
 		expect(raw).not.toContain("tenant@example.com");
 		expect(raw).not.toContain("private-mode");
 		expect(raw).not.toContain("private-ttl");
@@ -366,7 +647,7 @@ describe("cache telemetry", () => {
 		);
 		expect(requests[1].fingerprint.continuation).toBe(true);
 		expect(requests[1].epoch.epochReason).toBe("continuation");
-		expect(readFileSync(join(directory, "events.jsonl"), "utf8")).not.toContain("resp_private");
+		expect(readTelemetryText(directory)).not.toContain("resp_private");
 	});
 
 	it("records multiple wire attempts under one request and correlates the final result", () => {
@@ -509,7 +790,7 @@ describe("cache telemetry", () => {
 
 		expect(() => request.observeFinalPayload(cyclic)).not.toThrow();
 		request.finish(assistantMessage());
-		expect(readFileSync(join(directory, "events.jsonl"), "utf8")).toBe("");
+		expect(readTelemetryText(directory)).toBe("");
 	});
 
 	it("does not invoke payload accessors before the provider serializes them", () => {
@@ -529,7 +810,7 @@ describe("cache telemetry", () => {
 		request.observeFinalPayload(accessorPayload);
 
 		expect(reads).toBe(0);
-		expect(readFileSync(join(directory, "events.jsonl"), "utf8")).toBe("");
+		expect(readTelemetryText(directory)).toBe("");
 	});
 
 	it("does not turn malformed result telemetry into a provider failure", async () => {

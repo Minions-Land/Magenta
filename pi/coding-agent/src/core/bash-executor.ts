@@ -7,13 +7,97 @@
  */
 
 import { randomBytes } from "node:crypto";
-import { createWriteStream, type WriteStream } from "node:fs";
+import { createWriteStream, lstatSync, readdirSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { BufferedBoundedLog, DEFAULT_LOG_MAX_BYTES } from "@magenta/harness";
 import { stripAnsi } from "../utils/ansi.ts";
 import { sanitizeBinaryOutput } from "../utils/shell.ts";
 import type { BashOperations } from "./tools/bash.ts";
 import { DEFAULT_MAX_BYTES, truncateTail } from "./tools/truncate.ts";
+
+export const BASH_FULL_OUTPUT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+export const BASH_FULL_OUTPUT_MAX_BYTES = DEFAULT_LOG_MAX_BYTES;
+export const BASH_FULL_OUTPUT_MAX_FILES = 200;
+export const BASH_FULL_OUTPUT_MAX_TOTAL_BYTES = 256 * 1024 * 1024;
+
+const BASH_FULL_OUTPUT_PATTERN = /^pi-bash-(?:(\d+)-)?[a-f0-9]{16}\.log$/;
+const ACTIVE_BASH_FULL_OUTPUTS = new Set<string>();
+
+export interface BashFullOutputRetentionOptions {
+	maxAgeMs?: number;
+	maxFiles?: number;
+	maxTotalBytes?: number;
+	now?: number;
+}
+
+function nonNegativeLimit(value: number | undefined, fallback: number): number {
+	return typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.floor(value) : fallback;
+}
+
+function isLiveForeignProcess(pid: number | undefined): boolean {
+	if (pid === undefined || pid === process.pid || !Number.isInteger(pid) || pid <= 0) return false;
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch (error) {
+		return (error as NodeJS.ErrnoException).code === "EPERM";
+	}
+}
+
+/** Remove only recognized, closed full-output artifacts under finite retention budgets. */
+export function cleanupBashFullOutputFiles(
+	directory = tmpdir(),
+	options: BashFullOutputRetentionOptions = {},
+): { deletedFiles: number; deletedBytes: number } {
+	const maxAgeMs = nonNegativeLimit(options.maxAgeMs, BASH_FULL_OUTPUT_MAX_AGE_MS);
+	const maxFiles = nonNegativeLimit(options.maxFiles, BASH_FULL_OUTPUT_MAX_FILES);
+	const maxTotalBytes = nonNegativeLimit(options.maxTotalBytes, BASH_FULL_OUTPUT_MAX_TOTAL_BYTES);
+	const now = options.now ?? Date.now();
+	type Candidate = { path: string; size: number; mtimeMs: number; protected: boolean };
+	const candidates: Candidate[] = [];
+	try {
+		for (const entry of readdirSync(directory, { withFileTypes: true })) {
+			if (!entry.isFile() || entry.isSymbolicLink()) continue;
+			const match = BASH_FULL_OUTPUT_PATTERN.exec(entry.name);
+			if (!match) continue;
+			const path = join(directory, entry.name);
+			const info = lstatSync(path);
+			if (!info.isFile() || info.isSymbolicLink()) continue;
+			const ownerPid = match[1] === undefined ? undefined : Number(match[1]);
+			candidates.push({
+				path,
+				size: info.size,
+				mtimeMs: info.mtimeMs,
+				protected: ACTIVE_BASH_FULL_OUTPUTS.has(path) || isLiveForeignProcess(ownerPid),
+			});
+		}
+	} catch {
+		return { deletedFiles: 0, deletedBytes: 0 };
+	}
+
+	candidates.sort((left, right) => left.mtimeMs - right.mtimeMs || left.path.localeCompare(right.path));
+	let remainingFiles = candidates.length;
+	let remainingBytes = candidates.reduce((total, candidate) => total + candidate.size, 0);
+	let deletedFiles = 0;
+	let deletedBytes = 0;
+	for (const candidate of candidates) {
+		const expired = now - candidate.mtimeMs >= maxAgeMs;
+		const overBudget = remainingFiles > maxFiles || remainingBytes > maxTotalBytes;
+		if (!expired && !overBudget) break;
+		if (candidate.protected) continue;
+		try {
+			unlinkSync(candidate.path);
+			remainingFiles--;
+			remainingBytes -= candidate.size;
+			deletedFiles++;
+			deletedBytes += candidate.size;
+		} catch {
+			// Another process may have reclaimed the same closed artifact.
+		}
+	}
+	return { deletedFiles, deletedBytes };
+}
 
 // ============================================================================
 // Types
@@ -58,16 +142,29 @@ export async function executeBashWithOperations(
 	const maxOutputBytes = DEFAULT_MAX_BYTES * 2;
 
 	let tempFilePath: string | undefined;
-	let tempFileStream: WriteStream | undefined;
+	let tempFileStream: BufferedBoundedLog | undefined;
 	let totalBytes = 0;
 
 	const ensureTempFile = () => {
 		if (tempFilePath) {
 			return;
 		}
+		try {
+			cleanupBashFullOutputFiles();
+		} catch {
+			// Full-output retention is best-effort and must not fail a command.
+		}
 		const id = randomBytes(8).toString("hex");
-		tempFilePath = join(tmpdir(), `pi-bash-${id}.log`);
-		tempFileStream = createWriteStream(tempFilePath);
+		tempFilePath = join(tmpdir(), `pi-bash-${process.pid}-${id}.log`);
+		ACTIVE_BASH_FULL_OUTPUTS.add(tempFilePath);
+		const stream = createWriteStream(tempFilePath, { flags: "wx", mode: 0o600 });
+		tempFileStream = new BufferedBoundedLog(stream, { maxBytes: BASH_FULL_OUTPUT_MAX_BYTES });
+		stream.on("error", () => {});
+		const release = () => {
+			if (tempFilePath) ACTIVE_BASH_FULL_OUTPUTS.delete(tempFilePath);
+		};
+		stream.once("close", release);
+		stream.once("error", release);
 		for (const chunk of outputChunks) {
 			tempFileStream.write(chunk);
 		}

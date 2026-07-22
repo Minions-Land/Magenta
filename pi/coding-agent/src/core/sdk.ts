@@ -371,7 +371,8 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	};
 
 	const extensionRunnerRef: { current?: ExtensionRunner } = {};
-	const cacheTelemetry = CacheTelemetryRecorder.fromEnvironment(agentDir);
+	let cacheTelemetry: CacheTelemetryRecorder | undefined;
+	let session: AgentSession | undefined;
 
 	agent = new Agent({
 		initialState: {
@@ -497,35 +498,47 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		sessionManager.appendThinkingLevelChange(executionProfile);
 	}
 
-	const session = new AgentSession({
-		agent,
-		sessionManager,
-		settingsManager,
-		cwd,
-		agentDir,
-		scopedModels: options.scopedModels,
-		executionProfile,
-		harnessCapabilities: options.harnessCapabilities,
-		resourceLoader,
-		customTools: options.customTools,
-		sshTarget: options.sshTarget,
-		modelRegistry,
-		modelRuntime,
-		authStorage,
-		initialActiveToolNames,
-		autoActivateLoadedTools: options.tools === undefined && options.noTools !== "all",
-		autoActivateDefaultTools: options.tools === undefined && options.noTools === undefined,
-		allowedToolNames,
-		excludedToolNames,
-		extensionRunnerRef,
-		sessionStartEvent: options.sessionStartEvent,
-	});
-	await session.initializeStatefulHcpTools();
-	const extensionsResult = resourceLoader.getExtensions();
+	cacheTelemetry = CacheTelemetryRecorder.fromEnvironment(agentDir);
+	try {
+		session = new AgentSession({
+			agent,
+			sessionManager,
+			settingsManager,
+			cwd,
+			agentDir,
+			scopedModels: options.scopedModels,
+			executionProfile,
+			harnessCapabilities: options.harnessCapabilities,
+			resourceLoader,
+			customTools: options.customTools,
+			sshTarget: options.sshTarget,
+			modelRegistry,
+			modelRuntime,
+			authStorage,
+			initialActiveToolNames,
+			autoActivateLoadedTools: options.tools === undefined && options.noTools !== "all",
+			autoActivateDefaultTools: options.tools === undefined && options.noTools === undefined,
+			allowedToolNames,
+			excludedToolNames,
+			extensionRunnerRef,
+			sessionStartEvent: options.sessionStartEvent,
+			disposeCallback: () => cacheTelemetry?.close(),
+		});
+		await session.initializeStatefulHcpTools();
+		const extensionsResult = resourceLoader.getExtensions();
 
-	return {
-		session,
-		extensionsResult,
-		modelFallbackMessage,
-	};
+		return {
+			session,
+			extensionsResult,
+			modelFallbackMessage,
+		};
+	} catch (error) {
+		try {
+			await session?.dispose();
+		} catch {
+			// Preserve the creation error even if partially initialized Session cleanup fails.
+		}
+		cacheTelemetry?.close();
+		throw error;
+	}
 }

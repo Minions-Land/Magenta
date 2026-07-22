@@ -1,15 +1,29 @@
 import type { ChildProcess, SpawnOptions } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { mkdtempSync, rmSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readdirSync,
+	readFileSync,
+	rmSync,
+	statSync,
+	utimesSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type Tool, type ToolCall, validateToolArguments } from "@earendil-works/pi-ai";
+import { Check } from "typebox/value";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { NODE_MAX_TIMEOUT_SECONDS } from "../_magenta/timeout.ts";
 import {
 	type BackgroundEventManagerPort,
+	MAIN_PROGRESS_WRITE_INTERVAL_MS,
 	SubAgentController,
 	type SubAgentReturnMessage,
 	type SubAgentSpawn,
+	subAgentSchema,
 } from "../tools/sub-agent/magenta/sub-agent.ts";
 
 async function waitUntil(predicate: () => boolean | Promise<boolean>, timeoutMs = 2000): Promise<void> {
@@ -116,6 +130,145 @@ describe("HCP sub_agent Tool Source", () => {
 		}
 	});
 
+	it("coalesces rapid parent progress and flushes the latest snapshot at boundaries", async () => {
+		controller.shutdown();
+		const writes: string[] = [];
+		const backgroundEvents: BackgroundEventManagerPort = {
+			registerSource() {
+				return { update: () => {}, dispose: () => {} };
+			},
+		};
+		controller = new SubAgentController(backgroundEvents, {
+			cwd: root,
+			workDirRoot: join(root, "progress-events"),
+			resolveAgentInvocation: (args) => ({ command: "/magenta", args }),
+			spawnAgent: fakeSpawn(records),
+			registerReturn: () => {},
+			cancelReturn: () => {},
+			progressWriteIntervalMs: 30,
+			progressWriter: (_path, content) => writes.push(content),
+		});
+		expect(MAIN_PROGRESS_WRITE_INTERVAL_MS).toBe(1_000);
+
+		controller.handleAgentEvent({ type: "agent_start" } as any);
+		controller.handleAgentEvent({
+			type: "tool_execution_start",
+			toolCallId: "tool-1",
+			toolName: "bash",
+			args: { command: "noisy" },
+		} as any);
+		for (let index = 0; index < 25; index++) {
+			controller.handleAgentEvent({
+				type: "tool_execution_update",
+				toolCallId: "tool-1",
+				toolName: "bash",
+				args: { command: "noisy" },
+				partialResult: `progress-${index}`,
+			} as any);
+		}
+		expect(writes).toHaveLength(2);
+		await waitUntil(() => writes.length === 3);
+		expect(writes[2]).toContain("progress-24");
+
+		controller.handleAgentEvent({
+			type: "tool_execution_end",
+			toolCallId: "tool-1",
+			toolName: "bash",
+			result: "terminal-result",
+			isError: false,
+		} as any);
+		expect(writes.at(-1)).toContain("terminal-result");
+		controller.handleAgentEvent({
+			type: "tool_execution_update",
+			toolCallId: "tool-2",
+			toolName: "bash",
+			args: {},
+			partialResult: "shutdown-latest",
+		} as any);
+		const beforeShutdown = writes.length;
+		controller.shutdown();
+		expect(writes).toHaveLength(beforeShutdown + 1);
+		expect(writes.at(-1)).toContain("shutdown-latest");
+		await new Promise((resolve) => setTimeout(resolve, 50));
+		expect(writes).toHaveLength(beforeShutdown + 1);
+	});
+
+	it("writes the parent progress file atomically with private permissions", () => {
+		controller.handleAgentEvent({ type: "agent_start" } as any);
+		const eventRoot = join(root, "events");
+		const controllerDirectory = readdirSync(eventRoot).find((entry) => entry.includes("-"));
+		if (!controllerDirectory) throw new Error("Missing sub-agent controller directory");
+		const progressPath = join(eventRoot, controllerDirectory, "main-tool-progress.md");
+		expect(readFileSync(progressPath, "utf8")).toContain("Parent main-agent tool progress");
+		expect(statSync(progressPath).mode & 0o777).toBe(0o600);
+		expect(readdirSync(join(eventRoot, controllerDirectory)).some((entry) => entry.endsWith(".tmp"))).toBe(false);
+	});
+
+	it("publishes the same bounded timeout domain for outer Events and workflow slots", () => {
+		const outer = (subAgentSchema as { properties: Record<string, any> }).properties.timeoutSeconds;
+		const workflow = (subAgentSchema as { properties: Record<string, any> }).properties.workflow;
+		const slot = workflow.properties.workers.items.properties.timeoutSeconds;
+		expect(outer.description).toContain("Omit for no caller deadline");
+		expect(slot.description).toContain("Omit for no worker deadline");
+
+		for (const timeoutSeconds of [0.001, NODE_MAX_TIMEOUT_SECONDS]) {
+			expect(Check(subAgentSchema, { action: "start", task: "long task", timeoutSeconds })).toBe(true);
+			expect(
+				Check(subAgentSchema, {
+					action: "start",
+					workflow: {
+						pattern: "fan_out_synthesize",
+						workers: [{ task: "analyze", timeoutSeconds }],
+						synthesizer: { task: "merge" },
+					},
+				}),
+			).toBe(true);
+		}
+
+		for (const timeoutSeconds of [0, -1, Number.NaN, Number.POSITIVE_INFINITY, NODE_MAX_TIMEOUT_SECONDS + 0.001]) {
+			expect(Check(subAgentSchema, { action: "start", task: "bad timeout", timeoutSeconds })).toBe(false);
+			expect(
+				Check(subAgentSchema, {
+					action: "start",
+					workflow: {
+						pattern: "fan_out_synthesize",
+						workers: [{ task: "analyze", timeoutSeconds }],
+						synthesizer: { task: "merge" },
+					},
+				}),
+			).toBe(false);
+		}
+	});
+
+	it("rejects invalid outer and workflow-slot timeouts even when schema validation is bypassed", async () => {
+		const tool = controller.createToolDefinition();
+		const overflow = NODE_MAX_TIMEOUT_SECONDS + 0.001;
+		await expect(
+			tool.execute("outer-overflow", { action: "start", task: "bad timeout", timeoutSeconds: overflow }),
+		).rejects.toThrow(/timeoutSeconds.*maximum/);
+		await expect(
+			tool.execute("slot-overflow", {
+				action: "start",
+				workflow: {
+					pattern: "fan_out_synthesize",
+					workers: [{ task: "analyze", timeoutSeconds: overflow }],
+					synthesizer: { task: "merge" },
+				},
+			}),
+		).rejects.toThrow(/workflow\.workers\[0\]\.timeoutSeconds.*maximum/);
+		expect(records).toHaveLength(0);
+		expect(source?.getEvents()).toHaveLength(0);
+	});
+
+	it("leaves an omitted Event timeout without a hard deadline", async () => {
+		const tool = controller.createToolDefinition();
+		const start = await tool.execute("no-deadline", { action: "start", task: "long task" });
+		const eventId = (start.details as { eventId: string }).eventId;
+		await waitUntil(() => records.length === 1);
+		await new Promise((resolve) => setTimeout(resolve, 30));
+		expect(eventStates(await awaitStatus(tool, eventId))[0]?.state).toBe("running");
+	});
+
 	it("registers one queued Event and launches it asynchronously", async () => {
 		const tool = controller.createToolDefinition();
 		const result = await tool.execute("start", { action: "start", task: "inspect", tools: ["read", "sub_agent"] });
@@ -131,6 +284,55 @@ describe("HCP sub_agent Tool Source", () => {
 		expect(records[0]!.args).toEqual(
 			expect.arrayContaining(["agent", "--print", "--no-session", "--no-extensions", "--tools", "read"]),
 		);
+		if (process.platform !== "win32") {
+			const promptArgument = records[0]!.args.find((argument) => argument.startsWith("@"));
+			if (!promptArgument) throw new Error("Missing sub-agent prompt argument");
+			const promptPath = promptArgument.slice(1);
+			const logPath = source?.getEvents()[0]?.logPath;
+			if (!logPath) throw new Error("Missing sub-agent log path");
+			expect(statSync(promptPath).mode & 0o777).toBe(0o600);
+			expect(statSync(logPath).mode & 0o777).toBe(0o600);
+			expect(statSync(join(promptPath, "..")).mode & 0o777).toBe(0o700);
+		}
+	});
+
+	it("cleans old known artifacts and empty dead-process directories before each start", async () => {
+		controller.shutdown();
+		const workDirRoot = join(root, "retention-events");
+		const removable = join(workDirRoot, "2147483646-deadbeef");
+		const withUnknown = join(workDirRoot, "2147483645-feedface");
+		const knownNames = ["agent_001-old.log", "agent_001-old.prompt.md", "main-tool-progress.md"];
+		for (const directory of [removable, withUnknown]) {
+			mkdirSync(directory, { recursive: true });
+			for (const name of knownNames) {
+				const artifact = join(directory, name);
+				writeFileSync(artifact, "old");
+				utimesSync(artifact, new Date(0), new Date(0));
+			}
+		}
+		const unknown = join(withUnknown, "keep.bin");
+		writeFileSync(unknown, "keep");
+		const backgroundEvents: BackgroundEventManagerPort = {
+			registerSource(candidate) {
+				source = candidate;
+				return { update: () => {}, dispose: () => {} };
+			},
+		};
+		controller = new SubAgentController(backgroundEvents, {
+			cwd: root,
+			workDirRoot,
+			resolveAgentInvocation: (args) => ({ command: "/magenta", args }),
+			spawnAgent: fakeSpawn(records),
+			registerReturn: () => {},
+			cancelReturn: () => {},
+		});
+
+		await controller.createToolDefinition().execute("cleanup-start", { action: "start", task: "inspect" });
+		await waitUntil(() => records.length === 1);
+
+		expect(existsSync(removable)).toBe(false);
+		for (const name of knownNames) expect(existsSync(join(withUnknown, name))).toBe(false);
+		expect(existsSync(unknown)).toBe(true);
 	});
 
 	it("admits at most eight active Events and starts the ninth FIFO", async () => {
@@ -241,11 +443,15 @@ describe("HCP sub_agent Tool Source", () => {
 		child.stdout.emit("data", stdout.subarray(0, 8));
 		child.stdout.emit("data", stdout.subarray(8, 11));
 		child.stdout.emit("data", stdout.subarray(11));
+		expect(source?.getEvents()[0]?.tail).toBe("stderr|prefix🙂中文suffix");
 		child.emit("close", 0, null);
 		await waitUntil(() => returns.length === 1);
 		const snapshot = (returns[0]!.message.details as { eventData: Array<{ tail: string }> }).eventData[0]!;
 		expect(snapshot.tail).toBe("stderr|prefix🙂中文suffix");
 		expect(snapshot.tail).not.toContain("�");
+		const logPath = source?.getEvents()[0]?.logPath;
+		if (!logPath) throw new Error("Missing sub-agent log path");
+		await waitUntil(() => readFileSync(logPath, "utf8").includes("stderr|prefix🙂中文suffix"));
 	});
 
 	it("passes inherited model, packages, thinking, and sanitized tools to the child", async () => {
@@ -302,10 +508,14 @@ describe("HCP sub_agent Tool Source", () => {
 		const start = await tool.execute("start", { action: "start", task: "cancel me" });
 		const eventId = (start.details as { eventId: string }).eventId;
 		await waitUntil(() => records.length === 1);
+		records[0]!.child.stdout.emit("data", Buffer.from("cancelled tail"));
+		const logPath = source?.getEvents()[0]?.logPath;
+		if (!logPath) throw new Error("Missing sub-agent log path");
 		const cancel = await tool.execute("cancel", { action: "cancel", eventId });
 		expect((cancel.details as { state: string }).state).toBe("terminating");
 		expect(records[0]!.child.kill).toHaveBeenCalled();
 		expect(returns).toHaveLength(0);
+		await waitUntil(() => readFileSync(logPath, "utf8").includes("cancelled tail"));
 		records[0]!.child.emit("close", null, "SIGTERM");
 		await waitUntil(() => returns.length === 1);
 		const status = await awaitStatus(tool, eventId);
@@ -317,11 +527,38 @@ describe("HCP sub_agent Tool Source", () => {
 		const start = await tool.execute("start", { action: "start", task: "timeout", timeoutSeconds: 0.02 });
 		const eventId = (start.details as { eventId: string }).eventId;
 		await waitUntil(() => records.length === 1);
+		records[0]!.child.stdout.emit("data", Buffer.from("timeout tail"));
+		const logPath = source?.getEvents()[0]?.logPath;
+		if (!logPath) throw new Error("Missing sub-agent log path");
 		await waitUntil(async () => eventStates(await awaitStatus(tool, eventId))[0]?.state === "terminating");
 		expect(returns).toHaveLength(0);
+		await waitUntil(() => readFileSync(logPath, "utf8").includes("timeout tail"));
 		records[0]!.child.emit("close", null, "SIGTERM");
 		await waitUntil(() => returns.length === 1);
 		expect(eventStates(await awaitStatus(tool, eventId))[0]!.state).toBe("timed_out");
+	});
+
+	it("flushes buffered worker output on child error and shutdown", async () => {
+		const tool = controller.createToolDefinition();
+		await tool.execute("error-start", { action: "start", task: "error path" });
+		await waitUntil(() => records.length === 1);
+		records[0]!.child.stdout.emit("data", Buffer.from("error tail"));
+		const errorLogPath = source?.getEvents()[0]?.logPath;
+		if (!errorLogPath) throw new Error("Missing sub-agent error log path");
+		records[0]!.child.emit("error", new Error("child failed"));
+		await waitUntil(() => returns.length === 1);
+		await waitUntil(() => readFileSync(errorLogPath, "utf8").includes("error tail"));
+
+		await tool.execute("shutdown-start", { action: "start", task: "shutdown path" });
+		await waitUntil(() => records.length === 2);
+		records[1]!.child.stdout.emit("data", Buffer.from("shutdown tail"));
+		const shutdownEvent = source?.getEvents().find((event) => event.status === "running");
+		const shutdownLogPath = shutdownEvent?.logPath;
+		if (!shutdownLogPath) throw new Error("Missing sub-agent shutdown log path");
+		controller.shutdown();
+		expect(records[1]!.child.kill).toHaveBeenCalled();
+		await waitUntil(() => readFileSync(shutdownLogPath, "utf8").includes("shutdown tail"));
+		records[1]!.child.emit("close", null, "SIGTERM");
 	});
 
 	it("settles post-admission spawn failure as a failed Event", async () => {

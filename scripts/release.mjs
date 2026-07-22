@@ -16,11 +16,13 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readActiveBrandMetadata } from "./brand-metadata.mjs";
+import { runReleaseGate } from "./release-gate.mjs";
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const CHANGELOG_RELATIVE_PATH = "pi/coding-agent/CHANGELOG.md";
 const GENERATED_VERSION_RELATIVE_PATH = "pi/coding-agent/src/brand-version.generated.ts";
 const OFFICIAL_SOURCE_REMOTE = "github.com/Minions-Land/Magenta";
+const PUBLIC_RELEASE_API = "https://api.github.com/repos/Minions-Land/Magenta-CLI/releases/latest";
 const BUMP_TYPES = new Set(["major", "minor", "patch"]);
 const SEMVER_RE = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u;
 export const RELEASE_MAIN_FETCH_ARGS = [
@@ -73,6 +75,56 @@ export function readActiveBrand(root = REPO_ROOT) {
 	return brand;
 }
 
+export function assertLatestPublishedVersion(currentVersion, release) {
+	parseVersion(currentVersion, "active brand product version");
+	if (!release || typeof release !== "object") throw new Error("Latest public CLI release metadata is missing.");
+	if (release.draft !== false || release.prerelease !== false) {
+		throw new Error("Latest public CLI release metadata must describe a published, non-prerelease release.");
+	}
+	if (typeof release.tag_name !== "string" || !release.tag_name.startsWith("v")) {
+		throw new Error("Latest public CLI release has no exact vMAJOR.MINOR.PATCH tag.");
+	}
+	const publishedVersion = release.tag_name.slice(1);
+	parseVersion(publishedVersion, "latest public CLI release version");
+	if (publishedVersion !== currentVersion) {
+		throw new Error(
+			`Active brand version ${currentVersion} does not match latest public CLI release ${publishedVersion}. Repair or rerun the existing version before creating another source tag.`,
+		);
+	}
+	return publishedVersion;
+}
+
+export async function verifyLatestPublishedVersion(currentVersion, fetchImplementation = fetch) {
+	const headers = {
+		Accept: "application/vnd.github+json",
+		"User-Agent": "Magenta-release-preflight",
+		"X-GitHub-Api-Version": "2022-11-28",
+	};
+	const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
+	if (token) headers.Authorization = `Bearer ${token}`;
+	let response;
+	try {
+		response = await fetchImplementation(PUBLIC_RELEASE_API, {
+			headers,
+			signal: AbortSignal.timeout(15_000),
+		});
+	} catch (error) {
+		throw new Error(
+			`Could not query the latest public CLI release: ${error instanceof Error ? error.message : String(error)}`,
+		);
+	}
+	if (!response.ok) {
+		throw new Error(`Could not query the latest public CLI release: GitHub API returned ${response.status}.`);
+	}
+	let release;
+	try {
+		release = await response.json();
+	} catch {
+		throw new Error("Could not parse the latest public CLI release metadata.");
+	}
+	return assertLatestPublishedVersion(currentVersion, release);
+}
+
 export function updateBrandVersionSource(source, currentVersion, nextVersion) {
 	parseVersion(nextVersion, "next product version");
 	const matches = [...source.matchAll(/^(\s*version:\s*)"([^"]+)"(\s*,?\s*)$/gmu)];
@@ -115,6 +167,57 @@ function markdownSecondLevelHeadings(source) {
 		offset = newline >= 0 ? newline + 1 : source.length;
 	}
 	return headings;
+}
+
+function markdownLinesOutsideFences(source) {
+	const lines = [];
+	let fence;
+	for (const rawLine of source.split(/\r?\n/u)) {
+		const fenceMatch = rawLine.match(/^ {0,3}(`{3,}|~{3,})(.*)$/u);
+		if (!fence && fenceMatch) {
+			fence = { character: fenceMatch[1][0], length: fenceMatch[1].length };
+			continue;
+		}
+		if (fence) {
+			if (
+				fenceMatch &&
+				fenceMatch[1][0] === fence.character &&
+				fenceMatch[1].length >= fence.length &&
+				fenceMatch[2].trim() === ""
+			) {
+				fence = undefined;
+			}
+			continue;
+		}
+		lines.push(rawLine);
+	}
+	return lines;
+}
+
+export function extractReleaseNotes(source, version) {
+	parseVersion(version, "release version");
+	const headings = markdownSecondLevelHeadings(source);
+	const versionPrefix = `[${version}]`;
+	const matchingHeadings = headings.filter((heading) => heading.text.startsWith(versionPrefix));
+	if (matchingHeadings.length !== 1) {
+		throw new Error(`Expected exactly one changelog heading for release ${version}, found ${matchingHeadings.length}.`);
+	}
+	const releaseHeading = matchingHeadings[0];
+	const escapedVersion = version.replaceAll(".", "\\.");
+	if (!new RegExp(`^\\[${escapedVersion}\\] - \\d{4}-\\d{2}-\\d{2}$`, "u").test(releaseHeading.text)) {
+		throw new Error(`Changelog heading for release ${version} must include an ISO release date.`);
+	}
+	const headingIndex = headings.indexOf(releaseHeading);
+	const bodyEnd = headings[headingIndex + 1]?.start ?? source.length;
+	const body = source.slice(releaseHeading.end, bodyEnd).trim();
+	const visibleLines = markdownLinesOutsideFences(body);
+	if (!visibleLines.some((line) => /^ {0,3}###[ \t]+\S/u.test(line))) {
+		throw new Error(`Changelog release ${version} has no subsection outside a code fence.`);
+	}
+	if (!visibleLines.some((line) => /^ {0,3}-[ \t]+\S/u.test(line))) {
+		throw new Error(`Changelog release ${version} has no non-empty change entry outside a code fence.`);
+	}
+	return `${body}\n`;
 }
 
 export function finalizeChangelog(source, version, date) {
@@ -276,8 +379,18 @@ function ensureTagAvailable(version) {
 	}
 }
 
-function restoreReleaseFiles(snapshots) {
-	for (const [path, content] of snapshots) writeFileSync(resolve(REPO_ROOT, path), content);
+function restoreReleaseFiles(snapshots, root = REPO_ROOT) {
+	for (const [path, content] of snapshots) writeFileSync(resolve(root, path), content);
+}
+
+export function rollbackReleasePreparation({
+	buildArtifactsTouched,
+	cleanBuildArtifacts = () => run("npm", ["run", "clean"]),
+	root = REPO_ROOT,
+	snapshots,
+}) {
+	restoreReleaseFiles(snapshots, root);
+	if (buildArtifactsTouched) cleanBuildArtifacts();
 }
 
 function printRecovery({ currentHead, initialHead, mainPushed, plan, tagPushed }) {
@@ -299,7 +412,7 @@ function printRecovery({ currentHead, initialHead, mainPushed, plan, tagPushed }
 	}
 }
 
-export function releaseMain(args = process.argv.slice(2)) {
+export async function releaseMain(args = process.argv.slice(2)) {
 	if (args.length !== 1 || (!BUMP_TYPES.has(args[0]) && !SEMVER_RE.test(args[0]))) {
 		throw new Error("Usage: node scripts/release.mjs <major|minor|patch|x.y.z>");
 	}
@@ -307,6 +420,7 @@ export function releaseMain(args = process.argv.slice(2)) {
 	console.log("\n=== Magenta CLI Release ===\n");
 	const preconditions = ensureReleasePreconditions();
 	const brand = readActiveBrand();
+	await verifyLatestPublishedVersion(brand.version);
 	const version = resolveReleaseVersion(brand.version, args[0]);
 	ensureTagAvailable(version);
 	const plan = createReleaseGitPlan({
@@ -328,6 +442,7 @@ export function releaseMain(args = process.argv.slice(2)) {
 	const releaseChangelog = finalizeChangelog(changelogSource, version, date);
 	const nextBrandSource = updateBrandVersionSource(brand.configSource, brand.version, version);
 	const releasePaths = [brand.configRelativePath, CHANGELOG_RELATIVE_PATH, GENERATED_VERSION_RELATIVE_PATH];
+	let buildArtifactsTouched = false;
 	let mainPushed = false;
 	let tagPushed = false;
 
@@ -337,13 +452,9 @@ export function releaseMain(args = process.argv.slice(2)) {
 		writeFileSync(brand.configPath, nextBrandSource);
 		writeFileSync(changelogPath, releaseChangelog);
 		run(process.execPath, ["scripts/generate-brand-version.mjs"]);
-
-		const generatedVersion = readFileSync(generatedVersionPath, "utf8");
-		if (!generatedVersion.includes(`BRAND_VERSION = "${version}"`)) {
-			throw new Error(`Generated runtime version does not contain ${version}.`);
-		}
-
-		run("npm", ["run", "check:release"]);
+		run(process.execPath, ["scripts/verify-brand-version.mjs", "--expected", version]);
+		buildArtifactsTouched = true;
+		runReleaseGate({ expectedVersion: version, runCommand: run });
 		assertChangedPaths(releasePaths);
 		run("git", [...plan.releaseCommitArgs, ...releasePaths]);
 		assertChangedPaths([]);
@@ -362,8 +473,19 @@ export function releaseMain(args = process.argv.slice(2)) {
 	} catch (error) {
 		const currentHead = safeGitOutput(["rev-parse", "HEAD"]);
 		if (currentHead === preconditions.initialHead) {
-			restoreReleaseFiles(snapshots);
-			console.error("Restored the three release files because no release commit was created.");
+			try {
+				rollbackReleasePreparation({ buildArtifactsTouched, snapshots });
+				console.error(
+					buildArtifactsTouched
+						? "Restored the three release files and removed aborted build output because no release commit was created."
+						: "Restored the three release files because no release commit was created.",
+				);
+			} catch (rollbackError) {
+				throw new AggregateError(
+					[error, rollbackError],
+					"Release failed and pre-commit rollback could not be completed. Inspect the release files and ignored build output.",
+				);
+			}
 		} else {
 			printRecovery({
 				currentHead,
@@ -376,14 +498,16 @@ export function releaseMain(args = process.argv.slice(2)) {
 		throw error;
 	}
 
-	console.log(`\n=== Published source tag ${plan.tag}; GitHub release workflow is now running ===`);
+	console.log(
+		`\n=== Pushed source tag ${plan.tag}; publication is not complete until the Release workflow starts and passes ===`,
+	);
 	return version;
 }
 
 const isMain = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (isMain) {
 	try {
-		releaseMain();
+		await releaseMain();
 	} catch (error) {
 		console.error(`Release failed: ${error instanceof Error ? error.message : String(error)}`);
 		process.exitCode = 1;

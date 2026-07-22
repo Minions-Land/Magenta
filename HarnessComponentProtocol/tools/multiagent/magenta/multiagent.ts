@@ -1,13 +1,22 @@
 import { type ChildProcess, type SpawnOptions, spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { createWriteStream, existsSync, openSync, readFileSync, type WriteStream } from "node:fs";
+import { createWriteStream, existsSync, readFileSync } from "node:fs";
 import { mkdir, readFile, realpath, rename, stat, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { type Static, Type } from "typebox";
+import {
+	BufferedBoundedLog,
+	cleanupLogTree,
+	DEFAULT_LOG_MAX_AGE_MS,
+	DEFAULT_LOG_MAX_BYTES,
+	DEFAULT_LOG_MAX_FILES,
+	DEFAULT_LOG_MAX_TOTAL_BYTES,
+} from "../../../_magenta/log-retention.ts";
 import { uuidv7 } from "../../../_magenta/session/pi/uuid.ts";
+import { validateNodeTimeoutMs } from "../../../_magenta/timeout.ts";
 import type { MailboxSupport } from "../../send-message/magenta/runtime.ts";
 import { MAX_PEER_MESSAGE_CONTENT_BYTES } from "../../send-message/magenta/send-message.ts";
 import { ToolExecutionError } from "../../tool-error.ts";
@@ -21,7 +30,8 @@ import {
 } from "./worktree.ts";
 
 const MAX_RUNNING_TEAMMATES = 16;
-const RPC_TIMEOUT_MS = 30_000;
+/** Response deadline for one RPC command; this does not cap persistent Session lifetime. */
+export const DEFAULT_MULTIAGENT_RPC_TIMEOUT_MS = 5 * 60_000;
 const GRACEFUL_STOP_MS = 1_000;
 const TERM_GRACE_MS = 3_000;
 const MAX_TAIL_BYTES = 64 * 1024;
@@ -45,6 +55,7 @@ const FORBIDDEN_TOOLS = new Set(["multiagent", "bg_shell"]);
 const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 const IDENTITY_CUSTOM_TYPE = "magenta-multiagent-identity.v1";
 export const MAIN_TODO_SESSION_FILE_ENV = "MAGENTA_MAIN_TODO_SESSION_FILE";
+const ACTIVE_MULTIAGENT_LOG_PATHS = new Set<string>();
 
 export type MultiagentSpawn = (command: string, args: string[], options: SpawnOptions) => ChildProcess;
 export type MultiagentInvocationResolver = (args: string[]) => { command: string; args: string[] };
@@ -82,6 +93,10 @@ export type MultiagentRuntimeSettings = {
 	createChildSession: CreateChildSession;
 	getMailboxSupport: () => MailboxSupport;
 	getDefaultModel?: () => MultiagentModelSelection | undefined;
+	/** Per-command RPC response deadline. Omit for the 5-minute default; does not limit Session lifetime. */
+	rpcTimeoutMs?: number;
+	/** Override the per-RPC diagnostic log cap for embedders/tests. */
+	maxLogBytes?: number;
 	spawnAgent?: MultiagentSpawn;
 	createSessionId?: () => string;
 	worktreeManager?: TeammateWorktreeManager;
@@ -164,7 +179,9 @@ type PendingRpc = {
 };
 type LiveHandle = {
 	child: ChildProcess;
-	log: WriteStream;
+	log: BufferedBoundedLog;
+	logClosed: Promise<void>;
+	suppressedMessageUpdates: number;
 	generation: number;
 	pending: Map<string, PendingRpc>;
 	stopPromise?: Promise<void>;
@@ -233,6 +250,16 @@ async function wait(ms: number): Promise<void> {
 	await new Promise((resolveWait) => setTimeout(resolveWait, ms));
 }
 
+function isProcessAlive(pid: number): boolean {
+	if (!Number.isInteger(pid) || pid <= 0) return false;
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch (error) {
+		return (error as NodeJS.ErrnoException).code === "EPERM";
+	}
+}
+
 export class MultiagentController {
 	private readonly settings: MultiagentRuntimeSettings;
 	private readonly registry: DurableMultiagentRegistry;
@@ -243,6 +270,8 @@ export class MultiagentController {
 	private readonly runtimeId = randomUUID();
 	private readonly monitor: { update: (context?: MultiagentHostContext) => void; dispose?: () => void };
 	private readonly ready: Promise<void>;
+	private readonly maxLogBytes: number;
+	private readonly rpcTimeoutMs: number;
 	private nextRequestNumber = 1;
 	private readonly tasks = new Set<Promise<unknown>>();
 	private disposing = false;
@@ -251,6 +280,12 @@ export class MultiagentController {
 
 	constructor(settings: MultiagentRuntimeSettings) {
 		this.settings = settings;
+		this.rpcTimeoutMs =
+			validateNodeTimeoutMs(settings.rpcTimeoutMs, "multiagent rpcTimeoutMs") ?? DEFAULT_MULTIAGENT_RPC_TIMEOUT_MS;
+		this.maxLogBytes =
+			typeof settings.maxLogBytes === "number" && Number.isFinite(settings.maxLogBytes) && settings.maxLogBytes >= 0
+				? settings.maxLogBytes
+				: DEFAULT_LOG_MAX_BYTES;
 		this.registry = new DurableMultiagentRegistry(settings.registryPath, settings.parentSessionId);
 		this.worktrees = settings.worktreeManager ?? new TeammateWorktreeManager();
 		for (const record of this.registry.list()) this.records.set(record.sessionId, record);
@@ -285,7 +320,51 @@ export class MultiagentController {
 				return true;
 			},
 		});
-		this.ready = this.recoverDesiredState();
+		this.ready = this.initialize();
+	}
+
+	private async initialize(): Promise<void> {
+		await this.cleanupLogs();
+		await this.recoverDesiredState();
+	}
+
+	/**
+	 * Teammate RPC output is reproducible and may be regenerated from the child
+	 * Session. Clean only the explicit log suffix. Exact paths protect streams
+	 * opened by this runtime; a foreign runtime's Session directory is protected
+	 * only while its recorded child process is still alive, because older log
+	 * names do not identify the owning process. The legacy `teammates` namespace
+	 * is included because older Magenta versions wrote there.
+	 */
+	private async cleanupLogs(): Promise<void> {
+		const protectedPrefixes = [...this.records.values()]
+			.filter(
+				(record) =>
+					record.parentRuntimeId !== this.runtimeId &&
+					record.processPid !== undefined &&
+					isProcessAlive(record.processPid),
+			)
+			.flatMap((record) => [
+				join(this.settings.agentDir, "tmp", "multiagent", record.sessionId),
+				join(this.settings.agentDir, "tmp", "teammates", record.sessionId),
+			]);
+		const roots = [
+			join(this.settings.agentDir, "tmp", "multiagent"),
+			join(this.settings.agentDir, "tmp", "teammates"),
+		];
+		await Promise.all(
+			roots.map((root) =>
+				cleanupLogTree({
+					root,
+					fileFilter: (path) => path.endsWith(".rpc.log"),
+					protectedPaths: ACTIVE_MULTIAGENT_LOG_PATHS,
+					protectedPrefixes,
+					maxAgeMs: DEFAULT_LOG_MAX_AGE_MS,
+					maxTotalBytes: DEFAULT_LOG_MAX_TOTAL_BYTES,
+					maxFiles: DEFAULT_LOG_MAX_FILES,
+				}),
+			),
+		);
 	}
 
 	createToolDefinition(): AgentTool<any, MultiagentDetails> {
@@ -621,6 +700,7 @@ export class MultiagentController {
 		try {
 			await this.ensureWorktreeActive(record);
 			if (record.desiredProcessState !== "running" || record.observedProcessState !== "starting") return;
+			await this.cleanupLogs();
 			await mkdir(join(this.settings.agentDir, "tmp", "multiagent", record.sessionId), {
 				recursive: true,
 				mode: 0o700,
@@ -634,7 +714,15 @@ export class MultiagentController {
 				record.sessionId,
 				`${timestampForFile()}.rpc.log`,
 			);
-			const log = createWriteStream(logPath, { fd: openSync(logPath, "a", 0o600), autoClose: true });
+			const logStream = createWriteStream(logPath, { flags: "a", mode: 0o600 });
+			const log = new BufferedBoundedLog(logStream, { maxBytes: this.maxLogBytes });
+			const logClosed = new Promise<void>((resolveClosed) => {
+				logStream.once("close", () => resolveClosed());
+				logStream.once("error", () => resolveClosed());
+			});
+			ACTIVE_MULTIAGENT_LOG_PATHS.add(logPath);
+			logStream.once("close", () => ACTIVE_MULTIAGENT_LOG_PATHS.delete(logPath));
+			log.onError(() => {});
 			const args = [
 				"--mode",
 				"rpc",
@@ -652,6 +740,8 @@ export class MultiagentController {
 			if (record.model) args.push("--model", record.model);
 			const invocation = this.settings.resolveAgentInvocation(args);
 			if (this.disposing || record.desiredProcessState !== "running" || record.observedProcessState !== "starting") {
+				log.end();
+				await logClosed;
 				record.observedProcessState = "stopped";
 				record.endedAt = Date.now();
 				await this.persist(record);
@@ -665,6 +755,9 @@ export class MultiagentController {
 					...process.env,
 					MAGENTA_CODING_AGENT_DIR: this.settings.agentDir,
 					MAGENTA_PEER_MESSAGE_DB: this.settings.peerMessageDbPath,
+					// The control plane consumes lifecycle/response events, not token-level
+					// partials. The parent-side filter remains for older child binaries.
+					MAGENTA_INTERNAL_RPC_SUPPRESS_MESSAGE_UPDATES: "1",
 					...(this.settings.parentSessionFile
 						? { [MAIN_TODO_SESSION_FILE_ENV]: this.settings.parentSessionFile }
 						: {}),
@@ -677,6 +770,8 @@ export class MultiagentController {
 			const handle: LiveHandle = {
 				child,
 				log,
+				logClosed,
+				suppressedMessageUpdates: 0,
 				generation: record.processGeneration + 1,
 				pending: new Map(),
 				exitPromise,
@@ -690,7 +785,7 @@ export class MultiagentController {
 			record.lastError = undefined;
 			this.handles.set(record.sessionId, handle);
 			this.attachProcess(record, handle);
-			log.write(`$ ${invocation.command} ${invocation.args.map((arg) => JSON.stringify(arg)).join(" ")}\n\n`);
+			handle.log.write(`$ ${invocation.command} ${invocation.args.map((arg) => JSON.stringify(arg)).join(" ")}\n\n`);
 			const state = await this.sendRpc(record, { type: "get_state" });
 			if (state.sessionId !== record.sessionId) throw new Error(`RPC opened Session ${String(state.sessionId)}`);
 			if (
@@ -718,14 +813,14 @@ export class MultiagentController {
 			const lines = createInterface({ input: stdout });
 			lines.on("line", (line) => {
 				if (this.handles.get(record.sessionId) !== handle) return;
-				if (!handle.log.writableEnded) handle.log.write(`${line}\n`);
 				this.handleRpcLine(record, handle, line);
 			});
 			handle.stopReading = () => lines.close();
 		}
 		handle.child.stderr?.on("data", (data: Buffer) => {
 			if (this.handles.get(record.sessionId) !== handle) return;
-			if (!handle.log.writableEnded) handle.log.write(data);
+			this.flushSuppressedRpcTrace(handle);
+			handle.log.write(data);
 			const text = appendTail("", data, MAX_TAIL_BYTES);
 			record.lastError = text.trim() || record.lastError;
 			this.monitor.update();
@@ -745,12 +840,26 @@ export class MultiagentController {
 	}
 
 	private handleRpcLine(record: MultiagentRecord, handle: LiveHandle, line: string): void {
-		let payload: Record<string, unknown>;
+		let parsed: unknown;
 		try {
-			payload = JSON.parse(line) as Record<string, unknown>;
+			parsed = JSON.parse(line) as unknown;
 		} catch {
+			this.flushSuppressedRpcTrace(handle);
+			handle.log.write(`${line}\n`);
 			return;
 		}
+		if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+			this.flushSuppressedRpcTrace(handle);
+			handle.log.write(`${line}\n`);
+			return;
+		}
+		const payload = parsed as Record<string, unknown>;
+		if (payload.type === "message_update") {
+			handle.suppressedMessageUpdates++;
+			return;
+		}
+		this.flushSuppressedRpcTrace(handle);
+		handle.log.write(`${line}\n`);
 		if (payload.type === "response" && typeof payload.id === "string") {
 			const pending = handle.pending.get(payload.id);
 			if (pending) {
@@ -773,6 +882,13 @@ export class MultiagentController {
 		}
 	}
 
+	private flushSuppressedRpcTrace(handle: LiveHandle): void {
+		const count = handle.suppressedMessageUpdates;
+		if (count === 0) return;
+		handle.suppressedMessageUpdates = 0;
+		handle.log.write(serializeLine({ type: "magenta_rpc_trace_summary", suppressedMessageUpdates: count }));
+	}
+
 	private sendRpc(record: MultiagentRecord, command: RpcCommand): Promise<Record<string, unknown>> {
 		const handle = this.handles.get(record.sessionId);
 		if (!handle) return Promise.reject(new Error(`Session ${record.sessionId} has no live RPC process`));
@@ -783,7 +899,7 @@ export class MultiagentController {
 			const timer = setTimeout(() => {
 				handle.pending.delete(requestId);
 				rejectRequest(new Error(`Timeout waiting for ${command.type} response from ${record.sessionId}`));
-			}, RPC_TIMEOUT_MS);
+			}, this.rpcTimeoutMs);
 			timer.unref?.();
 			handle.pending.set(requestId, {
 				timer,
@@ -807,6 +923,7 @@ export class MultiagentController {
 		const pending = record.pendingInterrupt;
 		if (!pending || !this.handles.has(record.sessionId)) return;
 		try {
+			this.handles.get(record.sessionId)?.log.flush();
 			await this.sendRpc(record, { type: "abort" });
 			if (
 				record.pendingInterrupt !== pending ||
@@ -822,6 +939,7 @@ export class MultiagentController {
 			record.observedProcessState = "idle";
 			await this.persist(record);
 		} catch (error) {
+			if (record.pendingInterrupt !== pending || record.desiredProcessState !== "running") return;
 			record.lastError = `Interrupt failed: ${error instanceof Error ? error.message : String(error)}`;
 			record.observedProcessState = this.handles.has(record.sessionId) ? "running" : "failed";
 			await this.persist(record);
@@ -869,6 +987,7 @@ export class MultiagentController {
 
 	private async stopLiveHandle(record: MultiagentRecord, handle: LiveHandle, launchFailure: boolean): Promise<void> {
 		try {
+			handle.log.flush();
 			await Promise.race([this.sendRpc(record, { type: "abort" }).catch(() => undefined), wait(250)]);
 			try {
 				handle.child.stdin?.end();
@@ -904,7 +1023,9 @@ export class MultiagentController {
 			pending.reject(new Error(`Session ${record.sessionId} process terminated`));
 		}
 		handle.pending.clear();
-		if (!handle.log.writableEnded) handle.log.end();
+		this.flushSuppressedRpcTrace(handle);
+		handle.log.end();
+		await handle.logClosed;
 		record.processPid = undefined;
 		record.parentRuntimeId = undefined;
 		record.endedAt = Date.now();

@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { utimes } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type Tool, type ToolCall, validateToolArguments } from "@earendil-works/pi-ai";
@@ -102,6 +103,7 @@ describe("built-in bg_shell tool", () => {
 					options: { deliverAs: delivery, triggerTurn: delivery !== "nextTurn" },
 				});
 			},
+			logDir: join(tempDir, "logs"),
 		});
 	});
 
@@ -272,6 +274,134 @@ describe("built-in bg_shell tool", () => {
 		const loggedOutput = readFileSync(logPath, "utf8").split("\n\n").slice(1).join("\n\n");
 		expect(loggedOutput).toContain(expected);
 		expect(loggedOutput).not.toContain("�");
+	});
+
+	it("caps the physical log while retaining the bounded in-memory output tail", async () => {
+		const logDir = join(tempDir, "bounded-logs");
+		const bounded = new BackgroundShellController(manager, {
+			registerReturn: () => {},
+			logDir,
+			maxLogBytes: 512,
+		});
+		try {
+			const tool = bounded.createToolDefinition();
+			const ctx = createContext(tempDir);
+			const start = await executeInternalBgShell(
+				tool,
+				"call-bounded-log",
+				{
+					action: "start",
+					command: `${JSON.stringify(process.execPath)} -e ${JSON.stringify('process.stdout.write("x".repeat(4096))')}`,
+					returnToMain: false,
+				},
+				ctx,
+			);
+			const eventId = start.details?.id as string;
+			const logPath = start.details?.logPath as string;
+			await waitUntil(() => manager.getEvents().some((event) => event.id === eventId && event.status !== "running"));
+			await waitUntil(() => readFileSync(logPath).length === 512);
+
+			const log = readFileSync(logPath, "utf8");
+			expect(Buffer.byteLength(log)).toBe(512);
+			expect(log).toContain("[log truncated");
+			if (process.platform !== "win32") expect(statSync(logPath).mode & 0o777).toBe(0o600);
+			const status = await tool.execute(
+				"call-bounded-log-status",
+				{ action: "status", eventId },
+				undefined,
+				undefined,
+				ctx,
+			);
+			const eventData = status.details?.eventData as BackgroundShellEventSnapshot;
+			expect(eventData.tail.length).toBe(4096);
+		} finally {
+			bounded.shutdown();
+		}
+	});
+
+	it("protects an active log from a later controller's startup cleanup", async () => {
+		const logDir = join(tempDir, "active-logs");
+		const first = new BackgroundShellController(manager, { registerReturn: () => {}, logDir });
+		let second: BackgroundShellController | undefined;
+		try {
+			const ctx = createContext(tempDir);
+			const firstTool = first.createToolDefinition();
+			const running = await executeInternalBgShell(
+				firstTool,
+				"call-active-log",
+				{ action: "start", command: 'node -e "setTimeout(()=>{}, 30000)"', returnToMain: false },
+				ctx,
+			);
+			const runningId = running.details?.id as string;
+			const runningLog = running.details?.logPath as string;
+			await waitUntil(() => existsSync(runningLog));
+			const old = new Date(0);
+			await utimes(runningLog, old, old);
+
+			second = new BackgroundShellController(manager, {
+				registerReturn: () => {},
+				logDir,
+				maxLogAgeMs: 1,
+			});
+			const secondTool = second.createToolDefinition();
+			const quick = await executeInternalBgShell(
+				secondTool,
+				"call-cleanup-trigger",
+				{ action: "start", command: "printf cleanup", returnToMain: false },
+				ctx,
+			);
+			const quickId = quick.details?.id as string;
+			await waitUntil(() => manager.getEvents().some((event) => event.id === quickId && event.status !== "running"));
+			expect(existsSync(runningLog)).toBe(true);
+
+			await firstTool.execute(
+				"cancel-active-log",
+				{ action: "cancel", eventId: runningId },
+				undefined,
+				undefined,
+				ctx,
+			);
+		} finally {
+			first.shutdown();
+			second?.shutdown();
+		}
+	});
+
+	it("protects other live-process logs and removes completed current/dead-process logs", async () => {
+		controller.shutdown();
+		manager.dispose();
+		manager = new BackgroundEventManager();
+		const logDir = join(tempDir, "process-owned-logs");
+		mkdirSync(logDir, { recursive: true });
+		const liveLog = join(logDir, `${process.ppid}-bg_external-old.log`);
+		const completedCurrentLog = join(logDir, `${process.pid}-bg_completed-old.log`);
+		const deadLog = join(logDir, "2147483646-bg_stale-old.log");
+		writeFileSync(liveLog, "live\n");
+		writeFileSync(completedCurrentLog, "completed\n");
+		writeFileSync(deadLog, "stale\n");
+		const old = new Date(0);
+		await utimes(liveLog, old, old);
+		await utimes(completedCurrentLog, old, old);
+		await utimes(deadLog, old, old);
+
+		controller = new BackgroundShellController(manager, {
+			registerReturn: () => {},
+			logDir,
+			maxLogAgeMs: 1,
+		});
+		const tool = controller.createToolDefinition();
+		const quick = await executeInternalBgShell(
+			tool,
+			"call-process-cleanup-trigger",
+			{ action: "start", command: "printf cleanup", returnToMain: false },
+			createContext(tempDir),
+		);
+		const quickId = quick.details?.id as string;
+		await waitUntil(() => manager.getEvents().some((event) => event.id === quickId && event.status !== "running"));
+
+		expect(existsSync(liveLog)).toBe(true);
+		expect(existsSync(completedCurrentLog)).toBe(false);
+		expect(existsSync(deadLog)).toBe(false);
 	});
 
 	it("cancels a running command", async () => {

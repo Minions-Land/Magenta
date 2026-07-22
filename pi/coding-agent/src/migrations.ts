@@ -2,11 +2,19 @@
  * One-time migrations that run on startup.
  */
 
+import { migrateLegacyMessageStore } from "@magenta/harness";
 import chalk from "chalk";
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs";
 import { homedir } from "os";
 import { dirname, join } from "path";
-import { CONFIG_DIR_NAME, ENV_AGENT_DIR, getAgentDir, getBinDir } from "./config.ts";
+import {
+	CONFIG_DIR_NAME,
+	ENV_AGENT_DIR,
+	ENV_PEER_MESSAGE_DB,
+	getAgentDir,
+	getBinDir,
+	getPeerMessageDbPath,
+} from "./config.ts";
 import { migrateKeybindingsConfig } from "./core/keybindings.ts";
 
 const MIGRATION_GUIDE_URL =
@@ -254,6 +262,18 @@ function migrateToolsToBin(): void {
 	}
 }
 
+function migrateLegacyPeerMessageStore(): void {
+	// An explicit mailbox path is an ownership boundary, not a request to import
+	// state from the default branded directory.
+	if (process.env[ENV_PEER_MESSAGE_DB]) return;
+	try {
+		migrateLegacyMessageStore(join(getAgentDir(), "messages.db"), getPeerMessageDbPath());
+	} catch {
+		// A damaged, locked, or conflicting legacy store must not block startup.
+		// The source remains untouched so a later run or manual repair can retry.
+	}
+}
+
 /**
  * Check for deprecated hooks/ and tools/ directories.
  * Note: tools/ may contain fd/rg binaries extracted by pi, so only warn if it has other files.
@@ -349,6 +369,7 @@ export function runMigrations(cwd: string): {
 	const migratedAuthProviders = migrateAuthToAuthJson();
 	migrateSessionsFromAgentRoot();
 	migrateToolsToBin();
+	migrateLegacyPeerMessageStore();
 	migrateKeybindingsConfigFile();
 	const deprecationWarnings = migrateExtensionSystem(cwd);
 	return { migratedAuthProviders, deprecationWarnings };

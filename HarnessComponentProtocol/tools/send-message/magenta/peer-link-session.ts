@@ -3,6 +3,7 @@ import type { Readable, Writable } from "node:stream";
 import { StringDecoder } from "node:string_decoder";
 import {
 	MAX_PEER_LINK_FRAME_BYTES,
+	PEER_LINK_CAPABILITY_DURABLE_CUSTODY,
 	PEER_LINK_CAPABILITY_GOSSIP_TRANSIT,
 	PEER_LINK_PROTOCOL_VERSION,
 	type PeerLinkEnvelope,
@@ -26,9 +27,9 @@ export type PeerLinkStorage = {
 		ownerId: string,
 		includeUnresolved: boolean,
 		limit: number,
-		options?: { allowTransit?: boolean },
+		options?: { allowTransit?: boolean; reclaimUnsettledForwarded?: boolean },
 	): PeerLinkEnvelope[];
-	ackOutbound(messageIds: string[], ownerId: string): void;
+	ackOutbound(messageIds: string[], ownerId: string, options: { durableCustody: boolean }): void;
 	requeueOutbound(messageIds: string[], ownerId: string, options?: { notFound?: boolean }): void;
 	acceptIncoming(message: PeerLinkEnvelope, ingressPeerStoreId: string): PeerLinkAcceptResult;
 	runMaintenance?(): void;
@@ -54,6 +55,7 @@ const DEFAULT_FLUSH_INTERVAL_MS = 250;
 const DEFAULT_SESSION_REFRESH_INTERVAL_MS = 1_000;
 const DEFAULT_MAINTENANCE_INTERVAL_MS = 60 * 60 * 1_000;
 const DEFAULT_BATCH_SIZE = 50;
+const LOCAL_CAPABILITIES = [PEER_LINK_CAPABILITY_GOSSIP_TRANSIT, PEER_LINK_CAPABILITY_DURABLE_CUSTODY];
 
 export class PeerLinkSession {
 	private readonly ownerId = randomUUID();
@@ -114,6 +116,11 @@ export class PeerLinkSession {
 
 	async flush(): Promise<void> {
 		if (!this.isReady || !this.peerStoreId) return;
+		const remoteAllowsTransit = this.remoteCapabilities.has(PEER_LINK_CAPABILITY_GOSSIP_TRANSIT);
+		const remoteProvidesDurableCustody = this.remoteCapabilities.has(PEER_LINK_CAPABILITY_DURABLE_CUSTODY);
+		// The previous gossip release accepted transit but expired it by receipt age.
+		// Do not create a per-link claim until that peer can prove durable custody.
+		if (remoteAllowsTransit && !remoteProvidesDurableCustody) return;
 		if (this.flushRunning) {
 			this.flushRequested = true;
 			return;
@@ -130,7 +137,10 @@ export class PeerLinkSession {
 					this.ownerId,
 					this.options.includeUnresolvedOutbound === true,
 					available,
-					{ allowTransit: this.remoteCapabilities.has(PEER_LINK_CAPABILITY_GOSSIP_TRANSIT) },
+					{
+						allowTransit: remoteAllowsTransit,
+						reclaimUnsettledForwarded: remoteProvidesDurableCustody,
+					},
 				);
 				if (batch.length === 0) return;
 				// Claiming is atomic for the whole batch. Track every row before the
@@ -167,14 +177,14 @@ export class PeerLinkSession {
 	private readonly onOutputError = (error: Error) => this.fail(error);
 
 	private helloFrame(type: "hello" | "hello_ack"): PeerLinkFrame {
-		const sessions = this.fitSessionsToFrame(type, this.options.storage.listRegisteredSessionIds().sort());
+		const sessions = this.fitSessionsToFrame(type, this.options.storage.listRegisteredSessionIds());
 		this.lastAdvertisedSessions = JSON.stringify(sessions);
 		return {
 			type,
 			protocol: PEER_LINK_PROTOCOL_VERSION,
 			storeId: this.localStoreId,
 			sessions,
-			capabilities: [PEER_LINK_CAPABILITY_GOSSIP_TRANSIT],
+			capabilities: LOCAL_CAPABILITIES,
 		};
 	}
 
@@ -188,7 +198,7 @@ export class PeerLinkSession {
 						protocol: PEER_LINK_PROTOCOL_VERSION,
 						storeId: this.localStoreId,
 						sessions: candidate,
-						capabilities: [PEER_LINK_CAPABILITY_GOSSIP_TRANSIT],
+						capabilities: LOCAL_CAPABILITIES,
 					};
 		let lower = 0;
 		let upper = unique.length;
@@ -255,7 +265,13 @@ export class PeerLinkSession {
 			case "ack":
 				if (!this.inFlight.delete(frame.messageId)) return;
 				if (frame.status === "accepted" || frame.status === "duplicate") {
-					this.options.storage.ackOutbound([frame.messageId], this.ownerId);
+					this.options.storage.ackOutbound([frame.messageId], this.ownerId, {
+						// Pre-gossip V1 accepted only a locally-owned recipient into its
+						// durable inbox. The unsafe mixed-version case is transit-only V1.
+						durableCustody:
+							!this.remoteCapabilities.has(PEER_LINK_CAPABILITY_GOSSIP_TRANSIT) ||
+							this.remoteCapabilities.has(PEER_LINK_CAPABILITY_DURABLE_CUSTODY),
+					});
 				} else {
 					this.options.storage.requeueOutbound([frame.messageId], this.ownerId, { notFound: true });
 				}

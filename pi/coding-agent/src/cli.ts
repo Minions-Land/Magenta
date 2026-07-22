@@ -5,7 +5,7 @@
  *
  * Test with: npx tsx src/cli-new.ts [args...]
  */
-import { APP_NAME } from "./config.ts";
+import { APP_NAME, VERSION } from "./config.ts";
 
 process.title = APP_NAME;
 process.env.PI_CODING_AGENT = "true";
@@ -18,9 +18,22 @@ async function run(): Promise<void> {
 		await handlePeerCommand(args);
 		return;
 	}
+	if (args.some((arg) => arg === "--version" || arg === "-v")) {
+		const { parseArgs } = await import("./cli/args.ts");
+		const parsed = parseArgs(args);
+		if (parsed.version && parsed.diagnostics.length === 0) {
+			console.log(VERSION);
+			return;
+		}
+	}
+	if (args.length > 0 && args.every((arg) => arg === "--help" || arg === "-h")) {
+		const { printHelp } = await import("./cli/args.ts");
+		printHelp();
+		return;
+	}
 
 	// Keep provider SDKs, extensions, resource loading, and TUI modules outside
-	// the server-side peer helper's import graph.
+	// the server-side peer helper and read-only metadata import graphs.
 	const [{ configureHttpDispatcher }, { main }] = await Promise.all([
 		import("./core/http-dispatcher.ts"),
 		import("./main.ts"),

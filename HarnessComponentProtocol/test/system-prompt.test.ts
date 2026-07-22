@@ -1,7 +1,7 @@
 import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { NodeExecutionEnv } from "../_magenta/env/pi/nodejs.ts";
 import { loadSystemPromptDescriptor } from "../system-prompt/pi/descriptor.ts";
 import { SystemPromptProvider } from "../system-prompt/pi/provider.ts";
@@ -105,6 +105,28 @@ describe("buildSystemPrompt", () => {
 		expect(first).toContain("Current date: 2026-07-15");
 		expect(first).toContain("Current working directory: C:/work/repo");
 		expect(first).not.toContain("Kiro, Claude, GPT, Gemini");
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	it("keeps the default prompt stable across midnight", () => {
+		vi.useFakeTimers();
+		const options = {
+			cwd: "/repo",
+			selectedTools: ["read"],
+			toolSnippets: { read: "Read files" },
+			documentationPaths,
+		};
+
+		vi.setSystemTime(new Date("2026-07-15T23:59:59Z"));
+		const beforeMidnight = buildSystemPrompt(options);
+		vi.setSystemTime(new Date("2026-07-16T00:00:01Z"));
+		const afterMidnight = buildSystemPrompt(options);
+
+		expect(afterMidnight).toBe(beforeMidnight);
+		expect(afterMidnight).not.toContain("Current date:");
 	});
 
 	it("uses a custom prompt as the base while retaining ordered conditional operations and context", () => {

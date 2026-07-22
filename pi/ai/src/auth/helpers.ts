@@ -1,4 +1,23 @@
-import type { ApiKeyAuth, OAuthAuth } from "./types.ts";
+import type { ApiKeyAuth, ApiKeyCredential, AuthContext, OAuthAuth } from "./types.ts";
+
+export type EnvApiKeyAuthOptions = {
+	/** Optional provider base-URL variables, in precedence order. */
+	baseUrlEnvVars?: readonly string[];
+	/** Variables whose values authenticate with an Authorization Bearer header. */
+	bearerTokenEnvVars?: readonly string[];
+};
+
+async function firstConfiguredValue(
+	names: readonly string[],
+	credential: ApiKeyCredential | undefined,
+	ctx: AuthContext,
+): Promise<string | undefined> {
+	for (const name of names) {
+		const value = credential?.env?.[name] ?? (await ctx.env(name));
+		if (value) return value;
+	}
+	return undefined;
+}
 
 /**
  * Standard api-key auth: a stored credential key wins, otherwise the first
@@ -6,7 +25,11 @@ import type { ApiKeyAuth, OAuthAuth } from "./types.ts";
  * Providers with non-standard resolution (provider env, ambient files, IAM)
  * write their own `ApiKeyAuth`.
  */
-export function envApiKeyAuth(name: string, envVars: readonly string[]): ApiKeyAuth {
+export function envApiKeyAuth(
+	name: string,
+	envVars: readonly string[],
+	options: EnvApiKeyAuthOptions = {},
+): ApiKeyAuth {
 	return {
 		name,
 		login: async (interaction) => {
@@ -14,12 +37,30 @@ export function envApiKeyAuth(name: string, envVars: readonly string[]): ApiKeyA
 			return { type: "api_key", key };
 		},
 		resolve: async ({ ctx, credential }) => {
-			if (credential?.key) return { auth: { apiKey: credential.key }, source: "stored credential" };
-			for (const envVar of envVars) {
-				const value = await ctx.env(envVar);
-				if (value) return { auth: { apiKey: value }, source: envVar };
+			let value = credential?.key;
+			let source = value ? "stored credential" : undefined;
+			let bearerToken = false;
+			if (value) {
+				bearerToken = (options.bearerTokenEnvVars ?? []).some((name) => credential?.env?.[name] === value);
+			} else {
+				for (const envVar of envVars) {
+					const configured = await ctx.env(envVar);
+					if (!configured) continue;
+					value = configured;
+					source = envVar;
+					bearerToken = options.bearerTokenEnvVars?.includes(envVar) ?? false;
+					break;
+				}
 			}
-			return undefined;
+			if (!value || !source) return undefined;
+			const baseUrl = await firstConfiguredValue(options.baseUrlEnvVars ?? [], credential, ctx);
+			return {
+				auth: {
+					...(bearerToken ? { headers: { authorization: `Bearer ${value}` } } : { apiKey: value }),
+					...(baseUrl ? { baseUrl } : {}),
+				},
+				source,
+			};
 		},
 	};
 }

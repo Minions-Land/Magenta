@@ -18,8 +18,14 @@ const OFF_FLAG = {
 	"prompt-templates": ["--no-prompt-templates"],
 	context: ["--no-context-files"],
 };
-// A component with no CLI off-switch: the scenario must supply a manual_note.
+// A manual_note can explain missing isolation, but cannot make a real run executable.
 const NO_CLI_OFF_SWITCH = new Set(["compaction", "memory", "hooks", "policy", "sandbox", "runtime", "system-prompt"]);
+const CAPABILITY_COMPONENT = new Map([
+	["workflows", "harness_workflows"],
+	["multiagent", "harness_teammates"],
+]);
+const KNOWN_COMPONENTS = new Set([...Object.keys(OFF_FLAG), ...NO_CLI_OFF_SWITCH, ...CAPABILITY_COMPONENT.keys()]);
+const SCENARIO_KINDS = new Set(["comparison", "smoke"]);
 
 function stripComments(line) {
 	let inStr = false;
@@ -187,17 +193,33 @@ export function variantArgv(variant, { model, defaults = {} } = {}) {
 	const argv = ["--print", "--mode", "json", "--no-session"];
 	if (model) argv.push("--model", model);
 	const warnings = [];
+	const unresolvedManualIsolation = [];
 	const components = variant.components ?? {};
 	for (const [name, on] of Object.entries(components)) {
-		if (on) continue;
+		if (typeof on !== "boolean") throw new Error(`component '${name}' state must be boolean`);
+		if (!KNOWN_COMPONENTS.has(name)) {
+			unresolvedManualIsolation.push({
+				component: name,
+				requestedState: on,
+				reason: "unknown-component",
+				manualNote: typeof variant.manual_note === "string" ? variant.manual_note : null,
+			});
+			warnings.push(`unknown component '${name}': real run blocked because it cannot map to a CLI control`);
+			continue;
+		}
+		if (on || CAPABILITY_COMPONENT.has(name)) continue;
 		if (OFF_FLAG[name]) argv.push(...OFF_FLAG[name]);
 		else if (NO_CLI_OFF_SWITCH.has(name)) {
+			unresolvedManualIsolation.push({
+				component: name,
+				requestedState: false,
+				reason: "no-cli-off-switch",
+				manualNote: typeof variant.manual_note === "string" ? variant.manual_note : null,
+			});
 			warnings.push(
-				`component '${name}' has no CLI off-switch; manual setup required` +
+				`component '${name}' has no CLI off-switch; real run blocked by unresolved manual isolation` +
 					(variant.manual_note ? ` - ${variant.manual_note}` : " (scenario provided no manual_note)"),
 			);
-		} else {
-			warnings.push(`unknown component '${name}': cannot map to a CLI flag`);
 		}
 	}
 
@@ -207,12 +229,30 @@ export function variantArgv(variant, { model, defaults = {} } = {}) {
 		argv.push("--thinking", thinking);
 	}
 
-	const workflows = variant.harness_workflows ?? defaults.harness_workflows;
+	const workflowComponentState = components.workflows;
+	const configuredWorkflows = variant.harness_workflows ?? defaults.harness_workflows;
+	if (
+		workflowComponentState !== undefined &&
+		configuredWorkflows !== undefined &&
+		workflowComponentState !== configuredWorkflows
+	) {
+		throw new Error("components.workflows conflicts with harness_workflows");
+	}
+	const workflows = configuredWorkflows ?? workflowComponentState;
 	if (workflows !== undefined) {
 		if (typeof workflows !== "boolean") throw new Error("harness_workflows must be boolean");
 		argv.push(workflows ? "--harness-workflows" : "--no-harness-workflows");
 	}
-	const teammates = variant.harness_teammates ?? defaults.harness_teammates;
+	const multiagentComponentState = components.multiagent;
+	const configuredTeammates = variant.harness_teammates ?? defaults.harness_teammates;
+	if (
+		multiagentComponentState !== undefined &&
+		configuredTeammates !== undefined &&
+		multiagentComponentState !== configuredTeammates
+	) {
+		throw new Error("components.multiagent conflicts with harness_teammates");
+	}
+	const teammates = configuredTeammates ?? multiagentComponentState;
 	if (teammates !== undefined) {
 		if (typeof teammates !== "boolean") throw new Error("harness_teammates must be boolean");
 		argv.push(teammates ? "--harness-teammates" : "--no-harness-teammates");
@@ -230,6 +270,10 @@ export function variantArgv(variant, { model, defaults = {} } = {}) {
 	return {
 		argv,
 		warnings,
+		isolation: {
+			status: unresolvedManualIsolation.length === 0 ? "executable" : "unresolved-manual",
+			unresolvedManualIsolation,
+		},
 		configuration: { thinking, workflows, teammates, backgroundPolicy, backgroundWaitTimeoutSeconds },
 	};
 }
@@ -237,6 +281,11 @@ export function variantArgv(variant, { model, defaults = {} } = {}) {
 export async function buildPlan(scenario, { model } = {}) {
 	if (typeof scenario.name !== "string" || !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(scenario.name)) {
 		throw new Error("scenario name must be filesystem-safe");
+	}
+	const kind = scenario.kind ?? "comparison";
+	if (!SCENARIO_KINDS.has(kind)) throw new Error(`scenario kind must be one of: ${[...SCENARIO_KINDS].join(", ")}`);
+	if (typeof scenario.targets_component !== "string" || scenario.targets_component.length === 0) {
+		throw new Error("scenario targets_component must be a non-empty component name");
 	}
 	const promptRef = scenario.prompt_ref ? resolve(harnessRoot, "eval", scenario.prompt_ref) : null;
 	const scenarioExpect = scenario.expect ?? {};
@@ -246,11 +295,12 @@ export async function buildPlan(scenario, { model } = {}) {
 		if (typeof v.name !== "string" || !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(v.name)) {
 			throw new Error("variant name must be filesystem-safe");
 		}
-		const { argv, warnings, configuration } = variantArgv(v, { model, defaults: scenario });
+		const { argv, warnings, isolation, configuration } = variantArgv(v, { model, defaults: scenario });
 		return {
 			name: v.name,
 			argv,
 			warnings,
+			isolation,
 			components: v.components ?? {},
 			configuration,
 			cwd: resolveCwd(v.cwd ?? scenario.cwd),
@@ -259,14 +309,48 @@ export async function buildPlan(scenario, { model } = {}) {
 			expect: mergeExpectations(scenarioExpect, v.expect),
 		};
 	});
+	const unresolvedManualIsolation = variants.flatMap((variant) =>
+		variant.isolation.unresolvedManualIsolation.map((blocker) => ({ variant: variant.name, ...blocker })),
+	);
+	const targetStates = variants.map((variant) => variant.components[scenario.targets_component]);
+	if (targetStates.some((state) => typeof state !== "boolean")) {
+		unresolvedManualIsolation.push({
+			variant: "<scenario>",
+			component: scenario.targets_component,
+			requestedState: null,
+			reason: "target-not-declared",
+			manualNote: null,
+		});
+	}
+	if (kind === "comparison" && !(targetStates.includes(true) && targetStates.includes(false))) {
+		unresolvedManualIsolation.push({
+			variant: "<scenario>",
+			component: scenario.targets_component,
+			requestedState: null,
+			reason: "target-not-varied",
+			manualNote: null,
+		});
+	}
 	return {
 		schemaVersion: 1,
 		name: scenario.name,
+		kind,
 		description: scenario.description,
 		targetsComponent: scenario.targets_component,
 		promptRef,
 		cliPath,
 		scoring: scenario.scoring ?? {},
+		executionGate: {
+			realRunAllowed: unresolvedManualIsolation.length === 0,
+			unresolvedManualIsolation,
+		},
+		evidenceGate: {
+			comparisonClaimAllowed: false,
+			reasons:
+				kind === "comparison"
+					? ["fixed-variant-order", "shared-agent-environment", "single-repetition", "scoring-not-executed"]
+					: ["scenario-kind-is-smoke"],
+		},
 		variants,
 	};
 }

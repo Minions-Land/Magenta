@@ -10,6 +10,14 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import {
+	appendBoundedFileSync,
+	cleanupLogTree,
+	DEFAULT_LOG_MAX_AGE_MS,
+	DEFAULT_LOG_MAX_BYTES,
+	DEFAULT_LOG_MAX_TOTAL_BYTES,
+} from "../../../../_magenta/log-retention.ts";
+import { nodeTimeoutSecondsToMs } from "../../../../_magenta/timeout.ts";
 import type {
 	CommonOptions,
 	MultiAgentDiscoverResult,
@@ -49,7 +57,18 @@ function createDefaultRunner(resolveInvocation?: WorkerInvocationResolver): Work
 }
 
 const DEFAULT_MAX_CONCURRENT = 8;
+const DEFAULT_WORKFLOW_MAX_FILES = 2_000;
+export const WORKFLOW_STATE_ROOT_ENV = "MAGENTA_WORKFLOW_STATE_ROOT";
 export const TARGET = "multiagent://local";
+const ACTIVE_WORKFLOW_DIRS = new Set<string>();
+
+export type WorkflowRetentionOptions = {
+	maxAgeMs?: number;
+	maxTotalBytes?: number;
+	maxFiles?: number;
+	now?: number;
+	protectedPrefixes?: Iterable<string>;
+};
 
 export const PATTERNS: Pattern[] = [
 	"classify_and_act",
@@ -103,7 +122,7 @@ function nextWorkerId(prefix: string): string {
 
 /** Generate a workflow run id, also used as the .magenta/tmp/<id> dir name. */
 function nextWorkflowId(): string {
-	return `wf-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+	return `wf-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
 /**
@@ -112,15 +131,110 @@ function nextWorkflowId(): string {
  * already whitelists `./.magenta/tmp` for writes), rather than inventing a new
  * home-directory path that the process sandbox would reject.
  */
-function workflowStateDir(cwd: string, workflowId: string): string {
-	return path.join(cwd, ".magenta", "tmp", workflowId);
+function workflowStateRoot(cwd: string, configuredRoot?: string): string {
+	const environmentRoot = process.env[WORKFLOW_STATE_ROOT_ENV]?.trim();
+	return path.resolve(configuredRoot || environmentRoot || path.join(cwd, ".magenta", "tmp"));
 }
 
-/** Best-effort mkdir + write; never throws (observability must not break a run). */
+function isRegularFile(filePath: string): boolean {
+	try {
+		const info = fs.lstatSync(filePath);
+		return info.isFile() && !info.isSymbolicLink();
+	} catch {
+		return false;
+	}
+}
+
+function isProcessAlive(pid: number): boolean {
+	if (!Number.isInteger(pid) || pid <= 0) return false;
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch (error) {
+		return (error as NodeJS.ErrnoException).code === "EPERM";
+	}
+}
+
+/** Remove bounded, completed workflow artifacts while preserving unknown files and live runs. */
+export async function cleanupWorkflowArtifacts(
+	stateRoot: string,
+	options: WorkflowRetentionOptions = {},
+): Promise<void> {
+	const root = path.resolve(stateRoot);
+	const completedRuns = new Set<string>();
+	const protectedPrefixes = new Set(
+		[...(options.protectedPrefixes ?? [])].map((candidate) => path.resolve(candidate)),
+	);
+	for (const active of ACTIVE_WORKFLOW_DIRS) protectedPrefixes.add(active);
+
+	try {
+		for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+			if (!entry.isDirectory() || entry.isSymbolicLink() || !entry.name.startsWith("wf-")) continue;
+			const runRoot = path.resolve(root, entry.name);
+			const completed =
+				isRegularFile(path.join(runRoot, "result.json")) || isRegularFile(path.join(runRoot, "error.json"));
+			if (completed) {
+				completedRuns.add(runRoot);
+			}
+			const pidMatch = /^wf-(\d+)-\d+-/.exec(entry.name);
+			if (!completed && pidMatch && isProcessAlive(Number(pidMatch[1]))) protectedPrefixes.add(runRoot);
+		}
+	} catch {
+		return;
+	}
+
+	const completedParts = (candidate: string): string[] | undefined => {
+		const relativePath = path.relative(root, path.resolve(candidate));
+		if (!relativePath || relativePath === ".." || relativePath.startsWith(`..${path.sep}`)) return undefined;
+		const parts = relativePath.split(path.sep);
+		if (!completedRuns.has(path.join(root, parts[0]!))) return undefined;
+		return parts;
+	};
+
+	await cleanupLogTree({
+		root,
+		fileFilter: (candidate) => {
+			const parts = completedParts(candidate);
+			if (!parts) return false;
+			if (parts.length === 2) return ["log.jsonl", "result.json", "error.json"].includes(parts[1]!);
+			return parts.length === 4 && parts[1] === "nodes" && parts[3] === "output.json";
+		},
+		protectedPrefixes,
+		emptyDirectoryFilter: (candidate) => {
+			const parts = completedParts(candidate);
+			if (!parts) return false;
+			return (
+				parts.length === 1 ||
+				(parts.length === 2 && parts[1] === "nodes") ||
+				(parts.length === 3 && parts[1] === "nodes")
+			);
+		},
+		maxAgeMs: options.maxAgeMs ?? DEFAULT_LOG_MAX_AGE_MS,
+		maxTotalBytes: options.maxTotalBytes ?? DEFAULT_LOG_MAX_TOTAL_BYTES,
+		maxFiles: options.maxFiles ?? DEFAULT_WORKFLOW_MAX_FILES,
+		now: options.now,
+	});
+}
+
+/** Best-effort bounded JSON write; never throws (observability must not break a run). */
 function safeWrite(filePath: string, content: string): void {
 	try {
-		fs.mkdirSync(path.dirname(filePath), { recursive: true });
-		fs.writeFileSync(filePath, content, "utf8");
+		fs.mkdirSync(path.dirname(filePath), { recursive: true, mode: 0o700 });
+		const originalBytes = Buffer.byteLength(content, "utf8");
+		const bounded =
+			originalBytes <= DEFAULT_LOG_MAX_BYTES
+				? content
+				: JSON.stringify(
+						{
+							schemaVersion: 1,
+							truncated: true,
+							originalBytes,
+							message: `Workflow artifact exceeded ${DEFAULT_LOG_MAX_BYTES} bytes and was omitted`,
+						},
+						null,
+						2,
+					);
+		fs.writeFileSync(filePath, bounded, { encoding: "utf8", mode: 0o600 });
 	} catch {
 		// Observability is best-effort; a failed write must not abort the workflow.
 	}
@@ -129,8 +243,8 @@ function safeWrite(filePath: string, content: string): void {
 /** Best-effort append; never throws. */
 function safeAppend(filePath: string, line: string): void {
 	try {
-		fs.mkdirSync(path.dirname(filePath), { recursive: true });
-		fs.appendFileSync(filePath, line, "utf8");
+		fs.mkdirSync(path.dirname(filePath), { recursive: true, mode: 0o700 });
+		appendBoundedFileSync(filePath, line, DEFAULT_LOG_MAX_BYTES);
 	} catch {
 		// Best-effort.
 	}
@@ -151,11 +265,11 @@ function buildWorkflowContext(
 	runner: WorkerRunner,
 	workflowId: string,
 	cwd: string,
+	stateDir: string,
 	spawned: WorkerResult[],
 	defaults: Pick<CommonOptions, "model" | "tools" | "packages">,
 	signal?: AbortSignal,
 ): WorkflowContext {
-	const stateDir = workflowStateDir(cwd, workflowId);
 	const logPath = path.join(stateDir, "log.jsonl");
 	const event = (type: string, data: Record<string, unknown>) =>
 		safeAppend(logPath, `${JSON.stringify({ ts: new Date().toISOString(), type, ...data })}\n`);
@@ -185,7 +299,7 @@ function buildWorkflowContext(
 				packages: options?.packages ?? defaults.packages,
 				schema: options?.schema,
 				cwd,
-				timeoutMs: options?.timeoutSeconds !== undefined ? options.timeoutSeconds * 1000 : undefined,
+				timeoutMs: nodeTimeoutSecondsToMs(options?.timeoutSeconds, `workflow agent ${label} timeoutSeconds`),
 			},
 			signal,
 		);
@@ -233,26 +347,33 @@ async function runWorkflowModule(
 	args: unknown,
 	runner: WorkerRunner,
 	cwd: string,
+	stateRoot: string,
 	defaults: Pick<CommonOptions, "model" | "tools" | "packages">,
+	retention: WorkflowRetentionOptions,
 	signal?: AbortSignal,
 ): Promise<{ workflowId: string; spawned: WorkerResult[]; returned: unknown; success: boolean; error?: string }> {
 	const workflowId = nextWorkflowId();
+	const stateDir = path.join(stateRoot, workflowId);
+	ACTIVE_WORKFLOW_DIRS.add(stateDir);
 	const spawned: WorkerResult[] = [];
-	const context = buildWorkflowContext(runner, workflowId, cwd, spawned, defaults, signal);
-	const stateDir = workflowStateDir(cwd, workflowId);
-
 	try {
-		const mod = (await import(scriptPath)) as WorkflowModule;
-		if (typeof mod.default !== "function") {
-			throw new Error(`workflow module ${scriptPath} has no default export function`);
+		await cleanupWorkflowArtifacts(stateRoot, retention).catch(() => undefined);
+		const context = buildWorkflowContext(runner, workflowId, cwd, stateDir, spawned, defaults, signal);
+		try {
+			const mod = (await import(scriptPath)) as WorkflowModule;
+			if (typeof mod.default !== "function") {
+				throw new Error(`workflow module ${scriptPath} has no default export function`);
+			}
+			const returned = await mod.default(args, context);
+			safeWrite(path.join(stateDir, "result.json"), JSON.stringify(returned, null, 2));
+			return { workflowId, spawned, returned, success: true };
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err);
+			safeWrite(path.join(stateDir, "error.json"), JSON.stringify({ error: message }, null, 2));
+			return { workflowId, spawned, returned: null, success: false, error: message };
 		}
-		const returned = await mod.default(args, context);
-		safeWrite(path.join(stateDir, "result.json"), JSON.stringify(returned, null, 2));
-		return { workflowId, spawned, returned, success: true };
-	} catch (err) {
-		const message = err instanceof Error ? err.message : String(err);
-		safeWrite(path.join(stateDir, "error.json"), JSON.stringify({ error: message }, null, 2));
-		return { workflowId, spawned, returned: null, success: false, error: message };
+	} finally {
+		ACTIVE_WORKFLOW_DIRS.delete(stateDir);
 	}
 }
 
@@ -361,11 +482,21 @@ function resolveScriptPath(req: OrchestrationRequest): string {
 export class MultiAgentOrchestrator {
 	private readonly defaultCwd: string;
 	private readonly runner: WorkerRunner;
+	private readonly stateRoot?: string;
+	private readonly retention: WorkflowRetentionOptions;
 
 	constructor(
-		options: { cwd?: string; runner?: WorkerRunner; resolveWorkerInvocation?: WorkerInvocationResolver } = {},
+		options: {
+			cwd?: string;
+			runner?: WorkerRunner;
+			resolveWorkerInvocation?: WorkerInvocationResolver;
+			stateRoot?: string;
+			retention?: WorkflowRetentionOptions;
+		} = {},
 	) {
 		this.defaultCwd = options.cwd ?? process.cwd();
+		this.stateRoot = options.stateRoot;
+		this.retention = options.retention ?? {};
 		// Injectable so deterministic skeletons can be tested without spawning pi.
 		this.runner = options.runner ?? createDefaultRunner(options.resolveWorkerInvocation);
 	}
@@ -381,7 +512,17 @@ export class MultiAgentOrchestrator {
 		const scriptPath = resolveScriptPath(req);
 		const args = req.pattern === "script" ? (req as ScriptWorkflowRequest).args : req;
 		const cwd = (req as CommonOptions).cwd ?? this.defaultCwd;
-		const result = await runWorkflowModule(scriptPath, args, this.runner, cwd, req, signal);
+		const stateRoot = workflowStateRoot(cwd, this.stateRoot);
+		const result = await runWorkflowModule(
+			scriptPath,
+			args,
+			this.runner,
+			cwd,
+			stateRoot,
+			req,
+			this.retention,
+			signal,
+		);
 		return assembleResult(req.pattern, result);
 	}
 }

@@ -14,6 +14,8 @@ export const MAX_PEER_LINK_MESSAGE_BYTES = 24 * 1024;
 export const DEFAULT_PEER_LINK_HOPS = 2;
 /** Optional V1 hello capability: this peer safely accepts relayed envelopes. */
 export const PEER_LINK_CAPABILITY_GOSSIP_TRANSIT = "gossip-transit-v1";
+/** Optional V1 hello capability: accepted/duplicate proves durable payload custody. */
+export const PEER_LINK_CAPABILITY_DURABLE_CUSTODY = "durable-custody-v1";
 
 export type PeerLinkMetadata = Record<string, unknown>;
 

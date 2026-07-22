@@ -27,8 +27,9 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { mkdirSync } from "node:fs";
+import { chmodSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { DEFAULT_PEER_LINK_HOPS } from "./peer-link-protocol.ts";
 import { DatabaseSync } from "./sqlite-adapter.ts";
 
@@ -62,7 +63,7 @@ export type PeerRoute = {
 };
 
 export type PeerOutboxStatus = "pending" | "inflight" | "forwarded";
-export type PeerDeliveryStatus = "pending" | "inflight" | "forwarded";
+export type PeerDeliveryStatus = "pending" | "inflight" | "forwarded" | "rejected";
 
 /** One durable outbox row, including the original transport envelope. */
 export type PeerOutboxMessage = FederatedMessageEnvelope & {
@@ -112,12 +113,15 @@ export type PeerEndpoint = {
 	remoteStoreId?: string;
 	relayPid?: number;
 	relayBootId?: string;
+	relayGeneration?: string;
 	lastError?: string;
 	updatedAt: string;
 };
 
 export type MessageStoreOptions = {
 	stalenessMs?: number;
+	/** Retention period for successfully delivered inbox rows (milliseconds). Default 7 days. */
+	readMessageRetentionMs?: number;
 	/** Reclaim bridge claims older than this after relay process crashes. */
 	peerOutboxClaimTimeoutMs?: number;
 	/** Retention period for peer outbox messages (milliseconds). Default 7 days. */
@@ -187,8 +191,12 @@ export type PeerMessage = {
  * a message can be stranded in `pending` after a mid-delivery crash.
  */
 const DEFAULT_STALENESS_MS = 30_000;
-/** Default retention period for peer outbox messages (7 days). */
+/** Default retention period for delivered inbox and peer outbox messages (7 days). */
 const DEFAULT_OUTBOX_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+const DEFAULT_MAINTENANCE_INTERVAL_MS = 60 * 60 * 1000;
+const MAINTENANCE_LEASE_MS = 5 * 60 * 1000;
+const MAINTENANCE_BATCH_SIZE = 500;
+const MAX_MAINTENANCE_BATCHES = 8;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS messages (
@@ -199,6 +207,7 @@ CREATE TABLE IF NOT EXISTS messages (
     created_at TEXT NOT NULL,
     status     TEXT NOT NULL DEFAULT 'unread',
     drained_at TEXT,
+    read_at    TEXT,
     claim_owner TEXT,
     claim_pid   INTEGER,
     priority   TEXT NOT NULL DEFAULT 'normal',
@@ -220,6 +229,14 @@ CREATE TABLE IF NOT EXISTS store_identity (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
     store_id  TEXT NOT NULL UNIQUE
 );
+
+CREATE TABLE IF NOT EXISTS mailbox_maintenance (
+    singleton         INTEGER PRIMARY KEY CHECK (singleton = 1),
+    owner_id          TEXT,
+    lease_expires_at  TEXT,
+    last_completed_at TEXT
+);
+INSERT OR IGNORE INTO mailbox_maintenance (singleton) VALUES (1);
 
 CREATE TABLE IF NOT EXISTS peer_routes (
     session_id   TEXT PRIMARY KEY,
@@ -245,7 +262,8 @@ CREATE TABLE IF NOT EXISTS peer_outbox (
     forwarded_at         TEXT,
     next_attempt_at      TEXT,
     attempt_count        INTEGER NOT NULL DEFAULT 0,
-    received_at          TEXT NOT NULL DEFAULT ''
+    received_at          TEXT NOT NULL DEFAULT '',
+    settled_at           TEXT
 );
 -- NOTE: the legacy claim and retention indexes are created in migrate() after
 -- every compatibility column exists.
@@ -273,10 +291,11 @@ CREATE TABLE IF NOT EXISTS peer_endpoints (
     port             INTEGER,
     desired_state    TEXT NOT NULL DEFAULT 'on',
     observed_state   TEXT NOT NULL DEFAULT 'closed',
-    remote_store_id  TEXT,
-    relay_pid        INTEGER,
-    relay_boot_id    TEXT,
-    last_error       TEXT,
+	remote_store_id  TEXT,
+	relay_pid        INTEGER,
+	relay_boot_id    TEXT,
+	relay_generation TEXT,
+	last_error       TEXT,
     updated_at       TEXT NOT NULL
 );
 
@@ -302,24 +321,34 @@ CREATE INDEX IF NOT EXISTS idx_peer_seen_retention ON peer_seen(first_seen_at);
 export class MessageStore {
 	private readonly db: InstanceType<typeof DatabaseSync>;
 	private readonly stalenessMs: number;
+	private readonly readMessageRetentionMs: number;
 	private readonly peerOutboxClaimTimeoutMs: number;
 	private readonly peerOutboxRetentionMs: number;
 	private readonly peerSeenRetentionMs: number;
+	private readonly maintenanceOwnerId = randomUUID();
+	private lastMaintenanceAt = 0;
 	/** Stable identity persisted in the database and advertised to peer stores. */
 	readonly storeId: string;
 
 	constructor(dbPath: string, options?: MessageStoreOptions) {
-		mkdirSync(dirname(dbPath), { recursive: true });
+		const dbDirectory = dirname(dbPath);
+		mkdirSync(dbDirectory, { recursive: true, mode: 0o700 });
 		this.db = new DatabaseSync(dbPath);
+		if (dbPath !== ":memory:") chmodSync(dbPath, 0o600);
 		// WAL: concurrent readers/writers across separate agent processes.
 		this.db.exec("PRAGMA journal_mode = WAL;");
 		this.db.exec("PRAGMA busy_timeout = 5000;");
 		this.db.exec(SCHEMA);
-		this.migrate();
+		const schemaUpgraded = this.migrate();
 		this.storeId = this.loadOrCreateStoreId(options?.storeId);
 		this.stalenessMs = options?.stalenessMs ?? DEFAULT_STALENESS_MS;
+		this.readMessageRetentionMs = options?.readMessageRetentionMs ?? DEFAULT_OUTBOX_RETENTION_MS;
 		this.peerOutboxClaimTimeoutMs = options?.peerOutboxClaimTimeoutMs ?? 30_000;
 		this.peerOutboxRetentionMs = options?.peerOutboxRetentionMs ?? DEFAULT_OUTBOX_RETENTION_MS;
+		if (!Number.isFinite(this.readMessageRetentionMs) || this.readMessageRetentionMs < 0) {
+			this.db.close();
+			throw new TypeError("read message retention must be a non-negative finite number");
+		}
 		if (!Number.isFinite(this.peerOutboxClaimTimeoutMs) || this.peerOutboxClaimTimeoutMs < 0) {
 			this.db.close();
 			throw new TypeError("peer outbox claim timeout must be a non-negative finite number");
@@ -334,6 +363,10 @@ export class MessageStore {
 			this.db.close();
 			throw new TypeError(`peer seen retention must be a finite number at least ${minimumPeerSeenRetentionMs}ms`);
 		}
+		// Do not let the first ordinary operation erase old relay state in the same
+		// instant that an upgraded binary opens it. Current-schema databases run
+		// maintenance opportunistically on their next operation as usual.
+		if (schemaUpgraded) this.lastMaintenanceAt = Date.now();
 	}
 
 	/**
@@ -353,13 +386,21 @@ export class MessageStore {
 	 * Each column is added only if missing. Existing `read` rows are terminal and
 	 * left untouched.
 	 */
-	private migrate(): void {
+	private migrate(): boolean {
+		let schemaUpgraded = false;
+		let addedReadAt = false;
 		// BEGIN IMMEDIATE serializes concurrent process startups before either one
 		// inspects table_info, and SQLite keeps the ALTER sequence atomic.
 		this.transaction(() => {
 			const msgCols = this.db.prepare(`PRAGMA table_info(messages)`).all() as Array<{ name: string }>;
 			if (!msgCols.some((c) => c.name === "drained_at")) {
+				schemaUpgraded = true;
 				this.db.exec(`ALTER TABLE messages ADD COLUMN drained_at TEXT`);
+			}
+			if (!msgCols.some((c) => c.name === "read_at")) {
+				schemaUpgraded = true;
+				addedReadAt = true;
+				this.db.exec(`ALTER TABLE messages ADD COLUMN read_at TEXT`);
 			}
 			if (!msgCols.some((c) => c.name === "priority")) {
 				this.db.exec(`ALTER TABLE messages ADD COLUMN priority TEXT NOT NULL DEFAULT 'normal'`);
@@ -373,6 +414,14 @@ export class MessageStore {
 			if (!msgCols.some((c) => c.name === "metadata_json")) {
 				this.db.exec(`ALTER TABLE messages ADD COLUMN metadata_json TEXT`);
 			}
+			// Existing terminal rows predate read_at. Give them one full retention
+			// window from this upgrade instead of treating a long-queued message as old.
+			if (addedReadAt) {
+				this.db
+					.prepare(`UPDATE messages SET read_at = ? WHERE status = 'read' AND read_at IS NULL`)
+					.run(new Date().toISOString());
+			}
+			this.db.exec(`CREATE INDEX IF NOT EXISTS idx_messages_read_retention ON messages(status, read_at);`);
 			const presCols = this.db.prepare(`PRAGMA table_info(presence)`).all() as Array<{ name: string }>;
 			if (!presCols.some((c) => c.name === "pid")) {
 				this.db.exec(`ALTER TABLE presence ADD COLUMN pid INTEGER`);
@@ -410,7 +459,12 @@ export class MessageStore {
 			// Legacy status/claim columns on peer_outbox are left in place (unused) so an
 			// older database opens without a destructive rewrite.
 			if (!outboxCols.some((c) => c.name === "received_at")) {
+				schemaUpgraded = true;
 				this.db.exec(`ALTER TABLE peer_outbox ADD COLUMN received_at TEXT NOT NULL DEFAULT ''`);
+			}
+			if (!outboxCols.some((c) => c.name === "settled_at")) {
+				schemaUpgraded = true;
+				this.db.exec(`ALTER TABLE peer_outbox ADD COLUMN settled_at TEXT`);
 			}
 			// Backfill received_at from created_at for any row still carrying the empty
 			// default. Run UNCONDITIONALLY (not just when the column was just added):
@@ -419,6 +473,15 @@ export class MessageStore {
 			// later new-binary restart would otherwise skip these rows forever, leaking
 			// them past GC. This idempotent backfill heals them on every startup.
 			this.db.exec(`UPDATE peer_outbox SET received_at = created_at WHERE received_at = ''`);
+			// Pre-gossip binaries recorded a successful hand-off on the outbox row
+			// itself. Preserve that proof, but do not infer settlement from the gossip
+			// delivery ledger: older new-binary rows used the same `forwarded` value for
+			// both accepted and not_found acknowledgements.
+			this.db.exec(`
+				UPDATE peer_outbox
+				   SET settled_at = COALESCE(forwarded_at, received_at, created_at)
+				 WHERE settled_at IS NULL AND status = 'forwarded' AND forwarded_at IS NOT NULL
+			`);
 			this.db.exec(`
 			CREATE TABLE IF NOT EXISTS peer_outbox_delivery (
 				message_id      TEXT NOT NULL,
@@ -432,12 +495,32 @@ export class MessageStore {
 			this.db.exec(
 				`CREATE INDEX IF NOT EXISTS idx_peer_outbox_delivery_claim ON peer_outbox_delivery(peer_store_id, status);`,
 			);
+			// Keep the legacy received_at index for rollback compatibility and add a
+			// separate current-policy index without rebuilding schema on every open.
 			this.db.exec(`CREATE INDEX IF NOT EXISTS idx_peer_outbox_retention ON peer_outbox(received_at);`);
+			this.db.exec(`CREATE INDEX IF NOT EXISTS idx_peer_outbox_settled_retention ON peer_outbox(settled_at);`);
+			// This trigger is also a mixed-version safety boundary. An older process may
+			// still execute its age-only DELETE against the shared database, but SQLite
+			// must retain the payload until a current or legacy success ACK proves custody.
+			this.db.exec(`
+				CREATE TRIGGER IF NOT EXISTS protect_unsettled_peer_outbox
+				BEFORE DELETE ON peer_outbox
+				WHEN OLD.settled_at IS NULL
+				BEGIN
+					SELECT RAISE(IGNORE);
+				END
+			`);
+			const endpointCols = this.db.prepare(`PRAGMA table_info(peer_endpoints)`).all() as Array<{ name: string }>;
+			if (!endpointCols.some((c) => c.name === "relay_generation")) {
+				schemaUpgraded = true;
+				this.db.exec(`ALTER TABLE peer_endpoints ADD COLUMN relay_generation TEXT`);
+			}
 			this.db.exec(`
 				INSERT OR IGNORE INTO peer_seen (message_id, first_seen_at, ingress_peer_store_id)
 				SELECT id, created_at, NULL FROM messages
 			`);
 		});
+		return schemaUpgraded;
 	}
 
 	private loadOrCreateStoreId(requested?: string): string {
@@ -487,6 +570,49 @@ export class MessageStore {
 			throw new Error("stored message metadata is not a JSON object");
 		}
 		return parsed as PeerMessageMetadata;
+	}
+
+	private static publicMetadata(metadata?: PeerMessageMetadata): PeerMessageMetadata | undefined {
+		if (!metadata) return undefined;
+		const { [PEER_FEDERATION_METADATA_KEY]: _federation, ...publicMetadata } = metadata;
+		return Object.keys(publicMetadata).length === 0 ? undefined : publicMetadata;
+	}
+
+	private durablePayloadMatch(envelope: FederatedMessageEnvelope): "match" | "conflict" | "absent" {
+		type StoredPayload = {
+			sender: string;
+			recipient: string;
+			content: string;
+			created_at: string;
+			priority: MessagePriority;
+			metadata_json: string | null;
+		};
+		const rows = this.db
+			.prepare(
+				`SELECT sender, recipient, content, created_at, priority, metadata_json
+				   FROM messages WHERE id = ?
+				 UNION ALL
+				 SELECT sender, recipient, content, created_at, priority, metadata_json
+				   FROM peer_outbox WHERE message_id = ?`,
+			)
+			.all(envelope.id, envelope.id) as StoredPayload[];
+		if (rows.length === 0) return "absent";
+		const publicMetadata = MessageStore.publicMetadata(envelope.metadata);
+		for (const row of rows) {
+			if (
+				row.sender !== envelope.sender ||
+				row.recipient !== envelope.recipient ||
+				row.content !== envelope.content ||
+				row.created_at !== envelope.createdAt ||
+				row.priority !== envelope.priority ||
+				!isDeepStrictEqual(
+					MessageStore.publicMetadata(MessageStore.parseMetadata(row.metadata_json)),
+					publicMetadata,
+				)
+			)
+				return "conflict";
+		}
+		return "match";
 	}
 
 	private recordSeen(id: string, seenAt: string, ingressPeerStoreId: string | null): boolean {
@@ -586,6 +712,7 @@ export class MessageStore {
 		priority: MessagePriority = "normal",
 		metadata?: PeerMessageMetadata,
 	): string {
+		this.maybeRunMaintenance();
 		const envelope = this.createEnvelope(sender, recipient, content, priority, metadata);
 		this.transaction(() => {
 			this.recordSeen(envelope.id, envelope.createdAt, null);
@@ -643,12 +770,41 @@ export class MessageStore {
 		}));
 	}
 
-	/** All sessions registered locally through the presence table. */
+	/**
+	 * All sessions registered locally through the presence table, ordered for a
+	 * bounded peer advertisement. Live active sessions come first, then live idle
+	 * sessions; stale/offline rows follow from most recently updated to oldest.
+	 * Stable id ordering breaks timestamp ties so every process advertises the same
+	 * prefix when a V1 frame cannot fit the complete durable presence history.
+	 */
 	listRegisteredSessionIds(): string[] {
-		const rows = this.db.prepare(`SELECT agent_id FROM presence ORDER BY agent_id`).all() as Array<{
-			agent_id: string;
-		}>;
-		return rows.map((row) => row.agent_id);
+		type Row = { agent_id: string; state: PresenceState; last_seen: string; pid: number | null };
+		const rows = this.db.prepare(`SELECT agent_id, state, last_seen, pid FROM presence`).all() as Row[];
+		const processLiveness = new Map<number, boolean>();
+		const ranked = rows.map((row) => {
+			let live = false;
+			if (row.state !== "offline" && row.pid !== null) {
+				const cached = processLiveness.get(row.pid);
+				live = cached ?? MessageStore.isProcessAlive(row.pid);
+				if (cached === undefined) processLiveness.set(row.pid, live);
+			}
+			return {
+				...row,
+				rank: live ? (row.state === "active" ? 0 : 1) : 2,
+			};
+		});
+		ranked.sort((left, right) => {
+			if (left.rank !== right.rank) return left.rank - right.rank;
+			if (left.last_seen !== right.last_seen) return left.last_seen > right.last_seen ? -1 : 1;
+			if (left.agent_id === right.agent_id) return 0;
+			return left.agent_id < right.agent_id ? -1 : 1;
+		});
+		return ranked.map((row) => row.agent_id);
+	}
+
+	/** Whether a session has any durable local presence row, regardless of state. */
+	hasRegisteredSession(agentId: string): boolean {
+		return this.db.prepare(`SELECT 1 AS found FROM presence WHERE agent_id = ?`).get(agentId) !== undefined;
 	}
 
 	/**
@@ -691,6 +847,7 @@ export class MessageStore {
 		priority: MessagePriority = "normal",
 		metadata?: PeerMessageMetadata,
 	): RoutedSendResult {
+		this.maybeRunMaintenance();
 		const envelope = this.createEnvelope(sender, recipient, content, priority, metadata);
 		return this.transaction(() => {
 			const local = this.db.prepare(`SELECT 1 AS found FROM presence WHERE agent_id = ?`).get(recipient) as
@@ -717,7 +874,8 @@ export class MessageStore {
 	 * Accept one message received from a peer under pure gossip flooding. Accepted
 	 * ids are recorded in `peer_seen` in the same transaction as inbox/relay
 	 * insertion. Rules (no route table consulted):
-	 *  1. already in `peer_seen` -> duplicate
+	 *  1. matching durable inbox/outbox payload -> duplicate; a seen-only marker is
+	 *     removed and accepted again, while a conflicting payload id is rejected
 	 *  2. local recipient -> deliver to inbox
 	 *  3. otherwise -> queue in outbox for onward flooding, pre-marking the ingress
 	 *     peer as already delivered so the message never echoes back the way it came
@@ -725,22 +883,42 @@ export class MessageStore {
 	 * enforced by the transport layer before this is called.
 	 */
 	acceptFederatedMessage(envelope: FederatedMessageEnvelope, ingressPeerStoreId: string): FederatedAcceptResult {
+		this.maybeRunMaintenance();
 		return this.transaction(() => {
 			const seen = this.db.prepare(`SELECT 1 AS found FROM peer_seen WHERE message_id = ?`).get(envelope.id);
-			if (seen) return { id: envelope.id, disposition: "duplicate" };
+			const durablePayload = this.durablePayloadMatch(envelope);
+			if (durablePayload === "match") {
+				if (!seen) this.recordSeen(envelope.id, new Date().toISOString(), ingressPeerStoreId);
+				return { id: envelope.id, disposition: "duplicate" };
+			}
+			if (durablePayload === "conflict") return { id: envelope.id, disposition: "not_found" };
+			// v0.0.29 could expire an outbox body seven days before its peer_seen
+			// marker. Remove that stale tombstone atomically so a retry restores custody.
+			if (seen) this.db.prepare(`DELETE FROM peer_seen WHERE message_id = ?`).run(envelope.id);
 
 			const local = this.db.prepare(`SELECT 1 AS found FROM presence WHERE agent_id = ?`).get(envelope.recipient);
 
 			if (!this.recordSeen(envelope.id, new Date().toISOString(), ingressPeerStoreId)) {
-				return { id: envelope.id, disposition: "duplicate" };
+				return {
+					id: envelope.id,
+					disposition: this.durablePayloadMatch(envelope) === "match" ? "duplicate" : "not_found",
+				};
 			}
 			if (local) {
-				if (!this.insertInbox(envelope)) return { id: envelope.id, disposition: "duplicate" };
+				if (!this.insertInbox(envelope)) {
+					return {
+						id: envelope.id,
+						disposition: this.durablePayloadMatch(envelope) === "match" ? "duplicate" : "not_found",
+					};
+				}
 				return { id: envelope.id, disposition: "local" };
 			}
 			// Not local: flood onward. target=NULL; pre-mark ingress delivered to avoid echo.
 			if (!this.insertOutbox(envelope, null, ingressPeerStoreId)) {
-				return { id: envelope.id, disposition: "duplicate" };
+				return {
+					id: envelope.id,
+					disposition: this.durablePayloadMatch(envelope) === "match" ? "duplicate" : "not_found",
+				};
 			}
 			return { id: envelope.id, disposition: "relay" };
 		});
@@ -751,9 +929,11 @@ export class MessageStore {
 	 * the per-link delivery ledger: returns messages that have no delivery row for
 	 * this peer, or whose delivery row is stale (crashed relay). Creates/updates
 	 * delivery rows to track inflight state per link. Pure gossip normally floods
-	 * every message to every link. When `allowTransit` is false, the durable query
-	 * claims only locally-originated first-hop rows; relayed rows get no delivery
-	 * record and remain eligible after the peer upgrades its advertised capability.
+	 * every message to every explicitly transit-enabled link. Unless `allowTransit`
+	 * is true, the durable query claims only locally-originated first-hop rows;
+	 * relayed rows get no delivery record and remain eligible after peer upgrade.
+	 * A durable-custody link may also reclaim ambiguous `forwarded` rows written by
+	 * v0.0.29 while excluding the ingress echo marker for a relayed payload.
 	 * `includeUnresolved` is ignored (kept for compat).
 	 */
 	claimPeerOutbox(
@@ -761,7 +941,7 @@ export class MessageStore {
 		owner: string,
 		limit = 100,
 		_includeUnresolved = false,
-		options?: { allowTransit?: boolean },
+		options?: { allowTransit?: boolean; reclaimUnsettledForwarded?: boolean },
 	): PeerOutboxMessage[] {
 		if (peerStoreId.length === 0 || owner.length === 0) {
 			throw new TypeError("peer store id and claim owner must not be empty");
@@ -772,9 +952,38 @@ export class MessageStore {
 		const claimedAt = new Date(nowMs).toISOString();
 		const staleBefore = new Date(nowMs - this.peerOutboxClaimTimeoutMs).toISOString();
 		const transitPredicate =
-			options?.allowTransit === false
+			options?.allowTransit !== true
 				? `AND json_extract(o.metadata_json, '$.${PEER_FEDERATION_METADATA_KEY}.originStoreId') IS NULL`
 				: "";
+		const reclaimForwardedPredicate =
+			options?.reclaimUnsettledForwarded === true
+				? `OR (
+				      d.status = 'forwarded' AND o.settled_at IS NULL AND NOT EXISTS (
+				        SELECT 1 FROM peer_seen AS ingress_seen
+				         WHERE ingress_seen.message_id = o.message_id
+				           AND ingress_seen.ingress_peer_store_id = d.peer_store_id
+				      )
+				    )`
+				: "";
+		// Peer sessions poll frequently. Avoid BEGIN IMMEDIATE and a no-op reclaim
+		// UPDATE when this link has nothing claimable; a message arriving just after
+		// this read is picked up by the next poll.
+		const claimable = this.db
+			.prepare(
+				`SELECT 1 AS found
+				   FROM peer_outbox o
+				   LEFT JOIN peer_outbox_delivery d
+				     ON o.message_id = d.message_id AND d.peer_store_id = ?
+				  WHERE (
+				    d.status IS NULL OR d.status = 'pending' OR
+				    (d.status = 'inflight' AND (d.claimed_at IS NULL OR d.claimed_at <= ?))
+				    ${reclaimForwardedPredicate}
+				  )
+				  ${transitPredicate}
+				  LIMIT 1`,
+			)
+			.get(peerStoreId, staleBefore);
+		if (!claimable) return [];
 		type Row = {
 			message_id: string;
 			sender: string;
@@ -804,7 +1013,7 @@ export class MessageStore {
 					 FROM peer_outbox o
 					 LEFT JOIN peer_outbox_delivery d
 					   ON o.message_id = d.message_id AND d.peer_store_id = ?
-					 WHERE (d.status IS NULL OR d.status = 'pending')
+					 WHERE (d.status IS NULL OR d.status = 'pending' ${reclaimForwardedPredicate})
 					   ${transitPredicate}
 					 ORDER BY (CASE o.priority WHEN 'urgent' THEN 0 ELSE 1 END), o.rowid
 					 LIMIT ?`,
@@ -838,28 +1047,40 @@ export class MessageStore {
 		});
 	}
 
-	/** Mark per-link delivery rows as durably forwarded. All ack statuses stop retry. */
-	ackPeerOutbox(ids: readonly string[], owner: string): number {
+	/** Mark accepted/duplicate link acknowledgements, settling only explicit durable custody. */
+	ackPeerOutbox(ids: readonly string[], owner: string, options: { durableCustody: boolean }): number {
 		if (ids.length === 0) return 0;
 		const placeholders = ids.map(() => "?").join(",");
-		const result = this.db
-			.prepare(
-				`UPDATE peer_outbox_delivery SET status = 'forwarded', claim_owner = NULL, claimed_at = NULL
-				 WHERE status = 'inflight' AND claim_owner = ? AND message_id IN (${placeholders})`,
-			)
-			.run(owner, ...ids) as { changes: number | bigint };
-		return Number(result.changes);
+		return this.transaction(() => {
+			const accepted = this.db
+				.prepare(
+					`UPDATE peer_outbox_delivery SET status = 'forwarded', claim_owner = NULL, claimed_at = NULL
+					 WHERE status = 'inflight' AND claim_owner = ? AND message_id IN (${placeholders})
+					 RETURNING message_id`,
+				)
+				.all(owner, ...ids) as Array<{ message_id: string }>;
+			if (accepted.length === 0 || !options.durableCustody) return accepted.length;
+			const acceptedPlaceholders = accepted.map(() => "?").join(",");
+			this.db
+				.prepare(
+					`UPDATE peer_outbox SET settled_at = COALESCE(settled_at, ?)
+					 WHERE message_id IN (${acceptedPlaceholders})`,
+				)
+				.run(new Date().toISOString(), ...accepted.map((row) => row.message_id));
+			return accepted.length;
+		});
 	}
 
 	/** Return per-link delivery rows to pending for retry. */
 	requeuePeerOutbox(ids: readonly string[], owner: string, options?: { notFound?: boolean }): number {
 		if (ids.length === 0) return 0;
 		const placeholders = ids.map(() => "?").join(",");
-		// Gossip: not_found means TTL/loop, not "wrong branch". Stop retry on that link.
+		// Gossip: not_found means TTL/loop, not "wrong branch". Keep it distinct
+		// from old ambiguous forwarded rows so durable-custody recovery cannot spin.
 		if (options?.notFound) {
 			const result = this.db
 				.prepare(
-					`UPDATE peer_outbox_delivery SET status = 'forwarded', claim_owner = NULL, claimed_at = NULL
+					`UPDATE peer_outbox_delivery SET status = 'rejected', claim_owner = NULL, claimed_at = NULL
 					 WHERE status = 'inflight' AND claim_owner = ? AND message_id IN (${placeholders})`,
 				)
 				.run(owner, ...ids) as { changes: number | bigint };
@@ -938,13 +1159,14 @@ export class MessageStore {
 			remote_store_id: string | null;
 			relay_pid: number | null;
 			relay_boot_id: string | null;
+			relay_generation: string | null;
 			last_error: string | null;
 			updated_at: string;
 		};
 		const row = this.db
 			.prepare(
 				`SELECT endpoint_id, remote, port, desired_state, observed_state, remote_store_id,
-				        relay_pid, relay_boot_id, last_error, updated_at
+					        relay_pid, relay_boot_id, relay_generation, last_error, updated_at
 				   FROM peer_endpoints WHERE endpoint_id = ?`,
 			)
 			.get(id) as Row | undefined;
@@ -958,6 +1180,7 @@ export class MessageStore {
 			...(row.remote_store_id === null ? {} : { remoteStoreId: row.remote_store_id }),
 			...(row.relay_pid === null ? {} : { relayPid: row.relay_pid }),
 			...(row.relay_boot_id === null ? {} : { relayBootId: row.relay_boot_id }),
+			...(row.relay_generation === null ? {} : { relayGeneration: row.relay_generation }),
 			...(row.last_error === null ? {} : { lastError: row.last_error }),
 			updatedAt: row.updated_at,
 		};
@@ -977,21 +1200,47 @@ export class MessageStore {
 		return Number(result.changes) > 0;
 	}
 
-	/** Acquire the host-level relay slot, fencing stale or crashed owners by pid+boot id. */
-	claimPeerEndpointRelay(id: string, pid: number, bootId: string): boolean {
+	setPeerEndpointRelayGeneration(id: string, generation: string): boolean {
+		if (!generation) throw new TypeError("relay generation must not be empty");
+		const result = this.db
+			.prepare(
+				`UPDATE peer_endpoints SET relay_generation = ?, updated_at = ?
+				 WHERE endpoint_id = ? AND relay_generation IS NOT ?`,
+			)
+			.run(generation, new Date().toISOString(), id, generation) as { changes: number | bigint };
+		return Number(result.changes) > 0;
+	}
+
+	/**
+	 * Acquire the durable relay slot. The relay process normally also holds the
+	 * endpoint's OS-level lock; `exclusiveLockHeld` lets that authoritative owner
+	 * replace stale metadata even when the recorded pid has been reused.
+	 */
+	claimPeerEndpointRelay(
+		id: string,
+		pid: number,
+		bootId: string,
+		options?: { exclusiveLockHeld?: boolean; generation?: string },
+	): boolean {
 		if (!Number.isInteger(pid) || pid <= 0 || !bootId) throw new TypeError("relay owner requires pid and boot id");
 		return this.transaction(() => {
 			const current = this.db
-				.prepare(`SELECT desired_state, relay_pid, relay_boot_id FROM peer_endpoints WHERE endpoint_id = ?`)
+				.prepare(
+					`SELECT desired_state, relay_pid, relay_boot_id, relay_generation
+						   FROM peer_endpoints WHERE endpoint_id = ?`,
+				)
 				.get(id) as
 				| {
 						desired_state: PeerEndpointDesiredState;
 						relay_pid: number | null;
 						relay_boot_id: string | null;
+						relay_generation: string | null;
 				  }
 				| undefined;
 			if (!current || current.desired_state !== "on") return false;
+			if (current.relay_generation !== null && current.relay_generation !== options?.generation) return false;
 			if (
+				!options?.exclusiveLockHeld &&
 				current.relay_pid !== null &&
 				current.relay_boot_id !== bootId &&
 				MessageStore.isProcessAlive(current.relay_pid)
@@ -1084,6 +1333,7 @@ export class MessageStore {
 	 * in flight regardless of age, while abandoned owners remain recoverable.
 	 */
 	drainUnread(recipient: string, limit?: number, claim?: { ownerId: string; pid: number }): PeerMessage[] {
+		this.maybeRunMaintenance();
 		// Recover any messages left `pending` by a previous drain whose injection
 		// never confirmed (crash, thrown injector, interrupted turn). They rejoin
 		// this claim so a transient failure cannot strand a message forever.
@@ -1107,7 +1357,7 @@ export class MessageStore {
 		if (normalizedLimit !== undefined) {
 			rows = this.db
 				.prepare(
-					`UPDATE messages SET status = 'pending', drained_at = ?, claim_owner = ?, claim_pid = ?
+					`UPDATE messages SET status = 'pending', drained_at = ?, read_at = NULL, claim_owner = ?, claim_pid = ?
 					 WHERE status = 'unread' AND rowid IN (
 					   SELECT rowid FROM messages
 					    WHERE recipient = ? AND status = 'unread'
@@ -1120,7 +1370,7 @@ export class MessageStore {
 		} else {
 			rows = this.db
 				.prepare(
-					`UPDATE messages SET status = 'pending', drained_at = ?, claim_owner = ?, claim_pid = ?
+					`UPDATE messages SET status = 'pending', drained_at = ?, read_at = NULL, claim_owner = ?, claim_pid = ?
 					 WHERE recipient = ? AND status = 'unread'
 					 RETURNING rowid, id, sender, recipient, content, created_at, priority, metadata_json`,
 				)
@@ -1158,12 +1408,14 @@ export class MessageStore {
 		if (ids.length === 0) return;
 		const placeholders = ids.map(() => "?").join(",");
 		const ownerPredicate = claimOwner === undefined ? "claim_owner IS NULL" : "claim_owner = ?";
+		const readAt = new Date().toISOString();
 		this.db
 			.prepare(
-				`UPDATE messages SET status = 'read', drained_at = NULL, claim_owner = NULL, claim_pid = NULL
+				`UPDATE messages SET status = 'read', drained_at = NULL, read_at = ?, claim_owner = NULL, claim_pid = NULL
 				 WHERE status = 'pending' AND ${ownerPredicate} AND id IN (${placeholders})`,
 			)
-			.run(...(claimOwner === undefined ? ids : [claimOwner, ...ids]));
+			.run(readAt, ...(claimOwner === undefined ? ids : [claimOwner, ...ids]));
+		this.maybeRunMaintenance();
 	}
 
 	/**
@@ -1178,7 +1430,7 @@ export class MessageStore {
 		const ownerPredicate = claimOwner === undefined ? "claim_owner IS NULL" : "claim_owner = ?";
 		this.db
 			.prepare(
-				`UPDATE messages SET status = 'unread', drained_at = NULL, claim_owner = NULL, claim_pid = NULL
+				`UPDATE messages SET status = 'unread', drained_at = NULL, read_at = NULL, claim_owner = NULL, claim_pid = NULL
 				 WHERE status = 'pending' AND ${ownerPredicate} AND id IN (${placeholders})`,
 			)
 			.run(...(claimOwner === undefined ? ids : [claimOwner, ...ids]));
@@ -1196,7 +1448,7 @@ export class MessageStore {
 		// Legacy/unowned claims retain the historical time-only recovery rule.
 		this.db
 			.prepare(
-				`UPDATE messages SET status = 'unread', drained_at = NULL, claim_owner = NULL, claim_pid = NULL
+				`UPDATE messages SET status = 'unread', drained_at = NULL, read_at = NULL, claim_owner = NULL, claim_pid = NULL
 				 WHERE recipient = ? AND status = 'pending' AND claim_owner IS NULL
 				   AND (drained_at IS NULL OR drained_at <= ?)`,
 			)
@@ -1223,7 +1475,7 @@ export class MessageStore {
 			if (ownerStillCurrent) continue;
 			this.db
 				.prepare(
-					`UPDATE messages SET status = 'unread', drained_at = NULL, claim_owner = NULL, claim_pid = NULL
+					`UPDATE messages SET status = 'unread', drained_at = NULL, read_at = NULL, claim_owner = NULL, claim_pid = NULL
 					 WHERE recipient = ? AND status = 'pending' AND claim_owner = ? AND claim_pid IS ?
 					   AND (drained_at IS NULL OR drained_at <= ?)`,
 				)
@@ -1329,26 +1581,42 @@ export class MessageStore {
 	}
 
 	/**
-	 * Garbage-collect peer outbox messages older than the configured retention
-	 * period. A gossip hub never learns that "all peers received" a message, so
-	 * time-based retention is the only safe bound. The retention window is kept
-	 * long (default 7 days) so an offline recipient can still be served after a
-	 * multi-day absence. Delivery ledger rows are deleted alongside their message.
+	 * Delete only terminal inbox rows after their retention window. Unread and
+	 * pending rows remain durable regardless of age; their delivery guarantees
+	 * take precedence over storage reclamation.
+	 */
+	purgeExpiredReadMessages(nowMs: number = Date.now()): number {
+		const cutoff = new Date(nowMs - this.readMessageRetentionMs).toISOString();
+		const result = this.db
+			.prepare(
+				`DELETE FROM messages WHERE rowid IN (
+					   SELECT rowid FROM messages
+					    WHERE status = 'read' AND COALESCE(read_at, drained_at, created_at) <= ?
+					    ORDER BY COALESCE(read_at, drained_at, created_at), rowid LIMIT ?
+				 )`,
+			)
+			.run(cutoff, MAINTENANCE_BATCH_SIZE) as { changes: number | bigint };
+		return Number(result.changes);
+	}
+
+	/**
+	 * Garbage-collect peer outbox messages only after a remote peer accepted
+	 * durable custody (or reported a duplicate) and the configured retention
+	 * period elapsed. Unacknowledged payloads remain durable regardless of age.
+	 * Delivery ledger rows are deleted alongside their settled message.
 	 * Returns the number of messages purged.
 	 */
 	purgeExpiredOutbox(nowMs: number = Date.now()): number {
 		const cutoff = new Date(nowMs - this.peerOutboxRetentionMs).toISOString();
 		return this.transaction(() => {
-			// Under a mixed-version deployment an interim/old binary may INSERT a row
-			// without received_at (empty '' default). Fall back to created_at for those
-			// rows so GC still reclaims them without waiting for a new-binary restart to
-			// backfill (Fix A heals on restart; this makes GC tolerant meanwhile).
 			const expired = this.db
 				.prepare(
 					`SELECT message_id FROM peer_outbox
-					 WHERE (CASE WHEN received_at = '' THEN created_at ELSE received_at END) <= ?`,
+							 WHERE settled_at IS NOT NULL AND settled_at <= ?
+							 ORDER BY settled_at, message_id
+							 LIMIT ?`,
 				)
-				.all(cutoff) as Array<{ message_id: string }>;
+				.all(cutoff, MAINTENANCE_BATCH_SIZE) as Array<{ message_id: string }>;
 			if (expired.length === 0) return 0;
 			const deleteDelivery = this.db.prepare(`DELETE FROM peer_outbox_delivery WHERE message_id = ?`);
 			const deleteOutbox = this.db.prepare(`DELETE FROM peer_outbox WHERE message_id = ?`);
@@ -1372,15 +1640,101 @@ export class MessageStore {
 		const cutoff = new Date(nowMs - this.peerSeenRetentionMs).toISOString();
 		const result = this.db
 			.prepare(
-				`DELETE FROM peer_seen
-				 WHERE first_seen_at <= ?
-				   AND NOT EXISTS (
-				     SELECT 1 FROM peer_outbox
-				      WHERE peer_outbox.message_id = peer_seen.message_id
-				   )`,
+				`DELETE FROM peer_seen WHERE message_id IN (
+				   SELECT seen.message_id FROM peer_seen AS seen
+				    WHERE seen.first_seen_at <= ?
+				      AND NOT EXISTS (
+				        SELECT 1 FROM peer_outbox
+				         WHERE peer_outbox.message_id = seen.message_id
+				      )
+				    ORDER BY seen.first_seen_at, seen.message_id LIMIT ?
+				 )`,
 			)
-			.run(cutoff) as { changes: number | bigint };
+			.run(cutoff, MAINTENANCE_BATCH_SIZE) as { changes: number | bigint };
 		return Number(result.changes);
+	}
+
+	/** Run all bounded-store maintenance in dependency order. */
+	runMaintenance(nowMs: number = Date.now()): { readMessages: number; outbox: number; peerSeen: number } {
+		const drainBatches = (purge: () => number): number => {
+			let total = 0;
+			for (let batch = 0; batch < MAX_MAINTENANCE_BATCHES; batch++) {
+				const deleted = purge();
+				total += deleted;
+				if (deleted < MAINTENANCE_BATCH_SIZE) break;
+			}
+			return total;
+		};
+		const readMessages = drainBatches(() => this.purgeExpiredReadMessages(nowMs));
+		const outbox = drainBatches(() => this.purgeExpiredOutbox(nowMs));
+		const peerSeen = drainBatches(() => this.purgeExpiredPeerSeen(nowMs));
+		this.lastMaintenanceAt = nowMs;
+		return { readMessages, outbox, peerSeen };
+	}
+
+	private claimMaintenanceLease(nowMs: number): boolean {
+		const now = new Date(nowMs).toISOString();
+		const dueBefore = new Date(nowMs - DEFAULT_MAINTENANCE_INTERVAL_MS).toISOString();
+		const leaseExpiresAt = new Date(nowMs + MAINTENANCE_LEASE_MS).toISOString();
+		const claimable = this.db
+			.prepare(
+				`SELECT 1 AS found FROM mailbox_maintenance
+				  WHERE singleton = 1
+				    AND (last_completed_at IS NULL OR last_completed_at <= ?)
+				    AND (owner_id IS NULL OR lease_expires_at IS NULL OR lease_expires_at <= ?)`,
+			)
+			.get(dueBefore, now);
+		if (!claimable) return false;
+		return (
+			this.db
+				.prepare(
+					`UPDATE mailbox_maintenance
+					    SET owner_id = ?, lease_expires_at = ?
+					  WHERE singleton = 1
+					    AND (last_completed_at IS NULL OR last_completed_at <= ?)
+					    AND (owner_id IS NULL OR lease_expires_at IS NULL OR lease_expires_at <= ?)
+					  RETURNING singleton`,
+				)
+				.get(this.maintenanceOwnerId, leaseExpiresAt, dueBefore, now) !== undefined
+		);
+	}
+
+	private finishMaintenanceLease(nowMs: number, completed: boolean): void {
+		this.db
+			.prepare(
+				`UPDATE mailbox_maintenance
+				    SET owner_id = NULL, lease_expires_at = NULL,
+				        last_completed_at = CASE WHEN ? THEN ? ELSE last_completed_at END
+				  WHERE singleton = 1 AND owner_id = ?`,
+			)
+			.run(completed ? 1 : 0, new Date(nowMs).toISOString(), this.maintenanceOwnerId);
+	}
+
+	/**
+	 * Bound a local-only mailbox without an idle write timer. Active peer links
+	 * still invoke the same maintenance hourly so aged relay state converges even
+	 * when no new messages arrive.
+	 */
+	maybeRunMaintenance(nowMs: number = Date.now()): void {
+		if (nowMs - this.lastMaintenanceAt < DEFAULT_MAINTENANCE_INTERVAL_MS) return;
+		this.lastMaintenanceAt = nowMs;
+		let claimed = false;
+		try {
+			claimed = this.claimMaintenanceLease(nowMs);
+			if (!claimed) return;
+			this.runMaintenance(nowMs);
+			this.finishMaintenanceLease(nowMs, true);
+		} catch {
+			if (claimed) {
+				try {
+					this.finishMaintenanceLease(nowMs, false);
+				} catch {
+					// The lease expires automatically if SQLite is unavailable.
+				}
+			}
+			// Retention is best-effort and must not reject a mailbox operation. Delay
+			// the next attempt so a locked/damaged maintenance path cannot hot-loop.
+		}
 	}
 
 	close(): void {

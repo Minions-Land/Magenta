@@ -48,7 +48,7 @@ export type BuildSystemPromptOptions = {
 	documentationPaths?: SystemPromptDocumentationPaths;
 	/** Host-enabled bundled fragments. Fragments are also gated by the corresponding active tools. */
 	bundledPromptFeatures?: SystemPromptBundledFeatures;
-	/** Date to display as YYYY-MM-DD. Supplying it makes composition independent of the wall clock. */
+	/** Optional date to display as YYYY-MM-DD. Omit it to keep the default prompt stable across days. */
 	currentDate?: string | Date;
 };
 

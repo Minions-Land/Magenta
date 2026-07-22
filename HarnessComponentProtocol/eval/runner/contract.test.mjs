@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { validateAndNormalizeResult } from "./contract.mjs";
+import { summarizeEvalRun, validateAndNormalizeResult } from "./contract.mjs";
 
 const variant = {
 	name: "ultra",
@@ -73,8 +73,10 @@ function result(events, overrides = {}) {
 test("accepts and normalizes one complete headless terminal contract", () => {
 	const summary = validateAndNormalizeResult(result(completeEvents()), variant);
 	assert.equal(summary.valid, true);
+	assert.equal(summary.contractValid, true);
+	assert.equal(summary.executionSucceeded, true);
 	assert.deepEqual(summary.errors, []);
-	assert.deepEqual(summary.runtime.activeTools, ["sub_agent", "multiagent"]);
+	assert.deepEqual(summary.runtime.activeTools, ["multiagent", "sub_agent"]);
 	assert.deepEqual(summary.eventCounts, {
 		run_end: 1,
 		runtime_manifest: 1,
@@ -82,6 +84,18 @@ test("accepts and normalizes one complete headless terminal contract", () => {
 		tool_execution_start: 3,
 	});
 	assert.equal(summary.toolEvidence.length, 3);
+});
+
+test("keeps a consistent failed process diagnosable without accepting it as a successful eval arm", () => {
+	const summary = validateAndNormalizeResult(
+		result(completeEvents(event(), end({ status: "error", exitCode: 1 })), { code: 1 }),
+		variant,
+	);
+
+	assert.equal(summary.contractValid, true);
+	assert.equal(summary.executionSucceeded, false);
+	assert.equal(summary.valid, false);
+	assert.deepEqual(summary.errors, []);
 });
 
 test("rejects malformed, missing, and duplicate terminal events", () => {
@@ -144,4 +158,65 @@ test("rejects a runner wall timeout", () => {
 		variant,
 	);
 	assert.match(summary.errors.join("\n"), /wall timeout exceeded/);
+});
+
+test("rejects truncated or failed stream capture and records finite stream metadata", () => {
+	const summary = validateAndNormalizeResult(
+		result(completeEvents(), {
+			stdoutBytes: 64,
+			stderrBytes: 32,
+			stdoutObservedBytes: 80,
+			stderrObservedBytes: 96,
+			outputLimitBytes: 64,
+			stdoutTruncated: true,
+			stderrTruncated: true,
+			captureErrors: { stderr: "disk full" },
+		}),
+		variant,
+	);
+
+	assert.equal(summary.valid, false);
+	assert.match(summary.errors.join("\n"), /stdout exceeded the 64-byte capture limit/);
+	assert.match(summary.errors.join("\n"), /stderr exceeded the 64-byte capture limit/);
+	assert.match(summary.errors.join("\n"), /stderr capture failed: disk full/);
+	assert.deepEqual(summary.process.streams.stdout, {
+		bytes: 64,
+		observedBytes: 80,
+		limitBytes: 64,
+		truncated: true,
+	});
+});
+
+test("does not mark an unexecuted external scorer as a valid eval conclusion", () => {
+	const arm = validateAndNormalizeResult(result(completeEvents()), variant);
+	const summary = summarizeEvalRun(
+		{
+			name: "external-score",
+			scoring: { method: "evaluator-agent" },
+			evidenceGate: { comparisonClaimAllowed: false, reasons: ["fixed-variant-order"] },
+		},
+		[arm],
+	);
+
+	assert.equal(summary.contractValid, true);
+	assert.equal(summary.executionSucceeded, true);
+	assert.deepEqual(summary.scoring, { method: "evaluator-agent", status: "not_run", automatic: false });
+	assert.equal(summary.valid, false);
+	assert.equal(summary.evidence.comparisonClaimAllowed, false);
+});
+
+test("headless-contract scoring passes only when every arm succeeds", () => {
+	const successful = validateAndNormalizeResult(result(completeEvents()), variant);
+	const failed = validateAndNormalizeResult(
+		result(completeEvents(event(), end({ status: "error", exitCode: 1 })), { code: 1 }),
+		variant,
+	);
+	const plan = { name: "contract", scoring: { method: "headless-contract" }, evidenceGate: {} };
+
+	assert.equal(summarizeEvalRun(plan, [successful]).valid, true);
+	const summary = summarizeEvalRun(plan, [successful, failed]);
+	assert.equal(summary.contractValid, true);
+	assert.equal(summary.executionSucceeded, false);
+	assert.deepEqual(summary.scoring, { method: "headless-contract", status: "failed", automatic: true });
+	assert.equal(summary.valid, false);
 });

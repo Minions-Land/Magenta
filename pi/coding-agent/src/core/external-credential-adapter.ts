@@ -12,14 +12,21 @@
  * External files are NEVER mutated or deleted. They provide ambient discovery only.
  * logout() removes stored credentials but leaves external files intact.
  *
- * External baseUrl and model are NOT stored in credentials; they're returned
- * through separate accessors for Phase 2 to inject into request auth.
+ * External baseUrl is carried in provider-scoped credential env so provider
+ * auth can return request-scoped routing. External model selection remains
+ * available through a separate accessor.
  */
 
 import type { Credential, CredentialInfo, CredentialStore } from "@earendil-works/pi-ai";
 import type { AuthCredential, AuthStorage } from "./auth-storage.ts";
 import { type ExternalCredential, loadClaudeCodeAuth, loadCodexAuth } from "./external-auth-loader.ts";
 import { resolveConfigValue } from "./resolve-config-value.ts";
+
+const PROVIDER_BASE_URL_ENV: Readonly<Record<string, string>> = {
+	anthropic: "ANTHROPIC_BASE_URL",
+	google: "GOOGLE_BASE_URL",
+	openai: "OPENAI_BASE_URL",
+};
 
 /**
  * Sync probe for non-persistent runtime API key overrides (--api-key set on the
@@ -113,11 +120,19 @@ export class AuthStorageCredentialAdapter implements CredentialStore, RuntimeApi
  */
 export class ExternalCredentialStore implements CredentialStore, RuntimeApiKeyProbe {
 	private readonly store: CredentialStore;
+	private readonly loadExternalCredentials: () => readonly ExternalCredential[];
 	private externalCache: Map<string, ExternalCredential> | undefined;
 	private externalCacheTime = 0;
 
-	constructor(store: CredentialStore) {
+	constructor(
+		store: CredentialStore,
+		loadExternalCredentials: () => readonly ExternalCredential[] = () => [
+			...loadClaudeCodeAuth(),
+			...loadCodexAuth(),
+		],
+	) {
 		this.store = store;
+		this.loadExternalCredentials = loadExternalCredentials;
 	}
 
 	hasRuntimeApiKey(providerId: string): boolean {
@@ -134,7 +149,7 @@ export class ExternalCredentialStore implements CredentialStore, RuntimeApiKeyPr
 		}
 
 		// Claude Code takes precedence over Codex for the same provider.
-		const all = [...loadClaudeCodeAuth(), ...loadCodexAuth()];
+		const all = this.loadExternalCredentials();
 		const map = new Map<string, ExternalCredential>();
 		for (const cred of all) {
 			if (!map.has(cred.provider) && cred.apiKey) {
@@ -156,11 +171,19 @@ export class ExternalCredentialStore implements CredentialStore, RuntimeApiKeyPr
 		const external = this.getExternalCredentials().get(providerId);
 		if (!external?.apiKey) return undefined;
 
-		// Return as api_key credential. External baseUrl/model are NOT part of
-		// the credential; they're accessed separately via getExternalBaseUrl/Model.
+		// Carry provider routing as credential-scoped environment so provider-owned
+		// auth can return it as request auth without mutating the model catalog.
+		const baseUrlEnv = PROVIDER_BASE_URL_ENV[providerId];
+		const env = {
+			...(external.baseUrl && baseUrlEnv ? { [baseUrlEnv]: external.baseUrl } : {}),
+			...(providerId === "anthropic" && external.apiKeyIsBearerToken
+				? { ANTHROPIC_AUTH_TOKEN: external.apiKey }
+				: {}),
+		};
 		return {
 			type: "api_key",
 			key: external.apiKey,
+			...(Object.keys(env).length > 0 ? { env } : {}),
 		};
 	}
 

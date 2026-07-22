@@ -1,11 +1,25 @@
 import { type ChildProcess, type SpawnOptions, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { createWriteStream, type WriteStream } from "node:fs";
-import { mkdir, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { createWriteStream, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { mkdir, readdir, writeFile } from "node:fs/promises";
+import { basename, dirname, join, resolve } from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { type Static, Type } from "typebox";
+import {
+	type BoundedLogState,
+	BufferedBoundedLog,
+	cleanupLogTree,
+	createBoundedLogState,
+	DEFAULT_LOG_MAX_AGE_MS,
+	DEFAULT_LOG_MAX_FILES,
+	DEFAULT_LOG_MAX_TOTAL_BYTES,
+} from "../../../_magenta/log-retention.ts";
+import {
+	NODE_MAX_TIMEOUT_SECONDS,
+	nodeTimeoutSecondsToMs,
+	validateNodeTimeoutSeconds,
+} from "../../../_magenta/timeout.ts";
 import { ToolExecutionError } from "../../tool-error.ts";
 import {
 	appendTail as appendTailText,
@@ -27,7 +41,9 @@ import type {
 
 const APP_NAME = "Magenta";
 const WORK_DIR_ROOT = join(process.cwd(), ".magenta", "tmp", "sub-agents");
+const ACTIVE_SUB_AGENT_ARTIFACTS = new Set<string>();
 const TERM_GRACE_MS = 3000;
+export const MAIN_PROGRESS_WRITE_INTERVAL_MS = 1_000;
 /**
  * Cap on how many finished (non-running) sub-agent events are retained.
  * Prevents unbounded growth of the events Map over a long interactive session;
@@ -118,7 +134,8 @@ type SubAgentEvent = {
 	pattern?: string;
 	/** Present for kind="workflow" once finished: the structured orchestration result. */
 	workflowResult?: MultiAgentOrchestrationResult;
-	log: WriteStream | null;
+	log: BufferedBoundedLog | null;
+	logState: BoundedLogState;
 	queuedAt: number;
 	startedAt: number;
 	runningAt?: number;
@@ -236,7 +253,13 @@ const WorkflowSlotSchema = Type.Object({
 		Type.Array(Type.String(), { description: "Harness package selectors granted to this workflow worker." }),
 	),
 	thinking: Type.Optional(StringEnum(THINKING_LEVELS)),
-	timeoutSeconds: Type.Optional(Type.Number({ description: "Per-worker wall-clock timeout in seconds." })),
+	timeoutSeconds: Type.Optional(
+		Type.Number({
+			description: `Optional per-worker hard wall-clock deadline in seconds. Omit for no worker deadline. Maximum ${NODE_MAX_TIMEOUT_SECONDS} seconds.`,
+			exclusiveMinimum: 0,
+			maximum: NODE_MAX_TIMEOUT_SECONDS,
+		}),
+	),
 });
 
 /**
@@ -308,7 +331,11 @@ export const subAgentSchema = Type.Object(
 		provider: Type.Optional(Type.String({ description: "Optional provider." })),
 		thinking: Type.Optional(StringEnum(THINKING_LEVELS)),
 		timeoutSeconds: Type.Optional(
-			Type.Number({ description: "Optional explicit run timeout in seconds, including queued time." }),
+			Type.Number({
+				description: `Optional hard deadline in seconds for the entire sub-agent or workflow Event, including queued time. Omit for no caller deadline. Maximum ${NODE_MAX_TIMEOUT_SECONDS} seconds.`,
+				exclusiveMinimum: 0,
+				maximum: NODE_MAX_TIMEOUT_SECONDS,
+			}),
 		),
 		workflow: Type.Optional(WorkflowSchema),
 		eventId: Type.Optional(Type.String({ description: "Optional target for status; required for cancel." })),
@@ -320,12 +347,19 @@ export type SubAgentInput = Static<typeof subAgentSchema>;
 type InternalSubAgentInput = SubAgentInput;
 export type SubAgentDetails = Record<string, unknown>;
 
-function positiveNumber(value: unknown): number | undefined {
-	return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
+function isProcessAlive(pid: number): boolean {
+	if (!Number.isInteger(pid) || pid <= 0) return false;
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch (error) {
+		return (error as NodeJS.ErrnoException).code === "EPERM";
+	}
 }
 
-async function openLogStream(path: string): Promise<WriteStream> {
-	const log = createWriteStream(path, { flags: "a" });
+async function openLogStream(path: string, state: BoundedLogState): Promise<BufferedBoundedLog> {
+	const log = createWriteStream(path, { flags: "a", mode: 0o600 });
+	log.once("close", () => ACTIVE_SUB_AGENT_ARTIFACTS.delete(resolve(path)));
 	// Keep a permanent listener installed so a later filesystem failure cannot
 	// become an uncaught EventEmitter "error". Event-specific listeners below
 	// still turn such failures into terminal event state.
@@ -333,7 +367,7 @@ async function openLogStream(path: string): Promise<WriteStream> {
 	return new Promise((resolveOpen, rejectOpen) => {
 		const onOpen = () => {
 			cleanup();
-			resolveOpen(log);
+			resolveOpen(new BufferedBoundedLog(log, { state }));
 		};
 		const onError = (error: Error) => {
 			cleanup();
@@ -394,7 +428,7 @@ function createOutputDecoders(): Record<SubAgentOutputStream, Utf8TailDecoder> {
 
 function appendDecodedOutput(event: SubAgentEvent, decoded: string, writeLog: boolean): void {
 	if (!decoded) return;
-	if (writeLog && event.log && !event.log.writableEnded && !event.log.destroyed) event.log.write(decoded);
+	if (writeLog && event.log) event.log.write(decoded);
 	event.tail = appendTailText(event.tail, Buffer.from(decoded, "utf8"));
 	if (decoded.trim().length > 0) {
 		const now = Date.now();
@@ -452,6 +486,7 @@ function killTarget(
 function requestTermination(event: SubAgentEvent, request: TerminationRequest): boolean {
 	if (!isEventActive(event) || event.terminationRequest) return false;
 
+	event.log?.flush();
 	event.status = "terminating";
 	event.terminationRequest = request;
 	event.activityPhase = "terminating";
@@ -493,7 +528,7 @@ function finishEvent(
 	event.timeout = undefined;
 	if (event.graceKillTimer !== undefined) clearTimeout(event.graceKillTimer);
 	event.graceKillTimer = undefined;
-	if (event.log && !event.log.writableEnded && !event.log.destroyed) event.log.end();
+	event.log?.end();
 	// Release live process/cancellation references once terminal so retained
 	// events do not pin resources or expose stale cancellation state.
 	event.child = undefined;
@@ -588,7 +623,7 @@ function summarizeSubAgentForModel(event: SubAgentEvent, maxBytes = MODEL_RESULT
 
 /**
  * Plain-data snapshot of a sub-agent event, safe for structuredClone/postMessage.
- * The live event holds ChildProcess/WriteStream/Timer/AbortController references
+ * The live event holds ChildProcess/log-sink/Timer/AbortController references
  * that are not cloneable, so message payloads must carry this snapshot.
  */
 export type SubAgentEventSnapshot = Pick<
@@ -715,6 +750,7 @@ function summarizeWorkflowEvent(
  * validates required slots per pattern and rejects malformed requests.
  */
 export function buildOrchestrationRequest(input: WorkflowInput): MultiAgentOrchestrationRequest {
+	validateWorkflowTimeouts(input);
 	// The harness retains trusted programmatic script workflows, but this facade
 	// accepts model-authored tool input. Never turn that input into executable
 	// module source in the main process, even if a caller bypasses the schema.
@@ -745,6 +781,34 @@ export function buildOrchestrationRequest(input: WorkflowInput): MultiAgentOrche
 	if (candidateCount !== undefined) request.count = candidateCount;
 	if (topK !== undefined) request.keepTop = topK;
 	return request as unknown as MultiAgentOrchestrationRequest;
+}
+
+function validateWorkflowTimeouts(input: WorkflowInput): void {
+	type TimeoutSlot = { timeoutSeconds?: number };
+	const validateSlot = (slot: TimeoutSlot | undefined, path: string) => {
+		if (slot !== undefined) validateNodeTimeoutSeconds(slot.timeoutSeconds, `${path}.timeoutSeconds`);
+	};
+	for (const key of [
+		"classifier",
+		"fallback",
+		"synthesizer",
+		"generator",
+		"verifier",
+		"evaluator",
+		"judge",
+		"refine",
+	] as const) {
+		validateSlot(input[key], `workflow.${key}`);
+	}
+	for (const [index, slot] of (input.workers ?? []).entries()) {
+		validateSlot(slot, `workflow.workers[${index}]`);
+	}
+	for (const [index, slot] of (input.approaches ?? []).entries()) {
+		validateSlot(slot, `workflow.approaches[${index}]`);
+	}
+	for (const [key, slot] of Object.entries(input.handlers ?? {})) {
+		validateSlot(slot, `workflow.handlers.${key}`);
+	}
 }
 
 function formatWorkerUsage(usage: WorkerUsage): string {
@@ -817,6 +881,17 @@ function waitForEvent(
 	});
 }
 
+function writePrivateFileAtomic(path: string, content: string): void {
+	mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+	const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`;
+	try {
+		writeFileSync(temporary, content, { encoding: "utf8", flag: "wx", mode: 0o600 });
+		renameSync(temporary, path);
+	} finally {
+		rmSync(temporary, { force: true });
+	}
+}
+
 export class SubAgentController {
 	private nextAgentNumber = 1;
 	private shuttingDown = false;
@@ -826,9 +901,14 @@ export class SubAgentController {
 	private startQueue: string[] = [];
 	private maxRetainedFinishedEvents = MAX_RETAINED_FINISHED_EVENTS;
 	private mainToolProgress = new Map<string, MainToolProgress>();
+	private readonly workDirRoot: string;
 	private readonly workDir: string;
 	private readonly mainProgressPath: string;
-	private progressWriteChain: Promise<void> = Promise.resolve();
+	private readonly progressWriteIntervalMs: number;
+	private readonly progressWriter: (path: string, content: string) => void;
+	private progressWriteTimer?: NodeJS.Timeout;
+	private pendingProgressSnapshot?: string;
+	private lastProgressWriteAt = 0;
 	private config: SubAgentConfig = {
 		defaultReturnDelivery: "followUp",
 		defaultThinking: DEFAULT_THINKING,
@@ -864,12 +944,24 @@ export class SubAgentController {
 			maxRetainedFinishedEvents?: number;
 			/** Override the namespace root (primarily for embedders and tests). */
 			workDirRoot?: string;
+			/** Override progress coalescing and persistence for focused tests. */
+			progressWriteIntervalMs?: number;
+			progressWriter?: (path: string, content: string) => void;
 		},
 	) {
 		const controllerToken = `${process.pid}-${randomUUID()}`;
 		this.defaultCwd = options.cwd ?? process.cwd();
-		this.workDir = join(options.workDirRoot ?? WORK_DIR_ROOT, controllerToken);
+		this.workDirRoot = options.workDirRoot ?? WORK_DIR_ROOT;
+		this.workDir = join(this.workDirRoot, controllerToken);
 		this.mainProgressPath = join(this.workDir, "main-tool-progress.md");
+		ACTIVE_SUB_AGENT_ARTIFACTS.add(resolve(this.mainProgressPath));
+		this.progressWriteIntervalMs =
+			typeof options.progressWriteIntervalMs === "number" &&
+			Number.isFinite(options.progressWriteIntervalMs) &&
+			options.progressWriteIntervalMs >= 0
+				? options.progressWriteIntervalMs
+				: MAIN_PROGRESS_WRITE_INTERVAL_MS;
+		this.progressWriter = options.progressWriter ?? writePrivateFileAtomic;
 		this.registerReturn = options.registerReturn;
 		this.cancelReturn = options.cancelReturn;
 		this.spawnAgent = options.spawnAgent ?? spawn;
@@ -883,7 +975,7 @@ export class SubAgentController {
 		this.getWorkflowProvider = options.getWorkflowProvider;
 		this.isWorkflowEnabled = options.isWorkflowEnabled ?? (() => true);
 		this.config = {
-			defaultTimeoutSeconds: positiveNumber(options.defaultTimeoutSeconds),
+			defaultTimeoutSeconds: validateNodeTimeoutSeconds(options.defaultTimeoutSeconds, "defaultTimeoutSeconds"),
 			defaultReturnDelivery: options.defaultReturnDelivery ?? "followUp",
 			defaultThinking: options.defaultThinking ?? DEFAULT_THINKING,
 		};
@@ -944,6 +1036,36 @@ export class SubAgentController {
 		});
 	}
 
+	private async cleanupArtifacts(): Promise<void> {
+		const protectedPrefixes: string[] = [];
+		try {
+			const entries = await readdir(this.workDirRoot, { withFileTypes: true });
+			for (const entry of entries) {
+				if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
+				const pid = Number.parseInt(entry.name.split("-", 1)[0] ?? "", 10);
+				if (pid !== process.pid && isProcessAlive(pid)) protectedPrefixes.push(join(this.workDirRoot, entry.name));
+			}
+		} catch {
+			// The root is created lazily when the first worker starts.
+		}
+		await cleanupLogTree({
+			root: this.workDirRoot,
+			fileFilter: (path) => {
+				const name = basename(path);
+				return name.endsWith(".log") || name.endsWith(".prompt.md") || name === "main-tool-progress.md";
+			},
+			protectedPaths: ACTIVE_SUB_AGENT_ARTIFACTS,
+			protectedPrefixes,
+			emptyDirectoryFilter: (path) => {
+				const parent = resolve(path, "..");
+				return parent === resolve(this.workDirRoot) && /^\d+-[0-9a-f-]+$/i.test(basename(path));
+			},
+			maxAgeMs: DEFAULT_LOG_MAX_AGE_MS,
+			maxTotalBytes: DEFAULT_LOG_MAX_TOTAL_BYTES,
+			maxFiles: DEFAULT_LOG_MAX_FILES,
+		});
+	}
+
 	createToolDefinition(): AgentTool<any, SubAgentDetails> {
 		const controller = this;
 		return {
@@ -979,10 +1101,10 @@ export class SubAgentController {
 	}
 
 	handleAgentEvent(event: AgentSessionEvent): void {
+		if (this.shuttingDown) return;
 		if (event.type === "agent_start") {
-			this.shuttingDown = false;
 			this.mainToolProgress.clear();
-			void this.writeMainProgressSnapshot().catch(() => undefined);
+			this.scheduleMainProgressSnapshot(true);
 			return;
 		}
 		if (event.type === "tool_execution_start") {
@@ -996,7 +1118,7 @@ export class SubAgentController {
 				updatedAt: now,
 			});
 			this.pruneMainToolProgress();
-			void this.writeMainProgressSnapshot().catch(() => undefined);
+			this.scheduleMainProgressSnapshot(true);
 			return;
 		}
 		if (event.type === "tool_execution_update") {
@@ -1012,13 +1134,13 @@ export class SubAgentController {
 					startedAt: now,
 					updatedAt: now,
 				});
-				void this.writeMainProgressSnapshot().catch(() => undefined);
+				this.scheduleMainProgressSnapshot();
 				return;
 			}
 			existing.args = event.args ?? existing.args;
 			existing.partialResult = event.partialResult;
 			existing.updatedAt = Date.now();
-			void this.writeMainProgressSnapshot().catch(() => undefined);
+			this.scheduleMainProgressSnapshot();
 			return;
 		}
 		if (event.type === "tool_execution_end") {
@@ -1037,7 +1159,7 @@ export class SubAgentController {
 				endedAt: now,
 			});
 			this.pruneMainToolProgress();
-			void this.writeMainProgressSnapshot().catch(() => undefined);
+			this.scheduleMainProgressSnapshot(true);
 		}
 	}
 
@@ -1048,6 +1170,7 @@ export class SubAgentController {
 	shutdown(): void {
 		if (this.shuttingDown) return;
 		this.shuttingDown = true;
+		this.flushMainProgressSnapshot(false);
 		this.shutdownGeneration += 1;
 		for (const event of this.events.values()) {
 			if (!isEventActive(event)) continue;
@@ -1067,6 +1190,7 @@ export class SubAgentController {
 			}
 		}
 		this.startQueue.length = 0;
+		this.releaseControllerArtifactsIfInactive();
 		this.monitor.update();
 		this.monitor.dispose?.();
 	}
@@ -1123,6 +1247,8 @@ export class SubAgentController {
 		returnInstruction: string | undefined,
 	) {
 		this.assertStartAllowed(signal);
+		const explicitTimeoutSeconds = validateNodeTimeoutSeconds(params.timeoutSeconds, "timeoutSeconds");
+		if (params.workflow) buildOrchestrationRequest(params.workflow);
 		if (params.workflow && !this.isWorkflowEnabled()) {
 			throw new ToolExecutionError(
 				"unauthorized",
@@ -1159,6 +1285,7 @@ export class SubAgentController {
 			promptPath,
 			logPath,
 			log: null,
+			logState: createBoundedLogState(),
 			queuedAt,
 			startedAt: queuedAt,
 			status: "queued",
@@ -1170,13 +1297,16 @@ export class SubAgentController {
 			activityPhase: "queued",
 			waiters: [],
 		};
-		const timeoutSeconds = positiveNumber(params.timeoutSeconds) ?? this.config.defaultTimeoutSeconds;
-		const deadlineAt = timeoutSeconds ? queuedAt + timeoutSeconds * 1000 : undefined;
+		const timeoutSeconds = explicitTimeoutSeconds ?? this.config.defaultTimeoutSeconds;
+		const timeoutMs = nodeTimeoutSecondsToMs(timeoutSeconds, "timeoutSeconds");
+		const deadlineAt = timeoutMs === undefined ? undefined : queuedAt + timeoutMs;
 		if (deadlineAt !== undefined) {
-			event.timeout = setTimeout(() => this.timeoutEvent(id, timeoutSeconds!), timeoutSeconds! * 1000);
+			event.timeout = setTimeout(() => this.timeoutEvent(id, timeoutSeconds!), timeoutMs!);
 			event.timeout.unref?.();
 		}
 		this.events.set(id, event);
+		ACTIVE_SUB_AGENT_ARTIFACTS.add(resolve(event.logPath));
+		ACTIVE_SUB_AGENT_ARTIFACTS.add(resolve(event.promptPath));
 		this.pendingStarts.set(id, {
 			eventId: id,
 			parentCwd: ctx.cwd,
@@ -1273,11 +1403,25 @@ export class SubAgentController {
 	}
 
 	private onEventTerminal(event: SubAgentEvent): void {
+		// Open logs stay protected until WriteStream close proves every queued write
+		// reached the descriptor. Paths that never opened have no close callback.
+		const logPath = resolve(event.logPath);
+		const promptPath = resolve(event.promptPath);
+		if (!event.log) ACTIVE_SUB_AGENT_ARTIFACTS.delete(logPath);
+		// Workflow events intentionally reuse the log path as their prompt path.
+		// In that case only the stream's close callback may release protection.
+		if (promptPath !== logPath) ACTIVE_SUB_AGENT_ARTIFACTS.delete(promptPath);
 		this.pendingStarts.delete(event.id);
 		const queueIndex = this.startQueue.indexOf(event.id);
 		if (queueIndex >= 0) this.startQueue.splice(queueIndex, 1);
 		this.pruneFinishedEvents();
+		this.releaseControllerArtifactsIfInactive();
 		queueMicrotask(() => this.pumpStartQueue());
+	}
+
+	private releaseControllerArtifactsIfInactive(): void {
+		if (!this.shuttingDown || this.hasLiveWork()) return;
+		ACTIVE_SUB_AGENT_ARTIFACTS.delete(resolve(this.mainProgressPath));
 	}
 
 	private status(params: SubAgentInput) {
@@ -1360,7 +1504,8 @@ export class SubAgentController {
 		event?: SubAgentEvent,
 	): Promise<SubAgentEvent> {
 		if (!event) throw new Error("sub_agent internal event registration is required");
-		await mkdir(this.workDir, { recursive: true });
+		await this.cleanupArtifacts();
+		await mkdir(this.workDir, { recursive: true, mode: 0o700 });
 		this.assertStartAllowed(signal, startGeneration);
 		this.assertEventStarting(event);
 
@@ -1368,11 +1513,12 @@ export class SubAgentController {
 		const tools = event.tools;
 		const packages = event.packages ?? [];
 		const thinking = event.thinking;
-		await this.writeMainProgressSnapshot();
+		this.pendingProgressSnapshot = `${this.formatMainToolProgress()}\n`;
+		this.flushMainProgressSnapshot(true);
 		this.assertStartAllowed(signal, startGeneration);
 		this.assertEventStarting(event);
 		const prompt = this.buildPrompt(input, cwd, tools);
-		await writeFile(promptPath, prompt, "utf8");
+		await writeFile(promptPath, prompt, { encoding: "utf8", mode: 0o600 });
 		this.assertStartAllowed(signal, startGeneration);
 		this.assertEventStarting(event);
 
@@ -1388,7 +1534,8 @@ export class SubAgentController {
 		if (model) args.push("--model", model);
 		args.push(`@${promptPath}`);
 
-		const log = await openLogStream(logPath);
+		const log = await openLogStream(logPath, event.logState);
+		event.log = log;
 		try {
 			this.assertStartAllowed(signal, startGeneration);
 			this.assertEventStarting(event);
@@ -1418,14 +1565,13 @@ export class SubAgentController {
 		event.model = model;
 		event.provider = provider;
 		event.child = child;
-		event.log = log;
 		event.runningAt = runningAt;
 		event.status = "running";
 		event.lastActivityAt = runningAt;
 		event.activityPhase = "agent";
 		this.monitor.update();
 
-		log.on("error", (error) => {
+		log.onError((error) => {
 			if (!isEventActive(event)) return;
 			requestTermination(event, {
 				status: "failed",
@@ -1477,13 +1623,15 @@ export class SubAgentController {
 		}
 		const { cwd, logPath } = event;
 		const request = { ...buildOrchestrationRequest(input), cwd } as MultiAgentOrchestrationRequest;
-		await mkdir(this.workDir, { recursive: true });
+		await this.cleanupArtifacts();
+		await mkdir(this.workDir, { recursive: true, mode: 0o700 });
 		this.assertStartAllowed(signal, startGeneration);
 		this.assertEventStarting(event);
 
 		const abort = new AbortController();
 		event.abort = abort;
-		const log = await openLogStream(logPath);
+		const log = await openLogStream(logPath, event.logState);
+		event.log = log;
 		try {
 			this.assertStartAllowed(signal, startGeneration);
 			this.assertEventStarting(event);
@@ -1498,14 +1646,13 @@ export class SubAgentController {
 		}
 		const runningAt = Date.now();
 		event.abort = abort;
-		event.log = log;
 		event.runningAt = runningAt;
 		event.status = "running";
 		event.lastActivityAt = runningAt;
 		event.activityPhase = `workflow:${input.pattern}`;
 		this.monitor.update();
 
-		log.on("error", (error) => {
+		log.onError((error) => {
 			if (!isEventActive(event)) return;
 			requestTermination(event, {
 				status: "failed",
@@ -1523,15 +1670,13 @@ export class SubAgentController {
 				event.workflowResult = result;
 				const summary = formatWorkflowResult(result);
 				appendOutput(event, "single", Buffer.from(`${summary}\n`), false);
-				if (!log.writableEnded && !log.destroyed) {
-					let completeResult: string;
-					try {
-						completeResult = JSON.stringify(result, null, 2);
-					} catch {
-						completeResult = summary;
-					}
-					log.write(`${completeResult}\n`);
+				let completeResult: string;
+				try {
+					completeResult = JSON.stringify(result, null, 2);
+				} catch {
+					completeResult = summary;
 				}
+				log.write(`${completeResult}\n`);
 				const overallFailed = (result as MultiAgentOrchestrationResult & { success?: boolean }).success === false;
 				const outcomeFailed = result.outcome?.success === false;
 				const budgetFailed = result.terminatedBy === "budget";
@@ -1683,16 +1828,39 @@ export class SubAgentController {
 		for (const entry of entries.slice(60)) this.mainToolProgress.delete(entry.id);
 	}
 
-	private writeMainProgressSnapshot(): Promise<void> {
-		const snapshot = `${this.formatMainToolProgress()}\n`;
-		const write = this.progressWriteChain.then(async () => {
-			await mkdir(this.workDir, { recursive: true });
-			await writeFile(this.mainProgressPath, snapshot, "utf8");
-		});
-		// Keep future writes moving after a failure while returning the current
-		// rejection to startup callers that require a usable configuration path.
-		this.progressWriteChain = write.catch(() => undefined);
-		return write;
+	private scheduleMainProgressSnapshot(immediate = false): void {
+		this.pendingProgressSnapshot = `${this.formatMainToolProgress()}\n`;
+		if (immediate) {
+			this.flushMainProgressSnapshot(false);
+			return;
+		}
+		const delay = this.progressWriteIntervalMs - (Date.now() - this.lastProgressWriteAt);
+		if (delay <= 0) {
+			this.flushMainProgressSnapshot(false);
+			return;
+		}
+		if (this.progressWriteTimer) return;
+		this.progressWriteTimer = setTimeout(() => {
+			this.progressWriteTimer = undefined;
+			this.flushMainProgressSnapshot(false);
+		}, delay);
+		this.progressWriteTimer.unref?.();
+	}
+
+	private flushMainProgressSnapshot(throwOnError: boolean): void {
+		if (this.progressWriteTimer) {
+			clearTimeout(this.progressWriteTimer);
+			this.progressWriteTimer = undefined;
+		}
+		const snapshot = this.pendingProgressSnapshot;
+		this.pendingProgressSnapshot = undefined;
+		if (snapshot === undefined) return;
+		try {
+			this.progressWriter(this.mainProgressPath, snapshot);
+			this.lastProgressWriteAt = Date.now();
+		} catch (error) {
+			if (throwOnError) throw error;
+		}
 	}
 
 	private buildPrompt(input: AgentTask, cwd: string, tools: string[]): string {

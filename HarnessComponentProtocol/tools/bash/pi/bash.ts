@@ -1,5 +1,10 @@
 import type { AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
 import { type Static, Type } from "typebox";
+import {
+	NODE_MAX_TIMEOUT_MS,
+	NODE_MAX_TIMEOUT_SECONDS,
+	validateNodeTimeoutSeconds,
+} from "../../../_magenta/timeout.ts";
 import { OutputAccumulator } from "../../../_magenta/utils/pi/output-accumulator.ts";
 import {
 	DEFAULT_MAX_BYTES,
@@ -8,8 +13,8 @@ import {
 	type TruncationResult,
 } from "../../../_magenta/utils/pi/truncate.ts";
 
-export const MAX_TIMEOUT_MS = 2_147_483_647;
-export const MAX_TIMEOUT_SECONDS = MAX_TIMEOUT_MS / 1000;
+export const MAX_TIMEOUT_MS = NODE_MAX_TIMEOUT_MS;
+export const MAX_TIMEOUT_SECONDS = NODE_MAX_TIMEOUT_SECONDS;
 
 export const bashSchema = Type.Object({
 	command: Type.String({ description: "Bash command to execute" }),
@@ -23,14 +28,7 @@ export const bashSchema = Type.Object({
 });
 
 function validateTimeout(timeout: number | undefined): number | undefined {
-	if (timeout === undefined) return undefined;
-	if (!Number.isFinite(timeout) || timeout <= 0) {
-		throw new Error("Invalid timeout: must be a finite number of seconds");
-	}
-	if (timeout * 1000 > MAX_TIMEOUT_MS) {
-		throw new Error(`Invalid timeout: maximum is ${MAX_TIMEOUT_SECONDS} seconds`);
-	}
-	return timeout;
+	return validateNodeTimeoutSeconds(timeout);
 }
 
 export type BashToolInput = Static<typeof bashSchema>;

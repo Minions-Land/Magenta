@@ -8,11 +8,17 @@
 // run executes each bounded headless variant, retains both raw streams, and
 // validates the versioned JSONL terminal contract into normalized summaries.
 
-import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { validateAndNormalizeResult } from "./contract.mjs";
+import {
+	cleanupEvalResults,
+	createEvalRunDirectory,
+	runBoundedProcess,
+	writePrivateArtifact,
+} from "./artifacts.mjs";
+import { summarizeEvalRun, validateAndNormalizeResult } from "./contract.mjs";
+import { assertRealRunIsolation } from "./execution-gate.mjs";
 import { buildPlan, harnessRoot, loadScenario } from "./plan.mjs";
 
 function parseRunnerArgs(args) {
@@ -46,6 +52,16 @@ try {
 const { scenarioName, model, dryRun, json } = options;
 const scenario = await loadScenario(scenarioName);
 const plan = await buildPlan(scenario, { model });
+
+if (!dryRun) {
+	try {
+		assertRealRunIsolation(plan);
+	} catch (error) {
+		console.error(`error: ${error.message}`);
+		process.exit(1);
+	}
+}
+
 const prompt = plan.promptRef ? await readFile(plan.promptRef, "utf-8") : "";
 
 function printablePlan() {
@@ -63,6 +79,13 @@ function printPlan() {
 	console.log(`  cli: ${plan.cliPath}`);
 	console.log(`  prompt: ${plan.promptRef ?? "(none)"} (${Buffer.byteLength(prompt)} bytes)`);
 	console.log(`  scoring: ${JSON.stringify(plan.scoring)}`);
+	console.log(`  real run: ${plan.executionGate.realRunAllowed ? "READY" : "BLOCKED (unresolved manual isolation)"}`);
+	for (const blocker of plan.executionGate.unresolvedManualIsolation) {
+		console.log(
+			`    ! variant '${blocker.variant}' cannot prove component '${blocker.component}' state ${String(blocker.requestedState)}: ${blocker.reason}`,
+		);
+		if (blocker.manualNote) console.log(`      manual note: ${blocker.manualNote}`);
+	}
 	console.log("\nVariants:");
 	for (const variant of plan.variants) {
 		console.log(`\n  [${variant.name}] cwd=${variant.cwd} wallTimeoutMs=${variant.wallTimeoutMs}`);
@@ -78,7 +101,13 @@ if (dryRun) {
 	if (!existsSync(plan.cliPath) && !json) {
 		console.log(`note: built CLI not found at ${plan.cliPath}; a real run needs it built first.`);
 	}
-	if (!json) console.log("dry-run OK (no model calls made).");
+	if (!json) {
+		console.log(
+			plan.executionGate.realRunAllowed
+				? "dry-run OK (no model calls made)."
+				: "dry-run complete (no model calls made; real run remains blocked).",
+		);
+	}
 	process.exit(0);
 }
 
@@ -87,74 +116,49 @@ if (!existsSync(plan.cliPath)) {
 	process.exit(1);
 }
 
-const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-const outDir = resolve(harnessRoot, "eval/results", `${plan.name}-${stamp}`);
-await mkdir(outDir, { recursive: true });
+const resultsRoot = resolve(harnessRoot, "eval/results");
+const activeRun = await createEvalRunDirectory(resultsRoot, plan.name);
+const outDir = activeRun.path;
+try {
+	await cleanupEvalResults(resultsRoot, { protectedPrefixes: [outDir] }).catch(() => undefined);
+	await writePrivateArtifact(resolve(outDir, "plan.json"), `${JSON.stringify(printablePlan(), null, 2)}\n`);
 
-function runVariant(variant) {
-	return new Promise((resolveRun) => {
-		const args = [plan.cliPath, ...variant.argv, "-p", prompt];
-		const child = spawn(process.execPath, args, {
-			cwd: variant.cwd,
-			shell: false,
-			stdio: ["ignore", "pipe", "pipe"],
-		});
-		let stdout = "";
-		let stderr = "";
-		let timedOut = false;
-		let spawnError;
-		let killTimer;
-		const wallTimer = setTimeout(() => {
-			timedOut = true;
-			child.kill("SIGTERM");
-			killTimer = setTimeout(() => child.kill("SIGKILL"), 2_000);
-			killTimer.unref();
-		}, variant.wallTimeoutMs);
-		wallTimer.unref();
-		child.stdout?.on("data", (data) => (stdout += data));
-		child.stderr?.on("data", (data) => (stderr += data));
-		child.on("error", (error) => (spawnError = error.message));
-		child.on("close", (code, signal) => {
-			clearTimeout(wallTimer);
-			if (killTimer) clearTimeout(killTimer);
-			resolveRun({ name: variant.name, code, signal, timedOut, spawnError, stdout, stderr });
-		});
-	});
-}
-
-if (!json) console.log(`Running ${plan.variants.length} variant(s) for '${plan.name}'${model ? ` on ${model}` : ""}...`);
-const summaries = [];
-for (const variant of plan.variants) {
-	if (!json && variant.warnings.length) {
-		console.log(`\n[${variant.name}] WARNINGS - variant may not be correctly isolated:`);
-		for (const warning of variant.warnings) console.log(`  ! ${warning}`);
-	}
-	if (!json) console.log(`\n[${variant.name}] running...`);
-	const result = await runVariant(variant);
-	await writeFile(resolve(outDir, `${variant.name}.stdout.jsonl`), result.stdout);
-	await writeFile(resolve(outDir, `${variant.name}.stderr.log`), result.stderr);
-	const summary = validateAndNormalizeResult(result, variant);
-	await writeFile(resolve(outDir, `${variant.name}.summary.json`), `${JSON.stringify(summary, null, 2)}\n`);
-	summaries.push(summary);
 	if (!json) {
-		console.log(
-			`[${variant.name}] process exit ${String(result.code)}, contract ${summary.valid ? "valid" : "INVALID"}, ${result.stdout.length} stdout bytes`,
-		);
-		for (const error of summary.errors) console.log(`  ! ${error}`);
+		console.log(`Running ${plan.variants.length} variant(s) for '${plan.name}'${model ? ` on ${model}` : ""}...`);
 	}
+	const summaries = [];
+	for (const variant of plan.variants) {
+		if (!json && variant.warnings.length) {
+			console.log(`\n[${variant.name}] WARNINGS - variant may not be correctly isolated:`);
+			for (const warning of variant.warnings) console.log(`  ! ${warning}`);
+		}
+		if (!json) console.log(`\n[${variant.name}] running...`);
+		const result = await runBoundedProcess({
+			executable: process.execPath,
+			args: [plan.cliPath, ...variant.argv, "-p", prompt],
+			cwd: variant.cwd,
+			wallTimeoutMs: variant.wallTimeoutMs,
+			stdoutPath: resolve(outDir, `${variant.name}.stdout.jsonl`),
+			stderrPath: resolve(outDir, `${variant.name}.stderr.log`),
+		});
+		const summary = validateAndNormalizeResult(result, variant);
+		await writePrivateArtifact(resolve(outDir, `${variant.name}.summary.json`), `${JSON.stringify(summary, null, 2)}\n`);
+		summaries.push(summary);
+		if (!json) {
+			console.log(
+				`[${variant.name}] process exit ${String(result.code)}, contract ${summary.contractValid ? "valid" : "INVALID"}, execution ${summary.executionSucceeded ? "succeeded" : "FAILED"}, ${result.stdoutBytes} stdout bytes retained`,
+			);
+			for (const error of summary.errors) console.log(`  ! ${error}`);
+		}
+	}
+
+	const runSummary = summarizeEvalRun(plan, summaries, { model: model ?? null, resultsDirectory: outDir });
+	await writePrivateArtifact(resolve(outDir, "summary.json"), `${JSON.stringify(runSummary, null, 2)}\n`);
+
+	if (json) console.log(JSON.stringify(runSummary));
+	else console.log(`\nRaw logs and normalized summaries written to ${outDir}`);
+	if (!runSummary.valid) process.exitCode = 1;
+} finally {
+	await cleanupEvalResults(resultsRoot, { protectedPrefixes: [outDir] }).catch(() => undefined);
+	await activeRun.release();
 }
-
-const runSummary = {
-	schemaVersion: 1,
-	scenario: plan.name,
-	valid: summaries.every((summary) => summary.valid),
-	model: model ?? null,
-	resultsDirectory: outDir,
-	variants: summaries,
-};
-await writeFile(resolve(outDir, "plan.json"), `${JSON.stringify(printablePlan(), null, 2)}\n`);
-await writeFile(resolve(outDir, "summary.json"), `${JSON.stringify(runSummary, null, 2)}\n`);
-
-if (json) console.log(JSON.stringify(runSummary));
-else console.log(`\nRaw logs and normalized summaries written to ${outDir}`);
-if (!runSummary.valid) process.exitCode = 1;

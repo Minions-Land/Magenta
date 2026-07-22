@@ -6,12 +6,11 @@ targets_component = "compaction"
 # matters. Kept as a fixture so it can grow without editing this file.
 prompt_ref = "fixtures/long-build-spec.md"
 
-# Compaction has no first-class CLI off-switch yet. To A/B it today:
-#   - "compaction-on": run normally; compaction fires when the window fills.
-#   - "compaction-off": raise the effective window / shrink the task so
-#     compaction never triggers, OR run against a build of the loop with
-#     compaction disabled. This is a MANUAL step for now; see notes below.
-# When a --no-compaction flag exists, replace `manual_note` with `off_flag`.
+# Compaction has no first-class CLI off-switch, so this is not an executable
+# A/B scenario today. Dry-run exposes the unresolved isolation requirement;
+# a real run fails before any model call or result-directory creation.
+# `manual_note` is documentation only. When a real --no-compaction flag exists,
+# map it in runner/plan.mjs and remove this manual requirement.
 
 [[variants]]
 name = "compaction-on"
@@ -20,7 +19,7 @@ components = { compaction = true }
 [[variants]]
 name = "compaction-off"
 components = { compaction = false }
-manual_note = "No CLI flag yet. Disable by running the loop with a compaction provider that never triggers (raise reserveTokens above contextWindow), or use a build with compaction unregistered."
+manual_note = "Unresolved: Magenta has no executable compaction-off CLI flag. Any external comparison needs separately recorded isolation and provenance; this runner cannot claim it as an A/B result."
 
 [scoring]
 # Primary signal: did the run complete the task without prematurely declaring

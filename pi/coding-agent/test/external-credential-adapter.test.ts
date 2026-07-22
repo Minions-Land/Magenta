@@ -1,7 +1,15 @@
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Credential, CredentialStore } from "@earendil-works/pi-ai";
+import {
+	type AssistantMessage,
+	type Credential,
+	type CredentialStore,
+	createAssistantMessageEventStream,
+	createModels,
+	type Model,
+} from "@earendil-works/pi-ai";
+import { openaiProvider } from "@earendil-works/pi-ai/providers/openai";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import {
@@ -154,7 +162,75 @@ describe("ExternalCredentialStore", () => {
 		writeClaudeSettings({ env: { ANTHROPIC_AUTH_TOKEN: "external-token" } });
 		const store = new ExternalCredentialStore(memStore({}));
 		const cred = await store.read("anthropic");
-		expect(cred).toEqual({ type: "api_key", key: "external-token" });
+		expect(cred).toEqual({
+			type: "api_key",
+			key: "external-token",
+			env: { ANTHROPIC_AUTH_TOKEN: "external-token" },
+		});
+	});
+
+	test("Codex custom base URL is carried as credential-scoped OpenAI request config", async () => {
+		const store = new ExternalCredentialStore(memStore({}), () => [
+			{
+				provider: "openai",
+				apiKey: "external-openai-key",
+				baseUrl: "https://proxy.example/v1",
+				source: "codex",
+			},
+		]);
+		expect(await store.read("openai")).toEqual({
+			type: "api_key",
+			key: "external-openai-key",
+			env: { OPENAI_BASE_URL: "https://proxy.example/v1" },
+		});
+	});
+
+	test("routes an OpenAI model request through the Codex custom base URL", async () => {
+		const store = new ExternalCredentialStore(memStore({}), () => [
+			{
+				provider: "openai",
+				apiKey: "external-openai-key",
+				baseUrl: "http://127.0.0.1:4141/v1",
+				source: "codex",
+			},
+		]);
+		const models = createModels({ credentials: store });
+		const provider = openaiProvider();
+		let routedBaseUrl: string | undefined;
+		const respond = (model: Model<any>) => {
+			routedBaseUrl = model.baseUrl;
+			const stream = createAssistantMessageEventStream();
+			const message: AssistantMessage = {
+				role: "assistant",
+				content: [{ type: "text", text: "ok" }],
+				api: model.api,
+				provider: model.provider,
+				model: model.id,
+				usage: {
+					input: 0,
+					output: 0,
+					cacheRead: 0,
+					cacheWrite: 0,
+					totalTokens: 0,
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+				},
+				stopReason: "stop",
+				timestamp: Date.now(),
+			};
+			stream.push({ type: "start", partial: message });
+			stream.push({ type: "done", reason: "stop", message });
+			stream.end(message);
+			return stream;
+		};
+		models.setProvider({ ...provider, stream: respond, streamSimple: respond });
+		const model = provider.getModels()[0];
+		if (!model) throw new Error("OpenAI provider has no model fixture");
+
+		await models.completeSimple(model, {
+			messages: [{ role: "user", content: "route test", timestamp: Date.now() }],
+		});
+
+		expect(routedBaseUrl).toBe("http://127.0.0.1:4141/v1");
 	});
 
 	test("read returns undefined when no source has a credential", async () => {
@@ -184,7 +260,11 @@ describe("ExternalCredentialStore", () => {
 		expect(await store.read("anthropic")).toEqual({ type: "api_key", key: "stored-key" });
 		await store.delete("anthropic");
 		// After logout: external file still discoverable, not deleted.
-		expect(await store.read("anthropic")).toEqual({ type: "api_key", key: "external-token" });
+		expect(await store.read("anthropic")).toEqual({
+			type: "api_key",
+			key: "external-token",
+			env: { ANTHROPIC_AUTH_TOKEN: "external-token" },
+		});
 		expect(existsSync(join(tempHome, ".claude", "settings.json"))).toBe(true);
 	});
 

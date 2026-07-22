@@ -15,7 +15,7 @@
 import { InMemoryModelsStore, type Model } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
-import { createMagentaCredentialStore } from "../src/core/external-credential-adapter.ts";
+import { AuthStorageCredentialAdapter, createMagentaCredentialStore } from "../src/core/external-credential-adapter.ts";
 import { ModelRuntime } from "../src/core/model-runtime.ts";
 
 function model(id: string): Model<"openai-completions"> {
@@ -34,6 +34,38 @@ function model(id: string): Model<"openai-completions"> {
 }
 
 describe("ModelRuntime availability snapshot (CC-054)", () => {
+	it("resolves the declared ambient ANTHROPIC_AUTH_TOKEN through ModelRuntime", async () => {
+		const previous = {
+			authToken: process.env.ANTHROPIC_AUTH_TOKEN,
+			apiKey: process.env.ANTHROPIC_API_KEY,
+			oauthToken: process.env.ANTHROPIC_OAUTH_TOKEN,
+		};
+		process.env.ANTHROPIC_AUTH_TOKEN = "ambient-auth-token";
+		delete process.env.ANTHROPIC_API_KEY;
+		delete process.env.ANTHROPIC_OAUTH_TOKEN;
+
+		try {
+			const runtime = await ModelRuntime.create({
+				credentials: new AuthStorageCredentialAdapter(AuthStorage.inMemory()),
+				modelsPath: null,
+				modelsStore: new InMemoryModelsStore(),
+				allowModelNetwork: false,
+			});
+
+			expect(await runtime.getAuth("anthropic")).toMatchObject({
+				auth: { headers: { authorization: "Bearer ambient-auth-token" } },
+				source: "ANTHROPIC_AUTH_TOKEN",
+			});
+		} finally {
+			if (previous.authToken === undefined) delete process.env.ANTHROPIC_AUTH_TOKEN;
+			else process.env.ANTHROPIC_AUTH_TOKEN = previous.authToken;
+			if (previous.apiKey === undefined) delete process.env.ANTHROPIC_API_KEY;
+			else process.env.ANTHROPIC_API_KEY = previous.apiKey;
+			if (previous.oauthToken === undefined) delete process.env.ANTHROPIC_OAUTH_TOKEN;
+			else process.env.ANTHROPIC_OAUTH_TOKEN = previous.oauthToken;
+		}
+	});
+
 	it("getAvailableSnapshot() reflects a configured provider synchronously and stays stable across refresh", async () => {
 		const runtime = await ModelRuntime.create({
 			credentials: createMagentaCredentialStore(AuthStorage.inMemory()),

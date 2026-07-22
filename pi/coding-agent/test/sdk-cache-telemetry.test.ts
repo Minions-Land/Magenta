@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -17,6 +17,27 @@ import { createTestModelRegistry } from "./utilities.ts";
 
 const INITIAL_SENTINEL = "initial-provider-payload-sentinel";
 const FINAL_SENTINEL = "final-extension-payload-sentinel";
+
+function captureModel(): Model<"openai-codex-responses"> {
+	return {
+		id: "capture-model",
+		name: "Capture Model",
+		api: "openai-codex-responses",
+		provider: "capture-provider",
+		baseUrl: "https://capture.invalid/v1",
+		reasoning: false,
+		input: ["text"],
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		contextWindow: 128000,
+		maxTokens: 4096,
+	};
+}
+
+function activeLogNames(directory: string): string[] {
+	return readdirSync(directory)
+		.filter((name) => name.startsWith("events.active."))
+		.sort();
+}
 
 describe("createAgentSession cache telemetry", () => {
 	let tempDir: string;
@@ -41,18 +62,7 @@ describe("createAgentSession cache telemetry", () => {
 	});
 
 	it("fingerprints the final post-hook payload and falls back when a custom Codex provider omits wire observation", async () => {
-		const model: Model<"openai-codex-responses"> = {
-			id: "capture-model",
-			name: "Capture Model",
-			api: "openai-codex-responses",
-			provider: "capture-provider",
-			baseUrl: "https://capture.invalid/v1",
-			reasoning: false,
-			input: ["text"],
-			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-			contextWindow: 128000,
-			maxTokens: 4096,
-		};
+		const model = captureModel();
 		const authStorage = AuthStorage.create(join(agentDir, "auth.json"));
 		authStorage.setRuntimeApiKey(model.provider, "test-api-key");
 		const modelRegistry = await createTestModelRegistry(authStorage, join(agentDir, "models.json"));
@@ -106,6 +116,7 @@ describe("createAgentSession cache telemetry", () => {
 			settingsManager: SettingsManager.inMemory(),
 			sessionManager,
 		});
+		const telemetryDirectory = join(agentDir, "telemetry", "cache");
 		session.agent.onPayload = async (payload) => {
 			const record = payload as Record<string, unknown>;
 			return { ...record, input: [{ role: "user", content: FINAL_SENTINEL }] };
@@ -119,9 +130,10 @@ describe("createAgentSession cache telemetry", () => {
 				input: [{ role: "user", content: FINAL_SENTINEL }],
 			});
 
-			const telemetryDirectory = join(agentDir, "telemetry", "cache");
 			const key = Buffer.from(readFileSync(join(telemetryDirectory, "hmac.key"), "utf8").trim(), "hex");
-			const records = readFileSync(join(telemetryDirectory, "events.jsonl"), "utf8")
+			const eventLog = readdirSync(telemetryDirectory).find((name) => /^events\.active\./.test(name));
+			expect(eventLog).toBeDefined();
+			const records = readFileSync(join(telemetryDirectory, eventLog!), "utf8")
 				.trim()
 				.split("\n")
 				.map((line) => JSON.parse(line) as CacheRequestRecord | { type: string });
@@ -136,5 +148,74 @@ describe("createAgentSession cache telemetry", () => {
 			await session.dispose();
 			modelRegistry.unregisterProvider(model.provider);
 		}
+
+		expect(activeLogNames(telemetryDirectory)).toEqual([]);
+		expect(readdirSync(telemetryDirectory).some((name) => /^events\.\d+\./.test(name))).toBe(true);
+	});
+
+	it("keeps each SDK Session's active telemetry log independently owned", async () => {
+		const model = captureModel();
+		const authStorage = AuthStorage.create(join(agentDir, "auth.json"));
+		const modelRegistry = await createTestModelRegistry(authStorage, join(agentDir, "models.json"));
+		const telemetryDirectory = join(agentDir, "telemetry", "cache");
+		const first = await createAgentSession({
+			cwd,
+			agentDir,
+			model,
+			authStorage,
+			modelRegistry,
+			settingsManager: SettingsManager.inMemory(),
+			sessionManager: SessionManager.inMemory(cwd),
+		});
+		let firstDisposed = false;
+		let second: Awaited<ReturnType<typeof createAgentSession>> | undefined;
+		try {
+			const [firstLog] = activeLogNames(telemetryDirectory);
+			expect(firstLog).toBeDefined();
+			second = await createAgentSession({
+				cwd,
+				agentDir,
+				model,
+				authStorage,
+				modelRegistry,
+				settingsManager: SettingsManager.inMemory(),
+				sessionManager: SessionManager.inMemory(cwd),
+			});
+			const secondLog = activeLogNames(telemetryDirectory).find((name) => name !== firstLog);
+			expect(secondLog).toBeDefined();
+			expect(activeLogNames(telemetryDirectory)).toHaveLength(2);
+
+			await first.session.dispose();
+			firstDisposed = true;
+			expect(activeLogNames(telemetryDirectory)).toEqual([secondLog]);
+		} finally {
+			if (!firstDisposed) await first.session.dispose();
+			await second?.session.dispose();
+		}
+		expect(activeLogNames(telemetryDirectory)).toEqual([]);
+	});
+
+	it("removes the recorder active log when AgentSession construction fails", async () => {
+		const model = captureModel();
+		const authStorage = AuthStorage.create(join(agentDir, "auth.json"));
+		const modelRegistry = await createTestModelRegistry(authStorage, join(agentDir, "models.json"));
+		const otherRegistry = await createTestModelRegistry(authStorage, join(agentDir, "other-models.json"));
+
+		await expect(
+			createAgentSession({
+				cwd,
+				agentDir,
+				model,
+				authStorage,
+				modelRegistry,
+				modelRuntime: otherRegistry.modelRuntime,
+				settingsManager: SettingsManager.inMemory(),
+				sessionManager: SessionManager.inMemory(cwd),
+			}),
+		).rejects.toThrow("AgentSession modelRuntime must match modelRegistry.modelRuntime");
+
+		const telemetryDirectory = join(agentDir, "telemetry", "cache");
+		expect(activeLogNames(telemetryDirectory)).toEqual([]);
+		expect(readdirSync(telemetryDirectory).some((name) => /^events\.\d+\./.test(name))).toBe(false);
 	});
 });

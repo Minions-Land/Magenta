@@ -8,15 +8,17 @@
  *   3. Codex        (~/.codex/auth.json -> OPENAI_API_KEY, ~/.codex/config.toml -> base_url)
  */
 
-import { existsSync, readFileSync } from "fs";
-import { homedir } from "os";
-import { join } from "path";
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { parse } from "smol-toml";
 
 export type ExternalCredentialSource = "env" | "claude-code" | "codex";
 
 export type ExternalCredential = {
 	provider: string;
 	apiKey?: string;
+	apiKeyIsBearerToken?: boolean;
 	baseUrl?: string;
 	model?: string;
 	source: ExternalCredentialSource;
@@ -26,11 +28,13 @@ export type ExternalCredential = {
 export function loadEnvAuth(): ExternalCredential[] {
 	const creds: ExternalCredential[] = [];
 
-	const anthropicKey = process.env.ANTHROPIC_AUTH_TOKEN || process.env.ANTHROPIC_API_KEY;
+	const anthropicAuthToken = process.env.ANTHROPIC_AUTH_TOKEN;
+	const anthropicKey = anthropicAuthToken || process.env.ANTHROPIC_API_KEY;
 	if (anthropicKey) {
 		creds.push({
 			provider: "anthropic",
 			apiKey: anthropicKey,
+			apiKeyIsBearerToken: Boolean(anthropicAuthToken),
 			baseUrl: process.env.ANTHROPIC_BASE_URL,
 			model: process.env.ANTHROPIC_MODEL,
 			source: "env",
@@ -67,11 +71,13 @@ export function loadClaudeCodeAuth(): ExternalCredential[] {
 	try {
 		const settings = JSON.parse(readFileSync(settingsPath, "utf-8"));
 		const env = (settings.env ?? {}) as Record<string, string>;
-		const key = env.ANTHROPIC_AUTH_TOKEN || env.ANTHROPIC_API_KEY;
+		const authToken = env.ANTHROPIC_AUTH_TOKEN;
+		const key = authToken || env.ANTHROPIC_API_KEY;
 		if (key) {
 			creds.push({
 				provider: "anthropic",
 				apiKey: key,
+				apiKeyIsBearerToken: Boolean(authToken),
 				baseUrl: env.ANTHROPIC_BASE_URL,
 				model: env.ANTHROPIC_MODEL || (typeof settings.model === "string" ? settings.model : undefined),
 				source: "claude-code",
@@ -84,68 +90,38 @@ export function loadClaudeCodeAuth(): ExternalCredential[] {
 	return creds;
 }
 
-/** Minimal TOML lookup: find `base_url` for the active provider in config.toml.
+type TomlTable = Record<string, unknown>;
+
+function asTomlTable(value: unknown): TomlTable | undefined {
+	return typeof value === "object" && value !== null && !Array.isArray(value) ? (value as TomlTable) : undefined;
+}
+
+/** Structured TOML lookup: find `base_url` for the active provider in config.toml.
  *
  * Resolution order:
  *   1. Read `model_provider = "<name>"` from the top-level (pre-table) section.
  *   2. Find the matching `[model_providers.<name>]` section and return its base_url.
- *   3. Fall back to the first base_url found anywhere in the file.
+ *   3. If no provider is selected, return undefined rather than guessing an
+ *      endpoint from an inactive or stale provider table.
  *
  * Exported for unit testing.
  */
 export function parseCodexBaseUrl(toml: string): string | undefined {
-	const lines = toml.split("\n");
+	const config = asTomlTable(parse(toml));
+	if (!config) return undefined;
+	const activeProvider = typeof config.model_provider === "string" ? config.model_provider : undefined;
 
-	// Step 1: find active provider name from top-level config (before any [table]).
-	let activeProvider: string | undefined;
-	for (const line of lines) {
-		const trimmed = line.trim();
-		if (trimmed.startsWith("[")) break;
-		const m = trimmed.match(/^model_provider\s*=\s*"([^"]+)"/);
-		if (m) {
-			activeProvider = m[1];
-			break;
-		}
-	}
-
-	// Step 2: if we know the active provider, read base_url from its section only.
-	// We must NOT fall back to a different provider's base_url here, otherwise we'd
-	// mislabel the active provider with someone else's endpoint.
-	if (activeProvider) {
-		const sectionHeader = `[model_providers.${activeProvider}]`;
-		let inSection = false;
-		for (const line of lines) {
-			const trimmed = line.trim();
-			if (trimmed === sectionHeader) {
-				inSection = true;
-				continue;
-			}
-			if (inSection) {
-				if (trimmed.startsWith("[")) break; // left the section
-				const m = trimmed.match(/^base_url\s*=\s*"([^"]+)"/);
-				if (m) return m[1];
-			}
-		}
-		// Active provider declared but has no base_url: return undefined rather than
-		// borrowing another provider's URL.
-		return undefined;
-	}
-
-	// Step 3: no active provider declared — fall back to first base_url anywhere.
-	const fallback = toml.match(/base_url\s*=\s*"([^"]+)"/);
-	return fallback?.[1];
+	if (!activeProvider) return undefined;
+	const providers = asTomlTable(config.model_providers);
+	const activeConfig = asTomlTable(providers?.[activeProvider]);
+	return typeof activeConfig?.base_url === "string" ? activeConfig.base_url : undefined;
 }
 
 /** Find a top-level `model = "..."` (outside any [table]) in codex config.toml.
  *  Exported for unit testing. */
 export function parseCodexModel(toml: string): string | undefined {
-	for (const line of toml.split("\n")) {
-		const trimmed = line.trim();
-		if (trimmed.startsWith("[")) break; // stop at first table header
-		const match = trimmed.match(/^model\s*=\s*"([^"]+)"/);
-		if (match) return match[1];
-	}
-	return undefined;
+	const config = asTomlTable(parse(toml));
+	return typeof config?.model === "string" ? config.model : undefined;
 }
 
 /**
@@ -156,9 +132,10 @@ export function parseCodexModel(toml: string): string | undefined {
  * The custom base_url and default model live in ~/.codex/config.toml.
  *
  * Strategy:
- *   - OAuth tokens (ChatGPT Plus/Pro): ignore custom base_url, use official OpenAI API
+ *   - OAuth tokens (ChatGPT Plus/Pro): ignore them here; the access token is
+ *     not an OpenAI API key and Codex OAuth belongs to the openai-codex provider
  *   - API key: respect custom base_url and model from config.toml
- *   - If both OPENAI_API_KEY and custom provider exist: create multiple credentials
+ *   - If both OAuth and an API key exist, import only the explicit API key
  */
 export function loadCodexAuth(): ExternalCredential[] {
 	const creds: ExternalCredential[] = [];
@@ -188,19 +165,8 @@ export function loadCodexAuth(): ExternalCredential[] {
 		}
 	}
 
-	// Case 1: OAuth token (ChatGPT Plus/Pro)
-	// OAuth tokens only work with official OpenAI API, ignore custom base_url
-	if (auth.auth_mode === "chatgpt" && auth.tokens?.access_token) {
-		creds.push({
-			provider: "openai",
-			apiKey: auth.tokens.access_token,
-			baseUrl: undefined, // Force official API for OAuth
-			model: undefined, // Let Magenta choose default model
-			source: "codex",
-		});
-	}
-
-	// Case 2: API key (can use custom base_url)
+	// ChatGPT OAuth access tokens are deliberately not imported as OpenAI API keys.
+	// An explicit API key can use the configured custom base URL.
 	const explicitApiKey = auth.OPENAI_API_KEY || auth.openai?.key;
 	if (explicitApiKey) {
 		creds.push({

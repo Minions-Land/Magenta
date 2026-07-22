@@ -14,6 +14,17 @@ describe("buildSystemPrompt", () => {
 		expect(prompt).toContain("Current date: 2026-07-15");
 	});
 
+	test("does not inject the wall-clock date by default", () => {
+		const prompt = buildSystemPrompt({
+			selectedTools: [],
+			contextFiles: [],
+			skills: [],
+			cwd: "/repo",
+		});
+
+		expect(prompt).not.toContain("Current date:");
+	});
+
 	describe("empty tools", () => {
 		test("shows (none) for empty tools list", () => {
 			const prompt = buildSystemPrompt({

@@ -20,8 +20,8 @@ concurrency:
 
 jobs:
   build:
-    name: Build release binaries
-    runs-on: macos-14  # arm64 runner
+    name: Build and stage release candidates
+    runs-on: macos-15  # arm64 runner
     outputs:
       checksum_manifest_sha256: ${{ steps.checksums.outputs.manifest_sha256 }}
       release_tag: ${{ steps.release.outputs.tag }}
@@ -44,16 +44,47 @@ jobs:
         with:
           ref: refs/tags/${{ steps.release.outputs.tag }}
 
-      - name: Prepare release destination
+      - name: Require an unused release destination
         env:
           GH_TOKEN: ${{ secrets.MAGENTA_CLI_RELEASE_TOKEN }}
         run: |
-          if IS_DRAFT=$(gh release view "$RELEASE_TAG" --repo Minions-Land/Magenta-CLI --json isDraft --jq .isDraft 2>/dev/null); then
-            if [ "$IS_DRAFT" != "true" ]; then
-              echo "Release $RELEASE_TAG is already published" >&2
-              exit 1
-            fi
-            gh release delete "$RELEASE_TAG" --repo Minions-Land/Magenta-CLI --yes --cleanup-tag
+          if ! repository_write=$(gh api repos/Minions-Land/Magenta-CLI --jq '.permissions.push'); then
+            echo "Could not verify release-repository access; refusing to publish." >&2
+            exit 1
+          fi
+          if [ "$repository_write" != "true" ]; then
+            echo "Release token lacks write access to Minions-Land/Magenta-CLI; refusing to publish." >&2
+            exit 1
+          fi
+
+          lookup_dir=$(mktemp -d)
+          trap 'rm -rf "$lookup_dir"' EXIT
+          set +e
+          gh api --include \
+            "repos/Minions-Land/Magenta-CLI/releases/tags/$RELEASE_TAG" \
+            >"$lookup_dir/response" 2>"$lookup_dir/error"
+          lookup_status=$?
+          set -e
+
+          if [ "$lookup_status" -eq 0 ]; then
+            cat >&2 <<EOF
+          Refusing to overwrite the existing GitHub Release for $RELEASE_TAG.
+          This workflow never deletes a release or its Git tag automatically.
+
+          Recovery:
+          - Inspect and preserve the existing draft, signatures, assets, and receipts.
+          - For a published release, keep the tag immutable and prepare a new version.
+          - For an abandoned draft, an authorized maintainer may remove only the
+            GitHub Release object in the GitHub UI after audit; keep the Git tag.
+          - Rerun this workflow only after the destination is intentionally unused.
+          EOF
+            exit 1
+          fi
+
+          if ! head -n 1 "$lookup_dir/response" | grep -Eq '^HTTP/[0-9.]+ 404 '; then
+            echo "Could not prove that release destination $RELEASE_TAG is unused; refusing to publish." >&2
+            cat "$lookup_dir/error" >&2
+            exit 1
           fi
 
       - name: Setup Node.js
@@ -79,6 +110,22 @@ jobs:
           done
           rm -rf "$CLIPBOARD_STAGE"
           trap - EXIT
+
+      - name: Clean-build testable workspaces
+        run: |
+          npm run clean
+          npm run build:offline
+
+      - name: Verify source build version identity
+        run: |
+          node scripts/verify-brand-version.mjs \
+            --expected "${RELEASE_TAG#v}" \
+            --require-dist
+
+      - name: Run release checks and tests against the clean build
+        run: |
+          npm run check:release
+          npm test
       
       - name: Verify embedded binaries
         run: |
@@ -89,7 +136,14 @@ jobs:
         run: |
           cd pi/coding-agent
           npm run build:release-all
-      
+
+      - name: Verify release version identity
+        run: |
+          node scripts/verify-brand-version.mjs \
+            --expected "${RELEASE_TAG#v}" \
+            --require-dist \
+            --resource-marker pi/coding-agent/dist/release/magenta-release.json
+
       - name: Create release tarball
         run: |
           cd pi/coding-agent/dist/release
@@ -100,7 +154,7 @@ jobs:
             sandbox tools policy runtime skills theme assets \
             export-html docs examples package.json README.md \
             magenta-release.json \
-            CHANGELOG.md *.wasm
+            CHANGELOG.md ./*.wasm
           node --input-type=module <<'NODE'
           import { inspectReleaseResourceArchive } from "../utils/github-release-update-support.js";
           await inspectReleaseResourceArchive("magenta-resources-universal.tar.gz");
@@ -122,39 +176,210 @@ jobs:
           cat SHA256SUMS
           echo "manifest_sha256=$(shasum -a 256 SHA256SUMS | awk '{print $1}')" >> "$GITHUB_OUTPUT"
 
-      - name: Verify macOS release startup
+      - name: Atomically create the draft and upload release candidates
+        env:
+          GH_TOKEN: ${{ secrets.MAGENTA_CLI_RELEASE_TOKEN }}
         run: |
-          cd pi/coding-agent/dist/release
-          case "$(uname -m)" in
-            arm64) ./magenta-macos-arm64 --help > /tmp/magenta-help.txt ;;
-            x86_64) ./magenta-macos-x64 --help > /tmp/magenta-help.txt ;;
-            *) echo "Unsupported macOS runner architecture: $(uname -m)"; exit 1 ;;
-          esac
-          test -f _magenta/process-tools/target/release/magenta-process-tools
-
-      - name: Upload to draft release for verification
-        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3
-        with:
-          repository: Minions-Land/Magenta-CLI
-          token: ${{ secrets.MAGENTA_CLI_RELEASE_TOKEN }}
-          tag_name: ${{ env.RELEASE_TAG }}
-          target_commitish: main
-          files: |
-            pi/coding-agent/dist/release/magenta-macos-arm64
-            pi/coding-agent/dist/release/magenta-macos-x64
-            pi/coding-agent/dist/release/magenta-linux-x64
-            pi/coding-agent/dist/release/magenta-windows-x64.exe
-            pi/coding-agent/dist/release/magenta-resources-universal.tar.gz
-            pi/coding-agent/dist/release/install.ps1
-            pi/coding-agent/dist/release/SOURCE_COMMIT
+          gh release create "$RELEASE_TAG" \
+            --repo Minions-Land/Magenta-CLI \
+            --target main \
+            --draft \
+            --title "$RELEASE_TAG" \
+            --notes "Pending verification..." \
+            pi/coding-agent/dist/release/magenta-macos-arm64 \
+            pi/coding-agent/dist/release/magenta-macos-x64 \
+            pi/coding-agent/dist/release/magenta-linux-x64 \
+            pi/coding-agent/dist/release/magenta-windows-x64.exe \
+            pi/coding-agent/dist/release/magenta-resources-universal.tar.gz \
+            pi/coding-agent/dist/release/install.ps1 \
+            pi/coding-agent/dist/release/SOURCE_COMMIT \
             pi/coding-agent/dist/release/SHA256SUMS
-          draft: true
-          prerelease: false
-          body: "Pending verification..."
+
+  macos-signing-gate:
+    name: Import notarized macOS release candidates
+    needs: build
+    runs-on: macos-15
+    outputs:
+      checksum_manifest_sha256: ${{ steps.signed_receipt.outputs.manifest_sha256 }}
+    env:
+      RELEASE_TAG: ${{ needs.build.outputs.release_tag }}
+
+    steps:
+      - name: Require organization signing integration
+        id: signed_receipt
+        run: |
+          cat >&2 <<'EOF'
+          macOS publication is fail-closed: the draft contains cross-compiled
+          candidates, not verified macOS release assets. An organization-owned
+          signing service must sign every embedded and packaged Mach-O payload
+          plus both outer executables with a Developer ID Application certificate,
+          notarize each architecture with Apple, and replace the affected draft
+          binaries and universal resource archive.
+
+          This repository does not define or guess certificate/notary secret
+          names. Configure that integration in this job. It must bind its input
+          to the build job's candidate manifest digest, sign embedded payloads
+          before the final outer build/sign operation, replace both macOS draft
+          binaries and the resource archive containing the native clipboard
+          payload, prove all other assets are byte-identical to the build receipt,
+          regenerate SHA256SUMS for the exact draft asset set, and write
+          `manifest_sha256=<digest>` to GITHUB_OUTPUT before this
+          deliberate failure is removed. Every smoke job consumes that new
+          digest and waits for this job, so no platform can verify a mixture of
+          pre-signing and post-signing assets. Ad-hoc signatures, a third-party
+          Bun signature left in a modified executable, and checksum-only
+          evidence are not release verification.
+          EOF
+          exit 1
+
+  unix-installer-gate:
+    name: Require a provenance-bound transactional Unix installer
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Require a source-owned Unix installer transaction
+        run: |
+          cat >&2 <<'EOF'
+          Unix installer publication is fail-closed. The mutable install.sh in
+          the public distribution repository is not owned by this source tag,
+          is not covered by SOURCE_COMMIT or SHA256SUMS, and performs in-place
+          resource copies that can leave a mixed installation after failure.
+
+          Before removing this deliberate failure, add a reviewed source-owned
+          install.sh to this repository and publish that exact tagged file as a
+          Release asset. Include it in SHA256SUMS and the exact asset-set checks,
+          bind it to the tagged source through SOURCE_COMMIT, and download the
+          versioned Release asset instead of a mutable public main branch.
+
+          The installer must share the built-in updater's per-installation lock,
+          durably journal every activation phase, stage and validate the complete
+          binary/resource layout before mutation, atomically replace the binary,
+          and restore the complete previous resource set after any failure or
+          interrupted activation. Native Linux and macOS fault-injection smoke
+          tests must prove lock exclusion, journal recovery, binary atomicity,
+          and full resource rollback before this gate may pass.
+          EOF
+          exit 1
+
+  smoke-linux:
+    name: Smoke test Linux x64 release
+    needs: [build, macos-signing-gate]
+    runs-on: ubuntu-24.04
+    env:
+      RELEASE_TAG: ${{ needs.build.outputs.release_tag }}
+
+    steps:
+      - name: Download release assets from draft
+        run: |
+          gh release download "$RELEASE_TAG" --repo Minions-Land/Magenta-CLI --dir release --pattern '*'
+        env:
+          GH_TOKEN: ${{ secrets.MAGENTA_CLI_RELEASE_TOKEN }}
+
+      - name: Verify build receipt and native executable
+        run: |
+          EXPECTED="${{ needs.macos-signing-gate.outputs.checksum_manifest_sha256 }}"
+          ACTUAL=$(sha256sum release/SHA256SUMS | awk '{print $1}')
+          test -n "$EXPECTED"
+          test "$ACTUAL" = "$EXPECTED"
+          (cd release && sha256sum -c SHA256SUMS)
+          file release/magenta-linux-x64 | grep -Eq 'ELF 64-bit.*x86-64'
+          chmod +x release/magenta-linux-x64
+          test "$(release/magenta-linux-x64 --version)" = "${RELEASE_TAG#v}"
+          release/magenta-linux-x64 --help >/dev/null
+
+      - name: Install resources and exercise the installed native runtime
+        run: |
+          install_dir="$RUNNER_TEMP/magenta-linux-install"
+          mkdir -p "$install_dir" "$RUNNER_TEMP/magenta-linux-home"
+          tar -xzf release/magenta-resources-universal.tar.gz -C "$install_dir"
+          install -m 0755 release/magenta-linux-x64 "$install_dir/magenta"
+          test "$(HOME="$RUNNER_TEMP/magenta-linux-home" "$install_dir/magenta" --version)" = "${RELEASE_TAG#v}"
+          HOME="$RUNNER_TEMP/magenta-linux-home" "$install_dir/magenta" --help --offline smoke >/dev/null
+          process_tools="$install_dir/_magenta/process-tools/target/release/magenta-process-tools"
+          test -x "$process_tools"
+          "$process_tools" --help >/dev/null
+
+  smoke-macos:
+    name: Smoke test macOS ${{ matrix.arch }} release
+    needs: [build, macos-signing-gate]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-15
+            binary: magenta-macos-arm64
+          - arch: x64
+            runner: macos-15-intel
+            binary: magenta-macos-x64
+    runs-on: ${{ matrix.runner }}
+    env:
+      RELEASE_TAG: ${{ needs.build.outputs.release_tag }}
+
+    steps:
+      - name: Download release assets from draft
+        run: |
+          gh release download "$RELEASE_TAG" --repo Minions-Land/Magenta-CLI --dir release --pattern '*'
+        env:
+          GH_TOKEN: ${{ secrets.MAGENTA_CLI_RELEASE_TOKEN }}
+
+      - name: Verify build receipt and native architecture
+        run: |
+          EXPECTED="${{ needs.macos-signing-gate.outputs.checksum_manifest_sha256 }}"
+          ACTUAL=$(shasum -a 256 release/SHA256SUMS | awk '{print $1}')
+          test -n "$EXPECTED"
+          test "$ACTUAL" = "$EXPECTED"
+          (cd release && shasum -a 256 -c SHA256SUMS)
+          test "$(uname -m)" = "${{ matrix.arch == 'x64' && 'x86_64' || 'arm64' }}"
+          file "release/${{ matrix.binary }}" | grep -q "Mach-O 64-bit executable ${{ matrix.arch == 'x64' && 'x86_64' || 'arm64' }}"
+
+      - name: Require Developer ID and online notarization evidence
+        run: |
+          binary="release/${{ matrix.binary }}"
+          codesign --verify --strict --verbose=2 \
+            --test-requirement '=anchor apple generic and certificate leaf[field.1.2.840.113635.100.6.1.13] exists' \
+            "$binary"
+          codesign --verify --strict --check-notarization --verbose=2 "$binary"
+          spctl --assess --type execute --verbose=4 "$binary"
+          signature=$(codesign --display --verbose=4 "$binary" 2>&1)
+          grep -q '^Authority=Developer ID Application:' <<<"$signature"
+          grep -Eq '^TeamIdentifier=[A-Z0-9]+$' <<<"$signature"
+          ! grep -q '^Signature=adhoc$' <<<"$signature"
+
+      - name: Install resources and exercise the installed native runtime
+        run: |
+          install_dir="$RUNNER_TEMP/magenta-macos-install"
+          mkdir -p "$install_dir" "$RUNNER_TEMP/magenta-macos-home"
+          tar -xzf release/magenta-resources-universal.tar.gz -C "$install_dir"
+          install -m 0755 "release/${{ matrix.binary }}" "$install_dir/magenta"
+          test "$(HOME="$RUNNER_TEMP/magenta-macos-home" "$install_dir/magenta" --version)" = "${RELEASE_TAG#v}"
+          HOME="$RUNNER_TEMP/magenta-macos-home" "$install_dir/magenta" --help --offline smoke >/dev/null
+          process_tools="$install_dir/_magenta/process-tools/target/release/magenta-process-tools"
+          test -x "$process_tools"
+          "$process_tools" --help >/dev/null
+          verified_macho=0
+          while IFS= read -r -d '' payload; do
+            if ! file "$payload" | grep -q 'Mach-O'; then
+              continue
+            fi
+            codesign --verify --strict --verbose=2 \
+              --test-requirement '=anchor apple generic and certificate leaf[field.1.2.840.113635.100.6.1.13] exists' \
+              "$payload"
+            payload_signature=$(codesign --display --verbose=4 "$payload" 2>&1)
+            grep -q '^Authority=Developer ID Application:' <<<"$payload_signature"
+            grep -Eq '^TeamIdentifier=[A-Z0-9]+$' <<<"$payload_signature"
+            if grep -q '^Signature=adhoc$' <<<"$payload_signature"; then
+              echo "Ad-hoc signature is not allowed: $payload" >&2
+              exit 1
+            fi
+            verified_macho=$((verified_macho + 1))
+          done < <(find "$install_dir" -type f -print0)
+          test "$verified_macho" -ge 3
 
   smoke-windows:
     name: Smoke test Windows release
-    needs: build
+    needs: [build, macos-signing-gate]
     runs-on: windows-latest
     env:
       RELEASE_TAG: ${{ needs.build.outputs.release_tag }}
@@ -170,7 +395,7 @@ jobs:
       - name: Verify build checksum receipt and assets
         shell: powershell
         run: |
-          $expectedManifest = "${{ needs.build.outputs.checksum_manifest_sha256 }}"
+          $expectedManifest = "${{ needs.macos-signing-gate.outputs.checksum_manifest_sha256 }}"
           $actualManifest = (Get-FileHash -Algorithm SHA256 -Path "release\SHA256SUMS").Hash.ToLowerInvariant()
           if (-not $expectedManifest -or $actualManifest -ne $expectedManifest) {
             throw "Draft checksum manifest does not match the build job receipt"
@@ -249,6 +474,154 @@ jobs:
             if (-not $serverReady) { throw "Timed out waiting for the local release asset server" }
             & ".\release\install.ps1" -InstallDir $installDir -AssetBaseUrl "http://127.0.0.1:8765"
 
+            # Model a power loss after one old resource moved to backup but
+            # before replacement activation. The next installer run must use
+            # the durable journal to restore it, then complete a normal update.
+            $operationId = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            $installParent = Split-Path -Parent $installDir
+            $installLeaf = Split-Path -Leaf $installDir
+            $stagingDir = Join-Path $installParent (".$installLeaf.staging-$operationId")
+            $backupDir = Join-Path $installParent (".$installLeaf.backup-$operationId")
+            $journalPath = Join-Path $installDir ".magenta-install-update.json"
+            $ownershipMarkerName = ".magenta-installer-transaction.json"
+            New-Item -ItemType Directory -Path $stagingDir | Out-Null
+            New-Item -ItemType Directory -Path $backupDir | Out-Null
+            $oldEntryNames = @(
+              Get-ChildItem -LiteralPath $installDir -Force |
+                Where-Object { $_.Name -ne ".magenta-install-update.lock" } |
+                ForEach-Object Name
+            )
+            Copy-Item -LiteralPath (Join-Path $installDir "magenta.exe") -Destination (Join-Path $stagingDir "magenta.exe")
+            Move-Item -LiteralPath (Join-Path $installDir "README.md") -Destination (Join-Path $backupDir "README.md")
+            foreach ($marker in @(
+              @{ Directory = $stagingDir; Role = "staging" },
+              @{ Directory = $backupDir; Role = "backup" }
+            )) {
+              [ordered]@{
+                schemaVersion = 1
+                operationId = $operationId
+                installDir = $installDir
+                role = $marker.Role
+              } | ConvertTo-Json -Compress | Set-Content -LiteralPath (Join-Path $marker.Directory $ownershipMarkerName) -Encoding UTF8
+            }
+            $installedVersion = (& (Join-Path $installDir "magenta.exe") --version).Trim()
+            [ordered]@{
+              schemaVersion = 1
+              operationId = $operationId
+              installDir = $installDir
+              phase = "resources_backed_up"
+              stagingDir = $stagingDir
+              backupDir = $backupDir
+              hadPreviousInstall = $true
+              hadPreviousBinary = $true
+              oldEntryNames = $oldEntryNames
+              newEntryNames = $oldEntryNames
+              expectedBinarySha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $installDir "magenta.exe")).Hash.ToLowerInvariant()
+              targetVersion = $installedVersion
+            } | ConvertTo-Json -Depth 4 -Compress | Set-Content -LiteralPath $journalPath -Encoding UTF8
+
+            & ".\release\install.ps1" -InstallDir $installDir -AssetBaseUrl "http://127.0.0.1:8765"
+            if (Test-Path -LiteralPath $journalPath) { throw "Windows installer left its recovery journal behind" }
+            if (Test-Path -LiteralPath "$journalPath.tmp") { throw "Windows installer left a journal write behind" }
+            if (Test-Path -LiteralPath (Join-Path $installDir $ownershipMarkerName)) { throw "Windows installer left an active ownership marker behind" }
+            if (Test-Path -LiteralPath (Join-Path $installDir ".magenta-install-update.lock")) { throw "Windows installer left its shared lock behind" }
+            if (Test-Path -LiteralPath $stagingDir) { throw "Windows installer left interrupted staging behind" }
+            if (Test-Path -LiteralPath $backupDir) { throw "Windows installer left interrupted backup behind" }
+            if (-not (Test-Path -LiteralPath (Join-Path $installDir "README.md") -PathType Leaf)) { throw "Windows installer did not restore the interrupted resource move" }
+
+            # Model a power loss after the prepared journal and empty backup
+            # directory reached disk, but before the ownership marker write.
+            # Recovery may remove only that exact empty, journal-bound path.
+            $preparedOperationId = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            $preparedStagingDir = Join-Path $installParent (".$installLeaf.staging-$preparedOperationId")
+            $preparedBackupDir = Join-Path $installParent (".$installLeaf.backup-$preparedOperationId")
+            $preparedEntryNames = @(
+              Get-ChildItem -LiteralPath $installDir -Force |
+                Where-Object { $_.Name -ne ".magenta-install-update.lock" } |
+                ForEach-Object Name
+            )
+            New-Item -ItemType Directory -Path $preparedBackupDir | Out-Null
+            $preparedInstalledVersion = (& (Join-Path $installDir "magenta.exe") --version).Trim()
+            [ordered]@{
+              schemaVersion = 1
+              operationId = $preparedOperationId
+              installDir = $installDir
+              phase = "prepared"
+              stagingDir = $preparedStagingDir
+              backupDir = $preparedBackupDir
+              hadPreviousInstall = $true
+              hadPreviousBinary = $true
+              oldEntryNames = $preparedEntryNames
+              newEntryNames = $preparedEntryNames
+              expectedBinarySha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $installDir "magenta.exe")).Hash.ToLowerInvariant()
+              targetVersion = $preparedInstalledVersion
+            } | ConvertTo-Json -Depth 4 -Compress | Set-Content -LiteralPath $journalPath -Encoding UTF8
+
+            & ".\release\install.ps1" -InstallDir $installDir -AssetBaseUrl "http://127.0.0.1:8765"
+            if (Test-Path -LiteralPath $journalPath) { throw "Windows installer left its prepared recovery journal behind" }
+            if (Test-Path -LiteralPath $preparedBackupDir) { throw "Windows installer left its empty unmarked prepared backup behind" }
+            if (Test-Path -LiteralPath $preparedStagingDir) { throw "Windows installer created unexpected prepared staging state" }
+
+            # An InstallDir may be shared accidentally. Unknown top-level data
+            # must block both replacement and uninstall before either mutates it.
+            # A plausible but unowned WASM filename is deliberately used here:
+            # extension-wide allowlists would silently delete it.
+            $keepPath = Join-Path $installDir "user-notes.wasm"
+            "preserve me" | Set-Content -LiteralPath $keepPath -Encoding Ascii
+            $binaryBeforeUnmanagedChecks = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $installDir "magenta.exe")).Hash
+            $rejectedUnmanagedInstall = $false
+            try {
+              & ".\release\install.ps1" -InstallDir $installDir -AssetBaseUrl "http://127.0.0.1:8765"
+            } catch {
+              if ($_.Exception.Message -notmatch "unmanaged top-level entry") { throw }
+              $rejectedUnmanagedInstall = $true
+            }
+            if (-not $rejectedUnmanagedInstall) { throw "Windows installer accepted an unmanaged top-level file" }
+            $rejectedUnmanagedUninstall = $false
+            try {
+              & ".\release\install.ps1" -InstallDir $installDir -Uninstall
+            } catch {
+              if ($_.Exception.Message -notmatch "unmanaged top-level entry") { throw }
+              $rejectedUnmanagedUninstall = $true
+            }
+            if (-not $rejectedUnmanagedUninstall) { throw "Windows uninstaller accepted an unmanaged top-level file" }
+            if ((Get-Content -LiteralPath $keepPath -Raw).Trim() -ne "preserve me") { throw "Windows installer changed unmanaged data" }
+            $binaryAfterUnmanagedChecks = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $installDir "magenta.exe")).Hash
+            if ($binaryAfterUnmanagedChecks -ne $binaryBeforeUnmanagedChecks) { throw "Windows installer mutated Magenta before unmanaged-data rejection" }
+            if (Test-Path -LiteralPath $journalPath) { throw "Windows installer journaled an unmanaged-data rejection" }
+            if (Test-Path -LiteralPath (Join-Path $installDir ".magenta-install-update.lock")) { throw "Windows installer left its lock after unmanaged-data rejection" }
+            Remove-Item -LiteralPath $keepPath -Force
+
+            # Even allowlisted names such as README.md and docs are generic.
+            # A non-empty directory without magenta.exe has no installation
+            # ownership evidence and must remain byte-for-byte untouched.
+            $genericDir = "$installDir-generic-managed-names"
+            New-Item -ItemType Directory -Path (Join-Path $genericDir "docs") -Force | Out-Null
+            "generic readme" | Set-Content -LiteralPath (Join-Path $genericDir "README.md") -Encoding Ascii
+            "user document" | Set-Content -LiteralPath (Join-Path $genericDir "docs\user.txt") -Encoding Ascii
+            $rejectedGenericInstall = $false
+            try {
+              & ".\release\install.ps1" -InstallDir $genericDir -AssetBaseUrl "http://127.0.0.1:8765"
+            } catch {
+              if ($_.Exception.Message -notmatch "managed-looking data but no Magenta executable") { throw }
+              $rejectedGenericInstall = $true
+            }
+            if (-not $rejectedGenericInstall) { throw "Windows installer accepted generic managed-looking data without ownership evidence" }
+            $rejectedGenericUninstall = $false
+            try {
+              & ".\release\install.ps1" -InstallDir $genericDir -Uninstall
+            } catch {
+              if ($_.Exception.Message -notmatch "managed-looking data but no Magenta executable") { throw }
+              $rejectedGenericUninstall = $true
+            }
+            if (-not $rejectedGenericUninstall) { throw "Windows uninstaller accepted generic managed-looking data without ownership evidence" }
+            if ((Get-Content -LiteralPath (Join-Path $genericDir "README.md") -Raw).Trim() -ne "generic readme") { throw "Windows installer changed generic README data" }
+            if ((Get-Content -LiteralPath (Join-Path $genericDir "docs\user.txt") -Raw).Trim() -ne "user document") { throw "Windows installer changed generic docs data" }
+            if (Test-Path -LiteralPath (Join-Path $genericDir "magenta.exe")) { throw "Windows installer added a binary before ownership rejection" }
+            if (Test-Path -LiteralPath (Join-Path $genericDir ".magenta-install-update.json")) { throw "Windows installer journaled a generic-data rejection" }
+            if (Test-Path -LiteralPath (Join-Path $genericDir ".magenta-install-update.lock")) { throw "Windows installer left its lock after generic-data rejection" }
+            Remove-Item -LiteralPath $genericDir -Recurse -Force
+
             # The installer must inspect the archive before extraction. A
             # checksum-valid tar containing a top-level magenta.exe could
             # otherwise overwrite the binary that was verified above.
@@ -299,8 +672,8 @@ jobs:
           "$install_dir/magenta.exe" --help >/dev/null
 
   publish:
-    name: Publish verified release
-    needs: [build, smoke-windows]
+    name: Publish platform-gated release
+    needs: [build, macos-signing-gate, unix-installer-gate, smoke-linux, smoke-macos, smoke-windows]
     runs-on: ubuntu-latest
     env:
       RELEASE_TAG: ${{ needs.build.outputs.release_tag }}
@@ -311,11 +684,11 @@ jobs:
         with:
           ref: refs/tags/${{ env.RELEASE_TAG }}
 
-      - name: Download verified release assets from draft
+      - name: Download platform-gated release assets from draft
         run: |
           test "$(gh release view "$RELEASE_TAG" --repo Minions-Land/Magenta-CLI --json isDraft --jq .isDraft)" = "true"
           gh release download "$RELEASE_TAG" --repo Minions-Land/Magenta-CLI --dir release --pattern '*'
-          EXPECTED="${{ needs.build.outputs.checksum_manifest_sha256 }}"
+          EXPECTED="${{ needs.macos-signing-gate.outputs.checksum_manifest_sha256 }}"
           ACTUAL=$(sha256sum release/SHA256SUMS | awk '{print $1}')
           test -n "$EXPECTED"
           test "$ACTUAL" = "$EXPECTED"
@@ -331,20 +704,26 @@ jobs:
         id: release_notes
         run: |
           VERSION="${RELEASE_TAG}"
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          
-          # Extract release notes from CHANGELOG
-          cd pi/coding-agent
-          awk "/^## \[${VERSION#v}\]/{flag=1; next} /^## \[/{flag=0} flag" CHANGELOG.md > /tmp/release_notes.md
-          
-          # Fallback if no notes found
-          if [ ! -s /tmp/release_notes.md ]; then
-            echo "Release $VERSION" > /tmp/release_notes.md
-          fi
-          printf '\nSource commit: https://github.com/Minions-Land/Magenta/commit/%s\n' "$(cat ../../release/SOURCE_COMMIT)" >> /tmp/release_notes.md
+          RELEASE_NOTES_PATH="$RUNNER_TEMP/magenta-release-notes.md"
+          export RELEASE_NOTES_PATH
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+          RELEASE_NOTES_VERSION="${VERSION#v}" node --input-type=module <<'NODE'
+          import { readFileSync, writeFileSync } from "node:fs";
+          import { extractReleaseNotes } from "./scripts/release.mjs";
+
+          const version = process.env.RELEASE_NOTES_VERSION;
+          const outputPath = process.env.RELEASE_NOTES_PATH;
+          if (!outputPath) throw new Error("RELEASE_NOTES_PATH is required");
+          const changelog = readFileSync("pi/coding-agent/CHANGELOG.md", "utf8");
+          writeFileSync(outputPath, extractReleaseNotes(changelog, version), { mode: 0o600 });
+          NODE
+          printf '\nSource commit: https://github.com/Minions-Land/Magenta/commit/%s\n' "$(cat release/SOURCE_COMMIT)" >> "$RELEASE_NOTES_PATH"
       
       - name: Finalize GitHub Release
         run: |
+          RELEASE_NOTES_PATH="$RUNNER_TEMP/magenta-release-notes.md"
+          test -f "$RELEASE_NOTES_PATH"
           # Get the verified draft release ID without interpolating the tag into jq.
           RELEASE_ID=$(gh release view "$RELEASE_TAG" --repo Minions-Land/Magenta-CLI \
             --json databaseId,isDraft --jq 'select(.isDraft == true) | .databaseId')
@@ -355,7 +734,7 @@ jobs:
 
           # Update release notes and finalize (draft=false).
           gh api "/repos/Minions-Land/Magenta-CLI/releases/$RELEASE_ID" -X PATCH \
-            -f body="$(cat /tmp/release_notes.md)" \
+            -f body="$(cat "$RELEASE_NOTES_PATH")" \
             -F draft=false \
             -F prerelease=false
 

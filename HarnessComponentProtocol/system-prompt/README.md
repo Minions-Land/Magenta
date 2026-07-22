@@ -24,16 +24,17 @@ exactly one product.
 - `formatSkillsForSystemPrompt(skills, options)` for Agent Skills XML; and
 - `loadDescriptor(path)` for validated descriptor loading.
 
-The composition function is deterministic when `currentDate` is supplied. It
-preserves caller order for tools, guidelines, appended prompt content, context
-files, and skills. Its section order is:
+The composition function does not read the wall clock, so its default output is
+stable across midnight. A caller may supply `currentDate` to add a deterministic
+date explicitly. The function preserves caller order for tools, guidelines,
+appended prompt content, context files, and skills. Its section order is:
 
 1. selected default or custom base;
 2. host-selected appended prompt content;
 3. conditional bundled operational fragment;
 4. project context files;
 5. model-visible skills when `read` is active; and
-6. date and working directory.
+6. optional caller-supplied date, then working directory.
 
 A custom base replaces the default Magenta identity, tool list, guidelines,
 collaboration principles, and documentation section. It does **not** suppress a

@@ -2,6 +2,7 @@ import { PassThrough } from "node:stream";
 import { describe, expect, it } from "vitest";
 import {
 	MAX_PEER_LINK_FRAME_BYTES,
+	PEER_LINK_CAPABILITY_DURABLE_CUSTODY,
 	PEER_LINK_CAPABILITY_GOSSIP_TRANSIT,
 	type PeerLinkEnvelope,
 	parsePeerLinkFrame,
@@ -12,9 +13,10 @@ import { PeerLinkSession, type PeerLinkStorage } from "../../tools/send-message/
 type OutboxRow = {
 	message: PeerLinkEnvelope;
 	target?: string;
-	status: "pending" | "inflight" | "forwarded";
+	status: "pending" | "inflight" | "forwarded" | "rejected";
 	owner?: string;
 	retryAfter?: number;
+	settled?: boolean;
 };
 
 class MemoryPeerStore implements PeerLinkStorage {
@@ -23,6 +25,7 @@ class MemoryPeerStore implements PeerLinkStorage {
 	readonly inbox: PeerLinkEnvelope[] = [];
 	notFoundRequeues = 0;
 	maintenanceRuns = 0;
+	claimCalls = 0;
 	private readonly seen = new Set<string>();
 	private readonly storeId: string;
 	private readonly sessions: string[];
@@ -40,6 +43,10 @@ class MemoryPeerStore implements PeerLinkStorage {
 		return [...this.sessions];
 	}
 
+	replaceSessions(sessions: string[]) {
+		this.sessions.splice(0, this.sessions.length, ...sessions);
+	}
+
 	listAdvertisableSessions(_excludePeerStoreId?: string): string[] {
 		// Memory store has no cross-peer route propagation; advertise local sessions.
 		return [...this.sessions];
@@ -55,12 +62,15 @@ class MemoryPeerStore implements PeerLinkStorage {
 		ownerId: string,
 		includeUnresolved: boolean,
 		limit: number,
-		options?: { allowTransit?: boolean },
+		options?: { allowTransit?: boolean; reclaimUnsettledForwarded?: boolean },
 	) {
+		this.claimCalls++;
 		const claimed: PeerLinkEnvelope[] = [];
 		for (const row of this.outbox) {
 			if (claimed.length >= limit) break;
-			if (row.status !== "pending" || (row.retryAfter ?? 0) > Date.now()) continue;
+			const reclaimForwarded =
+				options?.reclaimUnsettledForwarded === true && row.status === "forwarded" && row.settled !== true;
+			if ((row.status !== "pending" && !reclaimForwarded) || (row.retryAfter ?? 0) > Date.now()) continue;
 			if (
 				options?.allowTransit === false &&
 				(row.message.originStoreId !== this.storeId || row.message.visitedStoreIds.length !== 1)
@@ -74,11 +84,12 @@ class MemoryPeerStore implements PeerLinkStorage {
 		return claimed;
 	}
 
-	ackOutbound(messageIds: string[], ownerId: string) {
+	ackOutbound(messageIds: string[], ownerId: string, options: { durableCustody: boolean }) {
 		for (const row of this.outbox) {
 			if (messageIds.includes(row.message.id) && row.status === "inflight" && row.owner === ownerId) {
 				row.status = "forwarded";
 				row.owner = undefined;
+				if (options.durableCustody) row.settled = true;
 			}
 		}
 	}
@@ -87,10 +98,9 @@ class MemoryPeerStore implements PeerLinkStorage {
 		if (options?.notFound) this.notFoundRequeues += messageIds.length;
 		for (const row of this.outbox) {
 			if (messageIds.includes(row.message.id) && row.status === "inflight" && row.owner === ownerId) {
-				row.status = "pending";
+				row.status = options?.notFound ? "rejected" : "pending";
 				row.owner = undefined;
-				if (options?.notFound) row.retryAfter = Date.now() + 50;
-				else delete row.retryAfter;
+				delete row.retryAfter;
 			}
 		}
 	}
@@ -233,11 +243,13 @@ function attachOriginMainV1Responder(input: PassThrough, output: PassThrough) {
 }
 
 describe("PeerLinkSession", () => {
-	it("bounds large V1 session advertisements instead of tearing down the link", async () => {
-		const sessions = Array.from(
+	it("keeps prioritized sessions in bounded handshake and refresh advertisements", async () => {
+		const lowerPrioritySessions = Array.from(
 			{ length: 5000 },
-			(_, index) => `session-${index.toString().padStart(5, "0")}-${"x".repeat(32)}`,
+			(_, index) => `a-session-${index.toString().padStart(5, "0")}-${"x".repeat(32)}`,
 		);
+		const liveSession = `z-live-session-${"x".repeat(32)}`;
+		const sessions = [liveSession, ...lowerPrioritySessions];
 		const local = new MemoryPeerStore("store-a", sessions);
 		const input = new PassThrough();
 		const output = new PassThrough();
@@ -245,7 +257,13 @@ describe("PeerLinkSession", () => {
 		output.on("data", (chunk) => {
 			wire += chunk.toString();
 		});
-		const link = new PeerLinkSession({ role: "initiator", input, output, storage: local });
+		const link = new PeerLinkSession({
+			role: "initiator",
+			input,
+			output,
+			storage: local,
+			sessionRefreshIntervalMs: 5,
+		});
 		try {
 			const started = link.start();
 			await waitFor(() => wire.includes("\n"));
@@ -255,9 +273,21 @@ describe("PeerLinkSession", () => {
 			expect(hello.type).toBe("hello");
 			if (hello.type !== "hello") throw new Error("expected hello frame");
 			expect(hello.sessions.length).toBeLessThan(sessions.length);
-			expect(hello.sessions[0]).toBe(sessions[0]);
+			expect(hello.sessions[0]).toBe(liveSession);
+			expect(hello.sessions).not.toContain(lowerPrioritySessions.at(-1));
 			input.write(serializePeerLinkFrame({ type: "hello_ack", protocol: 1, storeId: "store-b", sessions: [] }));
 			await started;
+
+			const refreshedLiveSession = `zz-refreshed-live-session-${"x".repeat(32)}`;
+			local.replaceSessions([refreshedLiveSession, liveSession, ...lowerPrioritySessions]);
+			await waitFor(() => wire.trimEnd().split("\n").length >= 2);
+			const refreshLine = wire.trimEnd().split("\n")[1];
+			expect(Buffer.byteLength(refreshLine, "utf8")).toBeLessThanOrEqual(MAX_PEER_LINK_FRAME_BYTES);
+			const refresh = parsePeerLinkFrame(refreshLine);
+			expect(refresh.type).toBe("sessions");
+			if (refresh.type !== "sessions") throw new Error("expected sessions frame");
+			expect(refresh.sessions.slice(0, 2)).toEqual([refreshedLiveSession, liveSession]);
+			expect(refresh.sessions).not.toContain(lowerPrioritySessions.at(-1));
 		} finally {
 			await link.close();
 		}
@@ -298,10 +328,14 @@ describe("PeerLinkSession", () => {
 			await link.start();
 			await waitFor(() => local.outbox[1]?.status === "forwarded");
 			await new Promise((resolve) => setTimeout(resolve, 25));
-			expect(legacy.probe.helloCapabilities).toEqual([PEER_LINK_CAPABILITY_GOSSIP_TRANSIT]);
+			expect(legacy.probe.helloCapabilities).toEqual([
+				PEER_LINK_CAPABILITY_GOSSIP_TRANSIT,
+				PEER_LINK_CAPABILITY_DURABLE_CUSTODY,
+			]);
 			expect(legacy.probe.receivedMessages.map((message) => message.id)).toEqual(["m:direct-old"]);
 			expect(legacy.probe.acceptedMessages.map((message) => message.id)).toEqual(["m:direct-old"]);
 			expect(local.outbox[0]?.status).toBe("pending");
+			expect(local.outbox[1]?.settled).toBe(true);
 			expect(local.notFoundRequeues).toBe(0);
 		} finally {
 			await link.close();
@@ -316,6 +350,93 @@ describe("PeerLinkSession", () => {
 			await Promise.all([upgraded.responder.start(), upgraded.initiator.start()]);
 			await waitFor(() => upgradedRemote.inbox.some((message) => message.id === "m:transit"));
 			expect(local.outbox[0]?.status).toBe("forwarded");
+		} finally {
+			await Promise.all([upgraded.initiator.close(), upgraded.responder.close()]);
+		}
+	});
+
+	it("sends nothing to a transit-only gossip peer while continuing to accept its inbound traffic", async () => {
+		const local = new MemoryPeerStore("store-new", ["session-new"]);
+		local.outbox.push({
+			message: envelope("m:direct-held", "session-new", "session-old", "store-new"),
+			target: "store-old",
+			status: "pending",
+		});
+		local.outbox.push({
+			message: {
+				...envelope("m:transit-held", "session-origin", "session-old", "store-origin"),
+				visitedStoreIds: ["store-origin", "store-new"],
+				hopsRemaining: 1,
+			},
+			target: "store-old",
+			status: "pending",
+		});
+
+		const toPrevious = new PassThrough();
+		const fromPrevious = new PassThrough();
+		let wire = "";
+		toPrevious.on("data", (chunk) => {
+			wire += chunk.toString();
+		});
+		const previousLink = new PeerLinkSession({
+			role: "initiator",
+			input: fromPrevious,
+			output: toPrevious,
+			storage: local,
+			includeUnresolvedOutbound: true,
+			flushIntervalMs: 5,
+			sessionRefreshIntervalMs: 1_000,
+		});
+		try {
+			const started = previousLink.start();
+			await waitFor(() => wire.includes("\n"));
+			fromPrevious.write(
+				serializePeerLinkFrame({
+					type: "hello_ack",
+					protocol: 1,
+					storeId: "store-old",
+					sessions: ["session-old"],
+					capabilities: [PEER_LINK_CAPABILITY_GOSSIP_TRANSIT],
+				}),
+			);
+			await started;
+			fromPrevious.write(
+				serializePeerLinkFrame({
+					type: "message",
+					message: envelope("m:from-previous", "session-old", "session-new", "store-old"),
+				}),
+			);
+			await waitFor(() => local.inbox.some((message) => message.id === "m:from-previous"));
+			await new Promise((resolve) => setTimeout(resolve, 25));
+
+			const frames = wire
+				.trimEnd()
+				.split("\n")
+				.map((line) => parsePeerLinkFrame(line));
+			const hello = frames[0];
+			expect(hello?.type).toBe("hello");
+			if (hello?.type !== "hello") throw new Error("expected hello frame");
+			expect(hello.capabilities).toEqual([
+				PEER_LINK_CAPABILITY_GOSSIP_TRANSIT,
+				PEER_LINK_CAPABILITY_DURABLE_CUSTODY,
+			]);
+			expect(frames.some((frame) => frame.type === "message")).toBe(false);
+			expect(frames).toContainEqual({ type: "ack", messageId: "m:from-previous", status: "accepted" });
+			expect(local.claimCalls).toBe(0);
+			expect(local.outbox.map((row) => row.status)).toEqual(["pending", "pending"]);
+		} finally {
+			await previousLink.close();
+		}
+
+		const upgradedRemote = new MemoryPeerStore("store-old", ["session-old"]);
+		const upgraded = linkedSessions(local, upgradedRemote);
+		try {
+			await Promise.all([upgraded.responder.start(), upgraded.initiator.start()]);
+			await waitFor(() => upgradedRemote.inbox.length === 2);
+			expect(new Set(upgradedRemote.inbox.map((message) => message.id))).toEqual(
+				new Set(["m:direct-held", "m:transit-held"]),
+			);
+			expect(local.outbox.every((row) => row.status === "forwarded" && row.settled === true)).toBe(true);
 		} finally {
 			await Promise.all([upgraded.initiator.close(), upgraded.responder.close()]);
 		}

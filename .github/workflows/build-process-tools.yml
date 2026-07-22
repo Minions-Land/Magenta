@@ -62,8 +62,14 @@ jobs:
         run: |
           binary=target/${{ matrix.target }}/release/magenta-process-tools
           file "$binary"
-          ! readelf -l "$binary" | grep -q 'Requesting program interpreter'
-          ! strings "$binary" | grep -Eq 'GLIBC_[0-9]'
+          if readelf -l "$binary" | grep -q 'Requesting program interpreter'; then
+            echo "Linux release binary unexpectedly requires a program interpreter" >&2
+            exit 1
+          fi
+          if strings "$binary" | grep -Eq 'GLIBC_[0-9]'; then
+            echo "Linux release binary unexpectedly references glibc symbols" >&2
+            exit 1
+          fi
           "$binary" --help >/dev/null
 
       - name: Rename binary (Unix)

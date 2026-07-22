@@ -39,6 +39,9 @@ import type {
 	RpcSlashCommand,
 } from "./rpc-types.ts";
 
+/** Internal child-process optimization used by Magenta's multiagent controller. */
+export const INTERNAL_RPC_SUPPRESS_MESSAGE_UPDATES_ENV = "MAGENTA_INTERNAL_RPC_SUPPRESS_MESSAGE_UPDATES";
+
 // Re-export types for consumers
 export type {
 	RpcCommand,
@@ -54,6 +57,9 @@ export type {
  */
 export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<never> {
 	takeOverStdout();
+	// Capture once at process startup. Ordinary RPC clients do not set this and
+	// continue receiving the complete event stream.
+	const suppressMessageUpdates = process.env[INTERNAL_RPC_SUPPRESS_MESSAGE_UPDATES_ENV] === "1";
 	let session = runtimeHost.session;
 	let unsubscribe: (() => void) | undefined;
 	let unsubscribeBackpressure: (() => void) | undefined;
@@ -355,6 +361,7 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 		const bufferedEvents: object[] = [];
 		let binding = true;
 		unsubscribe = session.subscribe((event) => {
+			if (suppressMessageUpdates && event.type === "message_update") return;
 			if (binding) bufferedEvents.push(event);
 			else output(event);
 			if (event.type === "agent_end" && shutdownRequested && inputReady) void shutdown();

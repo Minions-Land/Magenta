@@ -197,11 +197,9 @@ export class ModelRuntime implements Models {
 	 * no hard dependency on the pi-ai Radius port.
 	 */
 	private configureRadiusProviders(): void {
-		const radiusFactory = (
-			builtinProviderCatalog as {
-				radiusProvider?: (options: { id: string; name: string; gateway: string }) => Provider;
-			}
-		).radiusProvider;
+		const radiusFactory = Reflect.get(builtinProviderCatalog, "radiusProvider") as
+			| ((options: { id: string; name: string; gateway: string }) => Provider)
+			| undefined;
 		if (typeof radiusFactory !== "function") return;
 		this.builtins.clear();
 		for (const [providerId, provider] of this.defaultBuiltins) this.builtins.set(providerId, provider);

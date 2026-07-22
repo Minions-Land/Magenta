@@ -78,7 +78,7 @@ syntax.jsonl
 out.jsonl
 pi-*.html
 out.html
-packages/coding-agent/binaries/
+pi/coding-agent/binaries/
 todo.md
 plans/
 .pi/hf-sessions/

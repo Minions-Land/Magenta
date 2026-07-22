@@ -2,6 +2,7 @@ import { type ChildProcess, type SpawnOptions, spawn } from "node:child_process"
 import type { SshTarget } from "../../../_magenta/env/ssh.ts";
 import { MessageStore, type PeerEndpoint } from "./message-store.ts";
 import { peerEndpointId } from "./peer-endpoint.ts";
+import { encodePeerRelayGenerationArgs, isPeerRelayLockActive, peerRelayGeneration } from "./peer-relay-lock.ts";
 
 export type RemoteMailboxSpawn = (command: string, args: string[], options: SpawnOptions) => ChildProcess;
 export type AgentInvocationResolver = (args: string[]) => { command: string; args: string[] };
@@ -73,14 +74,8 @@ export class RemoteMailboxController {
 				this.spawnRetryAt.delete(endpoint.id);
 				continue;
 			}
-			if (endpoint.relayPid && MessageStore.isProcessAlive(endpoint.relayPid)) {
-				this.spawnRetryAt.delete(endpoint.id);
-				continue;
-			}
-			if ((this.spawnRetryAt.get(endpoint.id) ?? 0) > now) continue;
-			this.spawnRetryAt.set(endpoint.id, now + this.spawnRetryMs);
 			try {
-				const args = [
+				const relayArgs = [
 					"_peer",
 					"relay",
 					"--db",
@@ -89,9 +84,35 @@ export class RemoteMailboxController {
 					endpoint.id,
 					"--remote",
 					endpoint.remote,
+					"--stay-alive",
 				];
-				if (endpoint.port) args.push("--port", String(endpoint.port));
-				const invocation = this.resolveInvocation(args);
+				if (endpoint.port) relayArgs.push("--port", String(endpoint.port));
+				const generationInvocation = this.resolveInvocation(relayArgs);
+				const generation = peerRelayGeneration(generationInvocation);
+				const lockActive = isPeerRelayLockActive(this.dbPath, endpoint.id);
+				// While the lock is held, the persisted generation describes its owner.
+				// Supervisors from another installed release may share this database; if
+				// they rewrote that generation, each one-second poll would supersede the
+				// other's healthy relay and churn the SSH link.
+				if (lockActive) {
+					this.spawnRetryAt.delete(endpoint.id);
+					continue;
+				}
+				// A pid without the endpoint lock is never ownership proof. During a
+				// pre-lock upgrade it may already belong to an unrelated reused process;
+				// receiver-side deduplication makes a brief old/new overlap safer than an
+				// indefinitely dead link.
+				if ((this.spawnRetryAt.get(endpoint.id) ?? 0) > now) continue;
+				this.spawnRetryAt.set(endpoint.id, now + this.spawnRetryMs);
+				const invocation = this.resolveInvocation([
+					...relayArgs,
+					"--generation",
+					generation,
+					"--generation-command",
+					generationInvocation.command,
+					"--generation-args",
+					encodePeerRelayGenerationArgs(generationInvocation.args),
+				]);
 				const child = this.spawnRelay(invocation.command, invocation.args, {
 					detached: true,
 					stdio: "ignore",

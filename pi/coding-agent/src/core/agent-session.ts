@@ -21,6 +21,7 @@ import type {
 	AgentMessage,
 	AgentState,
 	AgentTool,
+	PrepareNextTurnContext,
 	ThinkingLevel,
 } from "@earendil-works/pi-agent-core";
 import { isRetryableAssistantError } from "@earendil-works/pi-ai";
@@ -283,6 +284,8 @@ export interface AgentSessionConfig {
 	extensionRunnerRef?: { current?: ExtensionRunner };
 	/** Session start event metadata emitted when extensions bind to this runtime. */
 	sessionStartEvent?: SessionStartEvent;
+	/** Internal best-effort cleanup for resources owned by this Session factory. */
+	disposeCallback?: () => void | Promise<void>;
 }
 
 export interface ExtensionBindings {
@@ -485,6 +488,7 @@ export class AgentSession {
 	private _extensionShutdownHandler?: ShutdownHandler;
 	private _extensionErrorListener?: ExtensionErrorListener;
 	private _extensionErrorUnsubscriber?: () => void;
+	private _disposeCallback?: () => void | Promise<void>;
 	private _backgroundEvents: BackgroundEventManager;
 	private _backgroundReminders: BackgroundReminderCoordinator;
 	private _externalActivations: ExternalActivationCoordinator;
@@ -518,6 +522,7 @@ export class AgentSession {
 	// Base system prompt (without extension appends) - used to apply fresh appends each turn
 	private _baseSystemPrompt = "";
 	private _baseSystemPromptOptions!: BuildSystemPromptOptions;
+	private _systemPromptOverride?: string;
 
 	constructor(config: AgentSessionConfig) {
 		this.agent = config.agent;
@@ -538,6 +543,7 @@ export class AgentSession {
 		this._modelRegistry = config.modelRegistry;
 		this._authStorage = config.authStorage;
 		this._extensionRunnerRef = config.extensionRunnerRef;
+		this._disposeCallback = config.disposeCallback;
 		this._initialActiveToolNames = config.initialActiveToolNames;
 		this._autoActivateLoadedTools = config.autoActivateLoadedTools ?? config.initialActiveToolNames === undefined;
 		this._autoActivateDefaultTools = config.autoActivateDefaultTools ?? this._autoActivateLoadedTools;
@@ -608,6 +614,7 @@ export class AgentSession {
 		// (session persistence, extensions, auto-compaction, retry logic)
 		this._unsubscribeAgent = this.agent.subscribe(this._handleAgentEvent);
 		this._installAgentToolHooks();
+		this._installAgentNextTurnRefresh();
 
 		this._buildRuntime({
 			activeToolNames: this._initialActiveToolNames,
@@ -697,6 +704,29 @@ export class AgentSession {
 					runtimes.teammates = runtime;
 				},
 			},
+		};
+	}
+
+	private _installAgentNextTurnRefresh(): void {
+		const previousPrepareNextTurnWithContext =
+			this.agent.prepareNextTurnWithContext ??
+			(this.agent.prepareNextTurn
+				? async (_turn: PrepareNextTurnContext, signal?: AbortSignal) => await this.agent.prepareNextTurn?.(signal)
+				: undefined);
+		this.agent.prepareNextTurnWithContext = async (turn, signal) => {
+			const previousSnapshot = await previousPrepareNextTurnWithContext?.(turn, signal);
+			const previousContext = previousSnapshot?.context ?? turn.context;
+
+			return {
+				...previousSnapshot,
+				context: {
+					...previousContext,
+					systemPrompt: this._systemPromptOverride ?? this._baseSystemPrompt,
+					tools: this.agent.state.tools.slice(),
+				},
+				model: this.agent.state.model,
+				thinkingLevel: this.agent.state.thinkingLevel,
+			};
 		};
 	}
 
@@ -1431,6 +1461,7 @@ export class AgentSession {
 	 */
 	async dispose(): Promise<void> {
 		let resourceDisposal = Promise.resolve();
+		let agentIdle = false;
 		try {
 			// A host wake that has not started must not resume after disposal waits for
 			// an active run to abort and become idle.
@@ -1445,6 +1476,7 @@ export class AgentSession {
 			this._backgroundShell.shutdown();
 			this.agent.abort();
 			await this.agent.waitForIdle();
+			agentIdle = true;
 			resourceDisposal = Promise.resolve(this._resourceLoader.dispose?.());
 			try {
 				await resourceDisposal;
@@ -1456,6 +1488,21 @@ export class AgentSession {
 			this._backgroundEvents.dispose();
 		} catch {
 			// Dispose must succeed even if an abort hook throws.
+		}
+		if (!agentIdle) {
+			try {
+				this.agent.abort();
+				await this.agent.waitForIdle();
+			} catch {
+				// Continue best-effort cleanup even if the Agent cannot report idleness.
+			}
+		}
+		const disposeCallback = this._disposeCallback;
+		this._disposeCallback = undefined;
+		try {
+			await disposeCallback?.();
+		} catch {
+			// Observability cleanup must not make Session disposal fail.
 		}
 
 		this._extensionRunner.invalidate(
@@ -1585,9 +1632,25 @@ export class AgentSession {
 		}
 		this.agent.state.tools = tools;
 
-		// Rebuild base system prompt with new tool set
+		// Rebuild base system prompt with new tool set. An additive run override can
+		// be rebased exactly; arbitrary full replacements remain extension-owned.
+		const previousBaseSystemPrompt = this._baseSystemPrompt;
 		this._baseSystemPrompt = this._rebuildSystemPrompt(validToolNames);
-		this.agent.state.systemPrompt = this._baseSystemPrompt;
+		this._systemPromptOverride = this._rebaseAdditiveSystemPromptOverride(
+			this._systemPromptOverride,
+			previousBaseSystemPrompt,
+			this._baseSystemPrompt,
+		);
+		this.agent.state.systemPrompt = this._systemPromptOverride ?? this._baseSystemPrompt;
+	}
+
+	private _rebaseAdditiveSystemPromptOverride(
+		override: string | undefined,
+		previousBase: string,
+		nextBase: string,
+	): string | undefined {
+		if (override === undefined || previousBase.length === 0 || !override.startsWith(previousBase)) return override;
+		return `${nextBase}${override.slice(previousBase.length)}`;
 	}
 
 	/** Whether compaction or branch summarization is currently running */
@@ -1738,6 +1801,8 @@ export class AgentSession {
 				await this.agent.continue();
 			}
 		} finally {
+			this._systemPromptOverride = undefined;
+			this.agent.state.systemPrompt = this._baseSystemPrompt;
 			this._flushPendingBashMessages();
 			await this._emitAgentSettled();
 		}
@@ -1754,6 +1819,8 @@ export class AgentSession {
 				await this.agent.continue();
 			}
 		} finally {
+			this._systemPromptOverride = undefined;
+			this.agent.state.systemPrompt = this._baseSystemPrompt;
 			this._flushPendingBashMessages();
 			await this._emitAgentSettled();
 		}
@@ -1929,10 +1996,11 @@ export class AgentSession {
 			this._backgroundReminders.markNextTurnDelivered();
 
 			// Emit before_agent_start extension event
+			const baseSystemPromptAtStart = this._baseSystemPrompt;
 			const result = await this._extensionRunner.emitBeforeAgentStart(
 				expandedText,
 				currentImages,
-				this._baseSystemPrompt,
+				baseSystemPromptAtStart,
 				this._baseSystemPromptOptions,
 			);
 			// Add all custom messages from extensions
@@ -1949,10 +2017,16 @@ export class AgentSession {
 				}
 			}
 			// Apply extension-modified system prompt, or reset to base
-			if (result?.systemPrompt) {
-				this.agent.state.systemPrompt = result.systemPrompt;
+			if (result?.systemPrompt !== undefined) {
+				this._systemPromptOverride = this._rebaseAdditiveSystemPromptOverride(
+					result.systemPrompt,
+					baseSystemPromptAtStart,
+					this._baseSystemPrompt,
+				);
+				this.agent.state.systemPrompt = this._systemPromptOverride ?? this._baseSystemPrompt;
 			} else {
 				// Ensure we're using the base prompt (in case previous turn had modifications)
+				this._systemPromptOverride = undefined;
 				this.agent.state.systemPrompt = this._baseSystemPrompt;
 			}
 		} catch (error) {

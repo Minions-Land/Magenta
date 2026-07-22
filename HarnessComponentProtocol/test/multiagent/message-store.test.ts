@@ -1,9 +1,9 @@
 import { type ChildProcess, fork } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type FederatedMessageEnvelope, MessageStore } from "../../tools/send-message/magenta/message-store.ts";
 import { DatabaseSync } from "../../tools/send-message/magenta/sqlite-adapter.ts";
 
@@ -56,6 +56,19 @@ describe("MessageStore", () => {
 	afterEach(() => {
 		store.close();
 		rmSync(dir, { recursive: true, force: true });
+	});
+
+	it.skipIf(process.platform === "win32")("creates private mailbox directories and database files", () => {
+		expect(statSync(join(dir, "sub")).mode & 0o777).toBe(0o700);
+		expect(statSync(join(dir, "sub", "messages.db")).mode & 0o777).toBe(0o600);
+	});
+
+	it.skipIf(process.platform === "win32")("does not change permissions on an existing mailbox parent", () => {
+		store.close();
+		rmSync(join(dir, "sub"), { recursive: true, force: true });
+		mkdirSync(join(dir, "sub"), { mode: 0o755 });
+		store = new MessageStore(join(dir, "sub", "messages.db"));
+		expect(statSync(join(dir, "sub")).mode & 0o777).toBe(0o755);
 	});
 
 	it("delivers a sent message exactly once", () => {
@@ -377,7 +390,7 @@ describe("MessageStore", () => {
 			// Any peer can claim under gossip.
 			const claimedA = store.claimPeerOutbox("store:peer-a", "bridge-a", 10);
 			expect(claimedA.map((m) => m.id)).toEqual([routed.id]);
-			store.ackPeerOutbox([routed.id], "bridge-a");
+			store.ackPeerOutbox([routed.id], "bridge-a", { durableCustody: true });
 			// After ack on one link, other links can still claim (per-link delivery).
 			const claimedB = store.claimPeerOutbox("store:peer-b", "bridge-b", 10);
 			expect(claimedB.map((m) => m.id)).toEqual([routed.id]);
@@ -426,8 +439,8 @@ describe("MessageStore", () => {
 			const second = store.claimPeerOutbox("store:peer-a", "owner-2", 1);
 			expect(second.map((message) => message.id)).toEqual([sent.id]);
 			// Ack only honored by the owning claimant.
-			expect(store.ackPeerOutbox([sent.id], "owner-1")).toBe(0);
-			expect(store.ackPeerOutbox([sent.id], "owner-2")).toBe(1);
+			expect(store.ackPeerOutbox([sent.id], "owner-1", { durableCustody: true })).toBe(0);
+			expect(store.ackPeerOutbox([sent.id], "owner-2", { durableCustody: true })).toBe(1);
 			// One peer forwarded; message body remains for other peers.
 			expect(store.getPeerOutboxCounts("store:peer-a")).toEqual({
 				pending: 1,
@@ -544,6 +557,17 @@ describe("MessageStore", () => {
 	});
 
 	describe("peer endpoint relay state", () => {
+		it("keeps an empty outbox poll read-only while another writer owns SQLite", () => {
+			const blocker = new DatabaseSync(join(dir, "sub", "messages.db"));
+			blocker.exec("BEGIN IMMEDIATE");
+			try {
+				expect(store.claimPeerOutbox("store:idle-peer", "relay", 10)).toEqual([]);
+			} finally {
+				blocker.exec("ROLLBACK");
+				blocker.close();
+			}
+		});
+
 		it("persists manual desired state while refreshing endpoint configuration", () => {
 			expect(store.upsertPeerEndpoint("hub", "root@example", 23915)).toMatchObject({
 				id: "hub",
@@ -560,21 +584,39 @@ describe("MessageStore", () => {
 			});
 		});
 
+		it("rolls relay ownership only onto the requested binary generation", () => {
+			store.upsertPeerEndpoint("hub", "root@example");
+			expect(store.setPeerEndpointRelayGeneration("hub", "generation-a")).toBe(true);
+			expect(store.setPeerEndpointRelayGeneration("hub", "generation-a")).toBe(false);
+			expect(store.claimPeerEndpointRelay("hub", process.pid, "old", { generation: "generation-old" })).toBe(false);
+			expect(store.claimPeerEndpointRelay("hub", process.pid, "current", { generation: "generation-a" })).toBe(true);
+			expect(store.getPeerEndpoint("hub")).toMatchObject({
+				relayGeneration: "generation-a",
+				relayBootId: "current",
+			});
+		});
+
 		it("fences relay ownership and suppresses claims while manually off", () => {
 			store.upsertPeerEndpoint("hub", "root@example");
 			expect(store.claimPeerEndpointRelay("hub", process.pid, "relay-a")).toBe(true);
 			expect(store.claimPeerEndpointRelay("hub", process.pid, "relay-b")).toBe(false);
+			// An endpoint-specific OS lock is authoritative. It lets a new relay
+			// replace stale metadata even if the old pid now belongs to another process.
+			expect(store.claimPeerEndpointRelay("hub", process.pid, "relay-b", { exclusiveLockHeld: true })).toBe(true);
 			expect(store.updatePeerEndpointRelay("hub", "relay-a", "connected", { remoteStoreId: "store:hub" })).toBe(
+				false,
+			);
+			expect(store.updatePeerEndpointRelay("hub", "relay-b", "connected", { remoteStoreId: "store:hub" })).toBe(
 				true,
 			);
 			expect(store.getPeerEndpoint("hub")).toMatchObject({
 				observedState: "connected",
 				remoteStoreId: "store:hub",
 				relayPid: process.pid,
-				relayBootId: "relay-a",
+				relayBootId: "relay-b",
 			});
-			expect(store.releasePeerEndpointRelay("hub", "relay-b")).toBe(false);
-			expect(store.releasePeerEndpointRelay("hub", "relay-a")).toBe(true);
+			expect(store.releasePeerEndpointRelay("hub", "relay-a")).toBe(false);
+			expect(store.releasePeerEndpointRelay("hub", "relay-b")).toBe(true);
 			expect(store.setPeerEndpointDesiredState("hub", "off")).toBe(true);
 			expect(store.claimPeerEndpointRelay("hub", process.pid, "relay-c")).toBe(false);
 		});
@@ -584,6 +626,19 @@ describe("MessageStore", () => {
 			store.updatePresence("two", "active", { pid: process.pid, bootId: "two" });
 			store.updatePresence("dead", "active", { pid: 2_147_483_646, bootId: "dead" });
 			expect(store.listLiveSessionPids()).toEqual([process.pid]);
+		});
+
+		it("probes each shared presence pid only once while ordering advertisements", () => {
+			store.updatePresence("one", "idle", { pid: process.pid, bootId: "one" });
+			store.updatePresence("two", "active", { pid: process.pid, bootId: "two" });
+			const probe = vi.spyOn(MessageStore, "isProcessAlive");
+			try {
+				expect(store.listRegisteredSessionIds()).toEqual(["two", "one"]);
+				expect(probe).toHaveBeenCalledTimes(1);
+				expect(probe).toHaveBeenCalledWith(process.pid);
+			} finally {
+				probe.mockRestore();
+			}
 		});
 	});
 

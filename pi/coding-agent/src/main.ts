@@ -502,6 +502,27 @@ export interface MainOptions {
 }
 
 export async function main(args: string[], options?: MainOptions) {
+	const parsed = parseArgs(args);
+	if (parsed.version) {
+		for (const diagnostic of parsed.diagnostics) {
+			const color = diagnostic.type === "error" ? chalk.red : chalk.yellow;
+			console.error(color(`${diagnostic.type === "error" ? "Error" : "Warning"}: ${diagnostic.message}`));
+		}
+		if (parsed.diagnostics.some((diagnostic) => diagnostic.type === "error")) {
+			process.exit(1);
+			return;
+		}
+		console.log(VERSION);
+		process.exit(0);
+		return;
+	}
+
+	if (parsed.help && args.length > 0 && args.every((arg) => arg === "--help" || arg === "-h")) {
+		printHelp();
+		process.exit(0);
+		return;
+	}
+
 	resetTimings();
 	const offlineMode = args.includes("--offline") || isTruthyEnvFlag(process.env.PI_OFFLINE);
 	if (offlineMode) {
@@ -557,7 +578,6 @@ export async function main(args: string[], options?: MainOptions) {
 		return;
 	}
 
-	const parsed = parseArgs(args);
 	if (parsed.diagnostics.length > 0) {
 		for (const d of parsed.diagnostics) {
 			const color = d.type === "error" ? chalk.red : chalk.yellow;
@@ -587,11 +607,6 @@ export async function main(args: string[], options?: MainOptions) {
 		} else {
 			console.log(chalk.green(`Updated Magenta to v${result.newVersion ?? "latest"}. Restart magenta.`));
 		}
-		process.exit(0);
-	}
-
-	if (parsed.version) {
-		console.log(VERSION);
 		process.exit(0);
 	}
 

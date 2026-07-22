@@ -434,8 +434,10 @@ ${chalk.bold("Examples:")}
 ${chalk.bold("Environment Variables:")}
   ANTHROPIC_API_KEY                - Anthropic Claude API key
   ANTHROPIC_OAUTH_TOKEN            - Anthropic OAuth token (alternative to API key)
+  ANTHROPIC_BASE_URL               - Anthropic-compatible API base URL override
   ANT_LING_API_KEY                 - Ant Ling API key
   OPENAI_API_KEY                   - OpenAI GPT API key
+  OPENAI_BASE_URL                  - OpenAI-compatible API base URL override
   AZURE_OPENAI_API_KEY             - Azure OpenAI API key
   AZURE_OPENAI_BASE_URL            - Azure OpenAI/Cognitive Services base URL (e.g. https://{resource}.openai.azure.com)
   AZURE_OPENAI_RESOURCE_NAME       - Azure OpenAI resource name (alternative to base URL)
@@ -444,6 +446,7 @@ ${chalk.bold("Environment Variables:")}
   DEEPSEEK_API_KEY                 - DeepSeek API key
   NVIDIA_API_KEY                   - NVIDIA NIM API key
   GEMINI_API_KEY                   - Google Gemini API key
+  GOOGLE_BASE_URL                  - Google Generative AI base URL override
   GROQ_API_KEY                     - Groq API key
   CEREBRAS_API_KEY                 - Cerebras API key
   XAI_API_KEY                      - xAI Grok API key

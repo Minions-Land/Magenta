@@ -1,13 +1,15 @@
 import type { ChildProcess, SpawnOptions } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { PassThrough } from "node:stream";
 import { type Tool, type ToolCall, validateToolArguments } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { NODE_MAX_TIMEOUT_MS } from "../_magenta/timeout.ts";
 import {
 	type CreateChildSessionRequest,
+	DEFAULT_MULTIAGENT_RPC_TIMEOUT_MS,
 	type MultiagentBackgroundPort,
 	MultiagentController,
 	type MultiagentSpawn,
@@ -39,7 +41,12 @@ type SpawnRecord = { sessionId: string; command: string; args: string[]; options
 
 function createSpawn(
 	records: SpawnRecord[],
-	options: { ready?: boolean; closeAfterReady?: boolean; deferredAbortResponses?: Array<() => void> } = {},
+	options: {
+		ready?: boolean;
+		closeAfterReady?: boolean;
+		deferredAbortResponses?: Array<() => void>;
+		onDeferredAbortRequest?: () => void;
+	} = {},
 ): MultiagentSpawn {
 	return (command, args, spawnOptions) => {
 		const stdout = new PassThrough();
@@ -78,6 +85,7 @@ function createSpawn(
 				};
 				if (request.type === "abort" && options.deferredAbortResponses) {
 					options.deferredAbortResponses.push(deliver);
+					options.onDeferredAbortRequest?.();
 				} else {
 					queueMicrotask(deliver);
 				}
@@ -241,6 +249,7 @@ describe("HCP multiagent Tool Source", () => {
 			spawnAgent?: MultiagentSpawn;
 			parentSessionFile?: string | null;
 			createChildSession?: ReturnType<typeof createSession>;
+			rpcTimeoutMs?: number;
 		} = {},
 	) => {
 		const backgroundEvents: MultiagentBackgroundPort = {
@@ -260,6 +269,7 @@ describe("HCP multiagent Tool Source", () => {
 			resolveAgentInvocation: (args) => ({ command: "/magenta", args }),
 			createChildSession: options.createChildSession ?? createSession(root),
 			getMailboxSupport: () => mailbox.support,
+			rpcTimeoutMs: options.rpcTimeoutMs,
 			spawnAgent: options.spawnAgent ?? createSpawn(spawns),
 			createSessionId: () => `session-${++ids}`,
 			worktreeManager: options.worktreeManager,
@@ -314,6 +324,68 @@ describe("HCP multiagent Tool Source", () => {
 		}
 	});
 
+	it("uses a five-minute RPC response deadline without limiting persistent Session lifetime", () => {
+		expect(DEFAULT_MULTIAGENT_RPC_TIMEOUT_MS).toBe(5 * 60_000);
+		expect(controller.createToolDefinition().parameters).not.toHaveProperty("properties.timeoutSeconds");
+	});
+
+	it("reapplies RPC log retention before each launch in a long-lived controller", async () => {
+		const tool = controller.createToolDefinition();
+		await tool.execute("status", { action: "status" });
+		const staleDirectory = join(root, "agent", "tmp", "multiagent", "stale-session");
+		const staleLog = join(staleDirectory, "old.rpc.log");
+		mkdirSync(staleDirectory, { recursive: true });
+		writeFileSync(staleLog, "reproducible trace");
+		utimesSync(staleLog, new Date(0), new Date(0));
+
+		await tool.execute("start", { action: "start" });
+		await waitUntil(async () => (await statusState(tool, "session-1")) === "idle");
+
+		expect(existsSyncSafe(staleLog)).toBe(false);
+		await waitUntil(() => existsSyncSafe(rpcLogPath(root, "session-1")));
+	});
+
+	it("reclaims old generation logs while a persistent Session is resumed repeatedly", async () => {
+		const tool = controller.createToolDefinition();
+		await tool.execute("start", { action: "start" });
+		await waitUntil(async () => (await statusState(tool, "session-1")) === "idle");
+		const sessionLogDirectory = join(root, "agent", "tmp", "multiagent", "session-1");
+
+		for (let generation = 1; generation <= 2; generation++) {
+			await tool.execute("stop", { action: "stop", sessionId: "session-1" });
+			await waitUntil(async () => (await statusState(tool, "session-1")) === "stopped");
+			const staleLog = join(sessionLogDirectory, `generation-${generation}-old.rpc.log`);
+			writeFileSync(staleLog, "closed generation trace");
+			utimesSync(staleLog, new Date(0), new Date(0));
+
+			await tool.execute("resume", { action: "resume", sessionId: "session-1" });
+			await waitUntil(async () => (await statusState(tool, "session-1")) === "idle");
+			expect(existsSyncSafe(staleLog)).toBe(false);
+		}
+	});
+
+	it("allows a testable RPC deadline override for launch readiness", async () => {
+		await controller.dispose();
+		controller = createController({
+			spawnAgent: createSpawn(spawns, { ready: false }),
+			rpcTimeoutMs: 15,
+		});
+		const tool = controller.createToolDefinition();
+		const startedAt = Date.now();
+		await tool.execute("start", { action: "start" });
+		await waitUntil(async () => (await statusState(tool, "session-1")) === "failed");
+		expect(Date.now() - startedAt).toBeGreaterThanOrEqual(10);
+		expect(Date.now() - startedAt).toBeLessThan(1_000);
+		expect(spawns).toHaveLength(1);
+	});
+
+	it.each([0, Number.NaN, Number.POSITIVE_INFINITY, NODE_MAX_TIMEOUT_MS + 1])(
+		"rejects invalid RPC deadline override %s",
+		(rpcTimeoutMs) => {
+			expect(() => createController({ rpcTimeoutMs })).toThrow(/multiagent rpcTimeoutMs/);
+		},
+	);
+
 	it("rejects start from an ephemeral Main that cannot provide lineage or Todo projection", async () => {
 		await controller.dispose();
 		controller = createController({ parentSessionFile: null });
@@ -338,7 +410,9 @@ describe("HCP multiagent Tool Source", () => {
 		expect(mailbox.messages[0]).toMatchObject({ to: "session-1", content: "inspect parser" });
 		await waitUntil(async () => (await statusState(tool, "session-1")) === "idle");
 		expect(spawns[0]!.args).toEqual(expect.arrayContaining(["--mode", "rpc", "--no-extensions", "--tools"]));
-		expect((spawns[0]!.options.env as Record<string, string>).MAGENTA_MAIN_TODO_SESSION_FILE).toBe(parentFile);
+		const childEnvironment = spawns[0]!.options.env as Record<string, string>;
+		expect(childEnvironment.MAGENTA_MAIN_TODO_SESSION_FILE).toBe(parentFile);
+		expect(childEnvironment.MAGENTA_INTERNAL_RPC_SUPPRESS_MESSAGE_UPDATES).toBe("1");
 		expect(source?.getEvents()[0]).toMatchObject({ status: "idle", activityPhase: "idle" });
 		spawns[0]!.child.stdout.write(`${JSON.stringify({ type: "agent_start" })}\n`);
 		await waitUntil(() => source?.getEvents()[0]?.activityPhase === "active");
@@ -347,6 +421,69 @@ describe("HCP multiagent Tool Source", () => {
 		await waitUntil(() => source?.getEvents()[0]?.activityPhase === "idle");
 		expect(source?.getEvents()[0]?.status).toBe("idle");
 		expect(existsSyncSafe(registryPath)).toBe(true);
+	});
+
+	it("suppresses streaming RPC payloads and summarizes them before retained lines", async () => {
+		const tool = controller.createToolDefinition();
+		await tool.execute("start", { action: "start" });
+		await waitUntil(async () => (await statusState(tool, "session-1")) === "idle");
+		const child = spawns[0]!.child;
+		const cumulativePayload = "must-not-reach-the-rpc-log".repeat(1_000);
+		for (let index = 0; index < 3; index++) {
+			child.stdout.write(
+				`${JSON.stringify({
+					type: "message_update",
+					message: { role: "assistant", content: [{ type: "text", text: cumulativePayload }] },
+					assistantMessageEvent: { type: "text_delta", delta: "x", partial: cumulativePayload },
+				})}\n`,
+			);
+		}
+		child.stdout.write("unparseable-rpc-line\n");
+		for (let index = 0; index < 2; index++) {
+			child.stdout.write(`${JSON.stringify({ type: "message_update", message: { partial: cumulativePayload } })}\n`);
+		}
+		child.stdout.write(`${JSON.stringify({ type: "agent_end" })}\n`);
+
+		const logPath = rpcLogPath(root, "session-1");
+		await waitUntil(() => {
+			const log = readFileSync(logPath, "utf8");
+			return log.includes('"suppressedMessageUpdates":2') && log.includes('"type":"agent_end"');
+		});
+		const log = readFileSync(logPath, "utf8");
+		expect(log).not.toContain(cumulativePayload);
+		expect(log).not.toContain('"type":"message_update"');
+		expect(log).toContain('"suppressedMessageUpdates":3');
+		expect(log).toContain("unparseable-rpc-line");
+		expect(log).toContain('"suppressedMessageUpdates":2');
+		expect(log.indexOf('"suppressedMessageUpdates":3')).toBeLessThan(log.indexOf("unparseable-rpc-line"));
+		expect(log.indexOf('"suppressedMessageUpdates":2')).toBeLessThan(log.indexOf('"type":"agent_end"'));
+	});
+
+	it("flushes the streaming RPC suppression count when the child exits", async () => {
+		const tool = controller.createToolDefinition();
+		await tool.execute("start", { action: "start" });
+		await waitUntil(async () => (await statusState(tool, "session-1")) === "idle");
+		spawns[0]!.child.stdout.write(`${JSON.stringify({ type: "message_update", message: { partial: "private" } })}\n`);
+		spawns[0]!.child.emit("close", 1, null);
+		await waitUntil(async () => (await statusState(tool, "session-1")) === "failed");
+		const logPath = rpcLogPath(root, "session-1");
+		await waitUntil(() => readFileSync(logPath, "utf8").includes('"suppressedMessageUpdates":1'));
+		expect(readFileSync(logPath, "utf8")).not.toContain('"partial":"private"');
+	});
+
+	it("flushes buffered stderr and RPC tail output when the child exits", async () => {
+		const tool = controller.createToolDefinition();
+		await tool.execute("start", { action: "start" });
+		await waitUntil(async () => (await statusState(tool, "session-1")) === "idle");
+		const child = spawns[0]!.child;
+		child.stderr.write("terminal stderr tail\n");
+		child.stdout.write("terminal rpc tail\n");
+		child.emit("close", 1, null);
+
+		await waitUntil(async () => (await statusState(tool, "session-1")) === "failed");
+		const log = readFileSync(rpcLogPath(root, "session-1"), "utf8");
+		expect(log).toContain("terminal stderr tail");
+		expect(log).toContain("terminal rpc tail");
 	});
 
 	it("does not overwrite terminal state when the process exits during readiness settlement", async () => {
@@ -382,15 +519,23 @@ describe("HCP multiagent Tool Source", () => {
 			sessionId: "session-1",
 			message: "replace the current turn",
 		});
-		expect(result.details).toMatchObject({ action: "interrupt", observedProcessState: "interrupting" });
+		expect(result.details).toMatchObject({ action: "interrupt", desiredProcessState: "running" });
+		expect(["interrupting", "idle"]).toContain((result.details as any).observedProcessState);
 		await waitUntil(() => mailbox.messages.some((message) => message.content === "replace the current turn"));
 		expect(await statusState(tool, "session-1")).toBe("idle");
 	});
 
 	it("does not deliver an interrupt replacement after stop revokes the pending interrupt", async () => {
 		const abortResponses: Array<() => void> = [];
+		let resolveAbortRequest!: () => void;
+		const abortRequested = new Promise<void>((resolve) => {
+			resolveAbortRequest = resolve;
+		});
 		controller = createController({
-			spawnAgent: createSpawn(spawns, { deferredAbortResponses: abortResponses }),
+			spawnAgent: createSpawn(spawns, {
+				deferredAbortResponses: abortResponses,
+				onDeferredAbortRequest: resolveAbortRequest,
+			}),
 		});
 		const tool = controller.createToolDefinition();
 		await tool.execute("start", { action: "start" });
@@ -400,11 +545,15 @@ describe("HCP multiagent Tool Source", () => {
 			sessionId: "session-1",
 			message: "must not be delivered",
 		});
-		await waitUntil(() => abortResponses.length === 1);
+		await abortRequested;
+		expect(abortResponses).toHaveLength(1);
 		await tool.execute("stop", { action: "stop", sessionId: "session-1" });
+		spawns[0]!.child.emit("close", 0, null);
 		abortResponses.shift()?.();
-		await new Promise((resolve) => setTimeout(resolve, 20));
+		await waitUntil(async () => (await statusState(tool, "session-1")) === "stopped");
 		expect(mailbox.messages.some((message) => message.content === "must not be delivered")).toBe(false);
+		const status = await tool.execute("status", { action: "status", sessionId: "session-1" });
+		expect((status.details as any).teammates[0].lastError).toBeUndefined();
 	});
 
 	it("keeps desired-running across controller disposal and auto-resumes once on exact Main reopen", async () => {
@@ -546,4 +695,11 @@ function existsSyncSafe(path: string): boolean {
 	} catch {
 		return false;
 	}
+}
+
+function rpcLogPath(root: string, sessionId: string): string {
+	const directory = join(root, "agent", "tmp", "multiagent", sessionId);
+	const file = readdirSync(directory).find((entry) => entry.endsWith(".rpc.log"));
+	if (!file) throw new Error(`Missing RPC log for ${sessionId}`);
+	return join(directory, file);
 }

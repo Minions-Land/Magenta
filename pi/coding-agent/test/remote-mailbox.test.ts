@@ -88,7 +88,11 @@ describe("RemoteMailboxController", () => {
 		});
 		const external = new MessageStore(dbPath);
 		try {
-			expect(external.claimPeerEndpointRelay(endpointId, 2_147_483_646, "crashed-relay")).toBe(true);
+			expect(
+				external.claimPeerEndpointRelay(endpointId, 2_147_483_646, "crashed-relay", {
+					generation: controller.list()[0]?.relayGeneration,
+				}),
+			).toBe(true);
 			const deadline = Date.now() + 500;
 			while (records.length < 2 && Date.now() < deadline) {
 				await new Promise((resolve) => setTimeout(resolve, 5));

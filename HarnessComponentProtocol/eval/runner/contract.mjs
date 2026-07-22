@@ -122,6 +122,15 @@ export function validateAndNormalizeResult(result, variant) {
 	const { events, errors } = parseJsonLines(result.stdout);
 	if (result.spawnError) errors.push(`process spawn failed: ${result.spawnError}`);
 	if (result.timedOut) errors.push(`wall timeout exceeded (${variant.wallTimeoutMs}ms)`);
+	if (result.stdoutTruncated) {
+		errors.push(`stdout exceeded the ${result.outputLimitBytes}-byte capture limit; raw output and contract input are truncated`);
+	}
+	if (result.stderrTruncated) {
+		errors.push(`stderr exceeded the ${result.outputLimitBytes}-byte capture limit; raw diagnostics are truncated`);
+	}
+	for (const stream of ["stdout", "stderr"]) {
+		if (result.captureErrors?.[stream]) errors.push(`${stream} capture failed: ${result.captureErrors[stream]}`);
+	}
 
 	const manifest = oneEvent(events, "runtime_manifest", errors);
 	const runEnd = oneEvent(events, "run_end", errors);
@@ -177,16 +186,36 @@ export function validateAndNormalizeResult(result, variant) {
 	}
 	checkExpectations(manifest, variant.expect, errors);
 	const toolEvidence = checkToolEvidence(events, variant.expect, errors);
+	const contractValid = errors.length === 0;
+	const executionSucceeded =
+		contractValid && result.code === 0 && runEnd?.status === "success" && runEnd.exitCode === 0;
 
 	return {
 		schemaVersion: 1,
 		variant: variant.name,
-		valid: errors.length === 0,
+		contractValid,
+		executionSucceeded,
+		// Backward-compatible aggregate: a structurally valid failed process is not a valid eval arm.
+		valid: contractValid && executionSucceeded,
 		errors,
 		process: {
 			exitCode: result.code ?? null,
 			signal: result.signal ?? null,
 			timedOut: result.timedOut,
+			streams: {
+				stdout: {
+					bytes: result.stdoutBytes ?? Buffer.byteLength(result.stdout ?? ""),
+					observedBytes: result.stdoutObservedBytes ?? Buffer.byteLength(result.stdout ?? ""),
+					limitBytes: result.outputLimitBytes ?? null,
+					truncated: result.stdoutTruncated ?? false,
+				},
+				stderr: {
+					bytes: result.stderrBytes ?? Buffer.byteLength(result.stderr ?? ""),
+					observedBytes: result.stderrObservedBytes ?? Buffer.byteLength(result.stderr ?? ""),
+					limitBytes: result.outputLimitBytes ?? null,
+					truncated: result.stderrTruncated ?? false,
+				},
+			},
 		},
 		runtime: manifest
 			? {
@@ -213,5 +242,39 @@ export function validateAndNormalizeResult(result, variant) {
 			: null,
 		eventCounts: eventCounts(events),
 		toolEvidence,
+	};
+}
+
+/** Aggregate arm validity without presenting an unexecuted scorer as evidence. */
+export function summarizeEvalRun(plan, summaries, { model = null, resultsDirectory = null } = {}) {
+	const contractValid = summaries.every((summary) => summary.contractValid);
+	const executionSucceeded = summaries.every((summary) => summary.executionSucceeded);
+	const scoringMethod = typeof plan.scoring?.method === "string" ? plan.scoring.method : null;
+	const scoring =
+		scoringMethod === "headless-contract"
+			? {
+					method: scoringMethod,
+					status: contractValid && executionSucceeded ? "passed" : "failed",
+					automatic: true,
+				}
+			: {
+					method: scoringMethod,
+					status: "not_run",
+					automatic: false,
+				};
+	return {
+		schemaVersion: 1,
+		scenario: plan.name,
+		contractValid,
+		executionSucceeded,
+		scoring,
+		evidence: {
+			comparisonClaimAllowed: plan.evidenceGate?.comparisonClaimAllowed === true,
+			reasons: plan.evidenceGate?.reasons ?? [],
+		},
+		valid: contractValid && executionSucceeded && scoring.status === "passed",
+		model,
+		resultsDirectory,
+		variants: summaries,
 	};
 }

@@ -193,6 +193,48 @@ describe("envApiKeyAuth", () => {
 		});
 		expect(credential).toEqual({ type: "api_key", key: "entered-key" });
 	});
+
+	it("returns a provider base URL from credential env before ambient env", async () => {
+		const auth = envApiKeyAuth("Test key", ["TEST_KEY"], { baseUrlEnvVars: ["TEST_BASE_URL"] });
+		const stored = await auth.resolve({
+			ctx: fakeAuthContext({ TEST_BASE_URL: "https://ambient.example/v1" }),
+			credential: {
+				type: "api_key",
+				key: "stored",
+				env: { TEST_BASE_URL: "https://credential.example/v1" },
+			},
+		});
+		expect(stored?.auth).toEqual({ apiKey: "stored", baseUrl: "https://credential.example/v1" });
+
+		const ambient = await auth.resolve({
+			ctx: fakeAuthContext({ TEST_KEY: "env", TEST_BASE_URL: "https://ambient.example/v1" }),
+		});
+		expect(ambient?.auth).toEqual({ apiKey: "env", baseUrl: "https://ambient.example/v1" });
+	});
+
+	it("represents configured bearer-token variables as Authorization headers", async () => {
+		const auth = envApiKeyAuth("Test key", ["TEST_AUTH_TOKEN", "TEST_KEY"], {
+			bearerTokenEnvVars: ["TEST_AUTH_TOKEN"],
+		});
+		expect(
+			await auth.resolve({
+				ctx: fakeAuthContext({ TEST_AUTH_TOKEN: "ambient-token", TEST_KEY: "api-key" }),
+			}),
+		).toMatchObject({
+			auth: { headers: { authorization: "Bearer ambient-token" } },
+			source: "TEST_AUTH_TOKEN",
+		});
+		expect(
+			await auth.resolve({
+				ctx: fakeAuthContext({}),
+				credential: {
+					type: "api_key",
+					key: "stored-token",
+					env: { TEST_AUTH_TOKEN: "stored-token" },
+				},
+			}),
+		).toMatchObject({ auth: { headers: { authorization: "Bearer stored-token" } } });
+	});
 });
 
 describe("createProvider", () => {
