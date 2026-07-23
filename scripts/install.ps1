@@ -404,8 +404,24 @@ function Write-MagentaTransactionJournal([string]$JournalPath, $Journal) {
     if ($null -ne $newItem -and ($newItem.PSIsContainer -or ($newItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)) {
         throw "Installer journal temporary path is not a plain file: $journalNewPath"
     }
+    if ($null -ne $newItem) {
+        # A crash can leave a complete temp file after the journal itself was
+        # already durable.  Validate its transaction identity before removing
+        # it; never truncate or replace an unrelated ordinary file.
+        $journalInstallDirectory = Get-NormalizedMagentaPath ([string]$Journal.installDir)
+        $journalInstallParent = Split-Path -Parent $journalInstallDirectory
+        $journalInstallLeaf = Split-Path -Leaf $journalInstallDirectory
+        $pendingJournal = Read-MagentaTransactionJournal `
+            $journalNewPath $journalInstallDirectory $journalInstallParent $journalInstallLeaf
+        if ([string]$pendingJournal.operationId -cne [string]$Journal.operationId) {
+            throw "Installer journal temporary state belongs to a different transaction; preserving it: $journalNewPath"
+        }
+        Remove-MagentaPlainPath $journalNewPath
+    }
     $bytes = (New-Object Text.UTF8Encoding($false)).GetBytes(($Journal | ConvertTo-Json -Depth 4 -Compress))
-    Write-MagentaDurableBytes $journalNewPath $bytes ([IO.FileMode]::Create)
+    # CreateNew is intentional: a pre-existing ordinary file must never be
+    # truncated between the path check above and the durable write.
+    Write-MagentaDurableBytes $journalNewPath $bytes ([IO.FileMode]::CreateNew)
 
     $journalItem = Get-MagentaItem $JournalPath
     if ($null -eq $journalItem) {
@@ -918,6 +934,20 @@ function Invoke-MagentaTransactionRecovery(
     }
 
     $journal = Read-MagentaTransactionJournal $JournalPath $InstallDirectory $InstallParent $InstallLeaf
+    $journalTempItem = Get-MagentaItem $journalNewPath
+    if ($null -ne $journalTempItem) {
+        if ($journalTempItem.PSIsContainer -or ($journalTempItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "Installer journal temporary path is not a plain file: $journalNewPath"
+        }
+        # The main journal is authoritative when both names exist (the temp
+        # may be left by a crash during File.Replace).  Only discard a temp
+        # that independently validates and belongs to the same operation.
+        $pendingJournal = Read-MagentaTransactionJournal $journalNewPath $InstallDirectory $InstallParent $InstallLeaf
+        if ([string]$pendingJournal.operationId -cne [string]$journal.operationId) {
+            throw "Installer journal temporary state belongs to a different transaction; preserving it: $journalNewPath"
+        }
+        Remove-MagentaPlainPath $journalNewPath
+    }
     if ($journal.phase -eq "staging") {
         if ($null -ne (Get-MagentaItem $journal.backupDir)) {
             throw "Staging-phase journal unexpectedly has a backup; preserving transaction state."
@@ -998,10 +1028,102 @@ $builtinMirrors = @(
     "https://github.moeyy.xyz"
 )
 
-# Robust download: try BITS (background, resumable) then Invoke-WebRequest, across
+# Download ceilings are enforced after every transfer, including chunked
+# responses that do not provide Content-Length.  Keep SHA256SUMS much smaller
+# than executable/resource payloads because it is only a text trust root.
+$magentaChecksumMaxBytes = [long](1 * 1024 * 1024)
+$magentaAssetMaxBytes = [long](512 * 1024 * 1024)
+$magentaDownloadTimeoutSeconds = 900
+
+function Remove-MagentaDownloadPartial([string]$Path) {
+    $item = Get-MagentaItem $Path
+    if ($null -eq $item) { return }
+    if ($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "Refusing to remove an unsafe partial download path: $Path"
+    }
+    Remove-Item -LiteralPath $Path -Force -ErrorAction Stop
+}
+
+function Test-MagentaDownloadFile(
+    [string]$Path,
+    [long]$MinBytes,
+    [long]$MaxBytes,
+    [string]$SourceUrl
+) {
+    $item = Get-MagentaItem $Path
+    if ($null -eq $item) { return $false }
+    if ($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "Downloaded payload is not a plain file: $Path"
+    }
+    if ($item.Length -gt $MaxBytes) {
+        throw "Downloaded payload from $SourceUrl exceeds the $MaxBytes-byte limit ($($item.Length) bytes)."
+    }
+    return $item.Length -ge $MinBytes
+}
+
+function Invoke-MagentaHttpDownload([string]$Url, [string]$PartialPath, [long]$MaxBytes) {
+    $client = New-Object System.Net.Http.HttpClient
+    $client.Timeout = [TimeSpan]::FromSeconds($magentaDownloadTimeoutSeconds)
+    $response = $null
+    $input = $null
+    $output = $null
+    $created = $false
+    $completed = $false
+    try {
+        $response = $client.GetAsync($Url, [System.Net.Http.HttpCompletionOption]::ResponseHeadersRead).GetAwaiter().GetResult()
+        if (-not $response.IsSuccessStatusCode) {
+            throw "HTTP $([int]$response.StatusCode) $($response.ReasonPhrase)"
+        }
+        $contentLength = $response.Content.Headers.ContentLength
+        if ($null -ne $contentLength -and [long]$contentLength -gt $MaxBytes) {
+            throw "Response declares $contentLength bytes, exceeding the $MaxBytes-byte limit."
+        }
+
+        $input = $response.Content.ReadAsStreamAsync().GetAwaiter().GetResult()
+        $output = New-Object System.IO.FileStream -ArgumentList @(
+            $PartialPath,
+            [IO.FileMode]::CreateNew,
+            [IO.FileAccess]::Write,
+            [IO.FileShare]::None,
+            65536,
+            [IO.FileOptions]::WriteThrough
+        )
+        $created = $true
+        $buffer = New-Object byte[] 65536
+        [long]$received = 0
+        while (($read = $input.Read($buffer, 0, $buffer.Length)) -gt 0) {
+            if ($received -gt ($MaxBytes - $read)) {
+                throw "Response exceeded the $MaxBytes-byte limit while streaming."
+            }
+            $output.Write($buffer, 0, $read)
+            $received += $read
+        }
+        $output.Flush($true)
+        $completed = $true
+    } finally {
+        if ($null -ne $output) { $output.Dispose() }
+        if ($null -ne $input) { $input.Dispose() }
+        if ($null -ne $response) { $response.Dispose() }
+        $client.Dispose()
+        if ($created -and -not $completed) {
+            Remove-MagentaDownloadPartial $PartialPath
+        }
+    }
+}
+
+# Robust download: try BITS (background, resumable) then a bounded HTTP stream, across
 # the direct URL plus mirror candidates, until the file is fully retrieved.
 # Set AllowMirrors to false for trust roots such as SHA256SUMS.
-function Invoke-MagentaDownload([string]$DirectUrl, [string]$OutFile, [long]$MinBytes = 0, [bool]$AllowMirrors = $true) {
+function Invoke-MagentaDownload(
+    [string]$DirectUrl,
+    [string]$OutFile,
+    [long]$MinBytes = 0,
+    [bool]$AllowMirrors = $true,
+    [long]$MaxBytes = $magentaAssetMaxBytes
+) {
+    if ($MinBytes -lt 0 -or $MaxBytes -le 0 -or $MinBytes -gt $MaxBytes) {
+        throw "Invalid Magenta download byte limits: minimum=$MinBytes maximum=$MaxBytes"
+    }
     $candidates = New-Object System.Collections.Generic.List[string]
     # Mirrors only make sense for public github.com asset URLs. A custom base
     # (e.g. -AssetBaseUrl for CI smoke tests or a private host) is used verbatim.
@@ -1016,27 +1138,43 @@ function Invoke-MagentaDownload([string]$DirectUrl, [string]$OutFile, [long]$Min
 
     foreach ($url in $candidates) {
         $srcHost = ([System.Uri]$url).Host
+        $partialPath = "$OutFile.part"
+        if ($null -ne (Get-MagentaItem $partialPath)) {
+            throw "A previous partial download exists; refusing to reuse it: $partialPath"
+        }
         # 1) BITS transfer (uses Windows background service, supports resume)
         try {
             if (Get-Command Start-BitsTransfer -ErrorAction SilentlyContinue) {
-                if (Test-Path -LiteralPath $OutFile) { Remove-Item -Force -LiteralPath $OutFile }
                 Write-Host "  Trying download source (BITS): $srcHost"
-                Start-BitsTransfer -Source $url -Destination $OutFile -ErrorAction Stop
-                if ((Test-Path -LiteralPath $OutFile) -and ((Get-Item $OutFile).Length -ge $MinBytes)) {
+                Start-BitsTransfer -Source $url -Destination $partialPath -ErrorAction Stop
+                if (Test-MagentaDownloadFile $partialPath $MinBytes $MaxBytes $url) {
+                    [IO.File]::Move($partialPath, $OutFile)
                     return
                 }
+                Remove-MagentaDownloadPartial $partialPath
             }
         } catch {
-            Write-Host "  BITS failed; falling back to Invoke-WebRequest..."
+            if ($null -ne (Get-MagentaItem $partialPath)) {
+                try { Remove-MagentaDownloadPartial $partialPath } catch { throw "BITS left an unsafe partial download at $partialPath. Error: $_" }
+            }
+            Write-Host "  BITS failed; falling back to bounded HTTP streaming..."
         }
-        # 2) Invoke-WebRequest
+        # 2) Bounded HTTP streaming.  ResponseHeadersRead keeps unknown-length
+        # bodies out of memory while the loop enforces the hard byte ceiling.
+        $httpCreated = $false
         try {
-            Write-Host "  Trying download source (IWR): $srcHost"
-            Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $OutFile -ErrorAction Stop
-            if ((Test-Path -LiteralPath $OutFile) -and ((Get-Item $OutFile).Length -ge $MinBytes)) {
+            Write-Host "  Trying download source (HTTP): $srcHost"
+            Invoke-MagentaHttpDownload $url $partialPath $MaxBytes
+            $httpCreated = $null -ne (Get-MagentaItem $partialPath)
+            if (Test-MagentaDownloadFile $partialPath $MinBytes $MaxBytes $url) {
+                [IO.File]::Move($partialPath, $OutFile)
                 return
             }
+            Remove-MagentaDownloadPartial $partialPath
         } catch {
+            if ($httpCreated -and $null -ne (Get-MagentaItem $partialPath)) {
+                Remove-MagentaDownloadPartial $partialPath
+            }
             Write-Host "  Source unavailable: $srcHost"
         }
     }
@@ -1137,11 +1275,11 @@ try {
             # mirrors, otherwise a mirror could swap both the checksum file and the
             # payload it verifies. A custom -AssetBaseUrl (CI/private host) is still used
             # verbatim because it is explicitly trusted by the operator.
-            Invoke-MagentaDownload "$directBase/SHA256SUMS" $checksumsPath 0 $false
+            Invoke-MagentaDownload "$directBase/SHA256SUMS" $checksumsPath 0 $false $magentaChecksumMaxBytes
             Write-Host "[magenta-windows-x64.exe] (~160-190MB)"
-            Invoke-MagentaDownload "$directBase/magenta-windows-x64.exe" $binaryPath 1000000
+            Invoke-MagentaDownload "$directBase/magenta-windows-x64.exe" $binaryPath 1000000 $true $magentaAssetMaxBytes
             Write-Host "[magenta-resources-universal.tar.gz] (~4MB)"
-            Invoke-MagentaDownload "$directBase/magenta-resources-universal.tar.gz" $resourcesPath
+            Invoke-MagentaDownload "$directBase/magenta-resources-universal.tar.gz" $resourcesPath 0 $true $magentaAssetMaxBytes
 
             $binarySize = (Get-Item $binaryPath).Length
             if ($binarySize -lt 1000000) {

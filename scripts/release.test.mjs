@@ -5,6 +5,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import {
+	MACOS_EMBEDDED_PAYLOADS,
+	MACOS_PUBLISHED_RELEASE_ASSET_NAMES_V0_0_30,
+} from "./macos-release-bundle-contract.mjs";
+import {
 	addUnreleasedSection,
 	assertExpectedChangedPaths,
 	assertLatestPublishedVersion,
@@ -14,11 +18,14 @@ import {
 	finalizeChangelog,
 	isOfficialSourceRemote,
 	parseChangedPaths,
+	parseReleaseArguments,
+	parseRemoteAnnotatedTagCommit,
 	RELEASE_MAIN_FETCH_ARGS,
 	readActiveBrand,
 	resolveReleaseVersion,
 	rollbackReleasePreparation,
 	updateBrandVersionSource,
+	verifyAbandonedVersionIsUnpublished,
 	verifyLatestPublishedVersion,
 } from "./release.mjs";
 import { runReleaseGate } from "./release-gate.mjs";
@@ -29,6 +36,15 @@ function assertSourceOrder(source, needles, label) {
 		const index = source.indexOf(needle, cursor + 1);
 		assert.ok(index > cursor, `${label} must contain ${JSON.stringify(needle)} in release order`);
 		cursor = index;
+	}
+}
+
+function assertCheckoutCredentialsAreNotPersisted(workflow, label) {
+	const checkoutPattern = /^\s*- (?:name:[^\n]+\n\s+)?uses: actions\/checkout@[0-9a-f]{40}[^\n]*\n(?<body>(?:\s{8,}[^\n]*\n)*)/gmu;
+	const matches = [...workflow.matchAll(checkoutPattern)];
+	assert.ok(matches.length > 0, `${label} must contain at least one checkout step`);
+	for (const match of matches) {
+		assert.match(match.groups?.body ?? "", /^\s+persist-credentials: false\s*$/mu, `${label} checkout`);
 	}
 }
 
@@ -49,15 +65,64 @@ test("release builds are pinned, offline, and receipt-bound", () => {
 	const releaseGate = readFileSync(new URL("./release-gate.mjs", import.meta.url), "utf8");
 	const binaryBuild = readFileSync(new URL("./build-binaries.sh", import.meta.url), "utf8");
 	const clipboardStage = readFileSync(new URL("./stage-release-clipboard.mjs", import.meta.url), "utf8");
+	const macosSigning = readFileSync(new URL("./macos-release-signing.mjs", import.meta.url), "utf8");
+	const macosTrustGenerator = readFileSync(new URL("./generate-macos-release-trust.mjs", import.meta.url), "utf8");
+	const macosWorkflow = readFileSync(new URL("./macos-release-workflow.mjs", import.meta.url), "utf8");
+	const releasePublisher = readFileSync(new URL("./github-release-publish.mjs", import.meta.url), "utf8");
+	const unixInstaller = readFileSync(new URL("./install.sh", import.meta.url), "utf8");
+	const unixSmoke = readFileSync(new URL("./smoke-unix-release.sh", import.meta.url), "utf8");
 	const windowsInstaller = readFileSync(new URL("./install.ps1", import.meta.url), "utf8");
 	const ciWorkflow = readFileSync(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8");
 	const workflow = readFileSync(new URL("../.github/workflows/release.yml", import.meta.url), "utf8");
+	const processToolsWorkflow = readFileSync(
+		new URL("../.github/workflows/build-process-tools.yml", import.meta.url),
+		"utf8",
+	);
+	const packagePromotionWorkflow = readFileSync(
+		new URL("../.github/workflows/promote-package-release.yml", import.meta.url),
+		"utf8",
+	);
+	const macosSigningJobStart = workflow.indexOf("\n  macos-signing:");
+	const smokeLinuxJobStart = workflow.indexOf("\n  smoke-linux:");
+	const smokeMacosJobStart = workflow.indexOf("\n  smoke-macos:");
+	const smokeWindowsJobStart = workflow.indexOf("\n  smoke-windows:");
+	assert.ok(macosSigningJobStart >= 0 && smokeLinuxJobStart > macosSigningJobStart);
+	assert.ok(smokeMacosJobStart > smokeLinuxJobStart && smokeWindowsJobStart > smokeMacosJobStart);
+	const macosSigningJob = workflow.slice(macosSigningJobStart, smokeLinuxJobStart);
+	const smokeMacosJob = workflow.slice(smokeMacosJobStart, smokeWindowsJobStart);
 
 	assert.match(rootPackage.scripts["build:offline"], /npm run build:offline -w @earendil-works\/pi-ai/u);
 	assert.doesNotMatch(rootPackage.scripts["build:offline"], /npm run build -w @earendil-works\/pi-ai/u);
 	assert.match(rootPackage.scripts["check:release"], /npm run check:assumptions/u);
+	assert.match(rootPackage.scripts["check:release"], /generate-macos-release-trust\.mjs --check/u);
 	assert.match(codingPackage.scripts["build:release-all"], /\.\.\/ai run build:offline/u);
 	assert.doesNotMatch(codingPackage.scripts["build:release-all"], /\.\.\/ai run build &&/u);
+	assert.match(codingPackage.scripts.clean, /clean-coding-agent-build\.mjs/u);
+	assert.match(codingPackage.scripts["build:binary"], /run-bun-compile\.mjs build --compile/u);
+	assert.equal(codingPackage.scripts["build:release-all"].match(/run-bun-compile\.mjs build --compile/gu)?.length, 4);
+	assert.doesNotMatch(codingPackage.scripts["build:binary"], /(?:^|&&\s+)bun build --compile/u);
+	assert.doesNotMatch(codingPackage.scripts["build:release-all"], /(?:^|&&\s+)bun build --compile/u);
+	assert.match(codingPackage.scripts.prebuild, /generate-macos-release-trust\.mjs/u);
+	assert.match(macosTrustGenerator, /installerTrustPattern/u);
+	assert.match(macosTrustGenerator, /standalone Unix installer trust/u);
+	assert.equal(MACOS_EMBEDDED_PAYLOADS.length, 6);
+	assert.equal(MACOS_PUBLISHED_RELEASE_ASSET_NAMES_V0_0_30.length, 10);
+	assert.equal(new Set(MACOS_PUBLISHED_RELEASE_ASSET_NAMES_V0_0_30).size, 10);
+	assert.deepEqual(
+		[...MACOS_PUBLISHED_RELEASE_ASSET_NAMES_V0_0_30].sort(),
+		[
+			"SHA256SUMS",
+			"SOURCE_COMMIT",
+			"install.ps1",
+			"install.sh",
+			"macos-signing-receipt.json",
+			"magenta-linux-x64",
+			"magenta-macos-arm64",
+			"magenta-macos-x64",
+			"magenta-resources-universal.tar.gz",
+			"magenta-windows-x64.exe",
+		].sort(),
+	);
 	assert.match(localRelease, /runReleaseGate\(\{/u);
 	assert.doesNotMatch(localRelease, /run\("npm", \["run", "check"\]/u);
 	assert.match(localRelease, /pi\/coding-agent\/dist\/magenta-release\.json/u);
@@ -69,12 +134,23 @@ test("release builds are pinned, offline, and receipt-bound", () => {
 	assert.match(localRelease, /rmSync\(binaryBuildDirectory/u);
 	assert.doesNotMatch(localRelease, /cpSync\(join\(binaryBuildDirectory, archiveName\)/u);
 	assert.match(binaryBuild, /\.magenta-binary-output/u);
+	assert.match(binaryBuild, /run-bun-compile\.mjs build --compile/u);
+	assert.doesNotMatch(binaryBuild, /\bbun build --compile/u);
 	assert.match(binaryBuild, /Refusing to replace a directory not owned by this script/u);
 	assert.doesNotMatch(binaryBuild, /build-binaries\.yml/u);
 	assert.match(binaryBuild, /npm run clean\s+npm run build:offline/u);
 	assert.doesNotMatch(binaryBuild, /npm run build(?:\s|$)/u);
 	assert.match(ciWorkflow, /npm run clean\s+npm run build:offline/u);
 	assert.doesNotMatch(ciWorkflow, /npm run build(?:\s|$)/u);
+	for (const [label, source] of [
+		["CI workflow", ciWorkflow],
+		["release workflow", workflow],
+		["process-tools workflow", processToolsWorkflow],
+		["package promotion workflow", packagePromotionWorkflow],
+	]) {
+		assertCheckoutCredentialsAreNotPersisted(source, label);
+	}
+	assert.match(processToolsWorkflow, /^permissions:\s*\n  contents: read\s*$/mu);
 	assert.ok(
 		ciWorkflow.indexOf("npm run build:offline") < ciWorkflow.indexOf("npm test"),
 		"CI must build ignored workspace dist before cross-workspace tests import it",
@@ -87,70 +163,131 @@ test("release builds are pinned, offline, and receipt-bound", () => {
 		"release CI must build ignored workspace dist before cross-workspace tests import it",
 	);
 	assert.match(workflow, /stage-release-clipboard\.mjs/u);
+	assert.match(workflow, /run-bun-compile\.mjs build --compile \.\.\/\.\.\/scripts\/clipboard-runtime-probe\.ts/u);
+	assert.doesNotMatch(workflow, /\bbun build --compile/u);
 	assert.match(workflow, /verify-brand-version\.mjs/u);
+	assert.match(workflow, /apple_team_id=\$\(node scripts\/macos-release-trust\.mjs\)/u);
+	assert.match(workflow, /test "\$\(node scripts\/macos-release-trust\.mjs\)" = "\$EXPECTED_APPLE_TEAM_ID"/u);
 	assert.match(workflow, /smoke-linux:\s+[\s\S]*runs-on: ubuntu-24\.04/u);
 	assert.match(workflow, /file release\/magenta-linux-x64[^\n]+ELF 64-bit\.\*x86-64/u);
 	assert.match(workflow, /release\/magenta-linux-x64 --version/u);
 	assert.match(workflow, /release\/magenta-linux-x64 --help/u);
-	assert.match(workflow, /install -m 0755 release\/magenta-linux-x64/u);
+	assert.match(workflow, /bash scripts\/smoke-unix-release\.sh release/u);
 	assert.match(workflow, /smoke-macos:\s+[\s\S]*runner: macos-15\s+[\s\S]*runner: macos-15-intel/u);
 	assert.match(workflow, /codesign --verify --strict --check-notarization/u);
 	assert.match(workflow, /certificate leaf\[field\.1\.2\.840\.113635\.100\.6\.1\.13\] exists/u);
 	assert.match(workflow, /spctl --assess --type execute/u);
-	assert.match(workflow, /! grep -q '\^Signature=adhoc\$'/u);
+	assert.match(workflow, /if grep -q '\^Signature=adhoc\$'/u);
 	assert.match(workflow, /find "\$install_dir" -type f -print0/u);
 	assert.match(workflow, /test "\$verified_macho" -ge 3/u);
-	assert.match(workflow, /resource archive containing the native clipboard/u);
-	assert.match(workflow, /prove all other assets are byte-identical to the build receipt/u);
-	assert.match(workflow, /macos-signing-gate:[\s\S]*exit 1/u);
-	assert.match(workflow, /does not define or guess certificate\/notary secret/u);
-	assert.match(workflow, /macos-signing-gate:[\s\S]*outputs:[\s\S]*steps\.signed_receipt\.outputs\.manifest_sha256/u);
-	assert.match(workflow, /unix-installer-gate:[\s\S]*exit 1/u);
-	assert.match(workflow, /source-owned[\s\S]*install\.sh/u);
-	assert.match(workflow, /install\.sh[\s\S]*Release asset[\s\S]*SHA256SUMS[\s\S]*SOURCE_COMMIT/u);
-	assert.match(workflow, /share the built-in updater's per-installation lock/u);
-	assert.match(workflow, /durably journal every activation phase/u);
-	assert.match(workflow, /atomically replace the binary/u);
-	assert.match(workflow, /restore the complete previous resource set/u);
+	assert.match(macosSigningJob, /environment:\s+[\s\S]*name: macos-release/u);
+	assert.match(macosSigningJob, /timeout-minutes: 300/u);
+	assert.equal(workflow.match(/retention-days: 7/gu)?.length, 2);
+	assert.doesNotMatch(workflow, /retention-days: 1(?:\s|$)/u);
+	assert.match(workflow, /MAGENTA_MACOS_CERTIFICATE_P12_BASE64: \$\{\{ secrets\./u);
+	assert.match(workflow, /MAGENTA_APPLE_NOTARY_KEY_P8_BASE64: \$\{\{ secrets\./u);
+	assert.match(workflow, /macos-release-workflow\.mjs/u);
+	assert.match(workflow, /MAGENTA_MACOS_TEAM_ID: \$\{\{ secrets\.MAGENTA_MACOS_TEAM_ID \}\}/u);
+	assert.match(workflow, /actions\/upload-artifact@[0-9a-f]{40}[\s\S]*magenta-unsigned/u);
+	assert.match(workflow, /actions\/download-artifact@[0-9a-f]{40}[\s\S]*unsigned_artifact_name/u);
+	assert.match(workflow, /actions\/upload-artifact@[0-9a-f]{40}[\s\S]*magenta-signing-output/u);
+	assert.doesNotMatch(workflow, /macos-signing-gate:|unix-installer-gate:/u);
+	assert.doesNotMatch(workflow, /Require organization signing integration|exit 1\s*\n\s*unix-installer/u);
 	assert.match(
 		workflow,
-		/needs: \[build, macos-signing-gate, unix-installer-gate, smoke-linux, smoke-macos, smoke-windows\]/u,
+		/needs: \[macos-signing, smoke-linux, smoke-macos, smoke-windows\]/u,
 	);
-	assert.match(workflow, /needs\.macos-signing-gate\.outputs\.checksum_manifest_sha256/u);
+	assert.match(workflow, /needs\.macos-signing\.outputs\.checksum_manifest_sha256/u);
 	assert.doesNotMatch(workflow, /name: Publish verified release/u);
-	assert.match(workflow, /cd pi\/coding-agent\s+npm run build:release-all/u);
+	assert.match(macosWorkflow, /\["run", "build:release-all"\]/u);
+	assert.match(macosWorkflow, /DEFAULT_COMMAND_TIMEOUT_MS = 60 \* 60 \* 1000/u);
+	assert.match(macosWorkflow, /OUTER_REBUILD_TIMEOUT_MS = 90 \* 60 \* 1000/u);
+	assert.match(macosWorkflow, /Outer rebuild changed signed embedded payload/u);
+	assert.match(macosWorkflow, /does not contain signed embedded payload bytes/u);
+	assert.match(macosWorkflow, /does not contain the signed clipboard bytes/u);
+	assert.match(macosWorkflow, /Final signed helper Identifier mismatch/u);
+	assert.match(macosWorkflow, /verifyInitialReleaseBundle\(\{[\s\S]*receipt\.finalManifestSha256/u);
+	assert.match(macosSigning, /rebuildOuterBinaries callback is required/u);
 	assert.match(clipboardStage, /assertTarballIntegrity\(tarball, pkg\.integrity/u);
 	assert.match(workflow, /checksum_manifest_sha256/u);
 	assert.match(workflow, /sha256sum -c SHA256SUMS/u);
-	assert.match(workflow, /install\.ps1 SOURCE_COMMIT > SHA256SUMS/u);
+	assert.match(workflow, /install\.sh install\.ps1 SOURCE_COMMIT > SHA256SUMS/u);
+	assert.match(workflow, /EXPECTED_ASSETS=.*install\.sh/u);
+	assert.match(workflow, /EXPECTED_ASSETS=.*macos-signing-receipt\.json/u);
+	assert.match(workflow, /cmp release\/macos-signing-receipt\.json attestations\/macos-signing-receipt\.json/u);
+	assert.match(workflow, /_release-helper-proof > "\$proof"/u);
+	assert.match(workflow, /verify-macos-runtime-helper-proof\.mjs/u);
+	assertSourceOrder(
+		smokeMacosJob,
+		['file "release/${{ matrix.binary }}"', 'chmod 0755 "release/${{ matrix.binary }}"', '"$binary" _release-helper-proof'],
+		"downloaded macOS artifact permission restoration",
+	);
+	assert.match(workflow, /"install\.sh",\s+"install\.ps1"/u);
+	assert.match(unixInstaller, /"\$BIN_FILE" _install-unix/u);
+	assert.match(unixSmoke, /resource-install:README\.md/u);
+	assert.match(unixSmoke, /binary-install:complete/u);
+	assert.match(unixSmoke, /\.local\/lib\/magenta/u);
+	assert.match(unixSmoke, /\.local\/bin/u);
+	assert.match(unixSmoke, /test -L "\$entrypoint"/u);
+	assert.match(unixSmoke, /bash "\$release_dir\/install\.sh" --uninstall/u);
+	assert.match(unixSmoke, /test ! -e "\$entrypoint"/u);
+	assert.match(unixSmoke, /Leave one verified installation/u);
+	assert.match(unixSmoke, /\.magenta-install-update\.json/u);
+	assert.match(unixSmoke, /RUNNER_TEMP is required/u);
+	assert.match(unixSmoke, /\^v\[0-9\]\+\\\.\[0-9\]\+\\\.\[0-9\]\+\$/u);
+	assert.doesNotMatch(unixSmoke, /v\[0-9\]\*\.\[0-9\]\*\.\[0-9\]\*/u);
 	assert.match(windowsInstaller, /Invoke-MagentaCapture \$binaryPath "--help --offline smoke"/u);
 	assert.doesNotMatch(windowsInstaller, /Invoke-MagentaCapture \$binaryPath "--help"(?:\r?\n|\s)/u);
 	assert.match(workflow, /group: release-\$\{\{ inputs\.release_tag \|\| github\.ref_name \}\}/u);
 	assert.match(workflow, /\^v\[0-9\]\+\\\.\[0-9\]\+\\\.\[0-9\]\+\$/u);
 	assert.doesNotMatch(workflow, /gh release delete|--cleanup-tag/u);
 	assert.doesNotMatch(workflow, /softprops\/action-gh-release/u);
-	assert.match(workflow, /Refusing to overwrite the existing GitHub Release/u);
-	assert.match(workflow, /Could not prove that release destination .* is unused; refusing to publish/u);
-	assert.match(workflow, /Inspect and preserve the existing draft, signatures, assets, and receipts/u);
-	assert.match(workflow, /gh release create "\$RELEASE_TAG"[\s\S]+--draft/u);
-	assert.match(workflow, /repository_write=.*permissions\.push/u);
+	assert.doesNotMatch(workflow, /gh release create|gh release upload/u);
+	assert.match(workflow, /publish:\s+[\s\S]*environment:\s+[\s\S]*name: cli-release/u);
+	assert.match(releasePublisher, /Existing non-empty draft is not bound to SOURCE_COMMIT/u);
+	assert.match(releasePublisher, /Pre-existing empty draft is not bound to SOURCE_COMMIT/u);
+	assert.match(releasePublisher, /GitHub draft asset does not match the verified bundle/u);
+	assert.match(releasePublisher, /"--paginate", "--slurp"/u);
+	assert.match(releasePublisher, /Release \$\{tag\} is already published; refusing to modify it/u);
+	assertSourceOrder(
+		releasePublisher,
+		['const uploadOrder = ["SOURCE_COMMIT"', "uploadAsset", "publishDraft"],
+		"draft publication",
+	);
 	assert.match(workflow, /extractReleaseNotes\(changelog, version\)/u);
 	assert.doesNotMatch(workflow, /Fallback if no notes found|echo "Release \$VERSION"/u);
 	assertSourceOrder(
 		workflow,
-		["Require an unused release destination", "Setup Node.js", "Run release checks and tests"],
-		"release destination gate",
+		[
+			"Run release checks and tests",
+			"Upload source-bound unsigned candidates",
+			"Sign inside-out",
+			"Upload the sealed signed release artifact",
+			"Idempotently stage and publish",
+		],
+		"release artifact flow",
 	);
 	assert.doesNotMatch(workflow, /gh release download \$\{\{ inputs\.release_tag/u);
-	assert.doesNotMatch(workflow, /gh release upload[^\n]+install\.ps1/u);
 	const releaseScript = readFileSync(new URL("./release.mjs", import.meta.url), "utf8");
 	assert.match(releaseScript, /runReleaseGate\(\{ expectedVersion: version, runCommand: run \}\)/u);
+	assert.match(releaseScript, /const releaseTrust = readMacosReleaseTrust\(\)/u);
 	assert.doesNotMatch(releaseScript, /run\("npm", \["run", "build"\]\)/u);
 	assert.match(releaseScript, /verify-brand-version\.mjs/u);
 	assert.match(releaseScript, /buildArtifactsTouched = true;\s+runReleaseGate/u);
 	assert.match(releaseScript, /rollbackReleasePreparation\(\{ buildArtifactsTouched, snapshots \}\)/u);
 	assert.match(releaseScript, /publication is not complete until the Release workflow starts and passes/u);
 	assert.doesNotMatch(releaseScript, /Published source tag/u);
+	assertSourceOrder(
+		releaseScript,
+		[
+			"const preconditions = ensureReleasePreconditions();",
+			"const releaseTrust = readMacosReleaseTrust();",
+			"writeFileSync(brand.configPath, nextBrandSource);",
+			"runReleaseGate({ expectedVersion: version, runCommand: run });",
+			"run(\"git\", [...plan.releaseCommitArgs",
+		],
+		"configured macOS trust before release mutation and history",
+	);
 	assertSourceOrder(
 		releaseGate,
 		[
@@ -182,6 +319,35 @@ test("release builds are pinned, offline, and receipt-bound", () => {
 		for (const action of actions) {
 			assert.match(action, /@[0-9a-f]{40}$/u, `${file} must pin ${action} to a commit`);
 		}
+	}
+});
+
+test("Unix release smoke rejects missing runner state and malformed release tags before mutation", () => {
+	const root = mkdtempSync(join(tmpdir(), "magenta-unix-smoke-contract-"));
+	const releaseDirectory = join(root, "release");
+	const installDirectory = join(root, "install");
+	mkdirSync(releaseDirectory);
+	const smokePath = new URL("./smoke-unix-release.sh", import.meta.url).pathname;
+	const argsFor = (tag) => [smokePath, releaseDirectory, installDirectory, tag];
+	try {
+		const { RUNNER_TEMP: _runnerTemp, ...environmentWithoutRunnerTemp } = process.env;
+		const missingRunnerTemp = spawnSync("bash", argsFor("v1.2.3"), {
+			encoding: "utf8",
+			env: environmentWithoutRunnerTemp,
+		});
+		assert.equal(missingRunnerTemp.status, 2);
+		assert.match(missingRunnerTemp.stderr, /RUNNER_TEMP is required/u);
+
+		for (const tag of ["1.2.3", "v1.2", "v1x2x3", "v1.2.3suffix", "v1.2.3.4"]) {
+			const malformed = spawnSync("bash", argsFor(tag), {
+				encoding: "utf8",
+				env: { ...process.env, RUNNER_TEMP: root },
+			});
+			assert.equal(malformed.status, 2, `${tag}: ${malformed.stderr}`);
+			assert.match(malformed.stderr, /Invalid release tag/u);
+		}
+	} finally {
+		rmSync(root, { recursive: true, force: true });
 	}
 });
 
@@ -277,6 +443,20 @@ test("rejects invalid, non-increasing, or unsafe release targets", () => {
 	assert.throws(() => resolveReleaseVersion("9007199254740991.0.0", "major"), /safe integers/u);
 });
 
+test("parses an explicit exact-version unpublished recovery without weakening normal release syntax", () => {
+	assert.deepEqual(parseReleaseArguments(["patch"]), { abandonedVersion: undefined, target: "patch" });
+	assert.deepEqual(parseReleaseArguments(["--abandon-unpublished=0.0.30", "0.0.31"]), {
+		abandonedVersion: "0.0.30",
+		target: "0.0.31",
+	});
+	assert.throws(() => parseReleaseArguments(["--abandon-unpublished=0.0.30"]), /Usage/u);
+	assert.throws(() => parseReleaseArguments(["--abandon-unpublished=v0.0.30", "patch"]), /Invalid/u);
+	assert.throws(
+		() => parseReleaseArguments(["--abandon-unpublished=0.0.30", "--abandon-unpublished=0.0.30", "patch"]),
+		/Usage/u,
+	);
+});
+
 test("requires the active product version to match the latest published CLI release", () => {
 	assert.equal(
 		assertLatestPublishedVersion("0.0.29", {
@@ -295,9 +475,59 @@ test("requires the active product version to match the latest published CLI rele
 			}),
 		/Repair or rerun the existing version/u,
 	);
+	assert.equal(
+		assertLatestPublishedVersion(
+			"0.0.30",
+			{ draft: false, prerelease: false, tag_name: "v0.0.29" },
+			{ abandonedVersion: "0.0.30" },
+		),
+		"0.0.29",
+	);
+	assert.throws(
+		() =>
+			assertLatestPublishedVersion(
+				"0.0.30",
+				{ draft: false, prerelease: false, tag_name: "v0.0.29" },
+				{ abandonedVersion: "0.0.31" },
+			),
+		/must exactly match/u,
+	);
+	assert.throws(
+		() =>
+			assertLatestPublishedVersion(
+				"0.0.30",
+				{ draft: false, prerelease: false, tag_name: "v0.0.30" },
+				{ abandonedVersion: "0.0.30" },
+			),
+		/must be newer/u,
+	);
 	assert.throws(
 		() => assertLatestPublishedVersion("0.0.29", { draft: false, prerelease: false, tag_name: "v01.0.0" }),
 		/Invalid latest public CLI release version/u,
+	);
+});
+
+test("requires one exact remote annotated tag for abandoned-version recovery", () => {
+	const tagObject = "1".repeat(40);
+	const taggedCommit = "2".repeat(40);
+	assert.equal(
+		parseRemoteAnnotatedTagCommit(
+			`${tagObject}\trefs/tags/v0.0.30\n${taggedCommit}\trefs/tags/v0.0.30^{}\n`,
+			"0.0.30",
+		),
+		taggedCommit,
+	);
+	assert.throws(
+		() => parseRemoteAnnotatedTagCommit(`${taggedCommit}\trefs/tags/v0.0.30\n`, "0.0.30"),
+		/annotated source tag/u,
+	);
+	assert.throws(
+		() =>
+			parseRemoteAnnotatedTagCommit(
+				`${tagObject}\trefs/tags/v0.0.30\nnot-a-sha\trefs/tags/v0.0.30^{}\n`,
+				"0.0.30",
+			),
+		/invalid object id/u,
 	);
 });
 
@@ -313,6 +543,39 @@ test("fails closed when the public release lookup fails", async () => {
 	await assert.rejects(
 		() => verifyLatestPublishedVersion("0.0.29", async () => Promise.reject(new Error("offline"))),
 		/Could not query.*offline/u,
+	);
+});
+
+test("abandoned-version recovery rejects any already-published exact release", async () => {
+	assert.equal(
+		await verifyAbandonedVersionIsUnpublished("0.0.30", async () => ({ ok: false, status: 404 })),
+		"absent",
+	);
+	assert.equal(
+		await verifyAbandonedVersionIsUnpublished("0.0.30", async () => ({
+			ok: true,
+			status: 200,
+			json: async () => ({ draft: true, prerelease: false, tag_name: "v0.0.30" }),
+		})),
+		"draft",
+	);
+	await assert.rejects(
+		() =>
+			verifyAbandonedVersionIsUnpublished("0.0.30", async () => ({
+				ok: true,
+				status: 200,
+				json: async () => ({ draft: false, prerelease: true, tag_name: "v0.0.30" }),
+			})),
+		/already published as a prerelease/u,
+	);
+	await assert.rejects(
+		() =>
+			verifyAbandonedVersionIsUnpublished("0.0.30", async () => ({
+				ok: true,
+				status: 200,
+				json: async () => ({ draft: false, prerelease: false, tag_name: "v0.0.30" }),
+			})),
+		/already published/u,
 	);
 });
 

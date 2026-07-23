@@ -14,23 +14,55 @@
 
 import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { createWriteStream, existsSync, mkdirSync, rmSync } from "node:fs";
-import { lstat, readFile, realpath, rename, writeFile } from "node:fs/promises";
-import { arch, homedir, platform } from "node:os";
+import type { BigIntStats, Dir, Dirent, Stats } from "node:fs";
+import { createReadStream, existsSync, mkdirSync, rmSync } from "node:fs";
+import {
+	lstat,
+	open,
+	opendir,
+	readdir,
+	readFile,
+	realpath,
+	rename,
+	rm,
+	rmdir,
+	unlink,
+	writeFile,
+} from "node:fs/promises";
+import { arch, platform } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
+import { createGunzip } from "node:zlib";
 import lockfile from "proper-lockfile";
 import { compare as compareSemver, valid as validSemver } from "semver";
 import { parse as parseToml } from "smol-toml";
+import { getConfigRootDir } from "../config.ts";
 import { resolveGitHubUrl } from "./github-mirror.ts";
 
-const HcpClientpackagedownloadtimeoutms = 300_000; // 5 minutes for package download
+const HcpClientpackagedownloadwalltimeoutms = 15 * 60_000;
+const HcpClientpackagedownloadinactivitytimeoutms = 120_000;
+const HcpClientpackagedownloadretrydelayms = 2_000;
+const HcpClientpackagedownloadmaxattempts = 3;
+const HcpClientpackagearchiveextractiontimeoutms = 300_000;
+const HcpClientpackageartifactmaxbytes = 512 * 1024 * 1024;
+const HcpClientpackagechecksummaxbytes = 1024 * 1024;
+const HcpClientpackagearchiveentrymaxcount = 10_000;
+const HcpClientpackageexpandedfilemaxbytes = 2 * 1024 * 1024 * 1024;
+const HcpClientpackageuncompressedtarmaxbytes = HcpClientpackageexpandedfilemaxbytes + 128 * 1024 * 1024;
+const HcpClientpackagearchiveinspectiontimeoutms = 120_000;
 const HcpClientpackagecatalogtimeoutms = 5_000;
 const HcpClientofficialpackageowner = "Minions-Land";
 const HcpClientofficialpackagerepo = "Magenta-CLI";
 const HcpClientpackagecacheprovenancefile = ".magenta-package-provenance.json";
-const HcpClientpackagecacheprovenanceschemaversion = 2;
+const HcpClientpackagecacheprovenanceschemaversion = 3;
+const HcpClientpackagecacheprovenancemaxbytes = 64 * 1024;
+const HcpClientpackagemanifestmaxbytes = 1024 * 1024;
+const HcpClientpackagestagingmarkerfile = ".magenta-package-staging.json";
+const HcpClientpackagestagingmarkerschemaversion = 1;
+const HcpClientpackagestagingmarkermaxbytes = 16 * 1024;
+const HcpClientpackagegenerationmaxscan = 64;
+const HcpClientpackagegenerationmaxdirectoryentries = 10_000;
+const HcpClientpackagecachetreeentrymaxcount = HcpClientpackagearchiveentrymaxcount * 2;
 const HcpClientgithubownerpattern = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
 const HcpClientgithubrepopattern = /^[A-Za-z0-9._-]{1,100}$/;
 const HcpClientpackagenamepattern = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
@@ -265,6 +297,18 @@ type HcpClientpackagecacheprovenance = {
 	platform: HcpClientpackageplatformid;
 	artifact: string;
 	artifactSha256: string;
+	packageTreeSha256: string;
+};
+
+type HcpClientpackagestagingmarker = {
+	schemaVersion: number;
+	source: "github";
+	owner: string;
+	repo: string;
+	package: string;
+	version: string;
+	platform: HcpClientpackageplatformid;
+	stagingDirectory: string;
 };
 
 type HcpClientpackagecachepathset = {
@@ -274,6 +318,7 @@ type HcpClientpackagecachepathset = {
 	provenancePath: string;
 	lockPath: string;
 	platform: HcpClientpackageplatformid;
+	generationArtifactSha256?: string;
 };
 
 /**
@@ -300,10 +345,10 @@ export function HcpClientparsegithubpackageselector(selector: string): HcpClient
 
 /**
  * Get the local cache directory for harness packages.
- * Default: ~/.magenta/harness-packages/
+ * Default: <configured Magenta root>/harness-packages/
  */
 export function HcpClientgetpackagecacheroot(): string {
-	return join(homedir(), ".magenta", "harness-packages");
+	return join(getConfigRootDir(), "harness-packages");
 }
 
 /**
@@ -400,30 +445,29 @@ async function HcpClientacquiregithubpackagelocked(
 	const diagnostics: HcpClientpackageacquisitiondiagnostic[] = [];
 	const { cacheRoot, cacheDir, packageRoot, platform: packagePlatform } = paths;
 	const cacheKey = `${selector.owner}/${selector.repo}/${selector.package}@${selector.version}/${packagePlatform}`;
+	await HcpClientmaintainpackagecacheresidue(paths, selector, diagnostics);
 
-	// Check if package is already cached and valid
-	if (existsSync(cacheDir)) {
+	let directCacheInvalid = false;
+	// Prefer the legacy/direct path when valid. An invalid direct cache may still
+	// be in use by another process, so it is never removed or renamed here.
+	if (await HcpClientpathentryexists(cacheDir)) {
 		const invalidReason = await HcpClientvalidatecachedpackage(paths, selector);
 		if (!invalidReason) {
 			diagnostics.push({ type: "info", message: `Using cached ${cacheKey}` });
 			return { packageRoot, cached: true, diagnostics };
 		}
-		// Cache directory exists but is incomplete, corrupt, or belongs to another
-		// origin. Remove only the already-contained cache directory.
+		directCacheInvalid = true;
 		diagnostics.push({
 			type: "warning",
-			message: `Invalid cache for ${cacheKey} (${invalidReason}), re-downloading`,
+			code: "package_cache_invalid_preserved",
+			message: `Invalid direct cache for ${cacheKey} (${invalidReason}); preserving it and checking repair generations`,
 		});
-		try {
-			HcpClientremovecachedir(cacheRoot, cacheDir);
-		} catch (error) {
-			diagnostics.push({
-				type: "error",
-				code: "cache_cleanup_failed",
-				message: `Failed to clean incomplete cache: ${error instanceof Error ? error.message : String(error)}`,
-			});
-			return { packageRoot, cached: false, diagnostics };
-		}
+	}
+
+	const cachedGeneration = await HcpClientfindvalidpackagegeneration(paths, selector, diagnostics);
+	if (cachedGeneration) {
+		diagnostics.push({ type: "info", message: `Using cached repair generation for ${cacheKey}` });
+		return { packageRoot: cachedGeneration.packageRoot, cached: true, diagnostics };
 	}
 
 	const stagingDir = HcpClientpackagestagingdir(paths);
@@ -435,6 +479,11 @@ async function HcpClientacquiregithubpackagelocked(
 	try {
 		mkdirSync(dirname(cacheDir), { recursive: true });
 		mkdirSync(stagingDir);
+		await writeFile(
+			join(stagingDir, HcpClientpackagestagingmarkerfile),
+			`${JSON.stringify(HcpClientcreatepackagestagingmarker(stagingDir, paths, selector), null, 2)}\n`,
+			{ encoding: "utf-8", flag: "wx", mode: 0o600 },
+		);
 		const tag = `${selector.package}-v${selector.version}`;
 		const artifact = `${tag}-${packagePlatform}.tar.gz`;
 		const artifactUrl = resolveGitHubUrl(
@@ -446,13 +495,26 @@ async function HcpClientacquiregithubpackagelocked(
 		mkdirSync(tempDir, { recursive: true });
 		const tarballPath = join(tempDir, artifact);
 		const checksumPath = join(tempDir, `${artifact}.sha256`);
+		const downloadDeadline = Date.now() + HcpClientpackagedownloadwalltimeoutms;
 
 		// Download tarball
 		diagnostics.push({ type: "info", message: `Downloading ${selector.package} v${selector.version}...` });
-		await HcpClientdownloadpackagefile(artifactUrl, tarballPath);
+		await HcpClientdownloadpackagefile(
+			artifactUrl,
+			tarballPath,
+			HcpClientpackageartifactmaxbytes,
+			downloadDeadline,
+			artifact,
+		);
 
 		// Download checksum
-		await HcpClientdownloadpackagefile(checksumUrl, checksumPath);
+		await HcpClientdownloadpackagefile(
+			checksumUrl,
+			checksumPath,
+			HcpClientpackagechecksummaxbytes,
+			downloadDeadline,
+			`${artifact}.sha256`,
+		);
 
 		// Verify checksum
 		const checksumContent = await readFile(checksumPath, "utf-8");
@@ -469,7 +531,7 @@ async function HcpClientacquiregithubpackagelocked(
 
 		// Inspect all logical entries before extraction. Only regular files and
 		// directories beneath the one expected package root are accepted.
-		HcpClientvalidatetargzarchive(tarballPath, selector.package);
+		await HcpClientvalidatetargzarchive(tarballPath, selector.package);
 		HcpClientextracttargz(tarballPath, stagingDir);
 
 		// Clean up temp files
@@ -479,6 +541,7 @@ async function HcpClientacquiregithubpackagelocked(
 		// provenance file is written last, so an interrupted install is never
 		// accepted as a verified cache entry on the next launch.
 		await HcpClientvalidatepackagemanifest(stagingPackageRoot, selector);
+		const packageTreeSha256 = await HcpClientcomputepackagetreesha256(stagingPackageRoot);
 		const provenance: HcpClientpackagecacheprovenance = {
 			schemaVersion: HcpClientpackagecacheprovenanceschemaversion,
 			source: "github",
@@ -489,17 +552,24 @@ async function HcpClientacquiregithubpackagelocked(
 			platform: packagePlatform,
 			artifact,
 			artifactSha256: actualHash,
+			packageTreeSha256,
 		};
 		await writeFile(stagingProvenancePath, `${JSON.stringify(provenance, null, 2)}\n`, "utf-8");
 
-		const published = await HcpClientpublishstagedcache(stagingDir, paths, selector);
+		const publishPaths = directCacheInvalid
+			? await HcpClientselectpackagegenerationpaths(paths, selector, actualHash)
+			: paths;
+		const published = await HcpClientpublishstagedcache(stagingDir, publishPaths, selector);
 		if (!published) {
 			diagnostics.push({ type: "info", message: `Another process installed ${cacheKey}` });
-			return { packageRoot, cached: true, diagnostics };
+			return { packageRoot: publishPaths.packageRoot, cached: true, diagnostics };
 		}
 
-		diagnostics.push({ type: "info", message: `Installed ${cacheKey}` });
-		return { packageRoot, cached: false, diagnostics };
+		diagnostics.push({
+			type: "info",
+			message: `${directCacheInvalid ? "Installed repair generation for" : "Installed"} ${cacheKey}`,
+		});
+		return { packageRoot: publishPaths.packageRoot, cached: false, diagnostics };
 	} catch (error) {
 		// Clean only this acquisition's staging directory. A concurrent process may
 		// already have published a valid final cache entry, which must be preserved.
@@ -516,9 +586,10 @@ async function HcpClientacquiregithubpackagelocked(
 }
 
 async function HcpClientlockpackagecache(paths: HcpClientpackagecachepathset): Promise<() => Promise<void>> {
-	mkdirSync(dirname(paths.lockPath), { recursive: true });
-	await writeFile(paths.lockPath, "", { flag: "a" });
-	return lockfile.lock(paths.lockPath, {
+	const lockTarget = dirname(paths.lockPath);
+	mkdirSync(lockTarget, { recursive: true });
+	return lockfile.lock(lockTarget, {
+		lockfilePath: `${paths.lockPath}.lock`,
 		realpath: false,
 		retries: {
 			retries: 120,
@@ -527,7 +598,7 @@ async function HcpClientlockpackagecache(paths: HcpClientpackagecachepathset): P
 			maxTimeout: 5000,
 			randomize: true,
 		},
-		stale: HcpClientpackagedownloadtimeoutms * 3,
+		stale: HcpClientpackagedownloadwalltimeoutms,
 		update: 30_000,
 	});
 }
@@ -606,6 +677,106 @@ function HcpClientresolvepackagecachepaths(selector: HcpClientgithubpackageselec
 	};
 }
 
+function HcpClientresolvepackagegenerationpaths(
+	paths: HcpClientpackagecachepathset,
+	generationName: string,
+	artifactSha256: string,
+): HcpClientpackagecachepathset {
+	const cacheDir = resolve(dirname(paths.cacheDir), generationName);
+	HcpClientassertpathwithin(paths.cacheRoot, cacheDir, "package cache generation directory");
+	const packageRoot = resolve(cacheDir, basename(paths.packageRoot));
+	HcpClientassertpathwithin(cacheDir, packageRoot, "generated package root");
+	return {
+		cacheRoot: paths.cacheRoot,
+		cacheDir,
+		packageRoot,
+		provenancePath: join(cacheDir, HcpClientpackagecacheprovenancefile),
+		lockPath: paths.lockPath,
+		platform: paths.platform,
+		generationArtifactSha256: artifactSha256,
+	};
+}
+
+function HcpClientparsepackagegenerationname(
+	name: string,
+	platformId: HcpClientpackageplatformid,
+): { artifactSha256: string } | undefined {
+	const prefix = `.${platformId}.generation-`;
+	if (!name.startsWith(prefix)) return undefined;
+	const match = /^([a-f0-9]{64})(?:-[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})?$/.exec(name.slice(prefix.length));
+	return match?.[1] ? { artifactSha256: match[1] } : undefined;
+}
+
+async function HcpClientfindvalidpackagegeneration(
+	paths: HcpClientpackagecachepathset,
+	selector: HcpClientgithubpackageselector,
+	diagnostics: HcpClientpackageacquisitiondiagnostic[],
+): Promise<HcpClientpackagecachepathset | undefined> {
+	const generationParent = dirname(paths.cacheDir);
+	let directory: Dir;
+	try {
+		directory = await opendir(generationParent);
+	} catch (error) {
+		if (HcpClientisfilesystemerror(error, "ENOENT")) return undefined;
+		diagnostics.push({
+			type: "warning",
+			code: "package_cache_generation_scan_failed",
+			message: `Could not inspect package repair generations in ${generationParent}: ${
+				error instanceof Error ? error.message : String(error)
+			}`,
+		});
+		return undefined;
+	}
+
+	const candidates: HcpClientpackagecachepathset[] = [];
+	let directoryEntries = 0;
+	for await (const entry of directory) {
+		directoryEntries++;
+		if (directoryEntries > HcpClientpackagegenerationmaxdirectoryentries) {
+			throw new Error(
+				`Package repair generation lookup exceeded the ${HcpClientpackagegenerationmaxdirectoryentries}-entry directory scan limit in ${generationParent}`,
+			);
+		}
+		const parsed = HcpClientparsepackagegenerationname(entry.name, paths.platform);
+		if (!parsed) continue;
+		if (candidates.length >= HcpClientpackagegenerationmaxscan) {
+			throw new Error(
+				`Package cache contains more than ${HcpClientpackagegenerationmaxscan} repair generations in ${generationParent}; refusing to create another generation`,
+			);
+		}
+		candidates.push(HcpClientresolvepackagegenerationpaths(paths, entry.name, parsed.artifactSha256));
+	}
+
+	candidates.sort((left, right) => left.cacheDir.localeCompare(right.cacheDir));
+	for (const candidate of candidates) {
+		const invalidReason = await HcpClientvalidatecachedpackage(candidate, selector);
+		if (!invalidReason) return candidate;
+		diagnostics.push({
+			type: "warning",
+			code: "package_cache_generation_invalid_preserved",
+			message: `Preserved invalid package repair generation ${candidate.cacheDir}: ${invalidReason}`,
+		});
+	}
+	return undefined;
+}
+
+async function HcpClientselectpackagegenerationpaths(
+	paths: HcpClientpackagecachepathset,
+	selector: HcpClientgithubpackageselector,
+	artifactSha256: string,
+): Promise<HcpClientpackagecachepathset> {
+	const prefix = `.${paths.platform}.generation-${artifactSha256}`;
+	const primary = HcpClientresolvepackagegenerationpaths(paths, prefix, artifactSha256);
+	if (!(await HcpClientpathentryexists(primary.cacheDir))) return primary;
+	if (!(await HcpClientvalidatecachedpackage(primary, selector))) return primary;
+
+	for (let attempt = 0; attempt < 16; attempt++) {
+		const candidate = HcpClientresolvepackagegenerationpaths(paths, `${prefix}-${randomUUID()}`, artifactSha256);
+		if (!(await HcpClientpathentryexists(candidate.cacheDir))) return candidate;
+	}
+	throw new Error(`Could not allocate an immutable repair generation for ${basename(paths.cacheDir)}`);
+}
+
 function HcpClientpackagestagingdir(paths: HcpClientpackagecachepathset): string {
 	const stagingDir = resolve(
 		dirname(paths.cacheDir),
@@ -613,6 +784,331 @@ function HcpClientpackagestagingdir(paths: HcpClientpackagecachepathset): string
 	);
 	HcpClientassertpathwithin(paths.cacheRoot, stagingDir, "package staging directory");
 	return stagingDir;
+}
+
+function HcpClientcreatepackagestagingmarker(
+	stagingDir: string,
+	paths: HcpClientpackagecachepathset,
+	selector: HcpClientgithubpackageselector,
+): HcpClientpackagestagingmarker {
+	return {
+		schemaVersion: HcpClientpackagestagingmarkerschemaversion,
+		source: "github",
+		owner: selector.owner.toLowerCase(),
+		repo: selector.repo.toLowerCase(),
+		package: selector.package,
+		version: selector.version,
+		platform: paths.platform,
+		stagingDirectory: basename(stagingDir),
+	};
+}
+
+type HcpClientpackageresiduecleanupresult = {
+	removed: boolean;
+	reason?: string;
+};
+
+async function HcpClientmaintainpackagecacheresidue(
+	paths: HcpClientpackagecachepathset,
+	selector: HcpClientgithubpackageselector,
+	diagnostics: HcpClientpackageacquisitiondiagnostic[],
+): Promise<void> {
+	try {
+		const sentinelResult = await HcpClientretirelegacypackagelocksentinel(paths);
+		if (sentinelResult.removed) {
+			diagnostics.push({
+				type: "info",
+				code: "package_cache_residue_removed",
+				message: `Removed legacy package lock sentinel ${paths.lockPath}`,
+			});
+		} else if (sentinelResult.reason) {
+			diagnostics.push({
+				type: "warning",
+				code: "package_cache_residue_preserved",
+				message: `Preserved legacy package lock sentinel ${paths.lockPath}: ${sentinelResult.reason}`,
+			});
+		}
+	} catch (error) {
+		diagnostics.push({
+			type: "warning",
+			code: "package_cache_residue_cleanup_failed",
+			message: `Could not retire legacy package lock sentinel ${paths.lockPath}: ${
+				error instanceof Error ? error.message : String(error)
+			}`,
+		});
+	}
+
+	const stagingParent = dirname(paths.cacheDir);
+	const stagingPrefix = `.${basename(paths.cacheDir)}.staging-`;
+	let entries: Dirent[];
+	try {
+		entries = await readdir(stagingParent, { withFileTypes: true });
+	} catch (error) {
+		if (HcpClientisfilesystemerror(error, "ENOENT")) return;
+		diagnostics.push({
+			type: "warning",
+			code: "package_cache_residue_cleanup_failed",
+			message: `Could not inspect package staging residue in ${stagingParent}: ${
+				error instanceof Error ? error.message : String(error)
+			}`,
+		});
+		return;
+	}
+
+	for (const entry of entries) {
+		if (!entry.name.startsWith(stagingPrefix)) continue;
+		const stagingDir = resolve(stagingParent, entry.name);
+		HcpClientassertpathwithin(paths.cacheRoot, stagingDir, "package staging directory");
+		try {
+			const result = await HcpClientcleanupstagingresidue(stagingDir, paths, selector);
+			if (result.removed) {
+				diagnostics.push({
+					type: "info",
+					code: "package_cache_residue_removed",
+					message: `Removed abandoned package staging directory ${stagingDir}`,
+				});
+			} else if (result.reason) {
+				diagnostics.push({
+					type: "warning",
+					code: "package_cache_residue_preserved",
+					message: `Preserved unverified package staging residue ${stagingDir}: ${result.reason}`,
+				});
+			}
+		} catch (error) {
+			if (HcpClientisfilesystemerror(error, "ENOENT")) continue;
+			diagnostics.push({
+				type: "warning",
+				code: "package_cache_residue_cleanup_failed",
+				message: `Could not clean package staging residue ${stagingDir}: ${
+					error instanceof Error ? error.message : String(error)
+				}`,
+			});
+		}
+	}
+}
+
+async function HcpClientcleanupstagingresidue(
+	stagingDir: string,
+	paths: HcpClientpackagecachepathset,
+	selector: HcpClientgithubpackageselector,
+): Promise<HcpClientpackageresiduecleanupresult> {
+	const initialInfo = await lstat(stagingDir);
+	if (!initialInfo.isDirectory() || initialInfo.isSymbolicLink()) {
+		return { removed: false, reason: "entry is not a real directory" };
+	}
+	if (!HcpClientisownedbycurrentuser(initialInfo)) {
+		return { removed: false, reason: "directory is owned by another user" };
+	}
+
+	const initialEntries = await readdir(stagingDir);
+	const isLegacyEmptyDirectory = initialEntries.length === 0;
+	const hasOwnedMarker = await HcpClienthasownedpackagestagingmarker(
+		stagingDir,
+		basename(stagingDir),
+		paths,
+		selector,
+	);
+	if (!isLegacyEmptyDirectory && !hasOwnedMarker) {
+		return { removed: false, reason: "non-empty directory has no matching ownership marker" };
+	}
+
+	const quarantineDir = HcpClientpackagequarantinepath(paths.cacheRoot, stagingDir);
+	await rename(stagingDir, quarantineDir);
+	const quarantinedInfo = await lstat(quarantineDir);
+	if (!HcpClientissamefilesystementry(initialInfo, quarantinedInfo)) {
+		return { removed: false, reason: `filesystem identity changed; entry was retained at ${quarantineDir}` };
+	}
+
+	if (hasOwnedMarker) {
+		const markerStillMatches = await HcpClienthasownedpackagestagingmarker(
+			quarantineDir,
+			basename(stagingDir),
+			paths,
+			selector,
+		);
+		if (!markerStillMatches) {
+			return { removed: false, reason: `ownership changed; entry was retained at ${quarantineDir}` };
+		}
+		await rm(quarantineDir, { recursive: true, force: false });
+		return { removed: true };
+	}
+
+	if ((await readdir(quarantineDir)).length !== 0) {
+		return { removed: false, reason: `directory became non-empty; entry was retained at ${quarantineDir}` };
+	}
+	await rmdir(quarantineDir);
+	return { removed: true };
+}
+
+async function HcpClienthasownedpackagestagingmarker(
+	stagingDir: string,
+	expectedStagingDirectory: string,
+	paths: HcpClientpackagecachepathset,
+	selector: HcpClientgithubpackageselector,
+): Promise<boolean> {
+	try {
+		const directoryInfo = await lstat(stagingDir);
+		if (
+			!directoryInfo.isDirectory() ||
+			directoryInfo.isSymbolicLink() ||
+			!HcpClientisownedbycurrentuser(directoryInfo)
+		) {
+			return false;
+		}
+		const markerPath = join(stagingDir, HcpClientpackagestagingmarkerfile);
+		const markerRaw = await HcpClientreadboundedregularfile(
+			markerPath,
+			HcpClientpackagestagingmarkermaxbytes,
+			"package staging marker",
+		);
+		const marker = JSON.parse(markerRaw) as Partial<HcpClientpackagestagingmarker>;
+		return (
+			marker.schemaVersion === HcpClientpackagestagingmarkerschemaversion &&
+			marker.source === "github" &&
+			marker.owner === selector.owner.toLowerCase() &&
+			marker.repo === selector.repo.toLowerCase() &&
+			marker.package === selector.package &&
+			marker.version === selector.version &&
+			marker.platform === paths.platform &&
+			marker.stagingDirectory === expectedStagingDirectory
+		);
+	} catch {
+		return false;
+	}
+}
+
+async function HcpClientretirelegacypackagelocksentinel(
+	paths: HcpClientpackagecachepathset,
+): Promise<HcpClientpackageresiduecleanupresult> {
+	let initialInfo: Stats;
+	try {
+		initialInfo = await lstat(paths.lockPath);
+	} catch (error) {
+		if (HcpClientisfilesystemerror(error, "ENOENT")) return { removed: false };
+		throw error;
+	}
+	if (!HcpClientissafelegacypackagelocksentinel(initialInfo)) {
+		return { removed: false, reason: "entry is not an owner-owned, zero-byte, single-link regular file" };
+	}
+
+	const quarantinePath = HcpClientpackagequarantinepath(paths.cacheRoot, paths.lockPath);
+	await rename(paths.lockPath, quarantinePath);
+	const quarantinedInfo = await lstat(quarantinePath);
+	if (
+		!HcpClientissamefilesystementry(initialInfo, quarantinedInfo) ||
+		!HcpClientissafelegacypackagelocksentinel(quarantinedInfo)
+	) {
+		return { removed: false, reason: `filesystem identity changed; entry was retained at ${quarantinePath}` };
+	}
+	await unlink(quarantinePath);
+	return { removed: true };
+}
+
+function HcpClientissafelegacypackagelocksentinel(info: Stats): boolean {
+	return (
+		info.isFile() &&
+		!info.isSymbolicLink() &&
+		info.size === 0 &&
+		info.nlink === 1 &&
+		HcpClientisownedbycurrentuser(info)
+	);
+}
+
+function HcpClientisownedbycurrentuser(info: { uid: number | bigint }): boolean {
+	if (typeof process.getuid !== "function") return true;
+	return typeof info.uid === "bigint" ? info.uid === BigInt(process.getuid()) : info.uid === process.getuid();
+}
+
+function HcpClientissamefilesystementry(
+	left: { dev: number; ino: number },
+	right: { dev: number; ino: number },
+): boolean {
+	return left.dev === right.dev && left.ino === right.ino;
+}
+
+async function HcpClientreadboundedregularfile(
+	filePath: string,
+	maxBytes: number,
+	description: string,
+): Promise<string> {
+	const pathInfo = await lstat(filePath);
+	if (!pathInfo.isFile() || pathInfo.isSymbolicLink()) {
+		throw new Error(`${description} is not a real file: ${filePath}`);
+	}
+	if (pathInfo.size > maxBytes || pathInfo.nlink !== 1 || !HcpClientisownedbycurrentuser(pathInfo)) {
+		throw new Error(`${description} size or ownership is invalid: ${filePath}`);
+	}
+
+	const handle = await open(filePath, "r");
+	try {
+		const openedInfo = await handle.stat();
+		if (
+			!HcpClientissamefilesystementry(pathInfo, openedInfo) ||
+			!openedInfo.isFile() ||
+			openedInfo.size > maxBytes ||
+			openedInfo.nlink !== 1 ||
+			!HcpClientisownedbycurrentuser(openedInfo) ||
+			openedInfo.mode !== pathInfo.mode ||
+			openedInfo.mtimeMs !== pathInfo.mtimeMs ||
+			openedInfo.ctimeMs !== pathInfo.ctimeMs
+		) {
+			throw new Error(`${description} changed while opening: ${filePath}`);
+		}
+
+		const buffer = Buffer.alloc(Math.min(maxBytes + 1, openedInfo.size + 1));
+		let bytesRead = 0;
+		while (bytesRead < buffer.length) {
+			const readResult = await handle.read(buffer, bytesRead, buffer.length - bytesRead, bytesRead);
+			if (readResult.bytesRead === 0) break;
+			bytesRead += readResult.bytesRead;
+		}
+		const [finalInfo, finalPathInfo] = await Promise.all([handle.stat(), lstat(filePath)]);
+		if (
+			bytesRead > maxBytes ||
+			finalInfo.size !== openedInfo.size ||
+			finalInfo.size !== bytesRead ||
+			!HcpClientissamefilesystementry(openedInfo, finalInfo) ||
+			!HcpClientissamefilesystementry(finalInfo, finalPathInfo) ||
+			finalInfo.nlink !== 1 ||
+			finalPathInfo.nlink !== 1 ||
+			!HcpClientisownedbycurrentuser(finalInfo) ||
+			!HcpClientisownedbycurrentuser(finalPathInfo) ||
+			finalInfo.mode !== openedInfo.mode ||
+			finalInfo.mtimeMs !== openedInfo.mtimeMs ||
+			finalInfo.ctimeMs !== openedInfo.ctimeMs ||
+			finalPathInfo.mode !== finalInfo.mode ||
+			finalPathInfo.mtimeMs !== finalInfo.mtimeMs ||
+			finalPathInfo.ctimeMs !== finalInfo.ctimeMs
+		) {
+			throw new Error(`${description} changed or exceeded its ${maxBytes}-byte limit: ${filePath}`);
+		}
+		return buffer.subarray(0, bytesRead).toString("utf-8");
+	} finally {
+		await handle.close();
+	}
+}
+
+function HcpClientpackagequarantinepath(cacheRoot: string, target: string): string {
+	const quarantinePath = resolve(
+		dirname(target),
+		`.magenta-package-quarantine-${basename(target)}-${process.pid}-${randomUUID()}`,
+	);
+	HcpClientassertpathwithin(cacheRoot, quarantinePath, "package cache quarantine path");
+	return quarantinePath;
+}
+
+function HcpClientisfilesystemerror(error: unknown, code: string): boolean {
+	return typeof error === "object" && error !== null && "code" in error && (error as { code?: unknown }).code === code;
+}
+
+async function HcpClientpathentryexists(path: string): Promise<boolean> {
+	try {
+		await lstat(path);
+		return true;
+	} catch (error) {
+		if (HcpClientisfilesystemerror(error, "ENOENT")) return false;
+		throw error;
+	}
 }
 
 function HcpClientassertpathwithin(parent: string, child: string, description: string): void {
@@ -632,11 +1128,20 @@ async function HcpClientpublishstagedcache(
 	paths: HcpClientpackagecachepathset,
 	selector: HcpClientgithubpackageselector,
 ): Promise<boolean> {
+	if (await HcpClientpathentryexists(paths.cacheDir)) {
+		const invalidReason = await HcpClientvalidatecachedpackage(paths, selector);
+		if (invalidReason) {
+			throw new Error(`cache destination already exists but is invalid: ${invalidReason}`);
+		}
+		HcpClientremovecachedir(paths.cacheRoot, stagingDir);
+		return false;
+	}
 	try {
 		await rename(stagingDir, paths.cacheDir);
+		await rm(join(paths.cacheDir, HcpClientpackagestagingmarkerfile), { force: true }).catch(() => undefined);
 		return true;
 	} catch (error) {
-		if (!existsSync(paths.cacheDir)) throw error;
+		if (!(await HcpClientpathentryexists(paths.cacheDir))) throw error;
 		const invalidReason = await HcpClientvalidatecachedpackage(paths, selector);
 		if (invalidReason) {
 			throw new Error(`cache destination appeared during publication but is invalid: ${invalidReason}`);
@@ -655,9 +1160,15 @@ async function HcpClientvalidatecachedpackage(
 		if (!cacheInfo.isDirectory() || cacheInfo.isSymbolicLink()) {
 			return `cache entry is not a real directory: ${paths.cacheDir}`;
 		}
+		if (!HcpClientisownedbycurrentuser(cacheInfo)) {
+			return `cache entry is owned by another user: ${paths.cacheDir}`;
+		}
 		const provenanceInfo = await lstat(paths.provenancePath);
 		if (!provenanceInfo.isFile() || provenanceInfo.isSymbolicLink()) {
 			return `cache provenance is not a real file: ${paths.provenancePath}`;
+		}
+		if (provenanceInfo.nlink !== 1 || !HcpClientisownedbycurrentuser(provenanceInfo)) {
+			return `cache provenance ownership is invalid: ${paths.provenancePath}`;
 		}
 		const [actualCacheRoot, actualCacheDir, actualPackageRoot] = await Promise.all([
 			realpath(paths.cacheRoot),
@@ -666,7 +1177,11 @@ async function HcpClientvalidatecachedpackage(
 		]);
 		HcpClientassertpathwithin(actualCacheRoot, actualCacheDir, "package cache directory");
 		HcpClientassertpathwithin(actualCacheDir, actualPackageRoot, "cached package root");
-		const provenanceRaw = await readFile(paths.provenancePath, "utf-8");
+		const provenanceRaw = await HcpClientreadboundedregularfile(
+			paths.provenancePath,
+			HcpClientpackagecacheprovenancemaxbytes,
+			"package cache provenance",
+		);
 		const provenance = JSON.parse(provenanceRaw) as Partial<HcpClientpackagecacheprovenance>;
 		if (
 			provenance.schemaVersion !== HcpClientpackagecacheprovenanceschemaversion ||
@@ -678,11 +1193,18 @@ async function HcpClientvalidatecachedpackage(
 			provenance.platform !== paths.platform ||
 			provenance.artifact !== `${selector.package}-v${selector.version}-${paths.platform}.tar.gz` ||
 			typeof provenance.artifactSha256 !== "string" ||
-			!/^[a-f0-9]{64}$/.test(provenance.artifactSha256)
+			!/^[a-f0-9]{64}$/.test(provenance.artifactSha256) ||
+			typeof provenance.packageTreeSha256 !== "string" ||
+			!/^[a-f0-9]{64}$/.test(provenance.packageTreeSha256) ||
+			(paths.generationArtifactSha256 !== undefined && provenance.artifactSha256 !== paths.generationArtifactSha256)
 		) {
 			return "provenance does not match the requested origin";
 		}
 		await HcpClientvalidatepackagemanifest(paths.packageRoot, selector);
+		const actualPackageTreeSha256 = await HcpClientcomputepackagetreesha256(paths.packageRoot);
+		if (actualPackageTreeSha256 !== provenance.packageTreeSha256) {
+			return `cached package content digest mismatch: expected ${provenance.packageTreeSha256}, got ${actualPackageTreeSha256}`;
+		}
 		return undefined;
 	} catch (error) {
 		return error instanceof Error ? error.message : String(error);
@@ -697,12 +1219,23 @@ async function HcpClientvalidatepackagemanifest(
 	if (!packageInfo.isDirectory() || packageInfo.isSymbolicLink()) {
 		throw new Error(`extracted package root is not a real directory: ${packageRoot}`);
 	}
+	if (!HcpClientisownedbycurrentuser(packageInfo)) {
+		throw new Error(`extracted package root is owned by another user: ${packageRoot}`);
+	}
 	const manifestPath = join(packageRoot, "package.toml");
 	const manifestInfo = await lstat(manifestPath);
 	if (!manifestInfo.isFile() || manifestInfo.isSymbolicLink()) {
 		throw new Error(`package.toml is not a real file: ${manifestPath}`);
 	}
-	const manifest = parseToml(await readFile(manifestPath, "utf-8")) as Record<string, unknown>;
+	if (manifestInfo.nlink !== 1 || !HcpClientisownedbycurrentuser(manifestInfo)) {
+		throw new Error(`package.toml ownership is invalid: ${manifestPath}`);
+	}
+	const manifestRaw = await HcpClientreadboundedregularfile(
+		manifestPath,
+		HcpClientpackagemanifestmaxbytes,
+		"package manifest",
+	);
+	const manifest = parseToml(manifestRaw) as Record<string, unknown>;
 	if (manifest.schema_version !== "magenta.package.v2") {
 		throw new Error(`package.toml must declare schema_version = "magenta.package.v2"`);
 	}
@@ -721,61 +1254,435 @@ async function HcpClientvalidatepackagemanifest(
 }
 
 /**
- * Download a file from a URL with timeout and progress. Throws on HTTP errors.
+ * Download one package asset within the acquisition-wide wall deadline.
  */
-async function HcpClientdownloadpackagefile(url: string, dest: string): Promise<void> {
-	const controller = new AbortController();
-	const timeout = setTimeout(() => controller.abort(), HcpClientpackagedownloadtimeoutms);
+export type HcpClientpackagedownloadoptions = {
+	inactivityTimeoutMs?: number;
+	retryDelayMs?: number;
+	maxAttempts?: number;
+};
 
-	try {
-		const response = await fetch(url, {
-			headers: { "User-Agent": "Magenta-Package-Acquisition" },
-			signal: controller.signal,
-		});
-
-		if (!response.ok) {
-			throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-		}
-
-		if (!response.body) {
-			throw new Error("Response body is empty");
-		}
-
-		const fileStream = createWriteStream(dest);
-		await pipeline(Readable.fromWeb(response.body as any), fileStream);
-	} finally {
-		clearTimeout(timeout);
+/** @internal Exported for deterministic transport-boundary tests. */
+export async function HcpClientdownloadpackagefile(
+	url: string,
+	dest: string,
+	maxBytes: number,
+	deadline: number,
+	assetName: string,
+	options: HcpClientpackagedownloadoptions = {},
+): Promise<void> {
+	const inactivityTimeoutMs = options.inactivityTimeoutMs ?? HcpClientpackagedownloadinactivitytimeoutms;
+	const retryDelayMs = options.retryDelayMs ?? HcpClientpackagedownloadretrydelayms;
+	const maxAttempts = options.maxAttempts ?? HcpClientpackagedownloadmaxattempts;
+	if (!Number.isFinite(inactivityTimeoutMs) || inactivityTimeoutMs <= 0) {
+		throw new RangeError("Package download inactivity timeout must be a positive finite number");
 	}
+	if (!Number.isFinite(retryDelayMs) || retryDelayMs < 0) {
+		throw new RangeError("Package download retry delay must be a finite non-negative number");
+	}
+	if (!Number.isSafeInteger(maxAttempts) || maxAttempts <= 0) {
+		throw new RangeError("Package download max attempts must be a positive safe integer");
+	}
+
+	for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+		if (Date.now() >= deadline) {
+			throw HcpClientpackagedownloadwalltimeouterror(assetName, deadline, attempt - 1);
+		}
+
+		const controller = new AbortController();
+		let wallTimer: NodeJS.Timeout | undefined;
+		let inactivityTimer: NodeJS.Timeout | undefined;
+		let destinationCreated = false;
+		let destinationHandle: Awaited<ReturnType<typeof open>> | undefined;
+		let responseBody: ReadableStream<Uint8Array> | undefined;
+		let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+		let completed = false;
+
+		const clearTimers = () => {
+			if (wallTimer) clearTimeout(wallTimer);
+			if (inactivityTimer) clearTimeout(inactivityTimer);
+			wallTimer = undefined;
+			inactivityTimer = undefined;
+		};
+		const abortAttempt = (error: HcpClientpackagedownloaderror) => {
+			if (!controller.signal.aborted) controller.abort(error);
+		};
+		const resetInactivityTimer = () => {
+			if (inactivityTimer) clearTimeout(inactivityTimer);
+			inactivityTimer = setTimeout(() => {
+				abortAttempt(
+					new HcpClientpackagedownloaderror(
+						`Download of ${assetName} stalled: no data was received for ${inactivityTimeoutMs}ms (attempt ${attempt}/${maxAttempts})`,
+						true,
+					),
+				);
+			}, inactivityTimeoutMs);
+		};
+
+		try {
+			wallTimer = setTimeout(
+				() => abortAttempt(HcpClientpackagedownloadwalltimeouterror(assetName, deadline, attempt)),
+				Math.max(1, deadline - Date.now()),
+			);
+			resetInactivityTimer();
+			const response = await HcpClientwaitwithabort(
+				fetch(url, {
+					headers: { "User-Agent": "Magenta-Package-Acquisition" },
+					signal: controller.signal,
+				}),
+				controller.signal,
+			);
+			responseBody = response.body ?? undefined;
+			if (!response.ok) {
+				throw new HcpClientpackagedownloaderror(
+					`HTTP ${response.status}: ${response.statusText}`,
+					response.status === 408 || response.status === 429 || response.status >= 500,
+				);
+			}
+			if (!responseBody) throw new HcpClientpackagedownloaderror("Response body is empty", true);
+
+			const contentLength = response.headers.get("content-length")?.trim();
+			if (contentLength !== undefined) {
+				if (!/^\d+$/.test(contentLength)) {
+					throw new HcpClientpackagedownloaderror(
+						`Download returned an invalid Content-Length: ${contentLength}`,
+						false,
+					);
+				}
+				if (BigInt(contentLength) > BigInt(maxBytes)) {
+					throw new HcpClientpackagedownloaderror(
+						`Download declares ${contentLength} bytes, exceeding the ${maxBytes}-byte limit`,
+						false,
+					);
+				}
+			}
+
+			controller.signal.throwIfAborted();
+			destinationHandle = await open(dest, "wx", 0o600);
+			destinationCreated = true;
+			reader = responseBody.getReader();
+			let receivedBytes = 0;
+			while (true) {
+				const chunk = await HcpClientwaitwithabort(reader.read(), controller.signal);
+				if (chunk.done) break;
+				if (chunk.value.byteLength > 0) resetInactivityTimer();
+				receivedBytes += chunk.value.byteLength;
+				if (receivedBytes > maxBytes) {
+					throw new HcpClientpackagedownloaderror(
+						`Download exceeded the ${maxBytes}-byte limit while streaming`,
+						false,
+					);
+				}
+				await destinationHandle.writeFile(chunk.value);
+				controller.signal.throwIfAborted();
+			}
+			if (inactivityTimer) clearTimeout(inactivityTimer);
+			inactivityTimer = undefined;
+			await destinationHandle.sync();
+			controller.signal.throwIfAborted();
+			await destinationHandle.close();
+			destinationHandle = undefined;
+			completed = true;
+			return;
+		} catch (rawError) {
+			const error = controller.signal.aborted
+				? HcpClientpackageabortreason(controller.signal)
+				: rawError instanceof Error
+					? rawError
+					: new Error(String(rawError));
+			clearTimers();
+			if (reader) {
+				void reader.cancel().catch(() => undefined);
+				reader = undefined;
+			} else if (responseBody) void responseBody.cancel().catch(() => undefined);
+			if (destinationHandle) await destinationHandle.close().catch(() => undefined);
+			if (destinationCreated) {
+				try {
+					await rm(dest, { force: false });
+				} catch (cleanupError) {
+					if (!HcpClientisfilesystemerror(cleanupError, "ENOENT")) {
+						throw new Error(`Failed to remove partial package download ${dest} after: ${error.message}`, {
+							cause: cleanupError,
+						});
+					}
+				}
+			}
+
+			if (Date.now() >= deadline) {
+				throw HcpClientpackagedownloadwalltimeouterror(assetName, deadline, attempt);
+			}
+			if (!HcpClientisretryablepackagedownloaderror(error) || attempt === maxAttempts) {
+				throw error;
+			}
+			await HcpClientwaitforpackagedownloadretry(retryDelayMs * attempt, deadline, assetName, attempt);
+		} finally {
+			clearTimers();
+			if (!completed && reader) void reader.cancel().catch(() => undefined);
+		}
+	}
+}
+
+class HcpClientpackagedownloaderror extends Error {
+	readonly retryable: boolean;
+
+	constructor(message: string, retryable: boolean, options?: ErrorOptions) {
+		super(message, options);
+		this.name = "HcpClientpackagedownloaderror";
+		this.retryable = retryable;
+	}
+}
+
+function HcpClientpackageabortreason(signal: AbortSignal): Error {
+	return signal.reason instanceof Error ? signal.reason : new Error("The operation was aborted");
+}
+
+function HcpClientwaitwithabort<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
+	if (signal.aborted) return Promise.reject(HcpClientpackageabortreason(signal));
+	return new Promise<T>((resolvePromise, rejectPromise) => {
+		const onAbort = () => {
+			signal.removeEventListener("abort", onAbort);
+			rejectPromise(HcpClientpackageabortreason(signal));
+		};
+		signal.addEventListener("abort", onAbort, { once: true });
+		operation.then(
+			(value) => {
+				signal.removeEventListener("abort", onAbort);
+				resolvePromise(value);
+			},
+			(error: unknown) => {
+				signal.removeEventListener("abort", onAbort);
+				rejectPromise(error);
+			},
+		);
+	});
+}
+
+function HcpClientisretryablepackagedownloaderror(error: Error): boolean {
+	if (error instanceof HcpClientpackagedownloaderror) return error.retryable;
+	const message = error.message.toLowerCase();
+	return (
+		error.name === "AbortError" ||
+		message.includes("aborted") ||
+		message.includes("timeout") ||
+		message.includes("econnreset") ||
+		message.includes("econnrefused") ||
+		message.includes("etimedout") ||
+		message.includes("enotfound") ||
+		message.includes("eai_again") ||
+		message.includes("socket connection was closed") ||
+		message.includes("unable to connect") ||
+		message.includes("fetch failed")
+	);
+}
+
+function HcpClientpackagedownloadwalltimeouterror(
+	assetName: string,
+	_deadline: number,
+	attempts: number,
+): HcpClientpackagedownloaderror {
+	return new HcpClientpackagedownloaderror(
+		`Download of ${assetName} exceeded the shared package download deadline after ${attempts} attempt${attempts === 1 ? "" : "s"}`,
+		false,
+	);
+}
+
+async function HcpClientwaitforpackagedownloadretry(
+	delayMs: number,
+	deadline: number,
+	assetName: string,
+	attempts: number,
+): Promise<void> {
+	const remainingMs = deadline - Date.now();
+	if (remainingMs <= 0) throw HcpClientpackagedownloadwalltimeouterror(assetName, deadline, attempts);
+	const boundedDelayMs = Math.min(delayMs, remainingMs);
+	if (boundedDelayMs > 0) await new Promise((resolvePromise) => setTimeout(resolvePromise, boundedDelayMs));
+	if (Date.now() >= deadline) throw HcpClientpackagedownloadwalltimeouterror(assetName, deadline, attempts);
 }
 
 /**
  * Compute SHA256 hash of a file (hex string).
  */
 async function HcpClientcomputepackagesha256(filePath: string): Promise<string> {
-	const content = await readFile(filePath);
-	return createHash("sha256").update(content).digest("hex");
+	const hash = createHash("sha256");
+	for await (const chunk of createReadStream(filePath)) hash.update(chunk);
+	return hash.digest("hex");
 }
 
-/** Reject tar-slip paths and every entry type except regular files/directories. */
-function HcpClientvalidatetargzarchive(tarballPath: string, expectedTopLevel: string): void {
+type HcpClientpackagetreehashstate = {
+	hash: ReturnType<typeof createHash>;
+	entryCount: number;
+	fileBytes: bigint;
+};
+
+async function HcpClientcomputepackagetreesha256(packageRoot: string): Promise<string> {
+	const state: HcpClientpackagetreehashstate = {
+		hash: createHash("sha256").update("magenta-package-tree-v1\n"),
+		entryCount: 0,
+		fileBytes: 0n,
+	};
+	await HcpClienthashpackagetreeentry(packageRoot, "", state);
+	return state.hash.digest("hex");
+}
+
+async function HcpClienthashpackagetreeentry(
+	absolutePath: string,
+	relativePath: string,
+	state: HcpClientpackagetreehashstate,
+): Promise<void> {
+	state.entryCount++;
+	if (state.entryCount > HcpClientpackagecachetreeentrymaxcount) {
+		throw new Error(`Package tree contains more than ${HcpClientpackagecachetreeentrymaxcount} filesystem entries`);
+	}
+
+	const initialInfo = await lstat(absolutePath, { bigint: true });
+	if (initialInfo.isSymbolicLink()) {
+		throw new Error(`Package tree contains a symbolic link: ${absolutePath}`);
+	}
+	if (!HcpClientisownedbycurrentuser(initialInfo)) {
+		throw new Error(`Package tree entry is owned by another user: ${absolutePath}`);
+	}
+	const digestPath = relativePath || ".";
+	const permissionMode = Number(initialInfo.mode & 0o777n);
+
+	if (initialInfo.isDirectory()) {
+		state.hash.update(`${JSON.stringify({ type: "directory", path: digestPath, mode: permissionMode })}\n`, "utf-8");
+		const entries = await HcpClientreadboundedpackagedirectory(
+			absolutePath,
+			HcpClientpackagecachetreeentrymaxcount - state.entryCount,
+		);
+		entries.sort((left, right) => Buffer.compare(Buffer.from(left), Buffer.from(right)));
+		for (const entry of entries) {
+			await HcpClienthashpackagetreeentry(
+				join(absolutePath, entry),
+				relativePath ? `${relativePath}/${entry}` : entry,
+				state,
+			);
+		}
+		const finalInfo = await lstat(absolutePath, { bigint: true });
+		HcpClientassertstablepackagetreeentry(initialInfo, finalInfo, absolutePath);
+		return;
+	}
+
+	if (!initialInfo.isFile() || initialInfo.nlink !== 1n) {
+		throw new Error(`Package tree entry is not a single-link regular file: ${absolutePath}`);
+	}
+	state.fileBytes += initialInfo.size;
+	if (state.fileBytes > BigInt(HcpClientpackageexpandedfilemaxbytes)) {
+		throw new Error(`Package tree exceeds the ${HcpClientpackageexpandedfilemaxbytes}-byte file limit`);
+	}
+
+	const contentHash = createHash("sha256");
+	const handle = await open(absolutePath, "r");
+	let bytesRead = 0;
+	try {
+		const openedInfo = await handle.stat({ bigint: true });
+		HcpClientassertstablepackagetreeentry(initialInfo, openedInfo, absolutePath);
+		const buffer = Buffer.allocUnsafe(64 * 1024);
+		while (bytesRead < Number(openedInfo.size)) {
+			const result = await handle.read(
+				buffer,
+				0,
+				Math.min(buffer.length, Number(openedInfo.size) - bytesRead),
+				bytesRead,
+			);
+			if (result.bytesRead === 0) break;
+			contentHash.update(buffer.subarray(0, result.bytesRead));
+			bytesRead += result.bytesRead;
+		}
+		const [finalInfo, finalPathInfo] = await Promise.all([
+			handle.stat({ bigint: true }),
+			lstat(absolutePath, { bigint: true }),
+		]);
+		HcpClientassertstablepackagetreeentry(openedInfo, finalInfo, absolutePath);
+		HcpClientassertstablepackagetreeentry(finalInfo, finalPathInfo, absolutePath);
+		if (BigInt(bytesRead) !== finalInfo.size) {
+			throw new Error(`Package tree file changed while hashing: ${absolutePath}`);
+		}
+	} finally {
+		await handle.close();
+	}
+
+	state.hash.update(
+		`${JSON.stringify({
+			type: "file",
+			path: digestPath,
+			mode: permissionMode,
+			size: initialInfo.size.toString(),
+			sha256: contentHash.digest("hex"),
+		})}\n`,
+		"utf-8",
+	);
+}
+
+async function HcpClientreadboundedpackagedirectory(directoryPath: string, maxEntries: number): Promise<string[]> {
+	const directory = await opendir(directoryPath);
+	const entries: string[] = [];
+	for await (const entry of directory) {
+		if (entries.length >= maxEntries) {
+			throw new Error(
+				`Package tree contains more than ${HcpClientpackagecachetreeentrymaxcount} filesystem entries`,
+			);
+		}
+		entries.push(entry.name);
+	}
+	return entries;
+}
+
+function HcpClientassertstablepackagetreeentry(before: BigIntStats, after: BigIntStats, path: string): void {
+	if (
+		before.dev !== after.dev ||
+		before.ino !== after.ino ||
+		before.mode !== after.mode ||
+		before.uid !== after.uid ||
+		before.nlink !== after.nlink ||
+		before.size !== after.size ||
+		before.mtimeNs !== after.mtimeNs ||
+		before.ctimeNs !== after.ctimeNs
+	) {
+		throw new Error(`Package tree entry changed while hashing: ${path}`);
+	}
+}
+
+/** Reject resource amplification, tar-slip paths, and non-file/directory entries. */
+async function HcpClientvalidatetargzarchive(tarballPath: string, expectedTopLevel: string): Promise<void> {
+	await HcpClientvalidateuncompressedtarsize(tarballPath);
 	const paths = HcpClientlisttargz(tarballPath, false);
-	const verboseEntries = HcpClientlisttargz(tarballPath, true);
 	if (paths.length === 0) throw new Error("Package archive is empty");
+	if (paths.length > HcpClientpackagearchiveentrymaxcount) {
+		throw new Error(
+			`Package archive contains ${paths.length} entries, exceeding the ${HcpClientpackagearchiveentrymaxcount}-entry limit`,
+		);
+	}
+	const verboseEntries = HcpClientlisttargz(tarballPath, true);
 	if (paths.length !== verboseEntries.length) {
 		throw new Error("Package archive listing is ambiguous");
 	}
 	const normalizedPaths = new Set<string>();
 	const portablePaths = new Map<string, string>();
+	let expandedFileBytes = 0;
 
 	for (let index = 0; index < paths.length; index++) {
 		const entryPath = paths[index]!;
-		const type = verboseEntries[index]![0];
+		const verboseEntry = verboseEntries[index]!;
+		const type = verboseEntry[0];
 		if (type !== "-" && type !== "d") {
 			throw new Error(
 				`Package archive entry ${JSON.stringify(entryPath)} has unsupported type ${JSON.stringify(type)}`,
 			);
 		}
 		const normalizedPath = HcpClientvalidatearchiveentrypath(entryPath, expectedTopLevel);
+		const entrySize = HcpClientparsepackagetarverboseentrysize(verboseEntry, entryPath);
+		if (type === "d" && entrySize !== 0) {
+			throw new Error(`Package archive directory has a non-zero size: ${JSON.stringify(entryPath)}`);
+		}
+		if (type === "-") {
+			expandedFileBytes += entrySize;
+			if (expandedFileBytes > HcpClientpackageexpandedfilemaxbytes) {
+				throw new Error(
+					`Package archive expands to more than the ${HcpClientpackageexpandedfilemaxbytes}-byte file limit`,
+				);
+			}
+		}
 		if (normalizedPaths.has(normalizedPath)) {
 			throw new Error(`Package archive contains a duplicate path: ${JSON.stringify(normalizedPath)}`);
 		}
@@ -792,9 +1699,71 @@ function HcpClientvalidatetargzarchive(tarballPath: string, expectedTopLevel: st
 	}
 }
 
+async function HcpClientvalidateuncompressedtarsize(tarballPath: string): Promise<void> {
+	const controller = new AbortController();
+	const timeout = setTimeout(() => controller.abort(), HcpClientpackagearchiveinspectiontimeoutms);
+	let uncompressedBytes = 0;
+	try {
+		await pipeline(
+			createReadStream(tarballPath),
+			createGunzip(),
+			async (chunks) => {
+				for await (const chunk of chunks) {
+					uncompressedBytes += Buffer.byteLength(chunk);
+					if (uncompressedBytes > HcpClientpackageuncompressedtarmaxbytes) {
+						throw new Error(
+							`Package archive expands to more than the ${HcpClientpackageuncompressedtarmaxbytes}-byte tar-stream limit`,
+						);
+					}
+				}
+			},
+			{ signal: controller.signal },
+		);
+	} catch (error) {
+		if (controller.signal.aborted) {
+			throw new Error(`Package archive inspection timed out after ${HcpClientpackagearchiveinspectiontimeoutms}ms`);
+		}
+		throw error;
+	} finally {
+		clearTimeout(timeout);
+	}
+}
+
+export function HcpClientparsepackagetarverboseentrysize(verboseEntry: string, entryPath: string): number {
+	if (!verboseEntry.endsWith(entryPath)) {
+		throw new Error(`Package archive verbose listing does not match ${JSON.stringify(entryPath)}`);
+	}
+	const metadataEnd = verboseEntry.length - entryPath.length;
+	if (metadataEnd === 0 || !/\s/.test(verboseEntry[metadataEnd - 1]!)) {
+		throw new Error(`Package archive verbose listing is ambiguous for ${JSON.stringify(entryPath)}`);
+	}
+	const fields = verboseEntry.slice(0, metadataEnd).trim().split(/\s+/);
+	let sizeText: string | undefined;
+	if (
+		fields.length === 8 &&
+		/^\d+$/.test(fields[1] ?? "") &&
+		/^\d+$/.test(fields[2] ?? "") &&
+		/^\d+$/.test(fields[3] ?? "")
+	) {
+		// bsdtar: mode links uid gid size month day time-or-year path
+		sizeText = fields[4];
+	} else if (fields.length === 5 && /^\d+\/\d+$/.test(fields[1] ?? "")) {
+		// GNU tar: mode uid/gid size yyyy-mm-dd hh:mm path
+		sizeText = fields[2];
+	}
+	if (!sizeText || !/^\d+$/.test(sizeText)) {
+		throw new Error(`Package archive verbose listing has an unsupported format for ${JSON.stringify(entryPath)}`);
+	}
+	const size = Number(sizeText);
+	if (!Number.isSafeInteger(size)) {
+		throw new Error(`Package archive entry size is not a safe integer for ${JSON.stringify(entryPath)}`);
+	}
+	return size;
+}
+
 function HcpClientlisttargz(tarballPath: string, verbose: boolean): string[] {
 	const tarCommand = platform() === "win32" ? HcpClientgetwindowstarcommand() : "tar";
-	const result = spawnSync(tarCommand, [verbose ? "tvzf" : "tzf", tarballPath], {
+	const result = spawnSync(tarCommand, ["--numeric-owner", verbose ? "-tvzf" : "-tzf", tarballPath], {
 		encoding: "utf-8",
 		maxBuffer: 64 * 1024 * 1024,
 		timeout: 60_000,
@@ -833,7 +1802,7 @@ function HcpClientvalidatearchiveentrypath(entryPath: string, expectedTopLevel: 
 		);
 	}
 	for (const segment of segments) {
-		if (segment.includes(":") || /[. ]$/.test(segment) || HcpClientwindowsreservednamepattern.test(segment)) {
+		if (/[<>:"|?*]/.test(segment) || /[. ]$/.test(segment) || HcpClientwindowsreservednamepattern.test(segment)) {
 			throw new Error(`Package archive entry is not cross-platform safe: ${JSON.stringify(entryPath)}`);
 		}
 	}
@@ -846,7 +1815,11 @@ function HcpClientvalidatearchiveentrypath(entryPath: string, expectedTopLevel: 
  */
 function HcpClientextracttargz(tarballPath: string, extractDir: string): void {
 	const tarCommand = platform() === "win32" ? HcpClientgetwindowstarcommand() : "tar";
-	const result = spawnSync(tarCommand, ["xzf", tarballPath, "-C", extractDir], { stdio: "pipe" });
+	const result = spawnSync(
+		tarCommand,
+		["--no-same-owner", "--no-same-permissions", "-xzf", tarballPath, "-C", extractDir],
+		{ stdio: "pipe", timeout: HcpClientpackagearchiveextractiontimeoutms },
+	);
 
 	if (result.error) {
 		throw new Error(`Failed to spawn tar: ${result.error.message}`);

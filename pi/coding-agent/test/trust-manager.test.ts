@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -35,6 +35,10 @@ describe("ProjectTrustStore", () => {
 		expect(store.get(childDir)).toBe(false);
 		store.set(childDir, null);
 		expect(store.get(childDir)).toBe(true);
+
+		const trustPath = join(agentDir, "trust.json");
+		expect(Object.values(JSON.parse(readFileSync(trustPath, "utf-8")))).toEqual([true]);
+		if (process.platform !== "win32") expect(lstatSync(trustPath).mode & 0o777).toBe(0o600);
 	});
 
 	it("detects trust-requiring project resources", () => {

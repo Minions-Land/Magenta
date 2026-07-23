@@ -44,6 +44,8 @@ function createSpawn(
 	options: {
 		ready?: boolean;
 		closeAfterReady?: boolean;
+		deferredReadyResponses?: Array<() => void>;
+		onDeferredReadyRequest?: () => void;
 		deferredAbortResponses?: Array<() => void>;
 		onDeferredAbortRequest?: () => void;
 	} = {},
@@ -83,7 +85,10 @@ function createSpawn(
 					stdout.write(`${JSON.stringify(response)}\n`);
 					if (request.type === "get_state" && options.closeAfterReady) close(1, null, true);
 				};
-				if (request.type === "abort" && options.deferredAbortResponses) {
+				if (request.type === "get_state" && options.deferredReadyResponses) {
+					options.deferredReadyResponses.push(deliver);
+					options.onDeferredReadyRequest?.();
+				} else if (request.type === "abort" && options.deferredAbortResponses) {
 					options.deferredAbortResponses.push(deliver);
 					options.onDeferredAbortRequest?.();
 				} else {
@@ -522,6 +527,40 @@ describe("HCP multiagent Tool Source", () => {
 		expect(result.details).toMatchObject({ action: "interrupt", desiredProcessState: "running" });
 		expect(["interrupting", "idle"]).toContain((result.details as any).observedProcessState);
 		await waitUntil(() => mailbox.messages.some((message) => message.content === "replace the current turn"));
+		expect(await statusState(tool, "session-1")).toBe("idle");
+	});
+
+	it("sends one abort when readiness settlement and interrupt scheduling overlap", async () => {
+		const readyResponses: Array<() => void> = [];
+		const abortResponses: Array<() => void> = [];
+		let resolveReadyRequest!: () => void;
+		const readyRequested = new Promise<void>((resolve) => {
+			resolveReadyRequest = resolve;
+		});
+		controller = createController({
+			spawnAgent: createSpawn(spawns, {
+				deferredReadyResponses: readyResponses,
+				onDeferredReadyRequest: resolveReadyRequest,
+				deferredAbortResponses: abortResponses,
+			}),
+		});
+		const tool = controller.createToolDefinition();
+		await tool.execute("start", { action: "start" });
+		await readyRequested;
+		await tool.execute("interrupt", {
+			action: "interrupt",
+			sessionId: "session-1",
+			message: "deliver exactly once",
+		});
+		await waitUntil(() => abortResponses.length === 1);
+		readyResponses.shift()?.();
+		await waitUntil(async () => (await statusState(tool, "session-1")) === "interrupting");
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		expect(abortResponses).toHaveLength(1);
+
+		abortResponses.shift()?.();
+		await waitUntil(() => mailbox.messages.some((message) => message.content === "deliver exactly once"));
+		expect(mailbox.messages.filter((message) => message.content === "deliver exactly once")).toHaveLength(1);
 		expect(await statusState(tool, "session-1")).toBe("idle");
 	});
 

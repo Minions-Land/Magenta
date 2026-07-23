@@ -5,15 +5,11 @@ is slow or unreliable from many networks in mainland China. Magenta downloads
 release binaries, runtime resources, harness packages, and helper tools from
 GitHub, so those operations can stall without a mirror.
 
-This guide covers two independent accelerators:
-
-1. **Payload mirror routing** \u2014 route large release assets through a proxy prefix.
-2. **Parallel download** \u2014 use `aria2c` for multi-connection transfers during
-   install.
-
-Both are optional. Integrity-bearing release metadata stays on the direct
-`api.github.com` TLS connection so a payload mirror cannot replace both an
-artifact and the checksum used to verify it.
+This guide covers one optional accelerator: **payload mirror routing** for large
+release assets. The maintained installers use bounded `curl` downloads and do
+not depend on an extra downloader. Integrity-bearing release metadata stays on
+the direct `api.github.com` TLS connection so a payload mirror cannot replace
+both an artifact and the checksum used to verify it.
 
 ## Quick Diagnosis
 
@@ -74,51 +70,44 @@ the payload mirror. A checksum manifest may travel through a mirror only when
 its own API digest authenticates it; otherwise it is fetched directly from
 GitHub.
 
-## 2. Parallel Download With aria2
+## Manual Download
 
-Single-connection `curl` over a public mirror can drop to a few hundred KB/s. The
-`aria2c` downloader opens many connections and typically sustains several MB/s for
-the standalone executable.
-
-Install it first:
-
-```bash
-# Debian/Ubuntu
-apt-get install -y aria2
-# CentOS/RHEL/Alibaba Cloud Linux
-yum install -y aria2
-# macOS
-brew install aria2
-```
-
-The macOS/Linux install script in [User Install](./USER_INSTALL.md) auto-detects
-`aria2c` and uses 16 connections when present, falling back to `curl` otherwise.
-Combined with a mirror it produces the fastest path.
-
-### Manual download
-
-To fetch the release yourself with a mirror and aria2:
+For a manual download, choose one exact release tag from the Releases page. Do
+not substitute an unversioned redirect: the tag is part of the integrity
+contract. A mirror may serve the two large payloads, while the manifest remains
+direct:
 
 ```bash
+tag="<exact-release-tag>"
 mirror=https://ghfast.top
-release=https://github.com/Minions-Land/Magenta-CLI/releases/latest/download
+release="https://github.com/Minions-Land/Magenta-CLI/releases/download/$tag"
 base="$mirror/$release"
 
-aria2c -x16 -s16 -k1M "$base/magenta-linux-x64"
-aria2c -x16 -s16 -k1M "$base/magenta-resources-universal.tar.gz"
-# The manifest is the fallback trust root, so fetch it directly.
-curl -fL "$release/SHA256SUMS" -o SHA256SUMS
+curl -fL --retry 3 "$base/magenta-linux-x64" -o magenta-linux-x64
+curl -fL --retry 3 "$base/magenta-resources-universal.tar.gz" -o magenta-resources-universal.tar.gz
+# The manifest is the trust root, so fetch it directly from the exact tag.
+curl -fL --retry 3 "$release/SHA256SUMS" -o SHA256SUMS
 
-# Verify before using
-sha256sum -c --ignore-missing SHA256SUMS
+# SHA256SUMS covers every release payload. Select only the two files downloaded
+# above, then require both entries to be present and correct.
+awk '$2 == "magenta-linux-x64" || $2 == "magenta-resources-universal.tar.gz"' SHA256SUMS > SHA256SUMS.selected
+test "$(wc -l < SHA256SUMS.selected | tr -d " ")" = 2
+if command -v sha256sum >/dev/null 2>&1; then
+  sha256sum -c SHA256SUMS.selected
+else
+  shasum -a 256 -c SHA256SUMS.selected
+fi
 ```
 
 ## Verifying Integrity
 
-Whichever mirror or downloader you use, always confirm the payloads against a
-trust root obtained outside that mirror. The install scripts use direct GitHub
-API digests plus the official manifest automatically; for manual downloads,
-fetch the manifest directly as shown above and run:
+Whichever mirror you use, always confirm the payloads against a trust root
+obtained outside that mirror. The public bootstrap resolves one exact tag and
+verifies the installer against its GitHub API digest. The full installer then
+fetches `SHA256SUMS` directly from that tag and verifies the executable and
+resources against the selected manifest entries; the built-in updater also
+checks GitHub asset digests. For manual downloads, fetch the manifest directly
+as shown above and verify a tag-specific subset:
 
 ```bash
 sha256sum magenta-linux-x64 magenta-resources-universal.tar.gz
@@ -132,8 +121,8 @@ switching mirrors if the failure repeats.
 
 - **A mirror stalls or returns 404/5xx**: switch `MAGENTA_GITHUB_MIRROR` to
   another prefix from the table above.
-- **`aria2c: command not found`**: install it (see above) or the script falls
-  back to `curl` automatically.
+- **The exact tag cannot be resolved**: restore direct access to
+  `api.github.com`; a payload mirror cannot replace the metadata trust root.
 - **`magenta --update` still slow**: confirm the variable is exported in the
   current shell with `echo $MAGENTA_GITHUB_MIRROR`. It must be set in the same
   environment that launches `magenta`.

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
@@ -104,14 +104,17 @@ describe("package MCP HCP assembly (v2)", () => {
 
 	it("expands one server into single-product component entries on the session Client", async () => {
 		const packagesRoot = await mkdtemp(join(tmpdir(), "package-mcp-hcp-"));
-		roots.push(packagesRoot);
+		const cacheRoot = await mkdtemp(join(tmpdir(), "package-mcp-cache-"));
+		roots.push(packagesRoot, cacheRoot);
 		const overlay = await writeMcpPackage(packagesRoot);
-		const assembled = await HcpClientbuildpackagesessionfortest({ repoRoot: packagesRoot, overlay });
+		const assembled = await HcpClientbuildpackagesessionfortest({ repoRoot: packagesRoot, cacheRoot, overlay });
 
 		expect(assembled.diagnostics.filter((d) => "type" in d && d.type === "error")).toEqual([]);
 		expect(assembled.packageToolAddresses.sort()).toEqual(["tool:bio_greet", "tool:bio_status"]);
 		const greet = assembled.hcp.resolveInstance<AgentTool>("tool:bio_greet");
 		expect(greet?.provenance).toMatchObject({ kind: "mcp", remoteTool: "greet" });
+		expect(await readdir(join(cacheRoot, "mcp"))).toHaveLength(1);
+		await expect(readdir(join(packagesRoot, ".magenta"))).rejects.toMatchObject({ code: "ENOENT" });
 		await expect(greet!.execute("call-1", { name: "hcp" })).resolves.toMatchObject({
 			content: [{ type: "text", text: "hello hcp" }],
 		});

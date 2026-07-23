@@ -348,6 +348,32 @@ describe("MessageStore", () => {
 			expect(store.listPeerRoutes("store:peer-a").map((route) => route.sessionId)).toEqual(["remote-new"]);
 		});
 
+		it("does not rewrite unchanged peer route membership", () => {
+			const path = join(dir, "route-diff", "messages.db");
+			const routeStore = new MessageStore(path, { storeId: "store:route-diff" });
+			const probe = new DatabaseSync(path);
+			try {
+				routeStore.replacePeerRoutes("store:peer", ["remote-a", "remote-b"]);
+				const before = (probe.prepare(`PRAGMA data_version`).get() as { data_version: number }).data_version;
+				const timestamps = routeStore.listPeerRoutes("store:peer").map((route) => route.updatedAt);
+				routeStore.replacePeerRoutes("store:peer", ["remote-b", "remote-a", "remote-a"]);
+				const after = (probe.prepare(`PRAGMA data_version`).get() as { data_version: number }).data_version;
+				expect(after).toBe(before);
+				expect(routeStore.listPeerRoutes("store:peer").map((route) => route.updatedAt)).toEqual(timestamps);
+
+				routeStore.replacePeerRoutes("store:peer", ["remote-b", "remote-c"]);
+				const changed = (probe.prepare(`PRAGMA data_version`).get() as { data_version: number }).data_version;
+				expect(changed).toBeGreaterThan(after);
+				expect(routeStore.listPeerRoutes("store:peer").map((route) => route.sessionId)).toEqual([
+					"remote-b",
+					"remote-c",
+				]);
+			} finally {
+				probe.close();
+				routeStore.close();
+			}
+		});
+
 		it("does not let peer advertisements hijack local or already-owned sessions", () => {
 			store.updatePresence("local", "offline");
 			store.replacePeerRoutes("store:peer-a", ["owned", "local"]);
@@ -584,6 +610,120 @@ describe("MessageStore", () => {
 			});
 		});
 
+		it("does not rewrite unchanged endpoint configuration or desired state", () => {
+			const path = join(dir, "endpoint-noop", "messages.db");
+			const endpointStore = new MessageStore(path);
+			const probe = new DatabaseSync(path);
+			try {
+				const initial = endpointStore.upsertPeerEndpoint("stable", "root@example", 23915);
+				const beforeVersion = (probe.prepare(`PRAGMA data_version`).get() as { data_version: number }).data_version;
+				expect(endpointStore.upsertPeerEndpoint("stable", "root@example", 23915).updatedAt).toBe(initial.updatedAt);
+				expect((probe.prepare(`PRAGMA data_version`).get() as { data_version: number }).data_version).toBe(
+					beforeVersion,
+				);
+
+				expect(endpointStore.setPeerEndpointDesiredState("stable", "off")).toBe(true);
+				const changedVersion = (probe.prepare(`PRAGMA data_version`).get() as { data_version: number })
+					.data_version;
+				const changed = probe
+					.prepare(`SELECT updated_at FROM peer_endpoints WHERE endpoint_id = 'stable'`)
+					.get() as { updated_at: string };
+				expect(endpointStore.setPeerEndpointDesiredState("stable", "off")).toBe(false);
+				expect((probe.prepare(`PRAGMA data_version`).get() as { data_version: number }).data_version).toBe(
+					changedVersion,
+				);
+				expect(
+					(
+						probe.prepare(`SELECT updated_at FROM peer_endpoints WHERE endpoint_id = 'stable'`).get() as {
+							updated_at: string;
+						}
+					).updated_at,
+				).toBe(changed.updated_at);
+			} finally {
+				probe.close();
+				endpointStore.close();
+			}
+		});
+
+		it("does not refresh the timestamp for an identical relay claim", () => {
+			const path = join(dir, "relay-claim-noop", "messages.db");
+			const endpointStore = new MessageStore(path);
+			const probe = new DatabaseSync(path);
+			try {
+				endpointStore.upsertPeerEndpoint("stable", "root@example");
+				expect(endpointStore.claimPeerEndpointRelay("stable", process.pid, "stable-relay")).toBe(true);
+				const beforeVersion = (probe.prepare(`PRAGMA data_version`).get() as { data_version: number }).data_version;
+				const before = probe
+					.prepare(`SELECT updated_at FROM peer_endpoints WHERE endpoint_id = 'stable'`)
+					.get() as { updated_at: string };
+
+				expect(endpointStore.claimPeerEndpointRelay("stable", process.pid, "stable-relay")).toBe(true);
+				expect((probe.prepare(`PRAGMA data_version`).get() as { data_version: number }).data_version).toBe(
+					beforeVersion,
+				);
+				expect(
+					(
+						probe.prepare(`SELECT updated_at FROM peer_endpoints WHERE endpoint_id = 'stable'`).get() as {
+							updated_at: string;
+						}
+					).updated_at,
+				).toBe(before.updated_at);
+			} finally {
+				probe.close();
+				endpointStore.close();
+			}
+		});
+
+		it("does not rewrite unchanged relay state or diagnostics", () => {
+			const path = join(dir, "sub", "messages.db");
+			store.upsertPeerEndpoint("wal-hub", "root@example");
+			expect(store.claimPeerEndpointRelay("wal-hub", process.pid, "wal-relay")).toBe(true);
+			const probe = new DatabaseSync(path);
+			try {
+				expect(
+					store.updatePeerEndpointRelay("wal-hub", "wal-relay", "error", {
+						remoteStoreId: "store:remote",
+						lastError: "ssh unavailable",
+					}),
+				).toBe(true);
+				const beforeVersion = (probe.prepare(`PRAGMA data_version`).get() as { data_version: number }).data_version;
+				const before = probe
+					.prepare(`SELECT updated_at FROM peer_endpoints WHERE endpoint_id = 'wal-hub'`)
+					.get() as { updated_at: string };
+
+				// Relay reconnect/error loops often publish this exact snapshot again.
+				expect(
+					store.updatePeerEndpointRelay("wal-hub", "wal-relay", "error", {
+						remoteStoreId: "store:remote",
+						lastError: "ssh unavailable",
+					}),
+				).toBe(false);
+				expect((probe.prepare(`PRAGMA data_version`).get() as { data_version: number }).data_version).toBe(
+					beforeVersion,
+				);
+				expect(
+					(
+						probe.prepare(`SELECT updated_at FROM peer_endpoints WHERE endpoint_id = 'wal-hub'`).get() as {
+							updated_at: string;
+						}
+					).updated_at,
+				).toBe(before.updated_at);
+
+				// A changed observation is still written.
+				expect(
+					store.updatePeerEndpointRelay("wal-hub", "wal-relay", "reconnecting", {
+						remoteStoreId: "store:remote",
+						lastError: "ssh unavailable",
+					}),
+				).toBe(true);
+				expect(
+					(probe.prepare(`PRAGMA data_version`).get() as { data_version: number }).data_version,
+				).toBeGreaterThan(beforeVersion);
+			} finally {
+				probe.close();
+			}
+		});
+
 		it("rolls relay ownership only onto the requested binary generation", () => {
 			store.upsertPeerEndpoint("hub", "root@example");
 			expect(store.setPeerEndpointRelayGeneration("hub", "generation-a")).toBe(true);
@@ -628,14 +768,13 @@ describe("MessageStore", () => {
 			expect(store.listLiveSessionPids()).toEqual([process.pid]);
 		});
 
-		it("probes each shared presence pid only once while ordering advertisements", () => {
+		it("does not probe volatile process state while ordering advertisements", () => {
 			store.updatePresence("one", "idle", { pid: process.pid, bootId: "one" });
 			store.updatePresence("two", "active", { pid: process.pid, bootId: "two" });
 			const probe = vi.spyOn(MessageStore, "isProcessAlive");
 			try {
-				expect(store.listRegisteredSessionIds()).toEqual(["two", "one"]);
-				expect(probe).toHaveBeenCalledTimes(1);
-				expect(probe).toHaveBeenCalledWith(process.pid);
+				expect(store.listRegisteredSessionIds()).toEqual(["one", "two"]);
+				expect(probe).not.toHaveBeenCalled();
 			} finally {
 				probe.mockRestore();
 			}
@@ -659,6 +798,52 @@ describe("MessageStore", () => {
 			expect(p?.pid).toBe(process.pid);
 			expect(p?.bootId).toBe("boot-1");
 			expect(p?.lastSeen).toBeTruthy();
+		});
+
+		it("does not rewrite an unchanged presence row", () => {
+			const path = join(dir, "sub", "messages.db");
+			const probe = new DatabaseSync(path);
+			try {
+				store.updatePresence("stable", "active", {
+					pid: process.pid,
+					bootId: "stable-boot",
+					wakePath: "/tmp/stable-wake",
+					processStartId: "stable-process",
+				});
+				const beforeVersion = (probe.prepare(`PRAGMA data_version`).get() as { data_version: number }).data_version;
+				const before = probe.prepare(`SELECT last_seen FROM presence WHERE agent_id = 'stable'`).get() as {
+					last_seen: string;
+				};
+
+				// AgentSession may report the same state at agent_start and turn_start.
+				// The second report must not become a SQLite write/heartbeat.
+				store.updatePresence("stable", "active", {
+					pid: process.pid,
+					bootId: "stable-boot",
+					wakePath: "/tmp/stable-wake",
+					processStartId: "stable-process",
+				});
+				const afterVersion = (probe.prepare(`PRAGMA data_version`).get() as { data_version: number }).data_version;
+				const after = probe.prepare(`SELECT last_seen FROM presence WHERE agent_id = 'stable'`).get() as {
+					last_seen: string;
+				};
+				expect(afterVersion).toBe(beforeVersion);
+				expect(after.last_seen).toBe(before.last_seen);
+
+				// A real state transition remains durable and advances the external
+				// connection's data_version.
+				store.updatePresence("stable", "idle", {
+					pid: process.pid,
+					bootId: "stable-boot",
+					wakePath: "/tmp/stable-wake",
+					processStartId: "stable-process",
+				});
+				expect(
+					(probe.prepare(`PRAGMA data_version`).get() as { data_version: number }).data_version,
+				).toBeGreaterThan(beforeVersion);
+			} finally {
+				probe.close();
+			}
 		});
 
 		it("reports an offline agent as not online and clears pid/boot_id", () => {
@@ -703,6 +888,119 @@ describe("MessageStore", () => {
 			store.send("unknown", "gru", "ping");
 			const drained = store.drainUnread("gru");
 			expect(drained[0].senderPresence).toBeUndefined();
+		});
+
+		it("fails closed when a PID is alive but its recorded process identity is reused", () => {
+			const currentStartId = MessageStore.getProcessStartIdentity(process.pid);
+			expect(currentStartId).toBeTruthy();
+			store.updatePresence("reused", "active", {
+				pid: process.pid,
+				bootId: "old-boot",
+				processStartId: "old-process-start",
+			});
+			expect(MessageStore.isProcessAlive(process.pid)).toBe(true);
+			expect(store.getPresence("reused")).toMatchObject({ online: false, pid: process.pid });
+
+			store.updatePresence("reused", "active", {
+				pid: process.pid,
+				bootId: "new-boot",
+				processStartId: currentStartId,
+			});
+			expect(store.getPresence("reused")).toMatchObject({ online: true, processStartId: currentStartId });
+		});
+
+		it("treats pre-identity rows as offline rather than trusting kill(pid, 0)", () => {
+			store.updatePresence("legacy", "active", {
+				pid: process.pid,
+				bootId: "legacy-boot",
+				processStartId: MessageStore.getProcessStartIdentity(process.pid),
+			});
+			const probe = new DatabaseSync(join(dir, "sub", "messages.db"));
+			try {
+				probe.prepare(`UPDATE presence SET process_start_id = NULL WHERE agent_id = 'legacy'`).run();
+			} finally {
+				probe.close();
+			}
+			expect(store.getPresence("legacy")).toMatchObject({ online: false, pid: process.pid, processStartId: null });
+		});
+	});
+
+	describe("presence orphan GC", () => {
+		const DEAD_PID = 2_147_483_646;
+
+		it("deletes only proven orphan rows and preserves Session/registry/custody references", () => {
+			const path = join(dir, "presence-gc", "messages.db");
+			const gcStore = new MessageStore(path, { presenceRetentionMs: 0 });
+			const rows = ["delete-me", "session-ref", "registry-ref", "unread-ref", "pending-ref", "outbox-ref"];
+			try {
+				for (const agentId of rows) {
+					gcStore.updatePresence(`agent-${agentId}`, "active", {
+						pid: DEAD_PID,
+						bootId: `boot-${agentId}`,
+						processStartId: `start-${agentId}`,
+					});
+				}
+				const probe = new DatabaseSync(path);
+				try {
+					const old = new Date(Date.now() - 10_000).toISOString();
+					probe.prepare(`UPDATE presence SET last_seen = ?`).run(old);
+				} finally {
+					probe.close();
+				}
+
+				gcStore.send("sender", "agent-unread-ref", "unread custody");
+				gcStore.send("sender", "agent-pending-ref", "pending custody");
+				gcStore.drainUnread("agent-pending-ref");
+				gcStore.sendRouted("agent-outbox-ref", "remote-recipient", "unsettled custody");
+
+				expect(
+					gcStore.purgeOrphanPresence({
+						sessionIds: ["agent-session-ref"],
+						registrySessionIds: ["agent-registry-ref"],
+						nowMs: Date.now(),
+					}),
+				).toBe(1);
+				expect(gcStore.getPresence("agent-delete-me")).toBeUndefined();
+				for (const retained of [
+					"agent-session-ref",
+					"agent-registry-ref",
+					"agent-unread-ref",
+					"agent-pending-ref",
+					"agent-outbox-ref",
+				]) {
+					expect(gcStore.getPresence(retained)).toBeDefined();
+				}
+			} finally {
+				gcStore.close();
+			}
+		});
+
+		it("retains a live or unverifiable process even when no Session reference is supplied", () => {
+			const path = join(dir, "presence-gc-live", "messages.db");
+			const gcStore = new MessageStore(path, { presenceRetentionMs: 0 });
+			try {
+				gcStore.updatePresence("live", "active", {
+					pid: process.pid,
+					bootId: "live-boot",
+					processStartId: MessageStore.getProcessStartIdentity(process.pid),
+				});
+				gcStore.updatePresence("unknown", "active", {
+					pid: process.pid,
+					bootId: "unknown-boot",
+					processStartId: null,
+				});
+				const probe = new DatabaseSync(path);
+				try {
+					probe.prepare(`UPDATE presence SET last_seen = ?`).run(new Date(Date.now() - 10_000).toISOString());
+				} finally {
+					probe.close();
+				}
+				expect(gcStore.purgeOrphanPresence({ sessionIds: [], nowMs: Date.now() })).toBe(0);
+				expect(gcStore.getPresence("live")).toBeDefined();
+				expect(gcStore.getPresence("unknown")).toBeDefined();
+			} finally {
+				gcStore.close();
+			}
 		});
 	});
 

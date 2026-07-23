@@ -37,6 +37,7 @@ export type HcpClientpackagetoolruntimecomponent = {
 export type HcpClientpackagetoolcontext = {
 	resolveCapability<T>(name: string): T | undefined;
 	repoRoot: string;
+	cacheRoot?: string;
 	components: HcpClientpackagetoolruntimecomponent[];
 	componentMap: Map<string, HcpClientpackagetoolruntimecomponent>;
 };
@@ -177,7 +178,7 @@ export async function HcpClientexpandpackagetoolbuildsettings(
 					),
 			},
 			cache: {
-				dir: resolve(context.repoRoot, ".magenta", "cache", "mcp"),
+				dir: resolve(context.cacheRoot ?? resolve(context.repoRoot, ".magenta", "cache"), "mcp"),
 				descriptorEnv,
 			},
 		});

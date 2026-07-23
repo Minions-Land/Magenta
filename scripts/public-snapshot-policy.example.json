@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 1,
+  "approval": {
+    "reviewed": false,
+    "reviewedBy": [],
+    "reviewedSourceCommit": "UNSET",
+    "reviewTicket": "UNSET"
+  },
+  "target": {
+    "owner": "UNAPPROVED",
+    "repository": "UNAPPROVED",
+    "rootCommitOwner": {
+      "name": "UNAPPROVED",
+      "email": "unapproved@example.invalid"
+    }
+  },
+  "approvedRepositoryOwners": [],
+  "approvedCommitOwners": [],
+  "include": [
+    ".github",
+    "AGENTS.md",
+    "HarnessComponentProtocol",
+    "LICENSE",
+    "NOTICE",
+    "README.md",
+    "brands",
+    "docs",
+    "package-lock.json",
+    "package.json",
+    "packages",
+    "pi",
+    "scripts",
+    "tsconfig.json"
+  ],
+  "exclude": [
+    ".research",
+    "HarnessComponentProtocol/eval/results",
+    "docs/STABILITY_AUDIT.md",
+    "docs/research",
+    "output"
+  ],
+  "requiredLegalFiles": [
+    {
+      "path": "LICENSE",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    {
+      "path": "NOTICE",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  ],
+  "packageRootPrefixes": [
+    "packages"
+  ],
+  "approvedPackageRoots": [],
+  "allowedBinaryFiles": [],
+  "interoperabilityAllowlist": [],
+  "maxFileBytes": 5242880
+}

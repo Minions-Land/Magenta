@@ -1,6 +1,17 @@
 import { createHash } from "node:crypto";
 import { constants as bufferConstants } from "buffer";
-import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync, writeSync } from "fs";
+import {
+	appendFileSync,
+	closeSync,
+	lstatSync,
+	mkdirSync,
+	openSync,
+	readFileSync,
+	rmSync,
+	symlinkSync,
+	writeFileSync,
+	writeSync,
+} from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -267,6 +278,19 @@ describe("SessionManager.setSessionFile with corrupted files", () => {
 		const header = JSON.parse(lines[0]);
 		expect(header.type).toBe("session");
 		expect(header.id).toBe(sm.getSessionId());
+		expect(lstatSync(emptyFile).mode & 0o777).toBe(0o600);
+	});
+
+	it("refuses symbolic-link session files without touching their target", () => {
+		const target = join(tempDir, "target.jsonl");
+		const linked = join(tempDir, "linked.jsonl");
+		const original =
+			'{"type":"session","version":3,"id":"external","timestamp":"2025-01-01T00:00:00Z","cwd":"/tmp"}\n';
+		writeFileSync(target, original);
+		symlinkSync(target, linked);
+
+		expect(() => SessionManager.open(linked, tempDir)).toThrow(/user-owned regular file/u);
+		expect(readFileSync(target, "utf8")).toBe(original);
 	});
 
 	it("rejects and preserves a non-empty file without a valid header byte-for-byte", () => {

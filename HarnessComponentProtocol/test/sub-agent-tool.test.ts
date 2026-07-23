@@ -371,8 +371,13 @@ describe("HCP sub_agent Tool Source", () => {
 			await tool.execute(`fill-${index}`, { action: "start", task: `fill ${index}` });
 		const ninth = await tool.execute("queued-timeout", { action: "start", task: "queued", timeoutSeconds: 0.02 });
 		const eventId = (ninth.details as { eventId: string }).eventId;
+		expect(eventStates(await awaitStatus(tool, eventId))[0]).toMatchObject({
+			eventId,
+			state: "queued",
+			queuePosition: 1,
+		});
 		await waitUntil(async () => eventStates(await awaitStatus(tool, eventId))[0]?.state === "timed_out");
-		expect(records).toHaveLength(8);
+		expect(records.some((record) => record.args.some((argument) => argument.includes(eventId)))).toBe(false);
 	});
 
 	it("captures output, settles once, and emits one terminal activation", async () => {

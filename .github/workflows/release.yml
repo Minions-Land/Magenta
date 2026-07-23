@@ -23,8 +23,12 @@ jobs:
     name: Build and stage release candidates
     runs-on: macos-15  # arm64 runner
     outputs:
+      apple_team_id: ${{ steps.release_trust.outputs.apple_team_id }}
       checksum_manifest_sha256: ${{ steps.checksums.outputs.manifest_sha256 }}
       release_tag: ${{ steps.release.outputs.tag }}
+      source_commit: ${{ steps.checksums.outputs.source_commit }}
+      unsigned_artifact_digest: ${{ steps.upload_unsigned.outputs.artifact-digest }}
+      unsigned_artifact_name: ${{ steps.checksums.outputs.artifact_name }}
     env:
       RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
 
@@ -42,55 +46,20 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
+          persist-credentials: false
           ref: refs/tags/${{ steps.release.outputs.tag }}
-
-      - name: Require an unused release destination
-        env:
-          GH_TOKEN: ${{ secrets.MAGENTA_CLI_RELEASE_TOKEN }}
-        run: |
-          if ! repository_write=$(gh api repos/Minions-Land/Magenta-CLI --jq '.permissions.push'); then
-            echo "Could not verify release-repository access; refusing to publish." >&2
-            exit 1
-          fi
-          if [ "$repository_write" != "true" ]; then
-            echo "Release token lacks write access to Minions-Land/Magenta-CLI; refusing to publish." >&2
-            exit 1
-          fi
-
-          lookup_dir=$(mktemp -d)
-          trap 'rm -rf "$lookup_dir"' EXIT
-          set +e
-          gh api --include \
-            "repos/Minions-Land/Magenta-CLI/releases/tags/$RELEASE_TAG" \
-            >"$lookup_dir/response" 2>"$lookup_dir/error"
-          lookup_status=$?
-          set -e
-
-          if [ "$lookup_status" -eq 0 ]; then
-            cat >&2 <<EOF
-          Refusing to overwrite the existing GitHub Release for $RELEASE_TAG.
-          This workflow never deletes a release or its Git tag automatically.
-
-          Recovery:
-          - Inspect and preserve the existing draft, signatures, assets, and receipts.
-          - For a published release, keep the tag immutable and prepare a new version.
-          - For an abandoned draft, an authorized maintainer may remove only the
-            GitHub Release object in the GitHub UI after audit; keep the Git tag.
-          - Rerun this workflow only after the destination is intentionally unused.
-          EOF
-            exit 1
-          fi
-
-          if ! head -n 1 "$lookup_dir/response" | grep -Eq '^HTTP/[0-9.]+ 404 '; then
-            echo "Could not prove that release destination $RELEASE_TAG is unused; refusing to publish." >&2
-            cat "$lookup_dir/error" >&2
-            exit 1
-          fi
 
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: '22.19.0'
+
+      - name: Require configured source-owned macOS release trust
+        id: release_trust
+        run: |
+          apple_team_id=$(node scripts/macos-release-trust.mjs)
+          test -n "$apple_team_id"
+          echo "apple_team_id=$apple_team_id" >> "$GITHUB_OUTPUT"
       
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
@@ -159,7 +128,7 @@ jobs:
           import { inspectReleaseResourceArchive } from "../utils/github-release-update-support.js";
           await inspectReleaseResourceArchive("magenta-resources-universal.tar.gz");
           NODE
-          bun build --compile ../../scripts/clipboard-runtime-probe.ts --outfile magenta-clipboard-runtime-probe
+          node ../../../../scripts/run-bun-compile.mjs build --compile ../../scripts/clipboard-runtime-probe.ts --outfile magenta-clipboard-runtime-probe
           ./magenta-clipboard-runtime-probe
           rm magenta-clipboard-runtime-probe
       
@@ -167,142 +136,201 @@ jobs:
         id: checksums
         run: |
           cp scripts/install.ps1 pi/coding-agent/dist/release/install.ps1
-          git rev-parse HEAD > pi/coding-agent/dist/release/SOURCE_COMMIT
+          install -m 0755 scripts/install.sh pi/coding-agent/dist/release/install.sh
+          source_commit=$(git rev-parse HEAD)
+          printf '%s\n' "$source_commit" > pi/coding-agent/dist/release/SOURCE_COMMIT
           cd pi/coding-agent/dist/release
           shasum -a 256 \
             magenta-macos-arm64 magenta-macos-x64 \
             magenta-linux-x64 magenta-windows-x64.exe \
-            magenta-resources-universal.tar.gz install.ps1 SOURCE_COMMIT > SHA256SUMS
+            magenta-resources-universal.tar.gz install.sh install.ps1 SOURCE_COMMIT > SHA256SUMS
           cat SHA256SUMS
-          echo "manifest_sha256=$(shasum -a 256 SHA256SUMS | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+          {
+            echo "manifest_sha256=$(shasum -a 256 SHA256SUMS | awk '{print $1}')"
+            echo "source_commit=$source_commit"
+            echo "artifact_name=magenta-unsigned-${RELEASE_TAG}-${source_commit}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          } >> "$GITHUB_OUTPUT"
 
-      - name: Atomically create the draft and upload release candidates
-        env:
-          GH_TOKEN: ${{ secrets.MAGENTA_CLI_RELEASE_TOKEN }}
+      - name: Stage the exact unsigned release contract
         run: |
-          gh release create "$RELEASE_TAG" \
-            --repo Minions-Land/Magenta-CLI \
-            --target main \
-            --draft \
-            --title "$RELEASE_TAG" \
-            --notes "Pending verification..." \
-            pi/coding-agent/dist/release/magenta-macos-arm64 \
-            pi/coding-agent/dist/release/magenta-macos-x64 \
-            pi/coding-agent/dist/release/magenta-linux-x64 \
-            pi/coding-agent/dist/release/magenta-windows-x64.exe \
-            pi/coding-agent/dist/release/magenta-resources-universal.tar.gz \
-            pi/coding-agent/dist/release/install.ps1 \
-            pi/coding-agent/dist/release/SOURCE_COMMIT \
-            pi/coding-agent/dist/release/SHA256SUMS
+          bundle="$RUNNER_TEMP/magenta-unsigned-artifact/release"
+          mkdir -p "$bundle"
+          cd pi/coding-agent/dist/release
+          cp \
+            magenta-macos-arm64 magenta-macos-x64 \
+            magenta-linux-x64 magenta-windows-x64.exe \
+            magenta-resources-universal.tar.gz \
+            install.sh install.ps1 SOURCE_COMMIT SHA256SUMS \
+            "$bundle/"
+          test "$(find "$bundle" -maxdepth 1 -type f | wc -l | tr -d ' ')" = "9"
+          (cd "$bundle" && shasum -a 256 -c SHA256SUMS)
 
-  macos-signing-gate:
-    name: Import notarized macOS release candidates
+      - name: Upload source-bound unsigned candidates
+        id: upload_unsigned
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: ${{ steps.checksums.outputs.artifact_name }}
+          path: ${{ runner.temp }}/magenta-unsigned-artifact/
+          if-no-files-found: error
+          # Covers protected-environment review plus a practical rerun window.
+          retention-days: 7
+          compression-level: 0
+
+  macos-signing:
+    name: Sign and notarize the source-bound macOS bundle
     needs: build
+    environment:
+      name: macos-release
     runs-on: macos-15
+    # Allows a 90-minute rebuild, two 45-minute notarizations, and verification.
+    timeout-minutes: 300
     outputs:
-      checksum_manifest_sha256: ${{ steps.signed_receipt.outputs.manifest_sha256 }}
+      apple_team_id: ${{ needs.build.outputs.apple_team_id }}
+      checksum_manifest_sha256: ${{ steps.signed_receipt.outputs.final_manifest_sha256 }}
+      release_tag: ${{ needs.build.outputs.release_tag }}
+      signed_artifact_digest: ${{ steps.upload_signed.outputs.artifact-digest }}
+      signed_artifact_name: ${{ steps.signed_receipt.outputs.artifact_name }}
+      source_commit: ${{ needs.build.outputs.source_commit }}
     env:
       RELEASE_TAG: ${{ needs.build.outputs.release_tag }}
+      SOURCE_COMMIT: ${{ needs.build.outputs.source_commit }}
+      EXPECTED_APPLE_TEAM_ID: ${{ needs.build.outputs.apple_team_id }}
 
     steps:
-      - name: Require organization signing integration
+      - name: Checkout the immutable source tag
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+          ref: refs/tags/${{ needs.build.outputs.release_tag }}
+
+      - name: Verify the signing checkout identity
+        run: |
+          test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"
+          test "$(node scripts/macos-release-trust.mjs)" = "$EXPECTED_APPLE_TEAM_ID"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: '22.19.0'
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: '1.3.14'
+
+      - name: Prepare the source-bound rebuild workspace
+        run: |
+          npm ci --ignore-scripts
+          CLIPBOARD_STAGE=$(mktemp -d)
+          trap 'rm -rf "$CLIPBOARD_STAGE"' EXIT
+          node scripts/stage-release-clipboard.mjs --out "$CLIPBOARD_STAGE"
+          mkdir -p node_modules/@mariozechner
+          for PACKAGE in clipboard clipboard-darwin-universal clipboard-linux-x64-gnu clipboard-win32-x64-msvc; do
+            rm -rf "node_modules/@mariozechner/$PACKAGE"
+            cp -R "$CLIPBOARD_STAGE/@mariozechner/$PACKAGE" node_modules/@mariozechner/
+          done
+          rm -rf "$CLIPBOARD_STAGE"
+          trap - EXIT
+          npm run clean
+          npm run build:offline
+
+      - name: Download the exact unsigned candidate artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: ${{ needs.build.outputs.unsigned_artifact_name }}
+          path: ${{ runner.temp }}/magenta-signing-input
+
+      - name: Stage the signed artifact layout
+        run: |
+          mkdir -p "$RUNNER_TEMP/magenta-signing-output/attestations"
+          mv "$RUNNER_TEMP/magenta-signing-input/release" "$RUNNER_TEMP/magenta-signing-output/release"
+
+      - name: Sign inside-out, rebuild, notarize, and seal the final manifest
         id: signed_receipt
+        env:
+          MAGENTA_APPLE_NOTARY_ISSUER_ID: ${{ secrets.MAGENTA_APPLE_NOTARY_ISSUER_ID }}
+          MAGENTA_APPLE_NOTARY_KEY_ID: ${{ secrets.MAGENTA_APPLE_NOTARY_KEY_ID }}
+          MAGENTA_APPLE_NOTARY_KEY_P8_BASE64: ${{ secrets.MAGENTA_APPLE_NOTARY_KEY_P8_BASE64 }}
+          MAGENTA_MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MAGENTA_MACOS_CERTIFICATE_P12_BASE64 }}
+          MAGENTA_MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MAGENTA_MACOS_CERTIFICATE_PASSWORD }}
+          MAGENTA_MACOS_CERTIFICATE_SHA256: ${{ secrets.MAGENTA_MACOS_CERTIFICATE_SHA256 }}
+          MAGENTA_MACOS_SIGNING_IDENTITY: ${{ secrets.MAGENTA_MACOS_SIGNING_IDENTITY }}
+          MAGENTA_MACOS_TEAM_ID: ${{ secrets.MAGENTA_MACOS_TEAM_ID }}
         run: |
-          cat >&2 <<'EOF'
-          macOS publication is fail-closed: the draft contains cross-compiled
-          candidates, not verified macOS release assets. An organization-owned
-          signing service must sign every embedded and packaged Mach-O payload
-          plus both outer executables with a Developer ID Application certificate,
-          notarize each architecture with Apple, and replace the affected draft
-          binaries and universal resource archive.
+          release_dir="$RUNNER_TEMP/magenta-signing-output/release"
+          receipt="$RUNNER_TEMP/magenta-signing-output/attestations/macos-signing-receipt.json"
+          node scripts/macos-release-workflow.mjs \
+            --workspace-root "$GITHUB_WORKSPACE" \
+            --release-dir "$release_dir" \
+            --resource-root "$RUNNER_TEMP/magenta-signed-resources" \
+            --receipt-path "$receipt" \
+            --entitlements scripts/macos-release.entitlements.plist \
+            --expected-initial-manifest-sha256 "${{ needs.build.outputs.checksum_manifest_sha256 }}" \
+            --expected-source-commit "$SOURCE_COMMIT" \
+            --expected-team-id "$EXPECTED_APPLE_TEAM_ID" \
+            --expected-version "${RELEASE_TAG#v}"
+          final_manifest_sha256=$(node -p "require(process.argv[1]).finalManifestSha256" "$receipt")
+          test -n "$final_manifest_sha256"
+          test "$final_manifest_sha256" = "$(shasum -a 256 "$release_dir/SHA256SUMS" | awk '{print $1}')"
+          echo "final_manifest_sha256=$final_manifest_sha256" >> "$GITHUB_OUTPUT"
+          echo "artifact_name=magenta-signed-${RELEASE_TAG}-${SOURCE_COMMIT}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
 
-          This repository does not define or guess certificate/notary secret
-          names. Configure that integration in this job. It must bind its input
-          to the build job's candidate manifest digest, sign embedded payloads
-          before the final outer build/sign operation, replace both macOS draft
-          binaries and the resource archive containing the native clipboard
-          payload, prove all other assets are byte-identical to the build receipt,
-          regenerate SHA256SUMS for the exact draft asset set, and write
-          `manifest_sha256=<digest>` to GITHUB_OUTPUT before this
-          deliberate failure is removed. Every smoke job consumes that new
-          digest and waits for this job, so no platform can verify a mixture of
-          pre-signing and post-signing assets. Ad-hoc signatures, a third-party
-          Bun signature left in a modified executable, and checksum-only
-          evidence are not release verification.
-          EOF
-          exit 1
-
-  unix-installer-gate:
-    name: Require a provenance-bound transactional Unix installer
-    needs: build
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Require a source-owned Unix installer transaction
-        run: |
-          cat >&2 <<'EOF'
-          Unix installer publication is fail-closed. The mutable install.sh in
-          the public distribution repository is not owned by this source tag,
-          is not covered by SOURCE_COMMIT or SHA256SUMS, and performs in-place
-          resource copies that can leave a mixed installation after failure.
-
-          Before removing this deliberate failure, add a reviewed source-owned
-          install.sh to this repository and publish that exact tagged file as a
-          Release asset. Include it in SHA256SUMS and the exact asset-set checks,
-          bind it to the tagged source through SOURCE_COMMIT, and download the
-          versioned Release asset instead of a mutable public main branch.
-
-          The installer must share the built-in updater's per-installation lock,
-          durably journal every activation phase, stage and validate the complete
-          binary/resource layout before mutation, atomically replace the binary,
-          and restore the complete previous resource set after any failure or
-          interrupted activation. Native Linux and macOS fault-injection smoke
-          tests must prove lock exclusion, journal recovery, binary atomicity,
-          and full resource rollback before this gate may pass.
-          EOF
-          exit 1
+      - name: Upload the sealed signed release artifact
+        id: upload_signed
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: ${{ steps.signed_receipt.outputs.artifact_name }}
+          path: ${{ runner.temp }}/magenta-signing-output/
+          if-no-files-found: error
+          # Keeps the sealed candidate available for failed smoke-job reruns.
+          retention-days: 7
+          compression-level: 0
 
   smoke-linux:
     name: Smoke test Linux x64 release
-    needs: [build, macos-signing-gate]
+    needs: macos-signing
     runs-on: ubuntu-24.04
     env:
-      RELEASE_TAG: ${{ needs.build.outputs.release_tag }}
+      RELEASE_TAG: ${{ needs.macos-signing.outputs.release_tag }}
 
     steps:
-      - name: Download release assets from draft
-        run: |
-          gh release download "$RELEASE_TAG" --repo Minions-Land/Magenta-CLI --dir release --pattern '*'
-        env:
-          GH_TOKEN: ${{ secrets.MAGENTA_CLI_RELEASE_TOKEN }}
+      - name: Checkout the immutable smoke harness
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+          ref: refs/tags/${{ needs.macos-signing.outputs.release_tag }}
+
+      - name: Download the sealed signed artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: ${{ needs.macos-signing.outputs.signed_artifact_name }}
+          path: .
 
       - name: Verify build receipt and native executable
         run: |
-          EXPECTED="${{ needs.macos-signing-gate.outputs.checksum_manifest_sha256 }}"
+          EXPECTED="${{ needs.macos-signing.outputs.checksum_manifest_sha256 }}"
           ACTUAL=$(sha256sum release/SHA256SUMS | awk '{print $1}')
           test -n "$EXPECTED"
           test "$ACTUAL" = "$EXPECTED"
+          EXPECTED_ASSETS=$(printf '%s\n' SHA256SUMS SOURCE_COMMIT install.sh install.ps1 macos-signing-receipt.json magenta-linux-x64 magenta-macos-arm64 magenta-macos-x64 magenta-resources-universal.tar.gz magenta-windows-x64.exe | sort)
+          ACTUAL_ASSETS=$(find release -maxdepth 1 -type f -printf '%f\n' | sort)
+          test "$ACTUAL_ASSETS" = "$EXPECTED_ASSETS"
           (cd release && sha256sum -c SHA256SUMS)
+          test "$(cat release/SOURCE_COMMIT)" = "${{ needs.macos-signing.outputs.source_commit }}"
+          test "$(node -p "require('./attestations/macos-signing-receipt.json').finalManifestSha256")" = "$EXPECTED"
+          cmp release/macos-signing-receipt.json attestations/macos-signing-receipt.json
           file release/magenta-linux-x64 | grep -Eq 'ELF 64-bit.*x86-64'
           chmod +x release/magenta-linux-x64
           test "$(release/magenta-linux-x64 --version)" = "${RELEASE_TAG#v}"
           release/magenta-linux-x64 --help >/dev/null
 
-      - name: Install resources and exercise the installed native runtime
+      - name: Exercise the transactional Unix installer and deterministic recovery
         run: |
-          install_dir="$RUNNER_TEMP/magenta-linux-install"
-          mkdir -p "$install_dir" "$RUNNER_TEMP/magenta-linux-home"
-          tar -xzf release/magenta-resources-universal.tar.gz -C "$install_dir"
-          install -m 0755 release/magenta-linux-x64 "$install_dir/magenta"
-          test "$(HOME="$RUNNER_TEMP/magenta-linux-home" "$install_dir/magenta" --version)" = "${RELEASE_TAG#v}"
-          HOME="$RUNNER_TEMP/magenta-linux-home" "$install_dir/magenta" --help --offline smoke >/dev/null
-          process_tools="$install_dir/_magenta/process-tools/target/release/magenta-process-tools"
-          test -x "$process_tools"
-          "$process_tools" --help >/dev/null
+          bash scripts/smoke-unix-release.sh release "$RUNNER_TEMP/magenta-linux-install" "$RELEASE_TAG"
 
   smoke-macos:
     name: Smoke test macOS ${{ matrix.arch }} release
-    needs: [build, macos-signing-gate]
+    needs: macos-signing
     strategy:
       fail-fast: false
       matrix:
@@ -315,24 +343,36 @@ jobs:
             binary: magenta-macos-x64
     runs-on: ${{ matrix.runner }}
     env:
-      RELEASE_TAG: ${{ needs.build.outputs.release_tag }}
+      EXPECTED_APPLE_TEAM_ID: ${{ needs.macos-signing.outputs.apple_team_id }}
+      RELEASE_TAG: ${{ needs.macos-signing.outputs.release_tag }}
 
     steps:
-      - name: Download release assets from draft
-        run: |
-          gh release download "$RELEASE_TAG" --repo Minions-Land/Magenta-CLI --dir release --pattern '*'
-        env:
-          GH_TOKEN: ${{ secrets.MAGENTA_CLI_RELEASE_TOKEN }}
+      - name: Checkout the immutable smoke harness
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+          ref: refs/tags/${{ needs.macos-signing.outputs.release_tag }}
+
+      - name: Download the sealed signed artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: ${{ needs.macos-signing.outputs.signed_artifact_name }}
+          path: .
 
       - name: Verify build receipt and native architecture
         run: |
-          EXPECTED="${{ needs.macos-signing-gate.outputs.checksum_manifest_sha256 }}"
+          EXPECTED="${{ needs.macos-signing.outputs.checksum_manifest_sha256 }}"
           ACTUAL=$(shasum -a 256 release/SHA256SUMS | awk '{print $1}')
           test -n "$EXPECTED"
           test "$ACTUAL" = "$EXPECTED"
           (cd release && shasum -a 256 -c SHA256SUMS)
+          test "$(cat release/SOURCE_COMMIT)" = "${{ needs.macos-signing.outputs.source_commit }}"
+          test "$(node -p "require('./attestations/macos-signing-receipt.json').finalManifestSha256")" = "$EXPECTED"
+          cmp release/macos-signing-receipt.json attestations/macos-signing-receipt.json
           test "$(uname -m)" = "${{ matrix.arch == 'x64' && 'x86_64' || 'arm64' }}"
           file "release/${{ matrix.binary }}" | grep -q "Mach-O 64-bit executable ${{ matrix.arch == 'x64' && 'x86_64' || 'arm64' }}"
+          # upload-artifact stores files in ZIP form and does not preserve executable bits.
+          chmod 0755 "release/${{ matrix.binary }}"
 
       - name: Require Developer ID and online notarization evidence
         run: |
@@ -343,18 +383,51 @@ jobs:
           codesign --verify --strict --check-notarization --verbose=2 "$binary"
           spctl --assess --type execute --verbose=4 "$binary"
           signature=$(codesign --display --verbose=4 "$binary" 2>&1)
+          grep -q '^Identifier=land\.minions\.magenta$' <<<"$signature"
           grep -q '^Authority=Developer ID Application:' <<<"$signature"
-          grep -Eq '^TeamIdentifier=[A-Z0-9]+$' <<<"$signature"
-          ! grep -q '^Signature=adhoc$' <<<"$signature"
+          grep -q "^TeamIdentifier=${EXPECTED_APPLE_TEAM_ID}$" <<<"$signature"
+          if grep -q '^Signature=adhoc$' <<<"$signature"; then
+            echo "Ad-hoc signature is not allowed: $binary" >&2
+            exit 1
+          fi
 
-      - name: Install resources and exercise the installed native runtime
+      - name: Prove the final executable materializes the signed embedded helpers
         run: |
-          install_dir="$RUNNER_TEMP/magenta-macos-install"
-          mkdir -p "$install_dir" "$RUNNER_TEMP/magenta-macos-home"
-          tar -xzf release/magenta-resources-universal.tar.gz -C "$install_dir"
-          install -m 0755 "release/${{ matrix.binary }}" "$install_dir/magenta"
-          test "$(HOME="$RUNNER_TEMP/magenta-macos-home" "$install_dir/magenta" --version)" = "${RELEASE_TAG#v}"
-          HOME="$RUNNER_TEMP/magenta-macos-home" "$install_dir/magenta" --help --offline smoke >/dev/null
+          binary="release/${{ matrix.binary }}"
+          proof_home="$RUNNER_TEMP/magenta-helper-proof-home"
+          proof="$RUNNER_TEMP/magenta-runtime-helper-proof.json"
+          verified="$RUNNER_TEMP/magenta-verified-helper-proof.json"
+          mkdir -p "$proof_home"
+          HOME="$proof_home" MAGENTA_RELEASE_HELPER_PROOF=1 \
+            "$binary" _release-helper-proof > "$proof"
+          node scripts/verify-macos-runtime-helper-proof.mjs \
+            --architecture "${{ matrix.arch }}" \
+            --cache-root "$proof_home/.magenta/cache" \
+            --proof "$proof" \
+            --receipt release/macos-signing-receipt.json > "$verified"
+          verified_helpers=0
+          while IFS=$'\t' read -r kind identifier path; do
+            test -n "$kind"
+            codesign --verify --strict --check-notarization --verbose=2 \
+              --test-requirement '=anchor apple generic and certificate leaf[field.1.2.840.113635.100.6.1.13] exists' \
+              "$path"
+            helper_signature=$(codesign --display --verbose=4 "$path" 2>&1)
+            grep -Fqx "Identifier=${identifier}" <<<"$helper_signature"
+            grep -q '^Authority=Developer ID Application:' <<<"$helper_signature"
+            grep -q "^TeamIdentifier=${EXPECTED_APPLE_TEAM_ID}$" <<<"$helper_signature"
+            if grep -q '^Signature=adhoc$' <<<"$helper_signature"; then
+              echo "Ad-hoc signature is not allowed: $path" >&2
+              exit 1
+            fi
+            verified_helpers=$((verified_helpers + 1))
+          done < <(node -e 'for (const h of require(process.argv[1]).helpers) console.log([h.kind, h.identifier, h.path].join("\t"))' "$verified")
+          test "$verified_helpers" = "3"
+
+      - name: Exercise the transactional Unix installer and deterministic recovery
+        run: |
+          smoke_root="$RUNNER_TEMP/magenta-macos-install"
+          bash scripts/smoke-unix-release.sh release "$smoke_root" "$RELEASE_TAG"
+          install_dir="$smoke_root/home/.local/lib/magenta"
           process_tools="$install_dir/_magenta/process-tools/target/release/magenta-process-tools"
           test -x "$process_tools"
           "$process_tools" --help >/dev/null
@@ -368,7 +441,7 @@ jobs:
               "$payload"
             payload_signature=$(codesign --display --verbose=4 "$payload" 2>&1)
             grep -q '^Authority=Developer ID Application:' <<<"$payload_signature"
-            grep -Eq '^TeamIdentifier=[A-Z0-9]+$' <<<"$payload_signature"
+            grep -q "^TeamIdentifier=${EXPECTED_APPLE_TEAM_ID}$" <<<"$payload_signature"
             if grep -q '^Signature=adhoc$' <<<"$payload_signature"; then
               echo "Ad-hoc signature is not allowed: $payload" >&2
               exit 1
@@ -379,30 +452,30 @@ jobs:
 
   smoke-windows:
     name: Smoke test Windows release
-    needs: [build, macos-signing-gate]
+    needs: macos-signing
     runs-on: windows-latest
     env:
-      RELEASE_TAG: ${{ needs.build.outputs.release_tag }}
+      RELEASE_TAG: ${{ needs.macos-signing.outputs.release_tag }}
 
     steps:
-      - name: Download release assets from draft
-        shell: powershell
-        run: |
-          gh release download "$env:RELEASE_TAG" --repo Minions-Land/Magenta-CLI --dir release --pattern '*'
-        env:
-          GH_TOKEN: ${{ secrets.MAGENTA_CLI_RELEASE_TOKEN }}
+      - name: Download the sealed signed artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: ${{ needs.macos-signing.outputs.signed_artifact_name }}
+          path: .
 
       - name: Verify build checksum receipt and assets
         shell: powershell
         run: |
-          $expectedManifest = "${{ needs.macos-signing-gate.outputs.checksum_manifest_sha256 }}"
+          $expectedManifest = "${{ needs.macos-signing.outputs.checksum_manifest_sha256 }}"
           $actualManifest = (Get-FileHash -Algorithm SHA256 -Path "release\SHA256SUMS").Hash.ToLowerInvariant()
           if (-not $expectedManifest -or $actualManifest -ne $expectedManifest) {
-            throw "Draft checksum manifest does not match the build job receipt"
+            throw "Signed checksum manifest does not match the signing receipt"
           }
 
           $expectedNames = @(
             "SOURCE_COMMIT",
+            "install.sh",
             "install.ps1",
             "magenta-linux-x64",
             "magenta-macos-arm64",
@@ -410,6 +483,11 @@ jobs:
             "magenta-resources-universal.tar.gz",
             "magenta-windows-x64.exe"
           ) | Sort-Object
+          $expectedReleaseNames = @($expectedNames + "SHA256SUMS" + "macos-signing-receipt.json" | Sort-Object)
+          $actualReleaseNames = @(Get-ChildItem -LiteralPath "release" -File | ForEach-Object Name | Sort-Object)
+          if (Compare-Object -ReferenceObject $expectedReleaseNames -DifferenceObject $actualReleaseNames) {
+            throw "Signed release top-level asset set does not match the publication contract"
+          }
           $entries = Get-Content -LiteralPath "release\SHA256SUMS" | ForEach-Object {
             if ($_ -notmatch '^([0-9a-fA-F]{64})\s+\*?(.+)$') {
               throw "Invalid SHA256SUMS entry: $_"
@@ -418,13 +496,20 @@ jobs:
           }
           $actualNames = @($entries | ForEach-Object Name | Sort-Object)
           if (Compare-Object -ReferenceObject $expectedNames -DifferenceObject $actualNames) {
-            throw "Draft release asset set does not match the build contract"
+            throw "Signed release asset set does not match the build contract"
           }
           foreach ($entry in $entries) {
             $actualHash = (Get-FileHash -Algorithm SHA256 -Path (Join-Path "release" $entry.Name)).Hash.ToLowerInvariant()
             if ($actualHash -ne $entry.Hash) {
               throw "Checksum mismatch for $($entry.Name)"
             }
+          }
+          if ((Get-Content -Raw -LiteralPath "release\SOURCE_COMMIT").Trim() -cne "${{ needs.macos-signing.outputs.source_commit }}") {
+            throw "Signed release SOURCE_COMMIT does not match the source tag"
+          }
+          $signingReceipt = Get-Content -Raw -LiteralPath "release\macos-signing-receipt.json" | ConvertFrom-Json
+          if ($signingReceipt.finalManifestSha256 -cne $expectedManifest) {
+            throw "Signed release manifest does not match the macOS signing receipt"
           }
 
       - name: Parse Windows installer
@@ -673,30 +758,50 @@ jobs:
 
   publish:
     name: Publish platform-gated release
-    needs: [build, macos-signing-gate, unix-installer-gate, smoke-linux, smoke-macos, smoke-windows]
+    needs: [macos-signing, smoke-linux, smoke-macos, smoke-windows]
+    environment:
+      name: cli-release
     runs-on: ubuntu-latest
     env:
-      RELEASE_TAG: ${{ needs.build.outputs.release_tag }}
+      RELEASE_TAG: ${{ needs.macos-signing.outputs.release_tag }}
 
     steps:
       - name: Checkout code
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
+          persist-credentials: false
           ref: refs/tags/${{ env.RELEASE_TAG }}
 
-      - name: Download platform-gated release assets from draft
+      - name: Download the same platform-gated signed artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: ${{ needs.macos-signing.outputs.signed_artifact_name }}
+          path: .
+
+      - name: Revalidate the final release contract and signing receipt
         run: |
-          test "$(gh release view "$RELEASE_TAG" --repo Minions-Land/Magenta-CLI --json isDraft --jq .isDraft)" = "true"
-          gh release download "$RELEASE_TAG" --repo Minions-Land/Magenta-CLI --dir release --pattern '*'
-          EXPECTED="${{ needs.macos-signing-gate.outputs.checksum_manifest_sha256 }}"
+          EXPECTED="${{ needs.macos-signing.outputs.checksum_manifest_sha256 }}"
           ACTUAL=$(sha256sum release/SHA256SUMS | awk '{print $1}')
           test -n "$EXPECTED"
           test "$ACTUAL" = "$EXPECTED"
-          EXPECTED_ASSETS=$(printf '%s\n' SHA256SUMS SOURCE_COMMIT install.ps1 magenta-linux-x64 magenta-macos-arm64 magenta-macos-x64 magenta-resources-universal.tar.gz magenta-windows-x64.exe | sort)
+          EXPECTED_ASSETS=$(printf '%s\n' SHA256SUMS SOURCE_COMMIT install.sh install.ps1 macos-signing-receipt.json magenta-linux-x64 magenta-macos-arm64 magenta-macos-x64 magenta-resources-universal.tar.gz magenta-windows-x64.exe | sort)
           ACTUAL_ASSETS=$(find release -maxdepth 1 -type f -printf '%f\n' | sort)
           test "$ACTUAL_ASSETS" = "$EXPECTED_ASSETS"
           (cd release && sha256sum -c SHA256SUMS)
           test "$(cat release/SOURCE_COMMIT)" = "$(git rev-parse HEAD)"
+          test "$(cat release/SOURCE_COMMIT)" = "${{ needs.macos-signing.outputs.source_commit }}"
+          test "$(node -p "require('./release/macos-signing-receipt.json').finalManifestSha256")" = "$EXPECTED"
+
+      - name: Verify distribution repository trust matches the signed source
+        run: |
+          distribution_trust="$RUNNER_TEMP/magenta-cli-macos-release-trust.json"
+          gh api \
+            -H "Accept: application/vnd.github.raw+json" \
+            "repos/Minions-Land/Magenta-CLI/contents/.github/macos-release-trust.json?ref=main" \
+            > "$distribution_trust"
+          node scripts/verify-macos-release-trust-agreement.mjs \
+            --source scripts/macos-release-trust.json \
+            --distribution "$distribution_trust"
         env:
           GH_TOKEN: ${{ secrets.MAGENTA_CLI_RELEASE_TOKEN }}
 
@@ -720,25 +825,18 @@ jobs:
           NODE
           printf '\nSource commit: https://github.com/Minions-Land/Magenta/commit/%s\n' "$(cat release/SOURCE_COMMIT)" >> "$RELEASE_NOTES_PATH"
       
-      - name: Finalize GitHub Release
+      - name: Idempotently stage and publish the exact verified release
         run: |
           RELEASE_NOTES_PATH="$RUNNER_TEMP/magenta-release-notes.md"
           test -f "$RELEASE_NOTES_PATH"
-          # Get the verified draft release ID without interpolating the tag into jq.
-          RELEASE_ID=$(gh release view "$RELEASE_TAG" --repo Minions-Land/Magenta-CLI \
-            --json databaseId,isDraft --jq 'select(.isDraft == true) | .databaseId')
-          if [ -z "$RELEASE_ID" ]; then
-            echo "Error: Draft release $RELEASE_TAG not found"
-            exit 1
-          fi
-
-          # Update release notes and finalize (draft=false).
-          gh api "/repos/Minions-Land/Magenta-CLI/releases/$RELEASE_ID" -X PATCH \
-            -f body="$(cat "$RELEASE_NOTES_PATH")" \
-            -F draft=false \
-            -F prerelease=false
-
-          echo "Release $RELEASE_TAG published"
+          test "$(gh api repos/Minions-Land/Magenta-CLI --jq '.permissions.push')" = "true"
+          node scripts/github-release-publish.mjs \
+            --repository Minions-Land/Magenta-CLI \
+            --tag "$RELEASE_TAG" \
+            --release-dir release \
+            --expected-manifest-sha256 "${{ needs.macos-signing.outputs.checksum_manifest_sha256 }}" \
+            --expected-source-commit "${{ needs.macos-signing.outputs.source_commit }}" \
+            --notes-file "$RELEASE_NOTES_PATH"
         env:
           GH_TOKEN: ${{ secrets.MAGENTA_CLI_RELEASE_TOKEN }}
       
@@ -751,6 +849,3 @@ jobs:
           echo ""
           echo "🔗 Download URL:"
           echo "   https://github.com/Minions-Land/Magenta-CLI/releases/tag/${{ steps.release_notes.outputs.version }}"
-
-      # Draft release is now finalized; no cleanup needed since releases
-      # don't consume Actions artifact storage quota.

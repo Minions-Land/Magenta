@@ -2,7 +2,7 @@ import type { FSWatcher } from "node:fs";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
 import chalk from "chalk";
-import { CONFIG_DIR_NAME } from "../config.ts";
+import { CONFIG_DIR_NAME, getConfigRootDir } from "../config.ts";
 import { loadThemeFromPath, type Theme } from "../modes/interactive/theme/theme.ts";
 import type { ResourceDiagnostic } from "./diagnostics.ts";
 import { loadUserMcpTools } from "./mcp-config-loader.ts";
@@ -11,6 +11,7 @@ export type { ResourceCollision, ResourceDiagnostic } from "./diagnostics.ts";
 
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import {
+	configureEmbeddedHelperCacheRoot,
 	type Skill as HarnessSkill,
 	type HcpClient,
 	HcpClientbuildsession,
@@ -640,6 +641,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 
 		// reload() preserves SettingsManager.projectTrusted and reloads settings for that trust state.
 		await this.settingsManager.reload();
+		configureEmbeddedHelperCacheRoot(join(getConfigRootDir(), "cache"));
 		initProcessToolsBinary();
 		const resolvedPaths = await this.packageManager.resolve();
 		const HcpClientcandidate = await this.HcpClientbuildcandidate(options?.onPackageAssemblyProgress);
@@ -1107,6 +1109,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 
 			const sessionAssembly = await HcpClientbuildsession({
 				repoRoot: this.cwd,
+				cacheRoot: join(this.agentDir, "cache"),
 				components: packageInput.components,
 				settings: HcpClientsessionassemblysettings,
 			});

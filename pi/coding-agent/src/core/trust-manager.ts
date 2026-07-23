@@ -1,6 +1,7 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { secureAtomicWriteFileSync, secureFileExistsSync, secureReadFileSync } from "@magenta/harness";
 import lockfile from "proper-lockfile";
 import { CONFIG_DIR_NAME } from "../config.ts";
 import { canonicalizePath, resolvePath } from "../utils/paths.ts";
@@ -25,6 +26,8 @@ export interface ProjectTrustOption {
 }
 
 type TrustFile = Record<string, boolean | null | undefined>;
+
+const TRUST_FILE_MAX_BYTES = 4 * 1024 * 1024;
 
 const TRUST_REQUIRING_PROJECT_CONFIG_RESOURCES = [
 	"settings.json",
@@ -95,13 +98,13 @@ export function getProjectTrustOptions(cwd: string, options?: { includeSessionOn
 }
 
 function readTrustFile(path: string): TrustFile {
-	if (!existsSync(path)) {
+	if (!secureFileExistsSync(path)) {
 		return {};
 	}
 
 	let parsed: unknown;
 	try {
-		parsed = JSON.parse(readFileSync(path, "utf-8"));
+		parsed = JSON.parse(secureReadFileSync(path, { maxBytes: TRUST_FILE_MAX_BYTES }).toString("utf-8"));
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		throw new Error(`Failed to read trust store ${path}: ${message}`);
@@ -130,7 +133,10 @@ function writeTrustFile(path: string, data: TrustFile): void {
 		}
 	}
 	mkdirSync(dirname(path), { recursive: true });
-	writeFileSync(path, `${JSON.stringify(sorted, null, 2)}\n`, "utf-8");
+	secureAtomicWriteFileSync(path, `${JSON.stringify(sorted, null, 2)}\n`, {
+		mode: 0o600,
+		maxBytes: TRUST_FILE_MAX_BYTES,
+	});
 }
 
 function acquireTrustLockSync(path: string): () => void {

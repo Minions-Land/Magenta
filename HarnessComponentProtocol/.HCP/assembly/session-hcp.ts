@@ -77,6 +77,8 @@ export type HcpClientassemblydiagnostic = {
 export type HcpClientassembleoptions = {
 	hcp: HcpClient;
 	repoRoot: string;
+	/** Host-owned cache root; components must not write reconstructable state into repoRoot. */
+	cacheRoot?: string;
 	cwd?: string;
 	/** Allow generated rows to be selected directly by autoload/modules/settings. Default true. */
 	includeGenerated?: boolean;
@@ -359,6 +361,7 @@ async function HcpClientbuildcomponent(
 			: resolve(HCP_ROOT, component.descriptorPath);
 		const built = await component.HcpMagnet.build({
 			repoRoot: options.repoRoot,
+			cacheRoot: options.cacheRoot,
 			cwd: options.cwd ?? options.repoRoot,
 			kind: component.kind,
 			name: component.name,
@@ -574,6 +577,7 @@ function HcpMagnetisproduct(value: unknown): value is HcpMagnetproduct {
 
 export type HcpClientbuildsessionoptions = {
 	repoRoot?: string;
+	cacheRoot?: string;
 	cwd?: string;
 	components?: readonly HcpClientcomponent[];
 	disabledModules?: readonly string[];
@@ -598,6 +602,7 @@ export async function HcpClientbuildsession(
 		const HcpClientsuppliednontools = await HcpClientassemble({
 			hcp,
 			repoRoot,
+			cacheRoot: options.cacheRoot,
 			cwd: options.cwd ?? repoRoot,
 			includeGenerated: false,
 			includeAutoload: false,
@@ -609,6 +614,7 @@ export async function HcpClientbuildsession(
 		const HcpClientdefaults = await HcpClientassemble({
 			hcp,
 			repoRoot,
+			cacheRoot: options.cacheRoot,
 			cwd: options.cwd ?? repoRoot,
 			includeAutoload: true,
 			disabledModules: options.disabledModules,
@@ -620,6 +626,7 @@ export async function HcpClientbuildsession(
 		const HcpClientsuppliedtools = await HcpClientassemble({
 			hcp,
 			repoRoot,
+			cacheRoot: options.cacheRoot,
 			cwd: options.cwd ?? repoRoot,
 			includeGenerated: false,
 			includeAutoload: false,

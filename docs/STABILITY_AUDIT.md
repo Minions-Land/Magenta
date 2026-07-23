@@ -12,7 +12,8 @@ single `Unreleased` section and is not a new release claim.
 This audit covers local credential discovery and provider routing, prompt-cache
 stability, long-running sub-agents and workflows, multiagent RPC, durable peer
 mailboxes and SSH relays, diagnostic write amplification, eval validity, local
-binary construction, self-update transactions, and the public release path.
+binary construction, self-update transactions, repository-history exposure, and
+the public release path.
 
 The audit treats mailbox databases, unread messages, unsettled relay payloads,
 Session transcripts, credentials, harness packages, and multiagent registries
@@ -42,6 +43,12 @@ under the Magenta agent directory. Regression tests assert that a Codex
 configuration's inode, contents, mode, and timestamps do not change during
 discovery, and that logout leaves an external Claude Code credential file intact.
 
+Magenta's own auth store now uses a private atomic replacement under a
+symlink-refusing file lock. Login, logout, and OAuth refresh update the in-memory
+credential map only after that durable write succeeds; a disk or permission
+failure therefore remains visible to the caller instead of creating a false
+logged-in state for the current process.
+
 ### Cache behavior
 
 The default system prompt included the wall-clock date, which changed a stable
@@ -58,9 +65,33 @@ process- and Session-owned active files, retires each file on Session disposal,
 and applies finite per-file, age, count, and total-size retention without
 persisting plaintext prompts or provider output.
 
+The local MCP descriptor cache now uses bounded secure reads, private atomic
+writes, bounded directory tracking, cleanup after every successful write, and
+an executable identity containing device, inode, ctime, mtime, size, and the
+resolved PATH location. Commands whose executable identity cannot be resolved
+are not cached. Package MCP assembly receives an explicit host cache root, so
+source worktrees are not polluted by runtime cache files.
+GitHub Harness Package caches use the same conservative ownership model: an
+invalid direct cache is never removed or renamed because another process may be
+executing it. A fully downloaded, checksum-verified, archive-inspected repair is
+published as an immutable sibling generation and selected only after provenance,
+owner, link-count, realpath, manifest, version, platform, and artifact-hash checks.
+Dangling links and unknown generation entries are preserved and fail closed.
+
 Google, Vertex, Bedrock, and Mistral payloads are not yet structurally classified
 for cache-cause attribution. Their telemetry is deliberately inconclusive rather
 than a false diagnosis.
+
+### State storage and migration
+
+Legacy `~/.pi/agent` migration previously copied directly into the destination,
+so an interrupted copy could expose a partially migrated profile. Migration now
+copies into a private sibling staging directory and atomically publishes only a
+complete result; failure removes only that staging tree. Auth state, update-check
+timestamps, and shared Harness cache metadata use bounded regular-file reads,
+private atomic writes, and symlink refusal. Sessions, credentials, settings,
+mailbox databases, installed packages, and unread or unsettled gossip state are
+never classified as disposable cache data.
 
 ### Timeouts, memory, and diagnostic writes
 
@@ -105,7 +136,9 @@ ownership is recovered as offline presence.
 Unread and pending inbox rows, plus unsettled outbox payloads, have no age-based
 deletion path. Maintenance deletes only terminal rows in bounded batches and is
 coordinated by an hourly lease. An empty claim probe stays read-only, so an idle
-link does not churn the mailbox WAL.
+link does not churn the mailbox WAL. Re-advertising the same Session member set,
+recording unchanged presence, or publishing an identical relay state/error is
+also write-free; timestamps advance only with a durable state change.
 
 Each endpoint now has an OS-level lock. Only its lock owner may publish an
 executable generation; PID and database metadata are diagnostic, not ownership
@@ -122,9 +155,15 @@ handoff caused the successor to enter the normal CLI instead of `_peer relay`.
 Successor argument normalization now removes only that executable entry, with
 compiled-runtime coverage for the exact handoff shape.
 
-The endpoint lock intentionally updates filesystem lease metadata every ten
-seconds so a crashed owner becomes stale after thirty seconds. This is a small,
-bounded filesystem heartbeat, not an SQLite/WAL polling write.
+The endpoint lock intentionally updates filesystem lease metadata every twenty
+seconds and treats the lease as stale after sixty seconds. The 20-second
+refresh remains at least 10 seconds inside the legacy 30-second checker used by
+older Magenta versions, so a healthy new owner is not stolen during a mixed
+version rollout. This halves the steady-state metadata writes to about 4,320
+per day per continuously held endpoint lock. A crashed owner is eligible for
+takeover no later than 60 seconds after its last successful refresh, plus normal
+scheduler/filesystem latency. This is a small, bounded filesystem heartbeat,
+not an SQLite/WAL polling write.
 
 ### Eval validity
 
@@ -164,6 +203,17 @@ asset. Local archives are rebuilt and verified file-for-file. Completed local
 macOS binaries receive and pass strict ad-hoc signature validation, which is
 suitable only for local testing.
 
+Transaction journal v6 records each original path and staged resource object's
+exact filesystem identity before the first move or replacement, and binds the
+staged binary by SHA-256. Activation and rollback recheck the applicable
+identity or digest, including Windows volume/file IDs, so a path replaced by
+another process is preserved for manual recovery instead of being deleted or
+overwritten. Recovery remains compatible
+with journals v1 through v5. Release and Package downloads stream into partial
+files with declared and observed byte limits; resource and Package archives
+also enforce compressed, uncompressed, logical-file, single-entry, record-count,
+and extraction-time limits before activation.
+
 Unix archive extraction now uses `--no-same-owner`. Without it, a privileged
 installer restored the build runner's numeric UID, after which the transaction's
 ownership checks correctly refused to move the staged resources. Release notes
@@ -171,28 +221,104 @@ are selected from the exact version section in `CHANGELOG.md`; a missing, empty,
 or still-unreleased section blocks publication instead of producing misleading
 notes.
 
-Public macOS release remains blocked without organization-owned Developer ID
-signing and notarization. The source repository workflows for the current
-published tag did not start because repository Actions execution was unavailable.
+The public distribution verifier no longer trusts a mutable latest-asset
+handoff. The Unix bootstrap resolves one GitHub API tag and installer digest,
+then pins that exact tag into the full installer; the documented Windows path
+performs the same unique-asset, size, digest, and exact-tag checks. Windows and
+macOS verification download by immutable GitHub asset ID with bounded streaming.
+For releases using the current source-bound contract, a dedicated fine-grained read-only token peels the exact
+annotated tag in the private source repository and compares it with
+`SOURCE_COMMIT` before downloaded code runs. Native Apple Silicon and Intel jobs
+then materialize process-tools, fd, and ripgrep in isolated secret-free homes
+and bind all six helper bytes, identifiers, Team IDs, signatures, and receipt
+hashes independently of the source workflow.
+
+The local release rehearsal exposed one first-install defect before publication:
+the compiled helper-proof command treated a missing `~/.magenta` directory as an
+already-existing trusted root. It now creates the private cache tree from the
+current user's real home through the same owner, mode, and symlink checks used by
+normal helper materialization. Both compiled macOS architectures passed the proof
+from completely fresh isolated homes after the fix.
+
+`MagentaPackages` now validates the real repository and Cardiomni runtime in CI.
+Package archives normalize gzip/tar timestamps, owners, and modes for reproducible
+hashes and include only regular files in the Git index, so ignored or untracked
+local clinical examples and editor configuration cannot enter an archive. Release
+tags must belong to verified `main`; a new destination is staged
+as a draft, its exact four-platform artifact/checksum set is compared with remote
+GitHub sizes and digests, and only then is the draft published. Existing Releases
+are never overwritten in place. Directory fsync failures propagate, and prior
+artifact/checksum backups remain available until replacement names are durable.
+
+Public macOS release remains blocked until organization-owned Developer ID and
+notary credentials are configured in the protected release environment. The
+latest source jobs did not execute a single build step: GitHub annotated them
+with "The job was not started because recent account payments have failed or
+your spending limit needs to be increased." The repository itself has Actions
+enabled, so changing workflow code or repository visibility does not solve this
+account-level runner block.
 A public asset set and downstream verifier exist and its `SOURCE_COMMIT` matches
 the source tag, but that downstream verification cannot replace missing
 source-build provenance. Do not assign a new release version to the current
 `Unreleased` work until Actions availability, signing, native platform jobs,
 review, and the normal version/tag flow are complete.
 
-The canonical Unix bootstrap currently lives only on the public distribution
-repository's mutable main branch. It is not a source-workflow asset covered by
-`SHA256SUMS` or `SOURCE_COMMIT`, and its activation path explicitly performs an
-in-place resource copy with only binary exception rollback. A crash can leave a
-binary gap or mixed resources. The public distribution repository must adopt a
-source-bound, checksummed installer with the same lock, journal, atomic binary
-replacement, and recovery invariants before Unix fresh installation is treated
-as a complete release transaction.
+The Unix bootstrap is now source-owned, checksummed, and versioned with the
+Release. Its thin shell layer delegates to the same lock, durable journal,
+atomic binary replacement, and full resource rollback engine as self-update;
+native Linux and macOS workflow jobs exercise deterministic crash recovery.
 
 Rollback directories are temporary transaction state. Successful activation
 deletes them; immutable source tags, workflow attestations, checksums, and
 published release metadata are the durable release record. Developer machines
 do not need accumulating binary backup directories.
+
+### Repository history and public-source publication
+
+The private source repository must not be made public in place. A forensic scan
+found one historical classic GitHub PAT in four paths. The current tree and all
+branch and tag tip trees are clean, but all four remote branch histories and 24
+release tags can still reach the leaked object. The token's SHA-256 fingerprint
+is `78ccf3a5e16d7419e2da6a5df081d304298ce9dcc0d8465ea721f7419436d7ed`;
+the secret itself is intentionally not reproduced. History rewriting cannot
+revoke a credential, so its owner must explicitly revoke it in GitHub before
+any public-source migration.
+
+The safe publication path is a new repository with one reviewed root commit
+created from an allowlisted current snapshot. Old branches, tags, Releases,
+pull-request refs, Actions artifacts, and workflow logs must not be imported.
+The existing source repository should remain private and may be archived after
+the replacement is verified. This avoids pretending that an in-place force
+push can retract objects already copied into release metadata, caches, or refs
+outside ordinary branch history.
+
+The repository now includes a fail-closed snapshot exporter for that path. It
+reads only Git-tracked files from an explicit current-tree allowlist, requires a
+clean owner-reviewed source commit plus digest-pinned root legal files, and runs
+built-in secret/sensitive-term checks and a gitleaks directory scan. Approved
+interoperability names require exact path, line, line-digest, and justification
+entries; package roots and binary assets require separate explicit approvals.
+Write mode creates a new local repository with one parentless `main` commit and
+verifies that no source history, remote, tags, or additional refs exist. It
+never creates a remote or pushes.
+
+`MagentaPackages` needs a separate content and license review before the same
+process. Its current product tree intentionally contains `Biomni`,
+`PantheonOS`, and `BiomniBench` references (along with related package names),
+and existing private Releases and Actions artifacts name those packages.
+Removing words from Git commit messages would neither remove the shipped code
+nor establish redistribution rights. `Codex` and `Claude Code` are also real
+provider and credential-interoperability contracts in Magenta; mechanically
+renaming them would break supported behavior. A public package snapshot
+therefore needs an explicit package allowlist and attribution review, not a
+global search-and-replace. The exporter additionally blocks `Panther OS`,
+`BioMesh`, `BioMeshBatch`, `DA Code`, and `Q-Less` unless an owner-approved
+snapshot policy excludes or handles the containing paths.
+
+Neither private repository currently has an approved root `LICENSE` and
+`NOTICE`. Copyright ownership and third-party redistribution terms must be
+decided by the repository owners before creating a public snapshot; this audit
+does not guess a license on their behalf.
 
 ## Remaining Limitations
 
@@ -203,10 +329,21 @@ the relay. Adding launchd/systemd ownership is a separate product and lifecycle
 decision, not an invariant claimed by this patch.
 
 Cache-cause attribution remains deliberately unavailable for Google, Vertex,
-Bedrock, and Mistral payloads. Public release is still blocked on Developer ID
-signing/notarization, a source-owned transactional Unix bootstrap, and native
-Windows crash-recovery evidence. These gates must not be bypassed to publish the
-current `Unreleased` work.
+Bedrock, and Mistral payloads. Publication is still externally blocked by the
+GitHub billing/spending failure above; the source repository currently has zero
+GitHub environments even though the workflow requires `macos-release` and
+`cli-release`; both source and distribution trust files still contain
+`UNCONFIGURED`; the source repository exposes no Apple signing/notary secrets;
+the distribution repository has not configured the new read-only
+`MAGENTA_SOURCE_READ_TOKEN`; and the audited host has zero valid Developer ID
+identities. The existing `MAGENTA_CLI_RELEASE_TOKEN` must also be reviewed and
+rotated before it is trusted for cross-repository publication. Mock contracts,
+local ad-hoc signatures, and dry-runs cannot substitute for one successful run
+on native Linux, macOS arm64, macOS Intel, and Windows infrastructure.
+
+Public-source migration is independently blocked until the historical PAT is
+confirmed revoked, an explicit package allowlist is approved, and root license
+and notice files are supplied by the owners.
 
 ## Cleanup Boundary
 
@@ -216,13 +353,22 @@ directories, repository-local workflow scratch space, downloaded tool caches,
 and closed bounded diagnostic logs. A path must not be removed while a live
 process has it open or uses it as its executable.
 
+The low-frequency maintenance primitives now require a current-user-owned
+regular object, a recognized schema/name, an age bound, and a final device/inode
+check. Stale wake sockets additionally require a definitely dead PID and a
+failed bounded connection probe. Empty teammate registries are candidates only
+after a complete Session-id scan proves their parent absent; an incomplete or
+malformed scan performs no registry deletion. Workflow, sub-agent, and MCP
+cache cleanup preserves symlinks, hard links, temporary/lock siblings, live-PID
+artifacts, and every object whose ownership or identity is uncertain.
+
 The following are durable and must be preserved:
 
 - `messages.db`, its WAL/SHM files, endpoint locks, unread inbox rows, and
   unsettled outbox rows;
 - agent Session transcripts, credentials, settings, and model metadata;
 - harness packages and user-installed skills;
-- multiagent registries and active logs;
+- non-empty or live-parent multiagent registries and active logs;
 - the active binary/resource installation until staged replacement is verified.
 
 On the audited macOS host, `~/.Magenta` and `~/.magenta` resolve to the same
@@ -230,21 +376,44 @@ directory inode. They are casing aliases on the filesystem, not duplicate trees.
 
 ## Verification Record
 
-Repository-wide verification passed `npm run check:release`, `npm test`, active
-brand/generated-source/compiled-dist version checks, `actionlint`, Biome,
-TypeScript, and `git diff --check`. The final full run contained 4,563 passing
-and 785 skipped tests with no failures, including 64 focused updater tests and
-714 Harness tests.
+The final local source state passed a clean offline build, brand/version checking,
+`npm run check:release`, and `npm test`. The full Magenta3 test command reported
+4,814 passed, 785 skipped, and zero failed: scripts 140/140; Harness 779/779;
+memory 4/4; agent-core 75/75; AI 625 passed plus 738 skipped; coding-agent 2,455
+passed plus 47 skipped; and TUI 736/736. The five earlier coding-agent `--help`
+failures disappeared after the required clean rebuild, confirming they came from
+ignored stale `dist` output rather than current source.
+
+Of the 785 skips, 777 are conditional integration or platform tests: 730 AI tests
+require real provider API, OAuth, cloud, local-model, or network availability, and
+47 coding-agent tests require provider credentials or Windows. The remaining eight
+are documented Xiaomi upstream limitation probes: four aborted-stream usage tests
+and four mixed text-plus-image tool-result tests. They remain as explicit FIXME
+contracts for periodic upstream retesting; they are not counted as passing product
+behavior and should not be deleted merely to reduce the default skipped count.
+
+The public CLI verifier reported 57 passed, zero skipped, and zero failed. Its
+distribution, release, CI, YAML/action, shell syntax, shellcheck, and diff policy
+checks also passed. MagentaPackages reported 26/26 workflow and artifact security
+tests, 5/5 Cardiomni runtime tests, 9/9 PantheonOS contract tests, 26/26 Pixi runtime
+tests, and 368 passed plus 32 explicitly ignored Rust tests with zero failures;
+package validation found six packages and 62 skill entrypoints. The Cardiomni test
+dependency lock file is part of the local Package commit. The verified Cardiomni
+branch was then fast-forwarded into the local Package `main`; remote `main` remains
+unchanged, so no package tag or publication can occur until a later reviewed push.
 
 Rebuilt and installed binaries matched the repository's active version identity.
-Their SHA-256 values were
-`8d004707a6f2c7603d486e3abc0509c355979f5f93d9fa0b5dbf3adc082b8b26`
-on macOS and
-`ebf4874ab50a66cd09e31062f7b3b7a1ec3cf13632f8d089848ef6feca75f3c0`
-on Linux. The macOS binary passed strict ad-hoc code-signature validation; it is
-not a public Developer ID signature. Both shared installation directories were
-updated through the crash-safe journal transaction with exact-hash and resource
-verification, and no transaction staging, backup, journal, or lock remained.
+Four-platform construction produced the expected Mach-O arm64, Mach-O x64, ELF
+Linux x64, and PE Windows x64 executable formats. Both compiled macOS targets
+materialized and executed the three helper classes expected for their architecture
+from fresh isolated homes; the arm64 binary also passed `--version` and the complete
+`--help` path. The local macOS binary passed strict ad-hoc code-signature
+validation; it is not a public Developer ID signature. Isolated native, npm,
+and Bun installations all reported the active product version and passed
+`--help`.
+Temporary local-release products were removed after verification; their hashes
+are not reused as release evidence. A formal release must record final hashes in
+its source-bound manifest and signing receipt.
 
 The production two-host check preserved every pre-existing unread row and every
 original outbox payload; independently recorded counts and business-field hashes
@@ -272,8 +441,16 @@ credentials, harness packages, installed skills, and multiagent registries were
 preserved. The remote profile and mailbox permissions were tightened to 0700 and
 0600 respectively.
 
-The repository contains static Windows installer transaction checks and a native
-workflow recovery fixture, but the source Actions jobs did not start, so native
-Windows crash-recovery evidence remains missing. The public Unix installer stays
-blocked by `unix-installer-gate` until the source-owned transaction passes native
-fault injection.
+The final local release verification removed its temporary output, and
+the repository contained no `.bun-build` scratch file afterward. The release
+workflow's temporary compiled clipboard probe now uses the same finally-cleaned
+Bun wrapper as every supported product compile, with a static regression test
+that rejects future direct `bun build --compile` calls in that workflow.
+
+The repository contains static Windows installer transaction checks plus native
+Linux, macOS, and Windows workflow recovery fixtures. The source Actions jobs did
+not start, so current-source native crash-recovery evidence remains pending. The
+old deliberate Unix installer gate has been replaced by the source-owned
+transaction and its fail-closed native smoke jobs; publication still waits for
+those jobs, real Developer ID signing/notarization, and the external Actions
+blockers described above.

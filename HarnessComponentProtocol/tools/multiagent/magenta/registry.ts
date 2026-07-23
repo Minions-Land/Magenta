@@ -1,7 +1,11 @@
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
-import { chmod, mkdir, rename, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { type Dirent, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { chmod, mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { removeOwnedPathIfUnchanged, snapshotOwnedPath } from "../../../_magenta/owned-path.ts";
 import type { TeammateWorktreeRecord } from "./worktree.ts";
+
+export const DEFAULT_EMPTY_MULTIAGENT_REGISTRY_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+const MAX_EMPTY_REGISTRY_BYTES = 64 * 1024;
 
 export type DesiredProcessState = "running" | "stopped";
 export type ObservedProcessState =
@@ -60,6 +64,19 @@ type RegistryFile = {
 	records: MultiagentRecord[];
 };
 
+export type EmptyRegistryCleanupOptions = {
+	registryDir: string;
+	/** Complete, fail-closed set of parent Session ids known to still exist. */
+	liveParentSessionIds: ReadonlySet<string>;
+	maxAgeMs?: number;
+	now?: number;
+};
+
+export type EmptyRegistryCleanupResult = {
+	scannedFiles: number;
+	deletedFiles: number;
+};
+
 function cloneRecord(record: MultiagentRecord): MultiagentRecord {
 	return structuredClone(record);
 }
@@ -85,6 +102,69 @@ function parseRegistry(value: unknown, parentSessionId: string): MultiagentRecor
 		sessionIds.add(candidate.sessionId);
 		return candidate as MultiagentRecord;
 	});
+}
+
+function parseEmptyRegistry(value: unknown, fileName: string): RegistryFile | undefined {
+	if (!isRecord(value)) return undefined;
+	const keys = Object.keys(value).sort();
+	if (keys.join("\u0000") !== ["parentSessionId", "records", "schemaVersion", "updatedAt"].join("\u0000")) {
+		return undefined;
+	}
+	if (
+		value.schemaVersion !== 1 ||
+		typeof value.parentSessionId !== "string" ||
+		!/^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/.test(value.parentSessionId) ||
+		`${value.parentSessionId}.json` !== fileName ||
+		typeof value.updatedAt !== "number" ||
+		!Number.isFinite(value.updatedAt) ||
+		value.updatedAt < 0 ||
+		!Array.isArray(value.records) ||
+		value.records.length !== 0
+	) {
+		return undefined;
+	}
+	return value as RegistryFile;
+}
+
+/**
+ * Delete only old, empty registries whose parent Session is proven absent.
+ * The caller must supply a complete Session-id snapshot; an uncertain Session
+ * scan must not call this function. Unknown schemas, links, locks, temporary
+ * siblings, and concurrently replaced files are preserved.
+ */
+export async function cleanupEmptyOrphanMultiagentRegistries(
+	options: EmptyRegistryCleanupOptions,
+): Promise<EmptyRegistryCleanupResult> {
+	const result: EmptyRegistryCleanupResult = { scannedFiles: 0, deletedFiles: 0 };
+	if (!(await snapshotOwnedPath(options.registryDir, "directory"))) return result;
+	let entries: Dirent<string>[];
+	try {
+		entries = await readdir(options.registryDir, { withFileTypes: true, encoding: "utf8" });
+	} catch {
+		return result;
+	}
+	const now = options.now ?? Date.now();
+	const maxAgeMs = options.maxAgeMs ?? DEFAULT_EMPTY_MULTIAGENT_REGISTRY_MAX_AGE_MS;
+
+	for (const entry of entries) {
+		if (!entry.isFile() || entry.isSymbolicLink() || !entry.name.endsWith(".json")) continue;
+		result.scannedFiles++;
+		if (entries.some((candidate) => candidate.name.startsWith(`${entry.name}.`))) continue;
+		const path = join(options.registryDir, entry.name);
+		const snapshot = await snapshotOwnedPath(path, "file");
+		if (!snapshot || snapshot.size > MAX_EMPTY_REGISTRY_BYTES) continue;
+		let registry: RegistryFile | undefined;
+		try {
+			registry = parseEmptyRegistry(JSON.parse(await readFile(path, "utf8")) as unknown, entry.name);
+		} catch {
+			continue;
+		}
+		if (!registry || options.liveParentSessionIds.has(registry.parentSessionId)) continue;
+		const newestTimestamp = Math.max(snapshot.mtimeMs, registry.updatedAt);
+		if (maxAgeMs < 0 || now - newestTimestamp < maxAgeMs) continue;
+		if (await removeOwnedPathIfUnchanged(path, snapshot)) result.deletedFiles++;
+	}
+	return result;
 }
 
 export class DurableMultiagentRegistry {

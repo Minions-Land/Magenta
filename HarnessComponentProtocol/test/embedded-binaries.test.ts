@@ -1,7 +1,8 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { resolveProcessToolCommandOverride } from "../_magenta/process-tools/command-registry.ts";
 import { getProcessToolsBinaryPath, initProcessToolsBinary } from "../_magenta/process-tools/embedded-binaries.ts";
 import { HcpClientisbunbinaryurl } from "../HcpClient.ts";
 
@@ -75,13 +76,15 @@ describe("embedded process-tools installation", () => {
 		const stdout = vi.spyOn(console, "log").mockImplementation(() => {});
 		const stderr = vi.spyOn(console, "error").mockImplementation(() => {});
 		try {
-			initProcessToolsBinary(root);
 			const target = join(
 				root,
 				"_magenta/process-tools/target/release",
 				process.platform === "win32" ? "magenta-process-tools.exe" : "magenta-process-tools",
 			);
+			const logicalCommand = join(root, "_magenta/process-tools/target/release", "magenta-process-tools");
+			expect(initProcessToolsBinary(root)).toBe(target);
 			expect(existsSync(target)).toBe(true);
+			expect(resolveProcessToolCommandOverride(logicalCommand)).toBe(target);
 
 			writeFileSync(target, "stale helper");
 			initProcessToolsBinary(root);
@@ -93,5 +96,11 @@ describe("embedded process-tools installation", () => {
 			stdout.mockRestore();
 			stderr.mockRestore();
 		}
+	});
+
+	it("normalizes the default source harness root before atomic materialization", () => {
+		const installed = initProcessToolsBinary();
+		expect(installed).toBe(resolve(installed));
+		expect(existsSync(installed)).toBe(true);
 	});
 });

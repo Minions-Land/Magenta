@@ -50,7 +50,7 @@ describe("MessageStorePeerLinkAdapter", () => {
 		for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 	});
 
-	it("orders local advertisements by live state and then recent presence", () => {
+	it("advertises a stable member set independent of presence state and heartbeat order", () => {
 		const dir = mkdtempSync(join(tmpdir(), "peer-link-presence-priority-"));
 		dirs.push(dir);
 		const path = join(dir, "store.db");
@@ -76,20 +76,20 @@ describe("MessageStorePeerLinkAdapter", () => {
 			}
 
 			expect(store.listRegisteredSessionIds()).toEqual([
-				"z-live-active",
-				"y-live-idle",
-				"b-offline-recent",
 				"a-stale-active",
+				"b-offline-recent",
 				"c-offline-old",
+				"y-live-idle",
+				"z-live-active",
 			]);
 
 			store.updatePresence("a-stale-active", "active", { pid: process.pid, bootId: "revived" });
 			expect(store.listRegisteredSessionIds()).toEqual([
 				"a-stale-active",
-				"z-live-active",
-				"y-live-idle",
 				"b-offline-recent",
 				"c-offline-old",
+				"y-live-idle",
+				"z-live-active",
 			]);
 		} finally {
 			store.close();

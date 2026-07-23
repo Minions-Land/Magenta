@@ -135,11 +135,13 @@ import { type checkForMagentaUpdate, recompileMagenta, runMagentaUpdate } from "
 import { detectSupportedImageMimeTypeFromFile } from "../../utils/mime.ts";
 import {
 	HcpClientdiscoverofficialpackages,
+	HcpClientgetpackagecacheroot,
 	type HcpClientpackagecatalogresult,
 	HcpClientparsegithubpackageselector,
 } from "../../utils/package-acquisition.ts";
 import { getCwdRelativePath } from "../../utils/paths.ts";
 import { getPiUserAgent } from "../../utils/pi-user-agent.ts";
+import { resolveProcessRespawnInvocation } from "../../utils/process-respawn.ts";
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
 import { ensureTool } from "../../utils/tools-manager.ts";
 import { checkForAnyUpdate } from "../../utils/unified-update-check.ts";
@@ -4189,8 +4191,7 @@ export class InteractiveMode {
 	}
 
 	private async restartProcess(): Promise<void> {
-		// Same arguments and environment (skip the node executable path).
-		await this.respawnAndExit(process.argv.slice(1));
+		await this.respawnAndExit(resolveProcessRespawnInvocation());
 	}
 
 	/**
@@ -4201,7 +4202,8 @@ export class InteractiveMode {
 	 * argv we reuse the original args unchanged.
 	 */
 	private async restartProcessWithSession(): Promise<void> {
-		const args = process.argv.slice(1);
+		const invocation = resolveProcessRespawnInvocation();
+		const args = invocation.args;
 		const alreadyHasSession = args.includes("--session") || args.includes("--session-id");
 		if (!alreadyHasSession && this.sessionManager.isPersisted()) {
 			if (!this.sessionManager.usesDefaultSessionDir()) {
@@ -4209,14 +4211,14 @@ export class InteractiveMode {
 			}
 			args.push("--session", this.sessionManager.getSessionId());
 		}
-		await this.respawnAndExit(args);
+		await this.respawnAndExit({ ...invocation, args });
 	}
 
 	/**
 	 * Tear down the TUI cleanly, spawn a replacement process attached to the same
 	 * terminal, and exit. Never returns.
 	 */
-	private async respawnAndExit(args: string[]): Promise<void> {
+	private async respawnAndExit(invocation: { command: string; args: string[] }): Promise<void> {
 		if (this.isShuttingDown) return;
 		this.isShuttingDown = true;
 		this.invalidateClipboardImagePastes();
@@ -4229,7 +4231,7 @@ export class InteractiveMode {
 		await this.runtimeHost.dispose();
 
 		const { spawn } = await import("child_process");
-		const child = spawn(process.argv[0], args, {
+		const child = spawn(invocation.command, invocation.args, {
 			detached: false,
 			stdio: "inherit",
 			env: process.env,
@@ -6528,7 +6530,7 @@ export class InteractiveMode {
 						label: selected ? "Reload package" : "Download & load",
 						description: selected
 							? "Reload this exact version through the verified Package cache"
-							: "Download the verified release into ~/.magenta/harness-packages, then load it",
+							: `Download the verified release into ${HcpClientgetpackagecacheroot()}, then load it`,
 					},
 					...(selected
 						? [
@@ -8025,10 +8027,7 @@ export class InteractiveMode {
 				throw new Error("API key cannot be empty.");
 			}
 
-			// CC-018: persist through the async modify() path so a write failure throws
-			// (surfaced by the catch below) instead of the fire-and-forget set() that
-			// swallows persistence errors. Do not report success before the credential
-			// is actually written to disk.
+			// Persist under the auth-file lock before reporting success.
 			await this.session.authStorage.modify(providerId, async () => ({ type: "api_key", key: apiKey }));
 			const persistErrors = this.session.authStorage.drainErrors();
 			if (persistErrors.length > 0) {

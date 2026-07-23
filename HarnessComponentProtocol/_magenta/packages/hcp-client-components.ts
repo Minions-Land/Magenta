@@ -107,6 +107,7 @@ function HcpClientbuildpackagetoolcomponent(
 				const settings = HcpClientcreatepackagetoolbuildsettings(component, validated, packageContext);
 				const context: HcpClientpackagetoolcontext = {
 					repoRoot: buildContext.repoRoot,
+					cacheRoot: buildContext.cacheRoot,
 					components: settings.components,
 					componentMap: settings.componentMap,
 					resolveCapability: buildContext.resolveCapability ?? (() => undefined),

@@ -2,15 +2,15 @@
  * Embedded fd/rg binaries manager
  *
  * 与 process-tools 类似，Bun 编译时将 fd 和 rg 的 4 个平台二进制嵌入。
- * 首次运行时解压到 ~/.magenta/cache/{fd,rg}/
+ * 首次运行时解压到 ~/.magenta/cache/{fd,rg}/<sha256>/
  */
 
-import { createHash } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { HcpClientisbunbinaryurl } from "../../../HcpClient.ts";
+import { materializeLeasedContentAddressedExecutable } from "./helper-cache-maintenance.ts";
+import { getEmbeddedHelperCacheRoot, getEmbeddedHelperTrustedRoot } from "./helper-cache-root.ts";
 
 const PLATFORM = process.platform;
 const ARCH = process.arch;
@@ -63,13 +63,7 @@ function getEmbeddedBinaryPath(tool: ToolName): string | null {
 
 // 缓存目录
 function getCacheDir(tool: ToolName): string {
-	return join(homedir(), ".magenta", "cache", tool);
-}
-
-function getCacheBinaryPath(tool: ToolName): string {
-	const cacheDir = getCacheDir(tool);
-	const binaryName = PLATFORM === "win32" ? `${tool}.exe` : tool;
-	return join(cacheDir, binaryName);
+	return join(getEmbeddedHelperCacheRoot(), tool);
 }
 
 /**
@@ -95,34 +89,13 @@ export function getEmbeddedToolPath(tool: ToolName): string | null {
 		return null;
 	}
 
-	// 嵌入场景：检查缓存
-	const cachePath = getCacheBinaryPath(tool);
-	if (existsSync(cachePath)) {
-		// 验证缓存文件的完整性
-		try {
-			const embeddedContent = readFileSync(embeddedPath);
-			const cachedContent = readFileSync(cachePath);
-
-			const embeddedHash = createHash("sha256").update(embeddedContent).digest("hex");
-			const cachedHash = createHash("sha256").update(cachedContent).digest("hex");
-
-			if (embeddedHash === cachedHash) {
-				return cachePath;
-			}
-		} catch {
-			// 缓存文件损坏，重新提取
-		}
-	}
-
-	// 提取嵌入的二进制到缓存
-	const cacheDir = getCacheDir(tool);
-	mkdirSync(cacheDir, { recursive: true });
-
 	const embeddedContent = readFileSync(embeddedPath);
-	writeFileSync(cachePath, embeddedContent);
-	chmodSync(cachePath, 0o755);
-
-	return cachePath;
+	return materializeLeasedContentAddressedExecutable({
+		content: embeddedContent,
+		cacheDirectory: getCacheDir(tool),
+		executableName: PLATFORM === "win32" ? `${tool}.exe` : tool,
+		trustedRoot: getEmbeddedHelperTrustedRoot(),
+	});
 }
 
 /**

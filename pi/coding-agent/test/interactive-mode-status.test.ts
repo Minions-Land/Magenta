@@ -369,7 +369,7 @@ name = "External Domain"
 		expect(root.description).toBe("0 selected · 0 local available · 1 official available");
 		expect(officialPackage).toMatchObject({ active: false });
 		const load = officialPackage.children.find((item: any) => item.label === "Download & load");
-		expect(load.description).toContain("~/.magenta/harness-packages");
+		expect(load.description).toContain("harness-packages");
 
 		const HcpClientsetpackageselectorenabled = vi.fn();
 		expect(

@@ -18,6 +18,21 @@ async function run(): Promise<void> {
 		await handlePeerCommand(args);
 		return;
 	}
+	if (args[0] === "_install-unix") {
+		const { handleUnixInstallerCommand } = await import("./cli/unix-installer-command.ts");
+		await handleUnixInstallerCommand(args.slice(1));
+		return;
+	}
+	if (args[0] === "_uninstall-unix") {
+		const { handleUnixUninstallerCommand } = await import("./cli/unix-installer-command.ts");
+		await handleUnixUninstallerCommand(args.slice(1));
+		return;
+	}
+	if (args[0] === "_release-helper-proof") {
+		const { handleReleaseHelperProofCommand } = await import("./cli/release-helper-proof-command.ts");
+		handleReleaseHelperProofCommand(args.slice(1));
+		return;
+	}
 	if (args.some((arg) => arg === "--version" || arg === "-v")) {
 		const { parseArgs } = await import("./cli/args.ts");
 		const parsed = parseArgs(args);

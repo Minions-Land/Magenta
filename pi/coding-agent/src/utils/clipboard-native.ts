@@ -13,7 +13,6 @@ type ClipboardRequire = (id: string) => unknown;
 
 const CLIPBOARD_PACKAGE = "@mariozechner/clipboard";
 const moduleRequire = createRequire(import.meta.url);
-const hasDisplay = process.platform !== "linux" || Boolean(process.env.DISPLAY || process.env.WAYLAND_DISPLAY);
 
 export function getPackagedClipboardNativeRequest(
 	runtimePlatform: NodeJS.Platform = process.platform,
@@ -74,6 +73,27 @@ export function loadClipboardNative(
 	return null;
 }
 
-const clipboard = !process.env.TERMUX_VERSION && hasDisplay ? loadClipboardNative() : null;
+/**
+ * Delay native module loading until the first clipboard operation. Compiled
+ * binaries repair their runtime resources during startup; loading a stale
+ * Windows addon before that repair can lock the DLL, while caching a failed
+ * load would keep clipboard support disabled until the next process.
+ */
+export function createLazyClipboardNative(
+	load: () => ClipboardModule | null = () => loadClipboardNative(),
+	isAvailable: () => boolean = () =>
+		!process.env.TERMUX_VERSION &&
+		(process.platform !== "linux" || Boolean(process.env.DISPLAY || process.env.WAYLAND_DISPLAY)),
+): () => ClipboardModule | null {
+	let initialized = false;
+	let value: ClipboardModule | null = null;
+	return () => {
+		if (!initialized) {
+			initialized = true;
+			value = isAvailable() ? load() : null;
+		}
+		return value;
+	};
+}
 
-export { clipboard };
+export const getClipboardNative = createLazyClipboardNative();

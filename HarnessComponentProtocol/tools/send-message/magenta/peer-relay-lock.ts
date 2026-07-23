@@ -3,8 +3,17 @@ import { accessSync, constants, statSync } from "node:fs";
 import { delimiter, isAbsolute, join, resolve } from "node:path";
 import lockfile from "proper-lockfile";
 
-const RELAY_LOCK_STALE_MS = 30_000;
-const RELAY_LOCK_UPDATE_MS = 10_000;
+/**
+ * Relay locks are filesystem leases, not a mailbox heartbeat.  Keep the
+ * refresh below the legacy 30-second stale window so an older Magenta process
+ * cannot mistake a healthy new-version owner for a dead one, while allowing a
+ * much longer lease to avoid needless directory-mtime writes.  A crashed
+ * owner is therefore eligible for takeover after at most 60 seconds from its
+ * last successful refresh (plus normal scheduler/filesystem latency).
+ */
+export const PEER_RELAY_LOCK_STALE_MS = 60_000;
+export const PEER_RELAY_LOCK_UPDATE_MS = 20_000;
+export const PEER_RELAY_LOCK_MAX_TAKEOVER_MS = PEER_RELAY_LOCK_STALE_MS;
 const RELAY_GENERATION_FENCING_OPTIONS = new Set(["--generation", "--generation-command", "--generation-args"]);
 const BUN_VIRTUAL_PATH_PATTERN = /(?:\$bunfs|~bun|%7ebun)/i;
 
@@ -108,6 +117,21 @@ export function peerRelayLockPath(dbPath: string, endpointId: string): string {
 	return `${resolve(dbPath)}.relay-${endpointHash}.lock`;
 }
 
+function peerRelayLockOptions(
+	dbPath: string,
+	endpointId: string,
+): {
+	realpath: false;
+	lockfilePath: string;
+	stale: number;
+} {
+	return {
+		realpath: false,
+		lockfilePath: peerRelayLockPath(dbPath, endpointId),
+		stale: PEER_RELAY_LOCK_STALE_MS,
+	};
+}
+
 export async function acquirePeerRelayLock(
 	dbPath: string,
 	endpointId: string,
@@ -115,10 +139,8 @@ export async function acquirePeerRelayLock(
 ): Promise<() => Promise<void>> {
 	const target = resolve(dbPath);
 	return lockfile.lock(target, {
-		realpath: false,
-		lockfilePath: peerRelayLockPath(target, endpointId),
-		stale: RELAY_LOCK_STALE_MS,
-		update: RELAY_LOCK_UPDATE_MS,
+		...peerRelayLockOptions(target, endpointId),
+		update: PEER_RELAY_LOCK_UPDATE_MS,
 		retries: 0,
 		onCompromised,
 	});
@@ -126,9 +148,5 @@ export async function acquirePeerRelayLock(
 
 export function isPeerRelayLockActive(dbPath: string, endpointId: string): boolean {
 	const target = resolve(dbPath);
-	return lockfile.checkSync(target, {
-		realpath: false,
-		lockfilePath: peerRelayLockPath(target, endpointId),
-		stale: RELAY_LOCK_STALE_MS,
-	});
+	return lockfile.checkSync(target, peerRelayLockOptions(target, endpointId));
 }

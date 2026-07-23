@@ -17,41 +17,57 @@ Magenta supports interactive TUI, one-shot text output, JSON event output, RPC i
 
 ## Install
 
-### One-line installation (Recommended)
+### Release-bound installation (Recommended)
 
-macOS / Linux:
+Use the [complete installation guide](../../docs/USER_INSTALL.md), which keeps
+the executable, universal resources archive, and checksum manifest on one exact
+release tag. The Unix command below downloads the public repository's small
+bootstrap to a reviewable file; the bootstrap resolves the tag and verifies its
+GitHub API digest before executing the versioned installer:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Minions-Land/Magenta-CLI/main/install.sh | bash
+bootstrap="$(mktemp)"
+trap 'rm -f "$bootstrap"' EXIT
+curl -fsSL https://raw.githubusercontent.com/Minions-Land/Magenta-CLI/main/install.sh -o "$bootstrap"
+bash "$bootstrap"
 ```
 
-Windows PowerShell 5.1 or later:
-
-```powershell
-irm https://github.com/Minions-Land/Magenta-CLI/releases/latest/download/install.ps1 | iex
-```
-
-The installers download the pre-compiled binary and its version-matched runtime resources. Windows installation also runs a startup check before replacing an existing installation.
+On Windows, use the PowerShell release-bound procedure in the installation
+guide. It resolves the exact tag through the GitHub API, checks the installer
+size and digest, and removes the temporary file in a `finally` block. Do not
+pipe a mutable URL into a shell or install a platform executable without its
+matching resources archive.
 
 ### Manual installation
 
-Download the appropriate binary from [GitHub Releases](https://github.com/Minions-Land/Magenta-CLI/releases):
+For a manual install, choose one exact tag from [GitHub Releases](https://github.com/Minions-Land/Magenta-CLI/releases) and download the platform binary, `magenta-resources-universal.tar.gz`, and `SHA256SUMS` from that same tag:
 
 ```bash
-# macOS arm64
-curl -fsSL https://github.com/Minions-Land/Magenta-CLI/releases/latest/download/magenta-macos-arm64 -o ~/.local/bin/magenta
-chmod +x ~/.local/bin/magenta
-
-# Download runtime resources
-cd ~/.local/bin
-curl -fsSL https://github.com/Minions-Land/Magenta-CLI/releases/latest/download/magenta-resources-universal.tar.gz | tar -xz
-
-# Run
-magenta
+tag="<exact-release-tag>"
+base="https://github.com/Minions-Land/Magenta-CLI/releases/download/$tag"
+asset="magenta-macos-arm64" # choose the asset matching the host platform
+mkdir -p ~/.local/bin/magenta-manual
+cd ~/.local/bin/magenta-manual
+curl -fL "$base/$asset" -o magenta
+curl -fL "$base/magenta-resources-universal.tar.gz" -o magenta-resources-universal.tar.gz
+curl -fL "$base/SHA256SUMS" -o SHA256SUMS
+awk -v target="$asset" '$2 == target || $2 == "magenta-resources-universal.tar.gz"' SHA256SUMS > SHA256SUMS.selected
+test "$(wc -l < SHA256SUMS.selected | tr -d " ")" = 2
+if command -v sha256sum >/dev/null 2>&1; then
+  sha256sum -c SHA256SUMS.selected
+else
+  shasum -a 256 -c SHA256SUMS.selected
+fi
+chmod +x magenta
 ```
+
+The manual layout is for inspection and troubleshooting; the maintained
+installer is preferred because it stages and activates the complete resource
+root transactionally.
 
 ### From source
 
+The source repository is currently private and requires repository access.
 Requires Node.js 22.19.0+, Bun, and Rust toolchain:
 
 ```bash

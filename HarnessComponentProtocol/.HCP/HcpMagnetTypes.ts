@@ -13,6 +13,8 @@
  */
 export type HcpMagnetBuildContext = {
 	repoRoot: string;
+	/** Host-owned cache root for durable, reconstructable component caches. */
+	cacheRoot?: string;
 	/** Resolve an already-selected capability dependency from the one session Client. */
 	resolveCapability?<T>(name: string): T | undefined;
 	/** Working directory bound to a tool product. Defaults to repoRoot. */

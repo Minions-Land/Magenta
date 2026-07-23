@@ -1,12 +1,15 @@
 import type { Transport } from "@earendil-works/pi-ai";
+import { secureAtomicWriteFileSync, secureFileExistsSync, secureReadFileSync } from "@magenta/harness";
 import { randomUUID } from "crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync } from "fs";
 import { dirname, join } from "path";
 import lockfile from "proper-lockfile";
 import { CONFIG_DIR_NAME, getAgentDir } from "../config.ts";
 import { normalizePath, resolvePath } from "../utils/paths.ts";
 import { type ExecutionProfile, type HarnessCapabilitySettings, isExecutionProfile } from "./execution-profile.ts";
 import { DEFAULT_HTTP_IDLE_TIMEOUT_MS, parseHttpIdleTimeoutMs } from "./http-dispatcher.ts";
+
+const SETTINGS_FILE_MAX_BYTES = 4 * 1024 * 1024;
 
 export interface CompactionSettings {
 	enabled?: boolean; // default: true
@@ -231,11 +234,13 @@ export class FileSettingsStorage implements SettingsStorage {
 		let release: (() => void) | undefined;
 		try {
 			// Only create directory and lock if file exists or we need to write
-			const fileExists = existsSync(path);
+			const fileExists = secureFileExistsSync(path);
 			if (fileExists) {
 				release = this.acquireLockSyncWithRetry(path);
 			}
-			const current = fileExists ? readFileSync(path, "utf-8") : undefined;
+			const current = fileExists
+				? secureReadFileSync(path, { maxBytes: SETTINGS_FILE_MAX_BYTES }).toString("utf-8")
+				: undefined;
 			const next = fn(current);
 			if (next !== undefined) {
 				// Only create directory when we actually need to write
@@ -245,7 +250,7 @@ export class FileSettingsStorage implements SettingsStorage {
 				if (!release) {
 					release = this.acquireLockSyncWithRetry(path);
 				}
-				writeFileSync(path, next, "utf-8");
+				secureAtomicWriteFileSync(path, next, { mode: 0o600, maxBytes: SETTINGS_FILE_MAX_BYTES });
 			}
 		} finally {
 			if (release) {

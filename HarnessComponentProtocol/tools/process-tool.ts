@@ -2,6 +2,7 @@ import { access, readFile } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
 import type { AgentTool, AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
 import { type TSchema, Type } from "typebox";
+import { resolveProcessToolCommandOverride } from "../_magenta/process-tools/command-registry.ts";
 import { parseToml, type TomlTable } from "../_magenta/utils/pi/toml.ts";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, type TruncationResult } from "../_magenta/utils/pi/truncate.ts";
 import type {
@@ -100,11 +101,16 @@ function defaultParameters(): TSchema {
 	return Type.Object({}, { additionalProperties: true });
 }
 
-function resolveCommand(root: string, command: string, override?: string): string {
-	const selected = override ?? command;
+function resolveCommandPath(root: string, selected: string): string {
 	if (isAbsolute(selected)) return selected;
 	if (selected.includes("/") || selected.includes("\\")) return resolve(root, selected);
 	return selected;
+}
+
+function resolveCommand(root: string, command: string, override?: string): string {
+	if (override !== undefined) return resolveCommandPath(root, override);
+	const logicalCommand = resolveCommandPath(root, command);
+	return resolveProcessToolCommandOverride(logicalCommand) ?? logicalCommand;
 }
 
 function asString(value: unknown): string | undefined {

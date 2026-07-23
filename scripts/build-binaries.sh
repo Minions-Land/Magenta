@@ -85,7 +85,9 @@ DEFAULT_OUTPUT_DIR="$REPO_ROOT/pi/coding-agent/binaries"
 REQUESTED_OUTPUT_DIR="$(node -e 'process.stdout.write(require("node:path").resolve(process.argv[1]))' "${OUTPUT_DIR:-$DEFAULT_OUTPUT_DIR}")"
 
 canonicalize_output_path() {
-    node -e '
+	# JavaScript template literals in this single-quoted program belong to Node.
+	# shellcheck disable=SC2016
+	node -e '
         const { existsSync, lstatSync, realpathSync } = require("node:fs");
         const { basename, dirname, resolve } = require("node:path");
         const requestedPath = resolve(process.argv[1]);
@@ -242,9 +244,9 @@ for platform in "${PLATFORMS[@]}"; do
     # explicit build entrypoints. The runtime can still use new URL(...), but the
     # worker must be present in the compiled executable.
     if [[ "$platform" == windows-* ]]; then
-        bun build --compile --target=bun-$platform ./dist/bun/cli.js ./src/utils/image-resize-worker.ts --outfile "$OUTPUT_DIR/$platform/$BINARY_NAME.exe"
-    else
-        bun build --compile --target=bun-$platform ./dist/bun/cli.js ./src/utils/image-resize-worker.ts --outfile "$OUTPUT_DIR/$platform/$BINARY_NAME"
+		node ../../scripts/run-bun-compile.mjs build --compile --target="bun-$platform" ./dist/bun/cli.js ./src/utils/image-resize-worker.ts --outfile "$OUTPUT_DIR/$platform/$BINARY_NAME.exe"
+	else
+		node ../../scripts/run-bun-compile.mjs build --compile --target="bun-$platform" ./dist/bun/cli.js ./src/utils/image-resize-worker.ts --outfile "$OUTPUT_DIR/$platform/$BINARY_NAME"
     fi
 done
 
@@ -286,12 +288,12 @@ for platform in "${PLATFORMS[@]}"; do
     esac
     mkdir -p "$OUTPUT_DIR/$platform/node_modules/@mariozechner"
     cp -r ../../node_modules/@mariozechner/clipboard "$OUTPUT_DIR/$platform/node_modules/@mariozechner/"
-    cp -r ../../node_modules/@mariozechner/$clipboard_native_package "$OUTPUT_DIR/$platform/node_modules/@mariozechner/"
+	cp -r "../../node_modules/@mariozechner/$clipboard_native_package" "$OUTPUT_DIR/$platform/node_modules/@mariozechner/"
 
     # Copy terminal input native helpers next to compiled binaries.
     if [[ "$platform" == darwin-* ]]; then
         mkdir -p "$OUTPUT_DIR/$platform/native/darwin/prebuilds/$platform"
-        cp ../tui/native/darwin/prebuilds/$platform/darwin-modifiers.node "$OUTPUT_DIR/$platform/native/darwin/prebuilds/$platform/"
+		cp "../tui/native/darwin/prebuilds/$platform/darwin-modifiers.node" "$OUTPUT_DIR/$platform/native/darwin/prebuilds/$platform/"
     fi
     if [[ "$platform" == windows-* ]]; then
         if [[ "$platform" == "windows-arm64" ]]; then
@@ -333,7 +335,7 @@ done
 echo ""
 echo "==> Build complete!"
 echo "Archives available in $OUTPUT_DIR/"
-ls -lh *.tar.gz *.zip 2>/dev/null || true
+ls -lh ./*.tar.gz ./*.zip 2>/dev/null || true
 echo ""
 echo "Extracted directories for testing:"
 for platform in "${PLATFORMS[@]}"; do

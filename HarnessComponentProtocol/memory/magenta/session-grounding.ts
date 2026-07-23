@@ -1,5 +1,11 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { randomUUID } from "node:crypto";
+import { resolve } from "node:path";
+import {
+	secureAtomicWriteFile,
+	secureFileExists,
+	secureReadFile,
+	withSecureFileLock,
+} from "../../_magenta/utils/secure-file.ts";
 import type { MemoryReadResult, MemoryRecallResult, MemoryReflectResult, MemoryRetainResult } from "../HcpServer.ts";
 
 export type SessionGroundingMemoryEntry = {
@@ -45,6 +51,7 @@ export type SessionGroundingReflectResult = MemoryReflectResult & {
 };
 
 const DEFAULT_DESCRIPTION = "Domain-free base memory for preserving user-driven constraints during harness assembly.";
+export const SESSION_GROUNDING_STORE_MAX_BYTES = 16 * 1024 * 1024;
 const DEFAULT_CONTENT = `# Session Grounding
 
 Treat explicit user constraints as harness state, not incidental chat history.
@@ -143,16 +150,21 @@ export class SessionGroundingMemoryProvider {
 			""
 		).trim();
 		if (!text) throw new Error("memory://session-grounding retain requires text");
-		await this.loadStore();
-		const entry: SessionGroundingMemoryEntry = {
-			id: `mem-${this.now()}`,
-			text,
-			scope: readString(input, "scope") ?? "project",
-			tags: readStringArray(input, "tags"),
-			createdAt: this.now(),
-		};
-		this.entries.push(entry);
-		await this.persistStore();
+		const entry = await withSecureFileLock(this.storePath, async () => {
+			await this.loadStore();
+			const createdAt = this.now();
+			const baseId = `mem-${createdAt}`;
+			const next: SessionGroundingMemoryEntry = {
+				id: this.entries.some((candidate) => candidate.id === baseId) ? `${baseId}-${randomUUID()}` : baseId,
+				text,
+				scope: readString(input, "scope") ?? "project",
+				tags: readStringArray(input, "tags"),
+				createdAt,
+			};
+			this.entries.push(next);
+			await this.persistStore();
+			return next;
+		});
 		return {
 			target: "memory://session-grounding",
 			op: "retain",
@@ -199,7 +211,13 @@ export class SessionGroundingMemoryProvider {
 
 	private async loadStore(): Promise<void> {
 		try {
-			const raw = await readFile(this.storePath, "utf-8");
+			if (!(await secureFileExists(this.storePath))) {
+				this.entries = [];
+				return;
+			}
+			const raw = (await secureReadFile(this.storePath, { maxBytes: SESSION_GROUNDING_STORE_MAX_BYTES })).toString(
+				"utf8",
+			);
 			this.entries = raw
 				.split(/\r?\n/)
 				.filter(Boolean)
@@ -215,8 +233,9 @@ export class SessionGroundingMemoryProvider {
 	}
 
 	private async persistStore(): Promise<void> {
-		await mkdir(dirname(this.storePath), { recursive: true });
 		const content = this.entries.map((entry) => JSON.stringify(entry)).join("\n");
-		await writeFile(this.storePath, content ? `${content}\n` : "");
+		await secureAtomicWriteFile(this.storePath, content ? `${content}\n` : "", {
+			maxBytes: SESSION_GROUNDING_STORE_MAX_BYTES,
+		});
 	}
 }

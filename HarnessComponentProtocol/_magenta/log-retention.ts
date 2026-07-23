@@ -1,8 +1,9 @@
-import type { Dirent, Stats } from "node:fs";
+import type { Dirent } from "node:fs";
 import { appendFileSync, lstatSync } from "node:fs";
-import { lstat, readdir, rmdir, unlink } from "node:fs/promises";
+import { readdir } from "node:fs/promises";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import type { Writable } from "node:stream";
+import { currentUserId, type OwnedPathSnapshot, removeOwnedPathIfUnchanged, snapshotOwnedPath } from "./owned-path.ts";
 
 /**
  * Runtime logs are diagnostic, reproducible artifacts rather than durable
@@ -247,7 +248,7 @@ export type LogCleanupResult = {
 	deletedDirectories: number;
 };
 
-type Candidate = { path: string; size: number; mtimeMs: number };
+type Candidate = { path: string; snapshot: OwnedPathSnapshot };
 
 function isWithin(root: string, candidate: string): boolean {
 	const child = relative(root, candidate);
@@ -264,7 +265,9 @@ async function collectCandidates(
 	directory: string,
 	filter: (path: string) => boolean,
 	output: Candidate[],
+	ownerUid: number,
 ): Promise<void> {
+	if (!(await snapshotOwnedPath(directory, "directory", ownerUid))) return;
 	let entries: Dirent[];
 	try {
 		entries = await readdir(directory, { withFileTypes: true });
@@ -275,16 +278,12 @@ async function collectCandidates(
 		const path = resolve(directory, entry.name);
 		if (!isWithin(root, path) || entry.isSymbolicLink()) continue;
 		if (entry.isDirectory()) {
-			await collectCandidates(root, path, filter, output);
+			await collectCandidates(root, path, filter, output, ownerUid);
 			continue;
 		}
 		if (!entry.isFile() || !filter(path)) continue;
-		try {
-			const info = await lstat(path);
-			if (info.isFile()) output.push({ path, size: info.size, mtimeMs: info.mtimeMs });
-		} catch {
-			// Files can disappear while a session is shutting down.
-		}
+		const snapshot = await snapshotOwnedPath(path, "file", ownerUid);
+		if (snapshot) output.push({ path, snapshot });
 	}
 }
 
@@ -294,7 +293,9 @@ async function pruneEmptyDirectories(
 	filter: (path: string) => boolean,
 	exact: Set<string>,
 	prefixes: string[],
+	ownerUid: number,
 ): Promise<number> {
+	if (!(await snapshotOwnedPath(directory, "directory", ownerUid))) return 0;
 	let entries: Dirent[];
 	try {
 		entries = await readdir(directory, { withFileTypes: true });
@@ -306,15 +307,11 @@ async function pruneEmptyDirectories(
 		if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
 		const child = resolve(directory, entry.name);
 		if (!isWithin(root, child) || isProtected(child, exact, prefixes)) continue;
-		deleted += await pruneEmptyDirectories(root, child, filter, exact, prefixes);
+		deleted += await pruneEmptyDirectories(root, child, filter, exact, prefixes, ownerUid);
 	}
 	if (directory === root || !filter(directory) || isProtected(directory, exact, prefixes)) return deleted;
-	try {
-		await rmdir(directory);
-		return deleted + 1;
-	} catch {
-		return deleted;
-	}
+	const snapshot = await snapshotOwnedPath(directory, "directory", ownerUid);
+	return snapshot && (await removeOwnedPathIfUnchanged(directory, snapshot)) ? deleted + 1 : deleted;
 }
 
 /**
@@ -324,13 +321,8 @@ async function pruneEmptyDirectories(
  */
 export async function cleanupLogTree(options: LogCleanupOptions): Promise<LogCleanupResult> {
 	const root = resolve(options.root);
-	let rootInfo: Stats;
-	try {
-		rootInfo = await lstat(root);
-	} catch {
-		return { scannedFiles: 0, deletedFiles: 0, deletedBytes: 0, protectedFiles: 0, deletedDirectories: 0 };
-	}
-	if (!rootInfo.isDirectory()) {
+	const ownerUid = currentUserId();
+	if (ownerUid === undefined || !(await snapshotOwnedPath(root, "directory", ownerUid))) {
 		return { scannedFiles: 0, deletedFiles: 0, deletedBytes: 0, protectedFiles: 0, deletedDirectories: 0 };
 	}
 
@@ -338,40 +330,39 @@ export async function cleanupLogTree(options: LogCleanupOptions): Promise<LogCle
 	const prefixes = [...(options.protectedPrefixes ?? [])].map((path) => resolve(path));
 	const filter = options.fileFilter ?? (() => true);
 	const candidates: Candidate[] = [];
-	await collectCandidates(root, root, filter, candidates);
+	await collectCandidates(root, root, filter, candidates, ownerUid);
 
 	const maxAgeMs = options.maxAgeMs ?? DEFAULT_LOG_MAX_AGE_MS;
 	const maxTotalBytes = options.maxTotalBytes ?? DEFAULT_LOG_MAX_TOTAL_BYTES;
 	const maxFiles = options.maxFiles ?? DEFAULT_LOG_MAX_FILES;
 	const now = options.now ?? Date.now();
-	let totalBytes = candidates.reduce((sum, candidate) => sum + candidate.size, 0);
+	let totalBytes = candidates.reduce((sum, candidate) => sum + candidate.snapshot.size, 0);
 	let fileCount = candidates.length;
 	let deletedBytes = 0;
 	let deletedFiles = 0;
 	let protectedFiles = 0;
 
-	candidates.sort((left, right) => left.mtimeMs - right.mtimeMs || left.path.localeCompare(right.path));
+	candidates.sort(
+		(left, right) => left.snapshot.mtimeMs - right.snapshot.mtimeMs || left.path.localeCompare(right.path),
+	);
 	for (const candidate of candidates) {
-		const expired = maxAgeMs >= 0 && now - candidate.mtimeMs >= maxAgeMs;
+		const expired = maxAgeMs >= 0 && now - candidate.snapshot.mtimeMs >= maxAgeMs;
 		const overBudget = totalBytes > maxTotalBytes || fileCount > maxFiles;
 		if (!expired && !overBudget) break;
 		if (isProtected(candidate.path, exact, prefixes)) {
 			protectedFiles++;
 			continue;
 		}
-		try {
-			await unlink(candidate.path);
-			totalBytes -= candidate.size;
+		if (await removeOwnedPathIfUnchanged(candidate.path, candidate.snapshot)) {
+			totalBytes -= candidate.snapshot.size;
 			fileCount--;
-			deletedBytes += candidate.size;
+			deletedBytes += candidate.snapshot.size;
 			deletedFiles++;
-		} catch {
-			// A concurrently closed session may have removed the file already.
 		}
 	}
 
 	const deletedDirectories = options.emptyDirectoryFilter
-		? await pruneEmptyDirectories(root, root, options.emptyDirectoryFilter, exact, prefixes)
+		? await pruneEmptyDirectories(root, root, options.emptyDirectoryFilter, exact, prefixes, ownerUid)
 		: 0;
 	return { scannedFiles: candidates.length, deletedFiles, deletedBytes, protectedFiles, deletedDirectories };
 }

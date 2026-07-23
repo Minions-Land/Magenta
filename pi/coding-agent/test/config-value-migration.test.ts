@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CONFIG_DIR_NAME, ENV_AGENT_DIR } from "../src/config.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
-import { migrateLegacyPiAgentDirToCurrentConfigDir, runMigrations } from "../src/migrations.ts";
+import { migrateAuthToAuthJson, migrateLegacyPiAgentDirToCurrentConfigDir, runMigrations } from "../src/migrations.ts";
 import { createTestModelRegistry } from "./utilities.ts";
 
 describe("config value env var syntax migration", () => {
@@ -99,6 +99,37 @@ describe("config value env var syntax migration", () => {
 			expect(migrated).toBe(false);
 			expect(fs.existsSync(newAgentDir)).toBe(false);
 		});
+
+		it.skipIf(process.platform === "win32")("does not expose a partial destination when copying fails", () => {
+			const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-legacy-agent-dir-failure-test-"));
+			tempDirs.push(root);
+			const oldAgentDir = path.join(root, ".pi", "agent");
+			const newAgentDir = path.join(root, CONFIG_DIR_NAME, "agent");
+			fs.mkdirSync(oldAgentDir, { recursive: true });
+			fs.writeFileSync(path.join(oldAgentDir, "settings.json"), '{"theme":"old"}\n', "utf-8");
+			const unreadablePath = path.join(oldAgentDir, "unreadable-state");
+			fs.writeFileSync(unreadablePath, "private\n", "utf-8");
+			fs.chmodSync(unreadablePath, 0o000);
+			const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+			try {
+				const migrated = migrateLegacyPiAgentDirToCurrentConfigDir({
+					oldAgentDir,
+					newAgentDir,
+					envAgentDir: undefined,
+					configDirName: CONFIG_DIR_NAME,
+				});
+
+				expect(migrated).toBe(false);
+				expect(fs.existsSync(newAgentDir)).toBe(false);
+				expect(fs.readdirSync(path.dirname(newAgentDir)).some((name) => name.startsWith(".agent.migration-"))).toBe(
+					false,
+				);
+				expect(logSpy).toHaveBeenCalledOnce();
+			} finally {
+				fs.chmodSync(unreadablePath, 0o600);
+			}
+		});
 	});
 
 	it("leaves uppercase auth.json API key values unchanged", () => {
@@ -130,6 +161,33 @@ describe("config value env var syntax migration", () => {
 		expect(migrated.opencode.key).toBe("public");
 		expect(migrated.github.access).toBe("ACCESS_TOKEN");
 		expect(logSpy).not.toHaveBeenCalled();
+	});
+
+	it("persists migrated credentials before retiring legacy sources", () => {
+		const agentDir = createAgentDir();
+		const oauthPath = path.join(agentDir, "oauth.json");
+		const settingsPath = path.join(agentDir, "settings.json");
+		fs.writeFileSync(oauthPath, JSON.stringify({ github: { access: "oauth-token" } }), "utf-8");
+		fs.writeFileSync(settingsPath, JSON.stringify({ theme: "dark", apiKeys: { openai: "api-key" } }), "utf-8");
+
+		let providers: string[] = [];
+		withAgentDir(agentDir, () => {
+			providers = migrateAuthToAuthJson();
+		});
+
+		const authPath = path.join(agentDir, "auth.json");
+		expect(providers.sort()).toEqual(["github", "openai"]);
+		expect(JSON.parse(fs.readFileSync(authPath, "utf-8"))).toEqual({
+			github: { type: "oauth", access: "oauth-token" },
+			openai: { type: "api_key", key: "api-key" },
+		});
+		expect(fs.existsSync(oauthPath)).toBe(false);
+		expect(fs.existsSync(`${oauthPath}.migrated`)).toBe(true);
+		expect(JSON.parse(fs.readFileSync(settingsPath, "utf-8"))).toEqual({ theme: "dark" });
+		if (process.platform !== "win32") {
+			expect(fs.lstatSync(authPath).mode & 0o777).toBe(0o600);
+			expect(fs.lstatSync(settingsPath).mode & 0o777).toBe(0o600);
+		}
 	});
 
 	it.each([

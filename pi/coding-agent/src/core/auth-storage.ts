@@ -14,9 +14,15 @@ import {
 	type OAuthProviderId,
 } from "@earendil-works/pi-ai/compat";
 import { getOAuthApiKey, getOAuthProvider, getOAuthProviders } from "@earendil-works/pi-ai/oauth";
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import {
+	secureAtomicWriteFileSync,
+	secureFileExistsSync,
+	secureReadFileSync,
+	withSecureFileLock,
+	withSecureFileLockSync,
+} from "@magenta/harness";
+import { existsSync, mkdirSync } from "fs";
 import { dirname, join } from "path";
-import lockfile from "proper-lockfile";
 import { getAgentDir } from "../config.ts";
 import { normalizePath } from "../utils/paths.ts";
 import { getExternalAuth } from "./external-auth-loader.ts";
@@ -36,6 +42,8 @@ export type AuthCredential = ApiKeyCredential | OAuthCredential;
 
 export type AuthStorageData = Record<string, AuthCredential>;
 
+const AUTH_STORAGE_MAX_BYTES = 4 * 1024 * 1024;
+
 export type AuthStatus = {
 	configured: boolean;
 	source?: "stored" | "runtime" | "environment" | "fallback" | "models_json_key" | "models_json_command";
@@ -50,8 +58,6 @@ type LockResult<T> = {
 	result: T;
 	next?: string;
 };
-
-const AUTH_FILE_WRITE_OPTIONS = { encoding: "utf-8", mode: 0o600 } as const;
 
 export interface AuthStorageBackend {
 	withLock<T>(fn: (current: string | undefined) => LockResult<T>): T;
@@ -72,109 +78,32 @@ export class FileAuthStorageBackend implements AuthStorageBackend {
 		}
 	}
 
-	private ensureFileExists(): void {
-		if (!existsSync(this.authPath)) {
-			writeFileSync(this.authPath, "{}", AUTH_FILE_WRITE_OPTIONS);
-			chmodSync(this.authPath, 0o600);
-		}
-	}
-
-	private acquireLockSyncWithRetry(path: string): () => void {
-		const maxAttempts = 10;
-		const delayMs = 20;
-		let lastError: unknown;
-
-		for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-			try {
-				return lockfile.lockSync(path, { realpath: false });
-			} catch (error) {
-				const code =
-					typeof error === "object" && error !== null && "code" in error
-						? String((error as { code?: unknown }).code)
-						: undefined;
-				if (code !== "ELOCKED" || attempt === maxAttempts) {
-					throw error;
-				}
-				lastError = error;
-				const start = Date.now();
-				while (Date.now() - start < delayMs) {
-					// Sleep synchronously to avoid changing callers to async.
-				}
-			}
-		}
-
-		throw (lastError as Error) ?? new Error("Failed to acquire auth storage lock");
-	}
-
 	withLock<T>(fn: (current: string | undefined) => LockResult<T>): T {
 		this.ensureParentDir();
-		this.ensureFileExists();
-
-		let release: (() => void) | undefined;
-		try {
-			release = this.acquireLockSyncWithRetry(this.authPath);
-			const current = existsSync(this.authPath) ? readFileSync(this.authPath, "utf-8") : undefined;
+		return withSecureFileLockSync(this.authPath, () => {
+			const current = secureFileExistsSync(this.authPath)
+				? secureReadFileSync(this.authPath, { maxBytes: AUTH_STORAGE_MAX_BYTES }).toString("utf-8")
+				: undefined;
 			const { result, next } = fn(current);
 			if (next !== undefined) {
-				writeFileSync(this.authPath, next, AUTH_FILE_WRITE_OPTIONS);
-				chmodSync(this.authPath, 0o600);
+				secureAtomicWriteFileSync(this.authPath, next, { maxBytes: AUTH_STORAGE_MAX_BYTES });
 			}
 			return result;
-		} finally {
-			if (release) {
-				release();
-			}
-		}
+		});
 	}
 
 	async withLockAsync<T>(fn: (current: string | undefined) => Promise<LockResult<T>>): Promise<T> {
 		this.ensureParentDir();
-		this.ensureFileExists();
-
-		let release: (() => Promise<void>) | undefined;
-		let lockCompromised = false;
-		let lockCompromisedError: Error | undefined;
-		const throwIfCompromised = () => {
-			if (lockCompromised) {
-				throw lockCompromisedError ?? new Error("Auth storage lock was compromised");
-			}
-		};
-
-		try {
-			release = await lockfile.lock(this.authPath, {
-				retries: {
-					retries: 10,
-					factor: 2,
-					minTimeout: 100,
-					maxTimeout: 10000,
-					randomize: true,
-				},
-				stale: 30000,
-				onCompromised: (err) => {
-					lockCompromised = true;
-					lockCompromisedError = err;
-				},
-			});
-
-			throwIfCompromised();
-			const current = existsSync(this.authPath) ? readFileSync(this.authPath, "utf-8") : undefined;
+		return withSecureFileLock(this.authPath, async () => {
+			const current = secureFileExistsSync(this.authPath)
+				? secureReadFileSync(this.authPath, { maxBytes: AUTH_STORAGE_MAX_BYTES }).toString("utf-8")
+				: undefined;
 			const { result, next } = await fn(current);
-			throwIfCompromised();
 			if (next !== undefined) {
-				writeFileSync(this.authPath, next, AUTH_FILE_WRITE_OPTIONS);
-				chmodSync(this.authPath, 0o600);
+				secureAtomicWriteFileSync(this.authPath, next, { maxBytes: AUTH_STORAGE_MAX_BYTES });
 			}
-			throwIfCompromised();
 			return result;
-		} finally {
-			if (release) {
-				try {
-					await release();
-				} catch {
-					// Ignore unlock errors when lock is compromised.
-				}
-			}
-		}
+		});
 	}
 }
 
@@ -272,20 +201,23 @@ export class AuthStorage {
 		provider: string,
 		fn: (current: AuthCredential | undefined) => Promise<AuthCredential | undefined>,
 	): Promise<AuthCredential | undefined> {
-		return this.storage.withLockAsync(async (content) => {
+		let synchronizedData: AuthStorageData | undefined;
+		const result = await this.storage.withLockAsync(async (content) => {
 			const currentData = this.parseStorageData(content);
 			const next = await fn(currentData[provider]);
 			if (next === undefined) {
-				// No change: keep the in-memory cache aligned with disk and report current.
-				this.data = currentData;
-				this.loadError = null;
+				synchronizedData = currentData;
 				return { result: currentData[provider] };
 			}
 			const merged: AuthStorageData = { ...currentData, [provider]: next };
-			this.data = merged;
-			this.loadError = null;
+			synchronizedData = merged;
 			return { result: next, next: JSON.stringify(merged, null, 2) };
 		});
+		if (synchronizedData) {
+			this.data = synchronizedData;
+			this.loadError = null;
+		}
+		return result;
 	}
 
 	private recordError(error: unknown): void {
@@ -320,10 +252,11 @@ export class AuthStorage {
 
 	private persistProviderChange(provider: string, credential: AuthCredential | undefined): void {
 		if (this.loadError) {
-			return;
+			throw this.loadError;
 		}
 
 		try {
+			let synchronizedData: AuthStorageData | undefined;
 			this.storage.withLock((current) => {
 				const currentData = this.parseStorageData(current);
 				const merged: AuthStorageData = { ...currentData };
@@ -332,10 +265,16 @@ export class AuthStorage {
 				} else {
 					delete merged[provider];
 				}
+				synchronizedData = merged;
 				return { result: undefined, next: JSON.stringify(merged, null, 2) };
 			});
+			if (synchronizedData) {
+				this.data = synchronizedData;
+				this.loadError = null;
+			}
 		} catch (error) {
 			this.recordError(error);
+			throw error;
 		}
 	}
 
@@ -358,7 +297,6 @@ export class AuthStorage {
 	 * Set credential for a provider.
 	 */
 	set(provider: string, credential: AuthCredential): void {
-		this.data[provider] = credential;
 		this.persistProviderChange(provider, credential);
 	}
 
@@ -366,7 +304,6 @@ export class AuthStorage {
 	 * Remove credential for a provider.
 	 */
 	remove(provider: string): void {
-		delete this.data[provider];
 		this.persistProviderChange(provider, undefined);
 	}
 
@@ -468,10 +405,10 @@ export class AuthStorage {
 			return null;
 		}
 
+		let synchronizedData: AuthStorageData | undefined;
 		const result = await this.storage.withLockAsync(async (current) => {
 			const currentData = this.parseStorageData(current);
-			this.data = currentData;
-			this.loadError = null;
+			synchronizedData = currentData;
 
 			const cred = currentData[providerId];
 			if (cred?.type !== "oauth") {
@@ -498,10 +435,13 @@ export class AuthStorage {
 				...currentData,
 				[providerId]: { type: "oauth", ...refreshed.newCredentials },
 			};
-			this.data = merged;
-			this.loadError = null;
+			synchronizedData = merged;
 			return { result: refreshed, next: JSON.stringify(merged, null, 2) };
 		});
+		if (synchronizedData) {
+			this.data = synchronizedData;
+			this.loadError = null;
+		}
 
 		return result;
 	}

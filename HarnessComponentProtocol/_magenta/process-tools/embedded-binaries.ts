@@ -2,16 +2,18 @@
  * Embedded process-tools binary manager
  *
  * Bun 编译时将平台特定的 magenta-process-tools 二进制嵌入虚拟文件系统。
- * 首次运行时，此模块会将二进制解压到 ~/.magenta/cache/process-tools/
+ * 首次运行时，此模块会将二进制解压到 ~/.magenta/cache/process-tools/<sha256>/
  * 并返回真实文件路径供 HCP 工具使用。
  */
 
-import { createHash } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { HcpClientisbunbinaryurl } from "../../HcpClient.ts";
+import { isAtomicallyMaterializedExecutable, materializeExecutableAtomically } from "../utils/pi/atomic-executable.ts";
+import { materializeLeasedContentAddressedExecutable } from "../utils/pi/helper-cache-maintenance.ts";
+import { getEmbeddedHelperCacheRoot, getEmbeddedHelperTrustedRoot } from "../utils/pi/helper-cache-root.ts";
+import { registerProcessToolCommandOverride } from "./command-registry.ts";
 
 // 平台检测
 const PLATFORM = process.platform;
@@ -19,7 +21,7 @@ const ARCH = process.arch;
 
 function getHarnessRoot(): string {
 	const isBunBinary = typeof (globalThis as any).Bun !== "undefined" && HcpClientisbunbinaryurl(import.meta.url);
-	return isBunBinary ? dirname(process.execPath) : fileURLToPath(new URL("../..", import.meta.url));
+	return resolve(isBunBinary ? dirname(process.execPath) : fileURLToPath(new URL("../..", import.meta.url)));
 }
 
 // 确定当前平台的二进制文件名
@@ -56,9 +58,28 @@ function getEmbeddedBinaryPath(): string | null {
 	return null;
 }
 
-// 缓存目录
-const CACHE_DIR = join(homedir(), ".magenta", "cache", "process-tools");
-const CACHE_BINARY_PATH = join(CACHE_DIR, PLATFORM === "win32" ? "magenta-process-tools.exe" : "magenta-process-tools");
+function runtimeBinaryName(): string {
+	return PLATFORM === "win32" ? "magenta-process-tools.exe" : "magenta-process-tools";
+}
+
+function manifestLogicalCommandPath(hcpRoot: string): string {
+	// Manifests intentionally omit .exe; ensureCommandReady adds it in source
+	// development, while compiled releases replace this logical path in-process.
+	return join(hcpRoot, "_magenta", "process-tools", "target", "release", "magenta-process-tools");
+}
+
+function developmentTargetPath(hcpRoot: string): string {
+	return join(hcpRoot, "_magenta", "process-tools", "target", "release", runtimeBinaryName());
+}
+
+function materializeEmbeddedBinary(embeddedPath: string): string {
+	return materializeLeasedContentAddressedExecutable({
+		content: readFileSync(embeddedPath),
+		cacheDirectory: join(getEmbeddedHelperCacheRoot(), "process-tools"),
+		executableName: runtimeBinaryName(),
+		trustedRoot: getEmbeddedHelperTrustedRoot(),
+	});
+}
 
 /**
  * 获取 magenta-process-tools 的真实文件路径
@@ -92,34 +113,7 @@ export function getProcessToolsBinaryPath(harnessRoot = getHarnessRoot()): strin
 		return releasePath;
 	}
 
-	// 嵌入场景：检查缓存
-	if (existsSync(CACHE_BINARY_PATH)) {
-		// 验证缓存文件的完整性（比较文件大小或哈希）
-		try {
-			const embeddedContent = readFileSync(embeddedPath);
-			const cachedContent = readFileSync(CACHE_BINARY_PATH);
-
-			const embeddedHash = createHash("sha256").update(embeddedContent).digest("hex");
-			const cachedHash = createHash("sha256").update(cachedContent).digest("hex");
-
-			if (embeddedHash === cachedHash) {
-				return CACHE_BINARY_PATH;
-			}
-		} catch {
-			// 缓存文件损坏，重新提取
-		}
-	}
-
-	// 提取嵌入的二进制到缓存
-	console.error(`[Magenta] Extracting process-tools binary to ${CACHE_DIR}...`);
-	mkdirSync(CACHE_DIR, { recursive: true });
-
-	const embeddedContent = readFileSync(embeddedPath);
-	writeFileSync(CACHE_BINARY_PATH, embeddedContent);
-	chmodSync(CACHE_BINARY_PATH, 0o755); // 添加执行权限
-
-	console.error(`[Magenta] Process-tools binary ready at ${CACHE_BINARY_PATH}`);
-	return CACHE_BINARY_PATH;
+	return materializeEmbeddedBinary(embeddedPath);
 }
 
 /**
@@ -127,47 +121,37 @@ export function getProcessToolsBinaryPath(harnessRoot = getHarnessRoot()): strin
  * 应在 HcpClient 装配前调用
  *
  * 策略：
- * 1. 在 Bun 编译的二进制中，从嵌入路径提取到缓存
- * 2. 安装到 HCP_ROOT/_magenta/process-tools/target/release/
- * 3. 这样 .toml 中的相对路径 "../../../_magenta/process-tools/target/release/magenta-process-tools" 可以正常工作
+ * 1. Bun 编译产物将 helper 提取到内容寻址缓存，并把静态 manifest
+ *    命令绑定到本进程的不可变路径。
+ * 2. Node/source 开发仍维护 canonical target/release 路径。
  */
-export function initProcessToolsBinary(hcpRoot = getHarnessRoot()): void {
+export function initProcessToolsBinary(hcpRoot = getHarnessRoot()): string {
 	try {
-		const binaryPath = getProcessToolsBinaryPath();
+		const embeddedPath = getEmbeddedBinaryPath();
+		const binaryPath = embeddedPath ? materializeEmbeddedBinary(embeddedPath) : getProcessToolsBinaryPath();
 		if (!existsSync(binaryPath)) {
 			throw new Error(`Process-tools binary not found: ${binaryPath}`);
 		}
 
-		// Tool manifests resolve ../../../_magenta from HCP_ROOT/tools/<tool>/magenta.
-		const targetDir = join(hcpRoot, "_magenta", "process-tools", "target", "release");
-		mkdirSync(targetDir, { recursive: true });
-
-		const targetBinaryPath = join(
-			targetDir,
-			PLATFORM === "win32" ? "magenta-process-tools.exe" : "magenta-process-tools",
-		);
-
-		// Keep the installed helper in lockstep with the binary bundled by the
-		// current Magenta version. A path-only check would leave an older helper in
-		// place forever after upgrades.
-		if (existsSync(targetBinaryPath)) {
-			try {
-				const sourceHash = createHash("sha256").update(readFileSync(binaryPath)).digest("hex");
-				const targetHash = createHash("sha256").update(readFileSync(targetBinaryPath)).digest("hex");
-				if (sourceHash === targetHash) return;
-			} catch {
-				// Replace unreadable or incomplete targets below.
-			}
+		let selectedPath = binaryPath;
+		if (!embeddedPath) {
+			const targetBinaryPath = developmentTargetPath(hcpRoot);
+			const binaryContent = readFileSync(binaryPath);
+			const alreadyCurrent = isAtomicallyMaterializedExecutable(targetBinaryPath, binaryContent);
+			materializeExecutableAtomically({
+				content: binaryContent,
+				destinationPath: targetBinaryPath,
+				directoryMode: 0o755,
+				trustedRoot: hcpRoot,
+			});
+			selectedPath = targetBinaryPath;
+			// stdout is a machine protocol in JSON/RPC modes; bootstrap diagnostics must
+			// never corrupt its framing.
+			if (!alreadyCurrent) console.error(`[Magenta] Process-tools binary installed at ${targetBinaryPath}`);
 		}
 
-		// 复制二进制到目标位置（Windows 不支持符号链接，统一用复制）
-		const binaryContent = readFileSync(binaryPath);
-		writeFileSync(targetBinaryPath, binaryContent);
-		chmodSync(targetBinaryPath, 0o755);
-
-		// stdout is a machine protocol in JSON/RPC modes; bootstrap diagnostics must
-		// never corrupt its framing.
-		console.error(`[Magenta] Process-tools binary installed at ${targetBinaryPath}`);
+		registerProcessToolCommandOverride(manifestLogicalCommandPath(hcpRoot), selectedPath);
+		return selectedPath;
 	} catch (error) {
 		console.error("[Magenta] Failed to initialize process-tools binary:", error);
 		throw error;

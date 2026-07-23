@@ -2,11 +2,33 @@
  * One-time migrations that run on startup.
  */
 
-import { migrateLegacyMessageStore } from "@magenta/harness";
+import {
+	cleanupEmptyOrphanMultiagentRegistries,
+	DurableMultiagentRegistry,
+	MessageStore,
+	migrateLegacyMessageStore,
+	secureAtomicWriteFileSync,
+	secureReadFileSync,
+	withSecureFileLockSync,
+} from "@magenta/harness";
 import chalk from "chalk";
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs";
+import { randomUUID } from "crypto";
+import type { Dirent } from "fs";
+import {
+	closeSync,
+	cpSync,
+	existsSync,
+	lstatSync,
+	mkdirSync,
+	openSync,
+	readdirSync,
+	readFileSync,
+	readSync,
+	renameSync,
+	rmSync,
+} from "fs";
 import { homedir } from "os";
-import { dirname, join } from "path";
+import { basename, dirname, join } from "path";
 import {
 	CONFIG_DIR_NAME,
 	ENV_AGENT_DIR,
@@ -14,6 +36,7 @@ import {
 	getAgentDir,
 	getBinDir,
 	getPeerMessageDbPath,
+	getSessionsDir,
 } from "./config.ts";
 import { migrateKeybindingsConfig } from "./core/keybindings.ts";
 
@@ -21,6 +44,7 @@ const MIGRATION_GUIDE_URL =
 	"https://github.com/earendil-works/pi-mono/blob/main/packages/coding-agent/CHANGELOG.md#extensions-migration";
 const EXTENSIONS_DOC_URL =
 	"https://github.com/earendil-works/pi-mono/blob/main/packages/coding-agent/docs/extensions.md";
+const LEGACY_JSON_STATE_MAX_BYTES = 8 * 1024 * 1024;
 
 export interface LegacyAgentDirMigrationOptions {
 	oldAgentDir?: string;
@@ -46,8 +70,28 @@ export function migrateLegacyPiAgentDirToCurrentConfigDir(options: LegacyAgentDi
 
 	try {
 		mkdirSync(dirname(newAgentDir), { recursive: true });
-		cpSync(oldAgentDir, newAgentDir, { recursive: true, errorOnExist: false });
-		return true;
+		return withSecureFileLockSync(newAgentDir, () => {
+			if (existsSync(newAgentDir)) return false;
+			const sourceStats = lstatSync(oldAgentDir);
+			if (!sourceStats.isDirectory() || sourceStats.isSymbolicLink()) return false;
+			const stagingDir = join(
+				dirname(newAgentDir),
+				`.${basename(newAgentDir)}.migration-${process.pid}-${randomUUID()}`,
+			);
+			try {
+				cpSync(oldAgentDir, stagingDir, {
+					recursive: true,
+					errorOnExist: true,
+					force: false,
+					preserveTimestamps: true,
+				});
+				if (existsSync(newAgentDir)) return false;
+				renameSync(stagingDir, newAgentDir);
+				return true;
+			} finally {
+				rmSync(stagingDir, { recursive: true, force: true });
+			}
+		});
 	} catch (err) {
 		console.log(
 			chalk.yellow(
@@ -76,16 +120,20 @@ export function migrateAuthToAuthJson(): string[] {
 
 	const migrated: Record<string, unknown> = {};
 	const providers: string[] = [];
+	let oauthWasRead = false;
+	let settingsWithoutApiKeys: Record<string, unknown> | undefined;
 
 	// Migrate oauth.json
 	if (existsSync(oauthPath)) {
 		try {
-			const oauth = JSON.parse(readFileSync(oauthPath, "utf-8"));
+			const oauth = JSON.parse(
+				secureReadFileSync(oauthPath, { maxBytes: LEGACY_JSON_STATE_MAX_BYTES }).toString("utf-8"),
+			);
 			for (const [provider, cred] of Object.entries(oauth)) {
 				migrated[provider] = { type: "oauth", ...(cred as object) };
 				providers.push(provider);
 			}
-			renameSync(oauthPath, `${oauthPath}.migrated`);
+			oauthWasRead = true;
 		} catch {
 			// Skip on error
 		}
@@ -94,7 +142,7 @@ export function migrateAuthToAuthJson(): string[] {
 	// Migrate settings.json apiKeys
 	if (existsSync(settingsPath)) {
 		try {
-			const content = readFileSync(settingsPath, "utf-8");
+			const content = secureReadFileSync(settingsPath, { maxBytes: LEGACY_JSON_STATE_MAX_BYTES }).toString("utf-8");
 			const settings = JSON.parse(content);
 			if (settings.apiKeys && typeof settings.apiKeys === "object") {
 				for (const [provider, key] of Object.entries(settings.apiKeys)) {
@@ -104,7 +152,7 @@ export function migrateAuthToAuthJson(): string[] {
 					}
 				}
 				delete settings.apiKeys;
-				writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+				settingsWithoutApiKeys = settings;
 			}
 		} catch {
 			// Skip on error
@@ -112,8 +160,30 @@ export function migrateAuthToAuthJson(): string[] {
 	}
 
 	if (Object.keys(migrated).length > 0) {
-		mkdirSync(dirname(authPath), { recursive: true });
-		writeFileSync(authPath, JSON.stringify(migrated, null, 2), { mode: 0o600 });
+		secureAtomicWriteFileSync(authPath, `${JSON.stringify(migrated, null, 2)}\n`, {
+			mode: 0o600,
+			maxBytes: LEGACY_JSON_STATE_MAX_BYTES,
+		});
+
+		// Retire legacy sources only after auth.json is durable. Cleanup failures
+		// leave duplicate credentials, never a credential-less installation.
+		if (oauthWasRead) {
+			try {
+				renameSync(oauthPath, `${oauthPath}.migrated`);
+			} catch {
+				// The durable auth.json is authoritative; retrying cleanup is optional.
+			}
+		}
+		if (settingsWithoutApiKeys) {
+			try {
+				secureAtomicWriteFileSync(settingsPath, `${JSON.stringify(settingsWithoutApiKeys, null, 2)}\n`, {
+					mode: 0o600,
+					maxBytes: LEGACY_JSON_STATE_MAX_BYTES,
+				});
+			} catch {
+				// Preserve the legacy copy when it cannot be replaced safely.
+			}
+		}
 	}
 
 	return providers;
@@ -206,13 +276,18 @@ function migrateKeybindingsConfigFile(): void {
 	if (!existsSync(configPath)) return;
 
 	try {
-		const parsed = JSON.parse(readFileSync(configPath, "utf-8")) as unknown;
+		const parsed = JSON.parse(
+			secureReadFileSync(configPath, { maxBytes: LEGACY_JSON_STATE_MAX_BYTES }).toString("utf-8"),
+		) as unknown;
 		if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
 			return;
 		}
 		const { config, migrated } = migrateKeybindingsConfig(parsed as Record<string, unknown>);
 		if (!migrated) return;
-		writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf-8");
+		secureAtomicWriteFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, {
+			mode: 0o600,
+			maxBytes: LEGACY_JSON_STATE_MAX_BYTES,
+		});
 	} catch {
 		// Ignore malformed files during migration
 	}
@@ -272,6 +347,198 @@ function migrateLegacyPeerMessageStore(): void {
 		// A damaged, locked, or conflicting legacy store must not block startup.
 		// The source remains untouched so a later run or manual repair can retry.
 	}
+}
+
+const PRESENCE_SESSION_HEADER_BYTES = 64 * 1024;
+
+type PresenceMaintenanceOptions = {
+	/** Optional project-specific Session directory selected by the CLI. */
+	sessionDir?: string;
+	/** Optional retention override used by tests and controlled maintenance jobs. */
+	retentionMs?: number;
+	/** Test/maintenance clock override. */
+	nowMs?: number;
+};
+
+/**
+ * Read only the first JSONL record needed to prove a persisted Session id.
+ * Session files are append-only and can be arbitrarily large; a full read here
+ * would turn every startup into an unbounded disk scan. A long or malformed
+ * header is treated as an unsafe scan and aborts GC for this startup.
+ */
+function readSessionHeaderId(filePath: string): string | undefined {
+	let fd: number | undefined;
+	try {
+		fd = openSync(filePath, "r");
+		const buffer = Buffer.allocUnsafe(PRESENCE_SESSION_HEADER_BYTES);
+		const bytesRead = readSync(fd, buffer, 0, buffer.length, 0);
+		const text = buffer.subarray(0, bytesRead).toString("utf8");
+		const newline = text.indexOf("\n");
+		if (newline < 0 && bytesRead === buffer.length) return undefined;
+		const firstLine = (newline < 0 ? text : text.slice(0, newline)).replace(/\r$/, "").trim();
+		if (!firstLine) return undefined;
+		const parsed = JSON.parse(firstLine) as { type?: unknown; id?: unknown };
+		if (parsed.type !== "session" || typeof parsed.id !== "string" || parsed.id.length === 0) return undefined;
+		return parsed.id;
+	} catch {
+		return undefined;
+	} finally {
+		if (fd !== undefined) {
+			try {
+				closeSync(fd);
+			} catch {
+				// A failed close is still an unsafe scan; the caller already skips GC.
+			}
+		}
+	}
+}
+
+/** Collect valid Session ids from one root without following symlinks. */
+function collectSessionIds(root: string): Set<string> | undefined {
+	const ids = new Set<string>();
+	const visit = (directory: string, depth: number): boolean => {
+		let directoryStat: ReturnType<typeof lstatSync>;
+		try {
+			directoryStat = lstatSync(directory);
+		} catch (error) {
+			return (error as NodeJS.ErrnoException).code === "ENOENT";
+		}
+		if (directoryStat.isSymbolicLink() || !directoryStat.isDirectory()) return false;
+		let entries: Dirent[];
+		try {
+			entries = readdirSync(directory, { withFileTypes: true });
+		} catch {
+			return false;
+		}
+		for (const entry of entries) {
+			const entryPath = join(directory, entry.name);
+			if (entry.isSymbolicLink()) return false;
+			if (entry.isDirectory()) {
+				// The shipped layout is root/<encoded-cwd>/*.jsonl. A bounded
+				// depth still handles custom nested layouts without following an
+				// accidental recursive tree forever.
+				if (depth >= 3 || !visit(entryPath, depth + 1)) return false;
+				continue;
+			}
+			if (!entry.isFile() || !entry.name.endsWith(".jsonl")) continue;
+			const id = readSessionHeaderId(entryPath);
+			if (!id) return false;
+			ids.add(id);
+		}
+		return true;
+	};
+	return visit(root, 0) ? ids : undefined;
+}
+
+/** Read registry references through the durable registry parser, failing closed on any bad file. */
+function collectRegistrySessionIds(agentDir: string): Set<string> | undefined {
+	const registryDir = join(agentDir, "multiagent");
+	let directoryStat: ReturnType<typeof lstatSync>;
+	try {
+		directoryStat = lstatSync(registryDir);
+	} catch (error) {
+		return (error as NodeJS.ErrnoException).code === "ENOENT" ? new Set<string>() : undefined;
+	}
+	if (directoryStat.isSymbolicLink() || !directoryStat.isDirectory()) return undefined;
+	let entries: Dirent[];
+	try {
+		entries = readdirSync(registryDir, { withFileTypes: true });
+	} catch {
+		return undefined;
+	}
+	const ids = new Set<string>();
+	for (const entry of entries) {
+		if (!entry.name.endsWith(".json")) continue;
+		if (entry.isSymbolicLink() || !entry.isFile()) return undefined;
+		const path = join(registryDir, entry.name);
+		try {
+			const raw = JSON.parse(readFileSync(path, "utf8")) as {
+				schemaVersion?: unknown;
+				parentSessionId?: unknown;
+			};
+			if (raw.schemaVersion !== 1 || typeof raw.parentSessionId !== "string" || raw.parentSessionId.length === 0) {
+				return undefined;
+			}
+			const registry = new DurableMultiagentRegistry(path, raw.parentSessionId);
+			for (const record of registry.list()) ids.add(record.sessionId);
+		} catch {
+			return undefined;
+		}
+	}
+	return ids;
+}
+
+function collectPersistedSessionIds(options: PresenceMaintenanceOptions): Set<string> | undefined {
+	const roots = new Set([getSessionsDir(), options.sessionDir].filter((value): value is string => Boolean(value)));
+	const sessionIds = new Set<string>();
+	for (const root of roots) {
+		const ids = collectSessionIds(root);
+		if (ids === undefined) return undefined;
+		for (const id of ids) sessionIds.add(id);
+	}
+	return sessionIds;
+}
+
+/**
+ * Run one conservative orphan-presence pass after startup paths are known.
+ * Scanning is read-only and happens once; a missing or malformed Session or
+ * registry tree returns zero without opening the mailbox for mutation.
+ */
+export function runPresenceOrphanMaintenance(options: PresenceMaintenanceOptions = {}): number {
+	const sessionIds = collectPersistedSessionIds(options);
+	if (sessionIds === undefined) return 0;
+	return purgeOrphanPresence(sessionIds, options);
+}
+
+function purgeOrphanPresence(sessionIds: Set<string>, options: PresenceMaintenanceOptions): number {
+	const registryIds = collectRegistrySessionIds(getAgentDir());
+	if (registryIds === undefined) return 0;
+	let store: MessageStore | undefined;
+	try {
+		store = new MessageStore(getPeerMessageDbPath());
+		return store.purgeOrphanPresence({
+			sessionIds,
+			registrySessionIds: registryIds,
+			retentionMs: options.retentionMs,
+			nowMs: options.nowMs,
+		});
+	} catch {
+		return 0;
+	} finally {
+		store?.close();
+	}
+}
+
+/** Remove only old, strictly empty registries after a complete Session scan. */
+export async function runEmptyRegistryOrphanMaintenance(options: PresenceMaintenanceOptions = {}): Promise<number> {
+	const sessionIds = collectPersistedSessionIds(options);
+	if (sessionIds === undefined) return 0;
+	return cleanupEmptyRegistries(sessionIds, options);
+}
+
+async function cleanupEmptyRegistries(sessionIds: Set<string>, options: PresenceMaintenanceOptions): Promise<number> {
+	try {
+		const result = await cleanupEmptyOrphanMultiagentRegistries({
+			registryDir: join(getAgentDir(), "multiagent"),
+			liveParentSessionIds: sessionIds,
+			maxAgeMs: options.retentionMs,
+			now: options.nowMs,
+		});
+		return result.deletedFiles;
+	} catch {
+		return 0;
+	}
+}
+
+/** Run one startup scan and share its proven Session set across both GC passes. */
+export async function runStartupOrphanMaintenance(
+	options: PresenceMaintenanceOptions = {},
+): Promise<{ deletedPresence: number; deletedRegistries: number }> {
+	const sessionIds = collectPersistedSessionIds(options);
+	if (sessionIds === undefined) return { deletedPresence: 0, deletedRegistries: 0 };
+	const deletedPresence = purgeOrphanPresence(sessionIds, options);
+	const deletedRegistries = await cleanupEmptyRegistries(sessionIds, options);
+	return { deletedPresence, deletedRegistries };
 }
 
 /**

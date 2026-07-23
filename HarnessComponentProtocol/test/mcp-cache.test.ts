@@ -1,9 +1,22 @@
 import { existsSync } from "node:fs";
-import { appendFile, mkdtemp, readFile, utimes, writeFile } from "node:fs/promises";
+import {
+	appendFile,
+	link,
+	lstat,
+	mkdir,
+	mkdtemp,
+	readdir,
+	readFile,
+	rename,
+	stat,
+	symlink,
+	utimes,
+	writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { readMcpToolsCache, writeMcpToolsCache } from "../_magenta/mcp/cache.ts";
+import { cleanupMcpToolsCache, readMcpToolsCache, writeMcpToolsCache } from "../_magenta/mcp/cache.ts";
 import { type CreateMcpToolsOptions, discoverMcpTools } from "../_magenta/mcp/tool.ts";
 import { createManagedMcpSpawner } from "./mcp-test-utils.ts";
 
@@ -36,6 +49,7 @@ rl.on("line", (line) => {
 `;
 
 type Fixture = {
+	root: string;
 	serverPath: string;
 	markerPath: string;
 	cacheDir: string;
@@ -45,7 +59,7 @@ async function makeFixture(): Promise<Fixture> {
 	const dir = await mkdtemp(join(tmpdir(), "magenta-mcp-cache-"));
 	const serverPath = join(dir, "spawn-server.cjs");
 	await writeFile(serverPath, SPAWN_COUNTING_SERVER, { mode: 0o755 });
-	return { serverPath, markerPath: join(dir, "spawns.log"), cacheDir: join(dir, "cache") };
+	return { root: dir, serverPath, markerPath: join(dir, "spawns.log"), cacheDir: join(dir, "cache") };
 }
 
 async function spawnCount(markerPath: string): Promise<number> {
@@ -133,6 +147,96 @@ describe("MCP tools/list disk cache", () => {
 		expect(await spawnCount(fx.markerPath)).toBe(2);
 	});
 
+	it("invalidates a same-size binary replacement even when mtime is preserved", async () => {
+		const fx = await makeFixture();
+		const options = {
+			cacheDir: fx.cacheDir,
+			serverName: "mock",
+			client: { command: process.execPath, args: [fx.serverPath] },
+		};
+		await writeMcpToolsCache(options, [{ name: "greet" }]);
+		expect(await readMcpToolsCache(options)).toEqual([{ name: "greet" }]);
+
+		const original = await stat(fx.serverPath);
+		const replacement = `${fx.serverPath}.replacement`;
+		await writeFile(replacement, SPAWN_COUNTING_SERVER, { mode: 0o755 });
+		await utimes(replacement, original.atime, original.mtime);
+		await rename(replacement, fx.serverPath);
+
+		await expect(readMcpToolsCache(options)).resolves.toBeUndefined();
+	});
+
+	it("resolves bare commands through PATH and invalidates replacements", async () => {
+		const fx = await makeFixture();
+		const binDir = join(fx.root, "bin");
+		await mkdir(binDir);
+		const commandName = process.platform === "win32" ? "mock-mcp.cmd" : "mock-mcp";
+		const commandPath = join(binDir, commandName);
+		await writeFile(commandPath, "first");
+		const options = {
+			cacheDir: fx.cacheDir,
+			serverName: "path-command",
+			client: { command: commandName, env: { PATH: binDir } },
+		};
+
+		await writeMcpToolsCache(options, [{ name: "cached" }]);
+		await expect(readMcpToolsCache(options)).resolves.toEqual([{ name: "cached" }]);
+
+		await writeFile(commandPath, "second");
+		await expect(readMcpToolsCache(options)).resolves.toBeUndefined();
+	});
+
+	it("does not cache a command whose executable identity cannot be resolved", async () => {
+		const fx = await makeFixture();
+		const options = {
+			cacheDir: fx.cacheDir,
+			serverName: "missing-command",
+			client: { command: "definitely-not-a-real-magenta-command", env: { PATH: fx.root } },
+		};
+
+		await writeMcpToolsCache(options, [{ name: "cached" }]);
+		await expect(readMcpToolsCache(options)).resolves.toBeUndefined();
+	});
+
+	it("keeps enforcing the file ceiling as new entries are written", async () => {
+		const fx = await makeFixture();
+		for (let index = 0; index < 132; index++) {
+			await writeMcpToolsCache(
+				{
+					cacheDir: fx.cacheDir,
+					serverName: `server-${index}`,
+					client: { command: process.execPath, args: [fx.serverPath, String(index)] },
+				},
+				[{ name: `tool-${index}` }],
+			);
+		}
+
+		const files = (await readdir(fx.cacheDir)).filter((name) => name.endsWith(".json"));
+		expect(files.length).toBeLessThanOrEqual(128);
+	});
+
+	it("counts protected managed entries toward an explicit file ceiling", async () => {
+		const fx = await makeFixture();
+		const baseClient = { command: process.execPath, args: [fx.serverPath] };
+		for (const serverName of ["oldest", "middle", "protected"]) {
+			await writeMcpToolsCache({ cacheDir: fx.cacheDir, serverName, client: baseClient }, [{ name: serverName }]);
+		}
+		const protectedName = (await readdir(fx.cacheDir)).find((name) => name.startsWith("protected-"));
+		expect(protectedName).toBeDefined();
+		const protectedPath = join(fx.cacheDir, protectedName!);
+
+		const result = await cleanupMcpToolsCache({
+			cacheDir: fx.cacheDir,
+			protectedPaths: [protectedPath],
+			maxAgeMs: -1,
+			maxFiles: 2,
+		});
+
+		expect(result.deletedFiles).toBe(1);
+		expect((await readdir(fx.cacheDir)).filter((name) => name.endsWith(".json"))).toHaveLength(2);
+		await expect(readFile(protectedPath, "utf8")).resolves.toContain('"cachedAt"');
+	});
+
 	it("read returns undefined when args differ from the cached entry", async () => {
 		const fx = await makeFixture();
 		const base = {
@@ -160,5 +264,77 @@ describe("MCP tools/list disk cache", () => {
 		expect(await readMcpToolsCache(base)).toEqual([{ name: "greet" }]);
 		const miss = await readMcpToolsCache({ ...base, client: { ...base.client, env: { KEY: "b" } } });
 		expect(miss).toBeUndefined();
+	});
+
+	it("treats malformed cache entry fields as a miss instead of throwing", async () => {
+		const fx = await makeFixture();
+		const options = {
+			cacheDir: fx.cacheDir,
+			serverName: "mock",
+			client: { command: process.execPath, args: [fx.serverPath] },
+		};
+		await writeMcpToolsCache(options, [{ name: "greet" }]);
+		const [cacheName] = await readdir(fx.cacheDir);
+		await writeFile(join(fx.cacheDir, cacheName!), JSON.stringify({ formatVersion: 1, args: "not-an-array" }));
+
+		await expect(readMcpToolsCache(options)).resolves.toBeUndefined();
+	});
+
+	it("does not serve entries outside the freshness window", async () => {
+		const fx = await makeFixture();
+		const options = {
+			cacheDir: fx.cacheDir,
+			serverName: "mock",
+			client: { command: process.execPath, args: [fx.serverPath] },
+		};
+		await writeMcpToolsCache(options, [{ name: "greet" }]);
+		const [cacheName] = await readdir(fx.cacheDir);
+		const cachePath = join(fx.cacheDir, cacheName!);
+		const entry = JSON.parse(await readFile(cachePath, "utf8")) as { cachedAt: number };
+
+		entry.cachedAt = 0;
+		await writeFile(cachePath, `${JSON.stringify(entry)}\n`);
+		await expect(readMcpToolsCache(options)).resolves.toBeUndefined();
+
+		entry.cachedAt = Date.now() + 60_000;
+		await writeFile(cachePath, `${JSON.stringify(entry)}\n`);
+		await expect(readMcpToolsCache(options)).resolves.toBeUndefined();
+	});
+
+	it("deletes only old generated entries with proven ownership and no active writer", async () => {
+		if (typeof process.getuid !== "function") return;
+		const fx = await makeFixture();
+		const baseClient = { command: process.execPath, args: [fx.serverPath] };
+		const old = { cacheDir: fx.cacheDir, serverName: "old", client: baseClient };
+		const recent = { cacheDir: fx.cacheDir, serverName: "recent", client: baseClient };
+		const locked = { cacheDir: fx.cacheDir, serverName: "locked", client: baseClient };
+		const linked = { cacheDir: fx.cacheDir, serverName: "linked", client: baseClient };
+		for (const options of [old, recent, locked, linked]) await writeMcpToolsCache(options, [{ name: "greet" }]);
+		const names = (await readdir(fx.cacheDir)).sort();
+		const byPrefix = (prefix: string) => names.find((name) => name.startsWith(`${prefix}-`))!;
+		const oldPath = join(fx.cacheDir, byPrefix("old"));
+		const recentPath = join(fx.cacheDir, byPrefix("recent"));
+		const lockedPath = join(fx.cacheDir, byPrefix("locked"));
+		const linkedPath = join(fx.cacheDir, byPrefix("linked"));
+		const oldTime = new Date(1);
+		await Promise.all([oldPath, lockedPath, linkedPath].map((path) => utimes(path, oldTime, oldTime)));
+		for (const path of [oldPath, lockedPath, linkedPath]) {
+			const parsed = JSON.parse(await readFile(path, "utf8")) as { cachedAt: number };
+			parsed.cachedAt = 1;
+			await writeFile(path, `${JSON.stringify(parsed)}\n`);
+			await utimes(path, oldTime, oldTime);
+		}
+		await mkdir(`${lockedPath}.lock`);
+		await link(linkedPath, `${linkedPath}.alias`);
+		await writeFile(join(fx.cacheDir, "unknown.json"), "unknown");
+		await symlink(oldPath, join(fx.cacheDir, "symlink-0000000000000000.json"));
+
+		const result = await cleanupMcpToolsCache({ cacheDir: fx.cacheDir, maxAgeMs: 100, now: 20_000 });
+		expect(result.deletedFiles).toBe(1);
+		await expect(lstat(oldPath)).rejects.toMatchObject({ code: "ENOENT" });
+		await expect(readFile(recentPath, "utf8")).resolves.toContain('"cachedAt"');
+		await expect(readFile(lockedPath, "utf8")).resolves.toContain('"cachedAt"');
+		await expect(readFile(linkedPath, "utf8")).resolves.toContain('"cachedAt"');
+		await expect(readFile(join(fx.cacheDir, "unknown.json"), "utf8")).resolves.toBe("unknown");
 	});
 });

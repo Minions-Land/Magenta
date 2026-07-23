@@ -3,6 +3,8 @@ set -euo pipefail
 
 # Rewrites relative source import specifiers in package source directories from .js to .ts.
 # TypeScript's rewriteRelativeImportExtensions option rewrites these back to .js in emitted output.
+# Perl replacement captures are intentionally single-quoted for the shell.
+# shellcheck disable=SC2016
 find packages -mindepth 2 -maxdepth 2 -type d -name src -print0 |
 	while IFS= read -r -d '' src_dir; do
 		find "$src_dir" -type f -name '*.ts' -print0

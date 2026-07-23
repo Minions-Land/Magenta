@@ -44,6 +44,9 @@ describe("keybindings migration", () => {
 			"tui.editor.cursorUp": ["up", "ctrl+p"],
 			"app.tools.expand": "ctrl+x",
 		});
+		if (process.platform !== "win32") {
+			expect(fs.lstatSync(path.join(agentDir, "keybindings.json")).mode & 0o777).toBe(0o600);
+		}
 	});
 
 	it("keeps the namespaced value when old and new names both exist", () => {

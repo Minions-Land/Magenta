@@ -5,6 +5,7 @@
  * Usage:
  *   node scripts/release.mjs <major|minor|patch>
  *   node scripts/release.mjs <x.y.z>
+ *   node scripts/release.mjs --abandon-unpublished=<x.y.z> <major|minor|patch|x.y.z>
  *
  * Product versions come from the active brand configuration. Pi workspace
  * package versions are independent infrastructure versions and are never
@@ -16,6 +17,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readActiveBrandMetadata } from "./brand-metadata.mjs";
+import { readMacosReleaseTrust } from "./macos-release-trust.mjs";
 import { runReleaseGate } from "./release-gate.mjs";
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -25,6 +27,7 @@ const OFFICIAL_SOURCE_REMOTE = "github.com/Minions-Land/Magenta";
 const PUBLIC_RELEASE_API = "https://api.github.com/repos/Minions-Land/Magenta-CLI/releases/latest";
 const BUMP_TYPES = new Set(["major", "minor", "patch"]);
 const SEMVER_RE = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u;
+const ABANDON_UNPUBLISHED_PREFIX = "--abandon-unpublished=";
 export const RELEASE_MAIN_FETCH_ARGS = [
 	"fetch",
 	"origin",
@@ -69,13 +72,34 @@ export function resolveReleaseVersion(currentVersion, target) {
 	return version;
 }
 
+export function parseReleaseArguments(args) {
+	const usage =
+		"Usage: node scripts/release.mjs [--abandon-unpublished=x.y.z] <major|minor|patch|x.y.z>";
+	if (!Array.isArray(args) || args.length < 1 || args.length > 2) throw new Error(usage);
+
+	let abandonedVersion;
+	let target;
+	for (const argument of args) {
+		if (typeof argument === "string" && argument.startsWith(ABANDON_UNPUBLISHED_PREFIX)) {
+			if (abandonedVersion !== undefined) throw new Error(usage);
+			abandonedVersion = argument.slice(ABANDON_UNPUBLISHED_PREFIX.length);
+			parseVersion(abandonedVersion, "abandoned unpublished version");
+			continue;
+		}
+		if (target !== undefined || (!BUMP_TYPES.has(argument) && !SEMVER_RE.test(argument))) throw new Error(usage);
+		target = argument;
+	}
+	if (target === undefined) throw new Error(usage);
+	return { abandonedVersion, target };
+}
+
 export function readActiveBrand(root = REPO_ROOT) {
 	const brand = readActiveBrandMetadata(root);
 	parseVersion(brand.version, "active brand product version");
 	return brand;
 }
 
-export function assertLatestPublishedVersion(currentVersion, release) {
+export function assertLatestPublishedVersion(currentVersion, release, { abandonedVersion } = {}) {
 	parseVersion(currentVersion, "active brand product version");
 	if (!release || typeof release !== "object") throw new Error("Latest public CLI release metadata is missing.");
 	if (release.draft !== false || release.prerelease !== false) {
@@ -86,43 +110,111 @@ export function assertLatestPublishedVersion(currentVersion, release) {
 	}
 	const publishedVersion = release.tag_name.slice(1);
 	parseVersion(publishedVersion, "latest public CLI release version");
-	if (publishedVersion !== currentVersion) {
+	if (abandonedVersion === undefined) {
+		if (publishedVersion === currentVersion) return publishedVersion;
 		throw new Error(
-			`Active brand version ${currentVersion} does not match latest public CLI release ${publishedVersion}. Repair or rerun the existing version before creating another source tag.`,
+			`Active brand version ${currentVersion} does not match latest public CLI release ${publishedVersion}. Repair or rerun the existing version, or use the explicit abandoned-version recovery only after auditing a failed unpublished source tag.`,
+		);
+	}
+
+	parseVersion(abandonedVersion, "abandoned unpublished version");
+	if (abandonedVersion !== currentVersion) {
+		throw new Error(
+			`Abandoned unpublished version ${abandonedVersion} must exactly match active brand version ${currentVersion}.`,
+		);
+	}
+	if (compareVersions(publishedVersion, currentVersion) >= 0) {
+		throw new Error(
+			`For abandoned-version recovery, active brand version ${currentVersion} must be newer than latest public CLI release ${publishedVersion}.`,
 		);
 	}
 	return publishedVersion;
 }
 
-export async function verifyLatestPublishedVersion(currentVersion, fetchImplementation = fetch) {
+function githubReleaseHeaders(userAgent) {
 	const headers = {
 		Accept: "application/vnd.github+json",
-		"User-Agent": "Magenta-release-preflight",
+		"User-Agent": userAgent,
 		"X-GitHub-Api-Version": "2022-11-28",
 	};
 	const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
 	if (token) headers.Authorization = `Bearer ${token}`;
+	return headers;
+}
+
+async function fetchReleaseMetadata(url, label, fetchImplementation, { allowNotFound = false } = {}) {
 	let response;
 	try {
-		response = await fetchImplementation(PUBLIC_RELEASE_API, {
-			headers,
+		response = await fetchImplementation(url, {
+			headers: githubReleaseHeaders("Magenta-release-preflight"),
+			redirect: "error",
 			signal: AbortSignal.timeout(15_000),
 		});
 	} catch (error) {
 		throw new Error(
-			`Could not query the latest public CLI release: ${error instanceof Error ? error.message : String(error)}`,
+			`Could not query ${label}: ${error instanceof Error ? error.message : String(error)}`,
 		);
 	}
+	if (allowNotFound && response.status === 404) return undefined;
 	if (!response.ok) {
-		throw new Error(`Could not query the latest public CLI release: GitHub API returned ${response.status}.`);
+		throw new Error(`Could not query ${label}: GitHub API returned ${response.status}.`);
 	}
-	let release;
 	try {
-		release = await response.json();
+		return await response.json();
 	} catch {
-		throw new Error("Could not parse the latest public CLI release metadata.");
+		throw new Error(`Could not parse ${label} metadata.`);
 	}
-	return assertLatestPublishedVersion(currentVersion, release);
+}
+
+export async function verifyLatestPublishedVersion(currentVersion, fetchImplementation = fetch, options) {
+	const release = await fetchReleaseMetadata(
+		PUBLIC_RELEASE_API,
+		"the latest public CLI release",
+		fetchImplementation,
+	);
+	return assertLatestPublishedVersion(currentVersion, release, options);
+}
+
+export async function verifyAbandonedVersionIsUnpublished(version, fetchImplementation = fetch) {
+	parseVersion(version, "abandoned unpublished version");
+	const tag = `v${version}`;
+	const release = await fetchReleaseMetadata(
+		`https://api.github.com/repos/Minions-Land/Magenta-CLI/releases/tags/${tag}`,
+		`public CLI release ${tag}`,
+		fetchImplementation,
+		{ allowNotFound: true },
+	);
+	if (release === undefined) return "absent";
+	if (!release || typeof release !== "object" || release.tag_name !== tag || typeof release.draft !== "boolean") {
+		throw new Error(`Public CLI release ${tag} metadata is malformed.`);
+	}
+	if (!release.draft) {
+		throw new Error(
+			`Public CLI release ${tag} is already published${release.prerelease === true ? " as a prerelease" : ""}; it cannot be abandoned as unpublished.`,
+		);
+	}
+	return "draft";
+}
+
+export function parseRemoteAnnotatedTagCommit(output, version) {
+	parseVersion(version, "abandoned unpublished version");
+	const tag = `v${version}`;
+	const records = output
+		.trim()
+		.split(/\r?\n/u)
+		.filter(Boolean)
+		.map((line) => line.split(/\s+/u));
+	const tagObjects = records.filter(([, ref]) => ref === `refs/tags/${tag}`);
+	const peeledCommits = records.filter(([, ref]) => ref === `refs/tags/${tag}^{}`);
+	if (tagObjects.length !== 1 || peeledCommits.length !== 1) {
+		throw new Error(`Recovery requires exactly one remote annotated source tag refs/tags/${tag}.`);
+	}
+	for (const [objectId] of [...tagObjects, ...peeledCommits]) {
+		if (!/^[0-9a-f]{40,64}$/u.test(objectId ?? "")) {
+			throw new Error(`Remote source tag refs/tags/${tag} returned an invalid object id.`);
+		}
+	}
+	return peeledCommits[0][0];
 }
 
 export function updateBrandVersionSource(source, currentVersion, nextVersion) {
@@ -379,6 +471,38 @@ function ensureTagAvailable(version) {
 	}
 }
 
+function readSingleBrandVersion(source, label) {
+	const matches = [...source.matchAll(/^\s*version:\s*"([^"]+)"\s*,?\s*$/gmu)];
+	if (matches.length !== 1) {
+		throw new Error(`Expected exactly one product version field in ${label}, found ${matches.length}.`);
+	}
+	parseVersion(matches[0][1], `${label} product version`);
+	return matches[0][1];
+}
+
+function ensureAbandonedVersionTag(brand, version) {
+	const tag = `v${version}`;
+	const remoteTagOutput = gitOutput([
+		"ls-remote",
+		"--tags",
+		"origin",
+		`refs/tags/${tag}`,
+		`refs/tags/${tag}^{}`,
+	]);
+	const taggedCommit = parseRemoteAnnotatedTagCommit(remoteTagOutput, version);
+	try {
+		gitOutput(["merge-base", "--is-ancestor", taggedCommit, "refs/remotes/origin/main"]);
+	} catch {
+		throw new Error(`Remote source tag ${tag} does not point into the current origin/main history.`);
+	}
+	const taggedBrandSource = gitOutput(["show", `${taggedCommit}:${brand.configRelativePath}`]);
+	const taggedVersion = readSingleBrandVersion(taggedBrandSource, `remote source tag ${tag}`);
+	if (taggedVersion !== version) {
+		throw new Error(`Remote source tag ${tag} embeds product version ${taggedVersion}, expected ${version}.`);
+	}
+	return taggedCommit;
+}
+
 function restoreReleaseFiles(snapshots, root = REPO_ROOT) {
 	for (const [path, content] of snapshots) writeFileSync(resolve(root, path), content);
 }
@@ -413,15 +537,22 @@ function printRecovery({ currentHead, initialHead, mainPushed, plan, tagPushed }
 }
 
 export async function releaseMain(args = process.argv.slice(2)) {
-	if (args.length !== 1 || (!BUMP_TYPES.has(args[0]) && !SEMVER_RE.test(args[0]))) {
-		throw new Error("Usage: node scripts/release.mjs <major|minor|patch|x.y.z>");
-	}
+	const { abandonedVersion, target } = parseReleaseArguments(args);
 
 	console.log("\n=== Magenta CLI Release ===\n");
 	const preconditions = ensureReleasePreconditions();
+	const releaseTrust = readMacosReleaseTrust();
+	console.log(`macOS release Team ID: ${releaseTrust.appleTeamId}`);
 	const brand = readActiveBrand();
-	await verifyLatestPublishedVersion(brand.version);
-	const version = resolveReleaseVersion(brand.version, args[0]);
+	const publishedVersion = await verifyLatestPublishedVersion(brand.version, fetch, { abandonedVersion });
+	if (abandonedVersion !== undefined) {
+		const publicReleaseState = await verifyAbandonedVersionIsUnpublished(abandonedVersion);
+		const taggedCommit = ensureAbandonedVersionTag(brand, abandonedVersion);
+		console.log(
+			`Recovery audit: abandoning unpublished v${abandonedVersion} at ${taggedCommit}; latest public release is v${publishedVersion}, exact public release state is ${publicReleaseState}.`,
+		);
+	}
+	const version = resolveReleaseVersion(brand.version, target);
 	ensureTagAvailable(version);
 	const plan = createReleaseGitPlan({
 		displayName: brand.displayName,

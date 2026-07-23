@@ -1,16 +1,43 @@
-import { createHash } from "node:crypto";
-import { createReadStream } from "node:fs";
-import { chmod, type FileHandle, link, lstat, mkdir, open, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
+import { createHash, randomUUID } from "node:crypto";
+import { type BigIntStats, createReadStream } from "node:fs";
+import {
+	chmod,
+	cp,
+	type FileHandle,
+	link,
+	lstat,
+	mkdir,
+	open,
+	readdir,
+	readFile,
+	rename,
+	rm,
+	writeFile,
+} from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { gunzipSync } from "node:zlib";
+import { secureReadFile } from "@magenta/harness";
 
 export const RELEASE_RESOURCES_ASSET_NAME = "magenta-resources-universal.tar.gz";
 export const RELEASE_CHECKSUMS_ASSET_NAME = "SHA256SUMS";
 export const RELEASE_RESOURCE_MARKER_NAME = "magenta-release.json";
+export const INSTALLED_RELEASE_MARKER_SCHEMA = "magenta.installed-release.v1";
+const INSTALLED_RELEASE_MARKER_TEMP_NAME = ".magenta-release.json.tmp";
 export const RELEASE_INSTALL_LOCK_NAME = ".magenta-install-update.lock";
 export const RELEASE_UPDATE_JOURNAL_NAME = ".magenta-install-update.json";
 const RELEASE_UPDATE_JOURNAL_TEMP_NAME = `${RELEASE_UPDATE_JOURNAL_NAME}.tmp`;
-const RELEASE_UPDATE_JOURNAL_VERSION = 1;
+// Journal version six binds original paths and staged resource objects to the
+// filesystem identities observed during prepare; the staged binary is bound by
+// its SHA-256 digest. Readers continue to accept every prior journal shape.
+const RELEASE_UPDATE_JOURNAL_VERSION = 6;
+const PREVIOUS_RELEASE_UPDATE_JOURNAL_VERSION = 5;
+const PREVIOUS_V4_RELEASE_UPDATE_JOURNAL_VERSION = 4;
+const PREVIOUS_V3_RELEASE_UPDATE_JOURNAL_VERSION = 3;
+const PREVIOUS_V2_RELEASE_UPDATE_JOURNAL_VERSION = 2;
+const LEGACY_RELEASE_UPDATE_JOURNAL_VERSION = 1;
+const RELEASE_RESOURCE_MARKER_MAX_BYTES = 16 * 1024;
+const RELEASE_UPDATE_JOURNAL_MAX_BYTES = 64 * 1024;
 
 export const RESOURCE_DIRECTORY_NAMES = [
 	"sandbox",
@@ -26,6 +53,14 @@ export const RESOURCE_DIRECTORY_NAMES = [
 ] as const;
 
 export const RESOURCE_FILE_NAMES = ["package.json", "README.md", "CHANGELOG.md"] as const;
+
+export const LEGACY_MANAGED_RELEASE_RESOURCE_NAMES = [
+	...RESOURCE_DIRECTORY_NAMES,
+	...RESOURCE_FILE_NAMES,
+	RELEASE_RESOURCE_MARKER_NAME,
+	"_magenta",
+	"photon_rs_bg.wasm",
+] as const;
 
 export const BASE_REQUIRED_RESOURCE_PATHS = [
 	"theme/dark.json",
@@ -57,6 +92,24 @@ export const REQUIRED_RESOURCE_PATHS = [
 	...CLIPBOARD_NATIVE_RESOURCE_PATHS.linux,
 	...CLIPBOARD_NATIVE_RESOURCE_PATHS.win32,
 ] as const;
+
+const releaseMarkerVersionPattern = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
+
+export function isManagedReleaseResourceName(value: string): boolean {
+	return (
+		value === "_magenta" ||
+		value === RELEASE_RESOURCE_MARKER_NAME ||
+		(RESOURCE_DIRECTORY_NAMES as readonly string[]).includes(value) ||
+		(RESOURCE_FILE_NAMES as readonly string[]).includes(value) ||
+		/^[A-Za-z0-9][A-Za-z0-9._-]*\.wasm$/.test(value)
+	);
+}
+
+export interface InstalledReleaseOwnership {
+	version: string;
+	/** Undefined for the legacy marker that recorded only a version. */
+	resourceNames?: readonly string[];
+}
 
 export function getInstalledRequiredResourcePaths(
 	runtimePlatform: NodeJS.Platform = process.platform,
@@ -216,6 +269,22 @@ export interface ReleaseArchiveEntry {
 	type: ReleaseArchiveEntryType;
 }
 
+// The archive is downloaded before it is inspected.  Keep decompression and
+// metadata processing bounded so a small gzip member cannot force an
+// unbounded allocation or parser work (a classic archive-bomb failure mode).
+export const MAX_RELEASE_ARCHIVE_EXPANDED_BYTES = 512 * 1024 * 1024;
+export const MAX_RELEASE_ARCHIVE_ENTRY_COUNT = 100_000;
+export const MAX_RELEASE_ARCHIVE_ENTRY_BYTES = 256 * 1024 * 1024;
+
+export interface ReleaseArchiveParseLimits {
+	/** Maximum bytes produced by gzip decompression. Defaults to the product cap. */
+	maxExpandedBytes?: number;
+	/** Maximum tar records, including PAX/long-name metadata records. */
+	maxEntryCount?: number;
+	/** Maximum declared size of any one tar record, including metadata. */
+	maxEntryBytes?: number;
+}
+
 const textDecoder = new TextDecoder("utf-8", { fatal: true });
 const windowsReservedNamePattern = /^(?:aux|con|nul|prn|com[1-9]|lpt[1-9])(?:\..*)?$/i;
 
@@ -304,11 +373,29 @@ function isZeroBlock(block: Uint8Array): boolean {
 	return true;
 }
 
-export function parseReleaseArchive(archiveBytes: Uint8Array): ReleaseArchiveEntry[] {
+export function parseReleaseArchive(
+	archiveBytes: Uint8Array,
+	limits: ReleaseArchiveParseLimits = {},
+): ReleaseArchiveEntry[] {
+	const maxExpandedBytes = limits.maxExpandedBytes ?? MAX_RELEASE_ARCHIVE_EXPANDED_BYTES;
+	const maxEntryCount = limits.maxEntryCount ?? MAX_RELEASE_ARCHIVE_ENTRY_COUNT;
+	const maxEntryBytes = limits.maxEntryBytes ?? MAX_RELEASE_ARCHIVE_ENTRY_BYTES;
+	if (!Number.isSafeInteger(maxExpandedBytes) || maxExpandedBytes <= 0) {
+		throw new Error("Runtime resource archive expanded-byte limit is invalid");
+	}
+	if (!Number.isSafeInteger(maxEntryCount) || maxEntryCount <= 0) {
+		throw new Error("Runtime resource archive entry-count limit is invalid");
+	}
+	if (!Number.isSafeInteger(maxEntryBytes) || maxEntryBytes <= 0) {
+		throw new Error("Runtime resource archive per-entry byte limit is invalid");
+	}
 	let tarBytes: Buffer;
 	try {
-		tarBytes = gunzipSync(archiveBytes);
-	} catch {
+		tarBytes = gunzipSync(archiveBytes, { maxOutputLength: maxExpandedBytes });
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ERR_BUFFER_TOO_LARGE") {
+			throw new Error(`Runtime resource archive exceeds the ${maxExpandedBytes}-byte expanded size limit`);
+		}
 		throw new Error("Runtime resource archive is not a valid gzip stream");
 	}
 
@@ -318,6 +405,7 @@ export function parseReleaseArchive(archiveBytes: Uint8Array): ReleaseArchiveEnt
 	let longPath: string | undefined;
 	let longLinkPath: string | undefined;
 	let offset = 0;
+	let recordCount = 0;
 
 	while (offset + 512 <= tarBytes.length) {
 		const header = tarBytes.subarray(offset, offset + 512);
@@ -327,9 +415,16 @@ export function parseReleaseArchive(archiveBytes: Uint8Array): ReleaseArchiveEnt
 			}
 			break;
 		}
+		recordCount += 1;
+		if (recordCount > maxEntryCount) {
+			throw new Error(`Runtime resource archive contains more than ${maxEntryCount} tar entries`);
+		}
 
 		verifyTarHeaderChecksum(header);
 		const size = parseTarNumber(header.subarray(124, 136), "entry size");
+		if (size > maxEntryBytes) {
+			throw new Error(`Runtime resource archive entry exceeds the ${maxEntryBytes}-byte per-entry size limit`);
+		}
 		const dataOffset = offset + 512;
 		const paddedSize = Math.ceil(size / 512) * 512;
 		const nextOffset = dataOffset + paddedSize;
@@ -516,40 +611,150 @@ export async function validateExtractedReleaseResources(
 		}
 	}
 	if (expectedVersion !== undefined) {
-		await ensureReleaseResourceVersion(stagingDirectory, expectedVersion);
+		await ensureReleaseResourceVersion(stagingDirectory, expectedVersion, [
+			...topLevelNames,
+			RELEASE_RESOURCE_MARKER_NAME,
+			"_magenta",
+		]);
 	}
 }
 
-export async function ensureReleaseResourceVersion(resourceDirectory: string, expectedVersion: string): Promise<void> {
+function parseInstalledReleaseOwnership(content: string, markerPath: string): InstalledReleaseOwnership {
+	let marker: unknown;
+	try {
+		marker = JSON.parse(content);
+	} catch {
+		throw new Error(`Runtime resource marker is invalid: ${markerPath}`);
+	}
+	if (typeof marker !== "object" || marker === null || Array.isArray(marker)) {
+		throw new Error(`Runtime resource marker is invalid: ${markerPath}`);
+	}
+	const candidate = marker as Record<string, unknown>;
+	if (typeof candidate.version !== "string" || !releaseMarkerVersionPattern.test(candidate.version)) {
+		throw new Error(`Runtime resource marker is invalid: ${markerPath}`);
+	}
+	const keys = Object.keys(candidate).sort();
+	if (keys.length === 1 && keys[0] === "version") return { version: candidate.version };
+	if (
+		keys.length !== 3 ||
+		keys[0] !== "resourceNames" ||
+		keys[1] !== "schema" ||
+		keys[2] !== "version" ||
+		candidate.schema !== INSTALLED_RELEASE_MARKER_SCHEMA ||
+		!Array.isArray(candidate.resourceNames)
+	) {
+		throw new Error(`Runtime resource marker has an unsupported ownership schema: ${markerPath}`);
+	}
+	const resourceNames = candidate.resourceNames as unknown[];
+	if (
+		resourceNames.length === 0 ||
+		resourceNames.length > 128 ||
+		resourceNames.some((name) => typeof name !== "string" || !isManagedReleaseResourceName(name)) ||
+		new Set(resourceNames).size !== resourceNames.length ||
+		!resourceNames.includes(RELEASE_RESOURCE_MARKER_NAME)
+	) {
+		throw new Error(`Runtime resource marker has an unsafe ownership manifest: ${markerPath}`);
+	}
+	return { version: candidate.version, resourceNames: resourceNames as string[] };
+}
+
+export async function readInstalledReleaseOwnership(resourceDirectory: string): Promise<InstalledReleaseOwnership> {
+	const markerPath = join(resourceDirectory, RELEASE_RESOURCE_MARKER_NAME);
+	await assertRegularFile(markerPath, RELEASE_RESOURCE_MARKER_NAME);
+	const content = await secureReadFile(markerPath, {
+		requireOwnerWritable: false,
+		maxBytes: RELEASE_RESOURCE_MARKER_MAX_BYTES,
+	});
+	return parseInstalledReleaseOwnership(content.toString("utf8"), markerPath);
+}
+
+export async function writeInstalledReleaseOwnership(
+	resourceDirectory: string,
+	expectedVersion: string,
+	resourceNames: readonly string[],
+): Promise<void> {
+	if (!releaseMarkerVersionPattern.test(expectedVersion)) {
+		throw new Error(`Invalid installed release version: ${expectedVersion}`);
+	}
+	const normalizedNames = [...new Set([...resourceNames, RELEASE_RESOURCE_MARKER_NAME])].sort();
+	if (normalizedNames.length > 128 || normalizedNames.some((name) => !isManagedReleaseResourceName(name))) {
+		throw new Error("Installed release ownership manifest contains an unsafe resource name");
+	}
+	const markerPath = join(resourceDirectory, RELEASE_RESOURCE_MARKER_NAME);
+	try {
+		await assertRegularFile(markerPath, RELEASE_RESOURCE_MARKER_NAME);
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+	}
+	const content = `${JSON.stringify({
+		schema: INSTALLED_RELEASE_MARKER_SCHEMA,
+		version: expectedVersion,
+		resourceNames: normalizedNames,
+	})}\n`;
+	const temporaryPath = join(resourceDirectory, INSTALLED_RELEASE_MARKER_TEMP_NAME);
+	let pendingExists = false;
+	try {
+		const stats = await lstat(temporaryPath);
+		if (!stats.isFile() || stats.isSymbolicLink() || (currentUid() !== undefined && stats.uid !== currentUid())) {
+			throw new Error(`Installed release marker temporary path is unsafe: ${temporaryPath}`);
+		}
+		pendingExists = true;
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+	}
+	if (pendingExists) {
+		const pendingContent = await secureReadFile(temporaryPath, {
+			requireOwnerWritable: false,
+			maxBytes: RELEASE_RESOURCE_MARKER_MAX_BYTES,
+		});
+		if (pendingContent.toString("utf8") !== content) {
+			throw new Error(
+				`Installed release marker temporary file does not match the requested ownership: ${temporaryPath}`,
+			);
+		}
+	} else {
+		const handle = await open(temporaryPath, "wx", 0o600);
+		try {
+			await handle.writeFile(content, "utf8");
+			await handle.sync();
+		} finally {
+			await handle.close();
+		}
+	}
+	await rename(temporaryPath, markerPath);
+	await chmod(markerPath, 0o644);
+	await syncDirectory(resourceDirectory);
+}
+
+export async function ensureReleaseResourceVersion(
+	resourceDirectory: string,
+	expectedVersion: string,
+	managedResourceNames?: readonly string[],
+): Promise<void> {
 	const markerPath = join(resourceDirectory, RELEASE_RESOURCE_MARKER_NAME);
 	try {
 		await lstat(markerPath);
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-		await writeFile(markerPath, `${JSON.stringify({ version: expectedVersion })}\n`, {
-			encoding: "utf8",
-			flag: "wx",
-		});
+		if (managedResourceNames) {
+			await writeInstalledReleaseOwnership(resourceDirectory, expectedVersion, managedResourceNames);
+		} else {
+			await writeFile(markerPath, `${JSON.stringify({ version: expectedVersion })}\n`, {
+				encoding: "utf8",
+				flag: "wx",
+			});
+		}
 		return;
 	}
 	await assertReleaseResourceVersion(resourceDirectory, expectedVersion);
+	if (managedResourceNames) {
+		await writeInstalledReleaseOwnership(resourceDirectory, expectedVersion, managedResourceNames);
+	}
 }
 
 export async function assertReleaseResourceVersion(resourceDirectory: string, expectedVersion: string): Promise<void> {
-	const markerPath = join(resourceDirectory, RELEASE_RESOURCE_MARKER_NAME);
-	await assertRegularFile(markerPath, RELEASE_RESOURCE_MARKER_NAME);
-	let marker: unknown;
-	try {
-		marker = JSON.parse(await readFile(markerPath, "utf8"));
-	} catch {
-		throw new Error(`Runtime resource marker is invalid: ${markerPath}`);
-	}
-	if (
-		typeof marker !== "object" ||
-		marker === null ||
-		!("version" in marker) ||
-		(marker as { version?: unknown }).version !== expectedVersion
-	) {
+	const marker = await readInstalledReleaseOwnership(resourceDirectory);
+	if (marker.version !== expectedVersion) {
 		throw new Error(`Runtime resources do not match Magenta ${expectedVersion}`);
 	}
 }
@@ -606,15 +811,46 @@ export const NODE_UPDATE_TRANSACTION_FILE_SYSTEM: UpdateTransactionFileSystem = 
 export type ReleaseUpdateTransactionKind = "resources" | "unix" | "windows";
 type ReleaseUpdateTransactionPhase = "staging" | "prepared" | "rolling_back" | "committed";
 
+/** Stable metadata captured for every path that existed before activation. */
+interface ReleaseUpdatePathIdentity {
+	name: string;
+	type: "file" | "directory";
+	device: string;
+	inode: string;
+	size: string;
+	mode: string;
+	birthtimeMs: string;
+	mtimeMs: string;
+}
+
 interface ReleaseUpdateTransactionJournal {
-	version: typeof RELEASE_UPDATE_JOURNAL_VERSION;
+	version:
+		| typeof RELEASE_UPDATE_JOURNAL_VERSION
+		| typeof PREVIOUS_RELEASE_UPDATE_JOURNAL_VERSION
+		| typeof PREVIOUS_V4_RELEASE_UPDATE_JOURNAL_VERSION
+		| typeof PREVIOUS_V3_RELEASE_UPDATE_JOURNAL_VERSION
+		| typeof PREVIOUS_V2_RELEASE_UPDATE_JOURNAL_VERSION
+		| typeof LEGACY_RELEASE_UPDATE_JOURNAL_VERSION;
 	operationId: string;
 	kind: ReleaseUpdateTransactionKind;
 	binaryName: string | null;
+	originalBinaryPresent: boolean | null;
+	binarySha256: string | null;
 	targetVersion: string | null;
-	resourceNames: string[];
+	/** Resources copied from staging into the installation at activation. */
+	installResourceNames: string[];
+	/** Previously marker-owned resources intentionally retired by this update. */
+	removeResourceNames: string[];
 	originalResourceNames: string[];
+	/** Null for legacy journals that predate path identity binding. */
+	originalPathIdentities: ReleaseUpdatePathIdentity[] | null;
+	/** Staged objects expected to occupy installed paths after activation; null for v1-v5. */
+	installedPathIdentities: ReleaseUpdatePathIdentity[] | null;
 	phase: ReleaseUpdateTransactionPhase;
+	/** PID of the detached Windows helper which owns a prepared transaction. */
+	helperPid: number | null;
+	/** Invariant UTC `DateTime.ToString("o")` value for that helper process. */
+	helperStartTimeUtc: string | null;
 }
 
 export interface InitializeReleaseUpdateTransactionOptions {
@@ -622,12 +858,25 @@ export interface InitializeReleaseUpdateTransactionOptions {
 	operationId: string;
 	kind: ReleaseUpdateTransactionKind;
 	binaryName?: string;
+	originalBinaryPresent?: boolean;
 	targetVersion?: string;
 }
 
 export interface RecoverReleaseUpdateTransactionOptions {
 	/** The version of the currently running binary, used only to finish a fully switched transaction. */
 	runningVersion?: string;
+	/** @internal Deterministic process probe for recovery tests. */
+	helperProcessIsAlive?: (pid: number) => boolean | Promise<boolean>;
+	/** @internal Deterministic process creation-time probe for recovery tests. */
+	helperProcessStartTimeUtc?: (pid: number) => string | undefined | Promise<string | undefined>;
+	/** @internal Deterministic replacement race immediately before rollback claims a path. */
+	testBeforeRollbackMutation?: (path: string) => void | Promise<void>;
+	/** @internal Deterministic crash immediately after a rollback path has been claimed. */
+	testAfterRollbackClaim?: (path: string, quarantinePath: string) => void | Promise<void>;
+	/** @internal Deterministic crash after an original path has been published without overwrite. */
+	testAfterRollbackPublication?: (sourcePath: string, destinationPath: string) => void | Promise<void>;
+	/** @internal Deterministic crash after rollback is complete but before terminal intent is durable. */
+	testBeforeRollbackTerminalJournal?: () => void | Promise<void>;
 }
 
 const operationIdPattern = /^[0-9a-f]{32}$/;
@@ -702,6 +951,143 @@ async function assertOwnedPath(path: string, options: { type?: "file" | "directo
 	return stats;
 }
 
+function roundedNanosecondsToMilliseconds(value: bigint, label: string): string {
+	if (value < 0n) throw new Error(`Update transaction ${label} timestamp is invalid`);
+	return ((value + 500_000n) / 1_000_000n).toString();
+}
+
+function capturePathIdentity(name: string, stats: BigIntStats): ReleaseUpdatePathIdentity {
+	if (stats.isSymbolicLink() || (!stats.isFile() && !stats.isDirectory())) {
+		throw new Error(`Update transaction original path is not a regular file or directory: ${name}`);
+	}
+	return {
+		name,
+		type: stats.isFile() ? "file" : "directory",
+		device: stats.dev.toString(),
+		inode: stats.ino.toString(),
+		size: stats.size.toString(),
+		mode: (stats.mode & 0o7777n).toString(),
+		birthtimeMs: roundedNanosecondsToMilliseconds(stats.birthtimeNs, `${name} birthtime`),
+		mtimeMs: roundedNanosecondsToMilliseconds(stats.mtimeNs, `${name} mtime`),
+	};
+}
+
+async function captureOwnedPathIdentity(name: string, path: string): Promise<ReleaseUpdatePathIdentity> {
+	await assertOwnedPath(path);
+	return capturePathIdentity(name, await lstat(path, { bigint: true }));
+}
+
+function samePathIdentity(expected: ReleaseUpdatePathIdentity, actual: ReleaseUpdatePathIdentity): boolean {
+	return (
+		expected.name === actual.name &&
+		expected.type === actual.type &&
+		expected.device === actual.device &&
+		expected.inode === actual.inode &&
+		expected.size === actual.size &&
+		expected.mode === actual.mode &&
+		expected.birthtimeMs === actual.birthtimeMs &&
+		expected.mtimeMs === actual.mtimeMs
+	);
+}
+
+async function assertPathIdentity(path: string, expected: ReleaseUpdatePathIdentity): Promise<void> {
+	const actual = capturePathIdentity(expected.name, await lstat(path, { bigint: true }));
+	if (!samePathIdentity(expected, actual)) {
+		throw new Error(`Update transaction path identity changed: ${path}`);
+	}
+}
+
+function findOriginalPathIdentity(
+	journal: ReleaseUpdateTransactionJournal,
+	name: string,
+): ReleaseUpdatePathIdentity | undefined {
+	return journal.originalPathIdentities?.find((identity) => identity.name === name);
+}
+
+function requireOriginalPathIdentity(
+	journal: ReleaseUpdateTransactionJournal,
+	name: string,
+): ReleaseUpdatePathIdentity {
+	const identity = findOriginalPathIdentity(journal, name);
+	if (!identity) {
+		throw new Error(`Update transaction has no identity for original path: ${name}`);
+	}
+	return identity;
+}
+
+function findInstalledPathIdentity(
+	journal: ReleaseUpdateTransactionJournal,
+	name: string,
+): ReleaseUpdatePathIdentity | undefined {
+	return journal.installedPathIdentities?.find((identity) => identity.name === name);
+}
+
+function requireInstalledPathIdentity(
+	journal: ReleaseUpdateTransactionJournal,
+	name: string,
+): ReleaseUpdatePathIdentity {
+	const identity = findInstalledPathIdentity(journal, name);
+	if (!identity) {
+		throw new Error(`Update transaction has no identity for installed path: ${name}`);
+	}
+	return identity;
+}
+
+const releaseUpdatePathIdentityKeys = [
+	"birthtimeMs",
+	"device",
+	"inode",
+	"mode",
+	"mtimeMs",
+	"name",
+	"size",
+	"type",
+] as const;
+
+function parseReleaseUpdatePathIdentities(
+	value: unknown,
+	label: "original" | "installed",
+	allowedNames: ReadonlySet<string>,
+	expectedNames: ReadonlySet<string>,
+): ReleaseUpdatePathIdentity[] {
+	if (!Array.isArray(value)) {
+		throw new Error(`Current update transaction journal has invalid ${label} path identities`);
+	}
+	const identities: ReleaseUpdatePathIdentity[] = [];
+	const seenNames = new Set<string>();
+	for (const rawIdentity of value) {
+		if (typeof rawIdentity !== "object" || rawIdentity === null || Array.isArray(rawIdentity)) {
+			throw new Error(`Update transaction journal has an invalid ${label} path identity`);
+		}
+		const identity = rawIdentity as Record<string, unknown>;
+		const identityName = identity.name;
+		const identityKeys = Object.keys(identity).sort();
+		if (
+			identityKeys.length !== releaseUpdatePathIdentityKeys.length ||
+			identityKeys.some((key, index) => key !== releaseUpdatePathIdentityKeys[index])
+		) {
+			throw new Error(`Update transaction journal has an unsupported ${label} path identity schema`);
+		}
+		if (
+			typeof identityName !== "string" ||
+			!allowedNames.has(identityName) ||
+			(identity.type !== "file" && identity.type !== "directory") ||
+			!["device", "inode", "size", "mode", "birthtimeMs", "mtimeMs"].every(
+				(field) => typeof identity[field] === "string" && /^\d+$/.test(identity[field] as string),
+			) ||
+			seenNames.has(identityName)
+		) {
+			throw new Error(`Update transaction journal has an unsafe ${label} path identity`);
+		}
+		seenNames.add(identityName);
+		identities.push(identity as unknown as ReleaseUpdatePathIdentity);
+	}
+	if (seenNames.size !== expectedNames.size || [...expectedNames].some((name) => !seenNames.has(name))) {
+		throw new Error(`Update transaction journal ${label} path identities do not match its ${label} paths`);
+	}
+	return identities;
+}
+
 async function ownedPathExists(path: string, type?: "file" | "directory"): Promise<boolean> {
 	try {
 		await assertOwnedPath(path, { type });
@@ -747,8 +1133,11 @@ function parseReleaseUpdateJournal(content: string): ReleaseUpdateTransactionJou
 		throw new Error("Update transaction journal is corrupted");
 	}
 	const candidate = value as Record<string, unknown>;
+	if (typeof candidate.version !== "number" || !Number.isInteger(candidate.version)) {
+		throw new Error("Update transaction journal has an invalid version type");
+	}
 	const keys = Object.keys(candidate).sort();
-	const expectedKeys = [
+	const legacyKeys = [
 		"binaryName",
 		"kind",
 		"operationId",
@@ -758,10 +1147,67 @@ function parseReleaseUpdateJournal(content: string): ReleaseUpdateTransactionJou
 		"targetVersion",
 		"version",
 	].sort();
+	const currentKeys = [...legacyKeys, "binarySha256", "originalBinaryPresent"].sort();
+	// Accept every historical shape. v2 briefly existed both with and without
+	// helperPid, and v3/v4 added the detached-helper identity fields.
+	const previousV2WithHelperKeys = [...currentKeys, "helperPid"].sort();
+	const previousV3Keys = [...previousV2WithHelperKeys].sort();
+	const previousV4Keys = [...previousV3Keys, "helperStartTimeUtc"].sort();
+	const previousV5Keys = [
+		"binaryName",
+		"binarySha256",
+		"helperPid",
+		"helperStartTimeUtc",
+		"installResourceNames",
+		"kind",
+		"operationId",
+		"originalBinaryPresent",
+		"originalResourceNames",
+		"phase",
+		"removeResourceNames",
+		"targetVersion",
+		"version",
+	].sort();
+	const currentV6Keys = [...previousV5Keys, "installedPathIdentities", "originalPathIdentities"].sort();
+	const isLegacy = candidate.version === LEGACY_RELEASE_UPDATE_JOURNAL_VERSION;
+	const isPreviousV5 = candidate.version === PREVIOUS_RELEASE_UPDATE_JOURNAL_VERSION;
+	const isPreviousV4 = candidate.version === PREVIOUS_V4_RELEASE_UPDATE_JOURNAL_VERSION;
+	const isPreviousV3 = candidate.version === PREVIOUS_V3_RELEASE_UPDATE_JOURNAL_VERSION;
+	const isPreviousV2 = candidate.version === PREVIOUS_V2_RELEASE_UPDATE_JOURNAL_VERSION;
+	const isCurrent = candidate.version === RELEASE_UPDATE_JOURNAL_VERSION;
+	const hasPreviousV2HelperSchema =
+		isPreviousV2 &&
+		keys.length === previousV2WithHelperKeys.length &&
+		keys.every((key, index) => key === previousV2WithHelperKeys[index]);
+	const hasPreviousV3Schema =
+		isPreviousV3 &&
+		keys.length === previousV3Keys.length &&
+		keys.every((key, index) => key === previousV3Keys[index]);
+	const hasPreviousV4Schema =
+		isPreviousV4 &&
+		keys.length === previousV4Keys.length &&
+		keys.every((key, index) => key === previousV4Keys[index]);
+	const hasPreviousV5Schema =
+		isPreviousV5 &&
+		keys.length === previousV5Keys.length &&
+		keys.every((key, index) => key === previousV5Keys[index]);
+	const expectedKeys = isLegacy
+		? legacyKeys
+		: isPreviousV2
+			? hasPreviousV2HelperSchema
+				? previousV2WithHelperKeys
+				: currentKeys
+			: isPreviousV3
+				? previousV3Keys
+				: isPreviousV4
+					? previousV4Keys
+					: isPreviousV5
+						? previousV5Keys
+						: currentV6Keys;
 	if (keys.length !== expectedKeys.length || keys.some((key, index) => key !== expectedKeys[index])) {
 		throw new Error("Update transaction journal has an unsupported schema");
 	}
-	if (candidate.version !== RELEASE_UPDATE_JOURNAL_VERSION) {
+	if (!isLegacy && !isPreviousV2 && !isPreviousV3 && !isPreviousV4 && !isPreviousV5 && !isCurrent) {
 		throw new Error("Update transaction journal has an unsupported version");
 	}
 	if (candidate.kind !== "resources" && candidate.kind !== "unix" && candidate.kind !== "windows") {
@@ -779,45 +1225,189 @@ function parseReleaseUpdateJournal(content: string): ReleaseUpdateTransactionJou
 	if (candidate.targetVersion !== null && typeof candidate.targetVersion !== "string") {
 		throw new Error("Update transaction journal has an invalid target version");
 	}
-	if (!Array.isArray(candidate.resourceNames) || !Array.isArray(candidate.originalResourceNames)) {
+	const installValues = isCurrent || isPreviousV5 ? candidate.installResourceNames : candidate.resourceNames;
+	const removeValues = isCurrent || isPreviousV5 ? candidate.removeResourceNames : [];
+	if (
+		!Array.isArray(installValues) ||
+		!Array.isArray(removeValues) ||
+		!Array.isArray(candidate.originalResourceNames)
+	) {
 		throw new Error("Update transaction journal has invalid resource lists");
 	}
-	const resourceNames = candidate.resourceNames as unknown[];
+	const installResourceNames = installValues as unknown[];
+	const removeResourceNames = removeValues as unknown[];
 	const originalResourceNames = candidate.originalResourceNames as unknown[];
 	if (
-		resourceNames.some((name) => typeof name !== "string" || !isSafeUpdateResourceName(name)) ||
-		new Set(resourceNames).size !== resourceNames.length ||
-		originalResourceNames.some((name) => typeof name !== "string" || !resourceNames.includes(name)) ||
+		installResourceNames.some((name) => typeof name !== "string" || !isSafeUpdateResourceName(name)) ||
+		new Set(installResourceNames).size !== installResourceNames.length ||
+		removeResourceNames.some((name) => typeof name !== "string" || !isManagedReleaseResourceName(name)) ||
+		new Set(removeResourceNames).size !== removeResourceNames.length ||
+		removeResourceNames.some((name) => installResourceNames.includes(name)) ||
+		originalResourceNames.some(
+			(name) =>
+				typeof name !== "string" || (!installResourceNames.includes(name) && !removeResourceNames.includes(name)),
+		) ||
 		new Set(originalResourceNames).size !== originalResourceNames.length
 	) {
 		throw new Error("Update transaction journal has unsafe resource names");
 	}
+	const originalBinaryPresent = isLegacy
+		? candidate.kind === "resources"
+			? null
+			: true
+		: candidate.originalBinaryPresent;
+	const binarySha256 = isLegacy ? null : candidate.binarySha256;
+	const helperPid =
+		isCurrent || hasPreviousV5Schema || hasPreviousV4Schema || hasPreviousV3Schema || hasPreviousV2HelperSchema
+			? candidate.helperPid
+			: null;
+	const helperStartTimeUtc =
+		isCurrent || hasPreviousV5Schema || hasPreviousV4Schema ? candidate.helperStartTimeUtc : null;
+	if (
+		helperStartTimeUtc !== null &&
+		(typeof helperStartTimeUtc !== "string" ||
+			!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{7}Z$/.test(helperStartTimeUtc))
+	) {
+		throw new Error("Update transaction journal has an invalid helper start time");
+	}
+	if (helperStartTimeUtc !== null && helperPid === null) {
+		throw new Error("Update transaction journal has a helper start time without a helper PID");
+	}
+	if (
+		(isCurrent || hasPreviousV5Schema || hasPreviousV4Schema) &&
+		(helperPid === null) !== (helperStartTimeUtc === null)
+	) {
+		throw new Error("Update transaction journal has an incomplete helper identity");
+	}
+	if (
+		helperPid !== null &&
+		(typeof helperPid !== "number" || !Number.isSafeInteger(helperPid) || helperPid <= 0 || helperPid > 0x7fffffff)
+	) {
+		throw new Error("Update transaction journal has an invalid helper PID");
+	}
+	if (candidate.kind !== "windows" && helperPid !== null) {
+		throw new Error("Non-Windows update transaction contains a helper PID");
+	}
 	if (candidate.kind === "resources") {
 		if (candidate.binaryName !== null) throw new Error("Resource transaction journal contains a binary name");
+		if (originalBinaryPresent !== null || binarySha256 !== null) {
+			throw new Error("Resource transaction journal contains binary state");
+		}
 	} else if (
 		typeof candidate.binaryName !== "string" ||
 		!isSafeArtifactBasename(candidate.binaryName) ||
-		resourceNames.includes(candidate.binaryName)
+		installResourceNames.includes(candidate.binaryName)
 	) {
 		throw new Error("Update transaction journal has an unsafe binary name");
+	} else {
+		if (typeof originalBinaryPresent !== "boolean") {
+			throw new Error("Update transaction journal has invalid previous binary state");
+		}
+		if (binarySha256 !== null && (typeof binarySha256 !== "string" || !/^[0-9a-f]{64}$/.test(binarySha256))) {
+			throw new Error("Update transaction journal has an invalid binary digest");
+		}
+		if (candidate.phase !== "staging" && originalBinaryPresent === false && binarySha256 === null) {
+			throw new Error("Fresh install transaction journal has no binary digest");
+		}
 	}
-	if (candidate.phase !== "staging" && resourceNames.length === 0) {
+	if (candidate.phase !== "staging" && installResourceNames.length === 0) {
 		throw new Error("Prepared update transaction journal contains no resources");
 	}
-	return candidate as unknown as ReleaseUpdateTransactionJournal;
+	const originalPathIdentities = isCurrent
+		? parseReleaseUpdatePathIdentities(
+				candidate.originalPathIdentities,
+				"original",
+				new Set([
+					...(installResourceNames as string[]),
+					...(removeResourceNames as string[]),
+					...(candidate.kind === "resources" ? [] : [candidate.binaryName as string]),
+				]),
+				candidate.phase === "staging"
+					? new Set()
+					: new Set([
+							...(originalResourceNames as string[]),
+							...(candidate.kind !== "resources" && originalBinaryPresent === true
+								? [candidate.binaryName as string]
+								: []),
+						]),
+			)
+		: null;
+	const installedPathIdentities = isCurrent
+		? parseReleaseUpdatePathIdentities(
+				candidate.installedPathIdentities,
+				"installed",
+				new Set(installResourceNames as string[]),
+				candidate.phase === "staging" ? new Set() : new Set(installResourceNames as string[]),
+			)
+		: null;
+	return {
+		version: candidate.version as ReleaseUpdateTransactionJournal["version"],
+		operationId: candidate.operationId as string,
+		kind: candidate.kind as ReleaseUpdateTransactionKind,
+		binaryName: candidate.binaryName as string | null,
+		originalBinaryPresent: originalBinaryPresent as boolean | null,
+		binarySha256: binarySha256 as string | null,
+		targetVersion: candidate.targetVersion as string | null,
+		installResourceNames: installResourceNames as string[],
+		removeResourceNames: removeResourceNames as string[],
+		originalResourceNames: originalResourceNames as string[],
+		originalPathIdentities,
+		installedPathIdentities,
+		phase: candidate.phase as ReleaseUpdateTransactionPhase,
+		helperPid,
+		helperStartTimeUtc,
+	};
 }
 
 async function readJournalFile(path: string): Promise<ReleaseUpdateTransactionJournal> {
 	const stats = await assertOwnedPath(path, { type: "file", privateFile: true });
-	if (stats.size > 64 * 1024) throw new Error("Update transaction journal is too large");
-	return parseReleaseUpdateJournal(await readFile(path, "utf8"));
+	if (stats.size > RELEASE_UPDATE_JOURNAL_MAX_BYTES) throw new Error("Update transaction journal is too large");
+	const content = await secureReadFile(path, {
+		requireOwnerWritable: false,
+		maxBytes: RELEASE_UPDATE_JOURNAL_MAX_BYTES,
+	});
+	return parseReleaseUpdateJournal(content.toString("utf8"));
+}
+
+function serializeReleaseUpdateJournal(journal: ReleaseUpdateTransactionJournal): Record<string, unknown> {
+	const serialized: Record<string, unknown> = {
+		version: journal.version,
+		operationId: journal.operationId,
+		kind: journal.kind,
+		binaryName: journal.binaryName,
+		targetVersion: journal.targetVersion,
+		...(journal.version >= PREVIOUS_RELEASE_UPDATE_JOURNAL_VERSION
+			? {
+					installResourceNames: journal.installResourceNames,
+					removeResourceNames: journal.removeResourceNames,
+				}
+			: { resourceNames: journal.installResourceNames }),
+		originalResourceNames: journal.originalResourceNames,
+		phase: journal.phase,
+	};
+	if (journal.version >= PREVIOUS_V2_RELEASE_UPDATE_JOURNAL_VERSION) {
+		serialized.binarySha256 = journal.binarySha256;
+		serialized.originalBinaryPresent = journal.originalBinaryPresent;
+	}
+	if (journal.version >= PREVIOUS_V3_RELEASE_UPDATE_JOURNAL_VERSION || journal.helperPid !== null) {
+		serialized.helperPid = journal.helperPid;
+	}
+	if (journal.version >= PREVIOUS_V4_RELEASE_UPDATE_JOURNAL_VERSION) {
+		serialized.helperStartTimeUtc = journal.helperStartTimeUtc;
+	}
+	if (journal.version >= RELEASE_UPDATE_JOURNAL_VERSION) {
+		serialized.originalPathIdentities = journal.originalPathIdentities ?? [];
+		serialized.installedPathIdentities = journal.installedPathIdentities ?? [];
+	}
+	return serialized;
 }
 
 async function writeReleaseUpdateJournal(
 	installDirectory: string,
 	journal: ReleaseUpdateTransactionJournal,
 ): Promise<void> {
-	parseReleaseUpdateJournal(JSON.stringify(journal));
+	const serialized = serializeReleaseUpdateJournal(journal);
+	parseReleaseUpdateJournal(JSON.stringify(serialized));
 	await assertOwnedPath(installDirectory, { type: "directory" });
 	const journalPath = join(installDirectory, RELEASE_UPDATE_JOURNAL_NAME);
 	const tempPath = join(installDirectory, RELEASE_UPDATE_JOURNAL_TEMP_NAME);
@@ -829,7 +1419,7 @@ async function writeReleaseUpdateJournal(
 	}
 	const handle = await open(tempPath, "wx", 0o600);
 	try {
-		await handle.writeFile(`${JSON.stringify(journal)}\n`, "utf8");
+		await handle.writeFile(`${JSON.stringify(serialized)}\n`, "utf8");
 		await handle.sync();
 	} finally {
 		await handle.close();
@@ -881,11 +1471,24 @@ async function readPendingJournal(installDirectory: string): Promise<ReleaseUpda
 	const journal = await readJournalFile(journalPath);
 	if (hasTemp) {
 		const temporaryJournal = await readJournalFile(tempPath);
+		const sameNames = (left: readonly string[], right: readonly string[]) =>
+			left.length === right.length && left.every((name, index) => name === right[index]);
+		const sameIdentities = (left: ReleaseUpdatePathIdentity[] | null, right: ReleaseUpdatePathIdentity[] | null) =>
+			JSON.stringify(left) === JSON.stringify(right);
 		if (
 			temporaryJournal.operationId !== journal.operationId ||
 			temporaryJournal.kind !== journal.kind ||
 			temporaryJournal.binaryName !== journal.binaryName ||
-			temporaryJournal.targetVersion !== journal.targetVersion
+			temporaryJournal.originalBinaryPresent !== journal.originalBinaryPresent ||
+			temporaryJournal.binarySha256 !== journal.binarySha256 ||
+			temporaryJournal.helperPid !== journal.helperPid ||
+			temporaryJournal.helperStartTimeUtc !== journal.helperStartTimeUtc ||
+			temporaryJournal.targetVersion !== journal.targetVersion ||
+			!sameNames(temporaryJournal.installResourceNames, journal.installResourceNames) ||
+			!sameNames(temporaryJournal.removeResourceNames, journal.removeResourceNames) ||
+			!sameNames(temporaryJournal.originalResourceNames, journal.originalResourceNames) ||
+			!sameIdentities(temporaryJournal.originalPathIdentities, journal.originalPathIdentities) ||
+			!sameIdentities(temporaryJournal.installedPathIdentities, journal.installedPathIdentities)
 		) {
 			throw new Error("Update transaction journal and temporary journal disagree; refusing recovery");
 		}
@@ -919,15 +1522,25 @@ export async function initializeReleaseUpdateTransaction(
 	if (options.kind !== "resources" && (!binaryName || !isSafeArtifactBasename(binaryName))) {
 		throw new Error("Update transaction requires a safe binary name");
 	}
+	if (options.kind !== "resources" && typeof options.originalBinaryPresent !== "boolean") {
+		throw new Error("Update transaction requires previous binary state");
+	}
 	const journal: ReleaseUpdateTransactionJournal = {
 		version: RELEASE_UPDATE_JOURNAL_VERSION,
 		operationId: options.operationId,
 		kind: options.kind,
 		binaryName: binaryName ?? null,
+		originalBinaryPresent: options.kind === "resources" ? null : (options.originalBinaryPresent as boolean),
+		binarySha256: null,
 		targetVersion: options.targetVersion ?? null,
-		resourceNames: [],
+		installResourceNames: [],
+		removeResourceNames: [],
 		originalResourceNames: [],
+		originalPathIdentities: [],
+		installedPathIdentities: [],
 		phase: "staging",
+		helperPid: null,
+		helperStartTimeUtc: null,
 	};
 	const paths = updateTransactionPaths(options.installDirectory, journal);
 	if (await readPendingJournal(options.installDirectory)) {
@@ -950,13 +1563,259 @@ async function assertSafeResourceCandidate(path: string): Promise<boolean> {
 	}
 }
 
+function rollbackQuarantinePrefix(name: string): string {
+	const nameDigest = createHash("sha256").update(name, "utf8").digest("hex");
+	return `.magenta-rollback-quarantine-${nameDigest}-`;
+}
+
+function rollbackQuarantinePath(backupDirectory: string, name: string): string {
+	return join(backupDirectory, `${rollbackQuarantinePrefix(name)}${randomUUID().replaceAll("-", "")}`);
+}
+
+interface RollbackTreeEntry {
+	path: string;
+	type: "file" | "directory";
+	mode: string;
+	uid: string;
+	gid: string;
+	size: string;
+	sha256?: string;
+}
+
+function sameStablePathStats(before: BigIntStats, after: BigIntStats): boolean {
+	return (
+		before.dev === after.dev &&
+		before.ino === after.ino &&
+		before.mode === after.mode &&
+		before.uid === after.uid &&
+		before.gid === after.gid &&
+		before.size === after.size &&
+		before.mtimeNs === after.mtimeNs &&
+		before.ctimeNs === after.ctimeNs &&
+		before.isFile() === after.isFile() &&
+		before.isDirectory() === after.isDirectory()
+	);
+}
+
+async function captureRollbackTree(root: string, syncFiles: boolean): Promise<RollbackTreeEntry[]> {
+	const entries: RollbackTreeEntry[] = [];
+	let totalBytes = 0n;
+	const visit = async (path: string, relativePath: string, depth: number): Promise<void> => {
+		if (depth > 128) throw new Error(`Rollback directory tree is too deep: ${root}`);
+		if (entries.length >= MAX_RELEASE_ARCHIVE_ENTRY_COUNT) {
+			throw new Error(`Rollback directory tree has too many entries: ${root}`);
+		}
+		await assertOwnedPath(path);
+		const before = await lstat(path, { bigint: true });
+		if (before.isSymbolicLink() || (!before.isFile() && !before.isDirectory())) {
+			throw new Error(`Rollback directory tree contains an unsupported path: ${path}`);
+		}
+		const uid = currentUid();
+		if (uid !== undefined && before.uid !== BigInt(uid)) {
+			throw new Error(`Rollback directory tree contains a path not owned by the current user: ${path}`);
+		}
+
+		let sha256: string | undefined;
+		if (before.isFile()) {
+			totalBytes += before.size;
+			if (totalBytes > BigInt(MAX_RELEASE_ARCHIVE_EXPANDED_BYTES)) {
+				throw new Error(`Rollback directory tree exceeds the byte limit: ${root}`);
+			}
+			if (syncFiles) await syncFile(path);
+			sha256 = await calculateFileSha256(path);
+		} else {
+			const childNames = await readdir(path);
+			childNames.sort();
+			for (const childName of childNames) {
+				await visit(join(path, childName), relativePath ? `${relativePath}/${childName}` : childName, depth + 1);
+			}
+			if (syncFiles) await syncDirectory(path);
+		}
+
+		const after = await lstat(path, { bigint: true });
+		if (!sameStablePathStats(before, after)) {
+			throw new Error(`Rollback directory tree changed while it was being verified: ${path}`);
+		}
+		entries.push({
+			path: relativePath,
+			type: before.isFile() ? "file" : "directory",
+			mode: (before.mode & 0o7777n).toString(),
+			uid: before.uid.toString(),
+			gid: before.gid.toString(),
+			size: before.isFile() ? before.size.toString() : "0",
+			...(sha256 ? { sha256 } : {}),
+		});
+	};
+
+	await visit(root, "", 0);
+	entries.sort((left, right) => left.path.localeCompare(right.path));
+	return entries;
+}
+
+async function rollbackDirectoryTreesEqual(left: string, right: string): Promise<boolean> {
+	const [leftTree, rightTree] = await Promise.all([
+		captureRollbackTree(left, false),
+		captureRollbackTree(right, true),
+	]);
+	return JSON.stringify(leftTree) === JSON.stringify(rightTree);
+}
+
+async function findRollbackClaim(
+	backupDirectory: string,
+	name: string,
+	expectedIdentity?: ReleaseUpdatePathIdentity,
+	expectedSha256?: string,
+): Promise<string | undefined> {
+	let names: string[];
+	try {
+		names = await readdir(backupDirectory);
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+		throw error;
+	}
+	const prefix = rollbackQuarantinePrefix(name);
+	const candidates = names.filter((candidate) => candidate.startsWith(prefix));
+	if (candidates.length > 1) throw new Error(`Multiple rollback claims exist for ${name}`);
+	const candidate = candidates[0];
+	if (!candidate) return undefined;
+	if (!expectedIdentity && !expectedSha256) {
+		throw new Error(`Legacy rollback claim for ${name} cannot be identified safely`);
+	}
+	const candidatePath = join(backupDirectory, candidate);
+	await assertOwnedPath(candidatePath);
+	if (expectedIdentity) await assertPathIdentity(candidatePath, expectedIdentity);
+	if (expectedSha256 && (await calculateFileSha256(candidatePath)) !== expectedSha256) {
+		throw new Error(`Rollback claim digest changed: ${candidatePath}`);
+	}
+	return candidatePath;
+}
+
+/** Publish an original rollback object while retaining its backup until terminal intent is durable. */
+async function publishRollbackPathWithoutOverwrite(
+	sourcePath: string,
+	destinationPath: string,
+	expectedIdentity: ReleaseUpdatePathIdentity,
+	options: RecoverReleaseUpdateTransactionOptions = {},
+): Promise<void> {
+	await assertPathIdentity(sourcePath, expectedIdentity);
+	const source = await assertOwnedPath(sourcePath);
+	if (source.isFile()) {
+		await link(sourcePath, destinationPath);
+		await syncFile(destinationPath);
+		await assertPathIdentity(sourcePath, expectedIdentity);
+		const [linkedSource, linkedDestination] = await Promise.all([
+			lstat(sourcePath, { bigint: true }),
+			lstat(destinationPath, { bigint: true }),
+		]);
+		if (linkedSource.dev !== linkedDestination.dev || linkedSource.ino !== linkedDestination.ino) {
+			throw new Error(`Rollback link publication changed identity: ${destinationPath}`);
+		}
+	} else if (source.isDirectory()) {
+		// Node has no cross-platform rename-without-replace for directories. cp's
+		// exclusive root creation fails on a destination conflict. Keeping the source
+		// lets recovery prove a completed copy or fail closed after a partial copy.
+		await cp(sourcePath, destinationPath, {
+			recursive: true,
+			force: false,
+			errorOnExist: true,
+			preserveTimestamps: true,
+		});
+		await assertPathIdentity(sourcePath, expectedIdentity);
+		if (!(await rollbackDirectoryTreesEqual(sourcePath, destinationPath))) {
+			throw new Error(`Rollback directory publication does not match its retained backup: ${destinationPath}`);
+		}
+	} else {
+		throw new Error(`Rollback source has an unsupported type: ${sourcePath}`);
+	}
+	await Promise.all([syncDirectory(dirname(sourcePath)), syncDirectory(dirname(destinationPath))]);
+	await options.testAfterRollbackPublication?.(sourcePath, destinationPath);
+}
+
+async function rollbackPathWasPublished(
+	backupPath: string,
+	installedPath: string,
+	originalIdentity: ReleaseUpdatePathIdentity,
+): Promise<boolean> {
+	await assertPathIdentity(backupPath, originalIdentity);
+	const [backupStats, installedStats] = await Promise.all([
+		lstat(backupPath, { bigint: true }),
+		lstat(installedPath, { bigint: true }),
+	]);
+	if (backupStats.isFile() && installedStats.isFile()) {
+		return backupStats.dev === installedStats.dev && backupStats.ino === installedStats.ino;
+	}
+	if (backupStats.isDirectory() && installedStats.isDirectory()) {
+		const equal = await rollbackDirectoryTreesEqual(backupPath, installedPath);
+		await assertPathIdentity(backupPath, originalIdentity);
+		return equal;
+	}
+	return false;
+}
+
+async function pathMatchesIdentity(path: string, expected: ReleaseUpdatePathIdentity): Promise<boolean> {
+	await assertOwnedPath(path);
+	return samePathIdentity(expected, capturePathIdentity(expected.name, await lstat(path, { bigint: true })));
+}
+
+async function claimRollbackPath(
+	path: string,
+	backupDirectory: string,
+	expectedIdentity: ReleaseUpdatePathIdentity,
+	options: RecoverReleaseUpdateTransactionOptions,
+	expectedSha256?: string,
+): Promise<string> {
+	const existingClaim = await findRollbackClaim(
+		backupDirectory,
+		expectedIdentity.name,
+		expectedIdentity,
+		expectedSha256,
+	);
+	if (existingClaim) {
+		if (await assertSafeResourceCandidate(path)) {
+			throw new Error(`Rollback path and claim both exist for ${expectedIdentity.name}`);
+		}
+		return existingClaim;
+	}
+	await assertPathIdentity(path, expectedIdentity);
+	if (expectedSha256 && (await calculateFileSha256(path)) !== expectedSha256) {
+		throw new Error(`Rollback candidate digest changed: ${path}`);
+	}
+	await options.testBeforeRollbackMutation?.(path);
+	const quarantinePath = rollbackQuarantinePath(backupDirectory, expectedIdentity.name);
+	await rename(path, quarantinePath);
+	await Promise.all([syncDirectory(dirname(path)), syncDirectory(backupDirectory)]);
+	await options.testAfterRollbackClaim?.(path, quarantinePath);
+	try {
+		await assertPathIdentity(quarantinePath, expectedIdentity);
+		if (expectedSha256 && (await calculateFileSha256(quarantinePath)) !== expectedSha256) {
+			throw new Error(`Rollback candidate digest changed after claim: ${path}`);
+		}
+	} catch (error) {
+		let disposition = `preserved at ${quarantinePath}`;
+		try {
+			const actualIdentity = await captureOwnedPathIdentity(expectedIdentity.name, quarantinePath);
+			await publishRollbackPathWithoutOverwrite(quarantinePath, path, actualIdentity);
+			disposition = `restored to ${path} and retained at ${quarantinePath}`;
+		} catch (restoreError) {
+			disposition += ` (automatic restore failed: ${restoreError instanceof Error ? restoreError.message : String(restoreError)})`;
+		}
+		throw new Error(
+			`Rollback candidate changed during the validation-to-mutation window and was ${disposition}: ${error instanceof Error ? error.message : String(error)}`,
+		);
+	}
+	return quarantinePath;
+}
+
 async function rollbackResource(
 	installDirectory: string,
 	stagingDirectory: string,
 	backupDirectory: string,
 	resourceName: string,
 	hadOriginal: boolean,
+	originalIdentity: ReleaseUpdatePathIdentity | undefined,
+	installedIdentity: ReleaseUpdatePathIdentity | undefined,
 	phase: ReleaseUpdateTransactionPhase,
+	options: RecoverReleaseUpdateTransactionOptions,
 ): Promise<void> {
 	const installedPath = join(installDirectory, resourceName);
 	const stagedPath = join(stagingDirectory, resourceName);
@@ -969,26 +1828,60 @@ async function rollbackResource(
 
 	if (hadOriginal) {
 		if (backup) {
-			if (staged && installed) {
-				throw new Error(`Ambiguous update recovery layout for ${resourceName}`);
+			const retainedOriginalIdentity =
+				originalIdentity ?? (await captureOwnedPathIdentity(resourceName, backupPath));
+			await assertPathIdentity(backupPath, retainedOriginalIdentity);
+			const claimedInstalled = await findRollbackClaim(backupDirectory, resourceName, installedIdentity);
+			const installedIsActivated =
+				installed && installedIdentity ? await pathMatchesIdentity(installedPath, installedIdentity) : false;
+			if (
+				installed &&
+				!installedIsActivated &&
+				(await rollbackPathWasPublished(backupPath, installedPath, retainedOriginalIdentity))
+			) {
+				return;
 			}
-			if (installed) await rm(installedPath, { recursive: true, force: false });
-			await rename(backupPath, installedPath);
+			if (staged && installed) throw new Error(`Ambiguous update recovery layout for ${resourceName}`);
+			if (claimedInstalled && installed) throw new Error(`Rollback claim conflicts with ${resourceName}`);
+			if (installed && installedIdentity && !installedIsActivated) {
+				throw new Error(`Update transaction path identity changed: ${installedPath}`);
+			}
+			if (installed && !claimedInstalled) {
+				await claimRollbackPath(
+					installedPath,
+					backupDirectory,
+					installedIdentity ?? (await captureOwnedPathIdentity(resourceName, installedPath)),
+					options,
+				);
+			}
+			await publishRollbackPathWithoutOverwrite(backupPath, installedPath, retainedOriginalIdentity, options);
 			return;
 		}
 		if (!installed || (!staged && phase !== "rolling_back")) {
 			throw new Error(`Previous installed resource cannot be identified safely: ${resourceName}`);
 		}
+		// Windows publishes a rollback directory with an atomic move, so its named
+		// backup is absent after publication.  A surviving claim still needs to be
+		// validated before terminal cleanup can remove it.
+		await findRollbackClaim(backupDirectory, resourceName, installedIdentity);
+		if (originalIdentity) await assertPathIdentity(installedPath, originalIdentity);
 		return;
 	}
 
 	if (backup) throw new Error(`Unexpected backup for previously absent resource: ${resourceName}`);
+	const claimedInstalled = await findRollbackClaim(backupDirectory, resourceName, installedIdentity);
+	if (claimedInstalled && installed) throw new Error(`Rollback claim conflicts with ${resourceName}`);
 	if (staged && installed) throw new Error(`Ambiguous update recovery layout for ${resourceName}`);
 	if (!staged && installed) {
-		await rm(installedPath, { recursive: true, force: false });
+		await claimRollbackPath(
+			installedPath,
+			backupDirectory,
+			installedIdentity ?? (await captureOwnedPathIdentity(resourceName, installedPath)),
+			options,
+		);
 		return;
 	}
-	if (!staged && !installed && phase !== "rolling_back") {
+	if (!staged && !installed && !claimedInstalled && phase !== "rolling_back") {
 		throw new Error(`New resource cannot be identified safely: ${resourceName}`);
 	}
 }
@@ -998,7 +1891,11 @@ async function rollbackBinary(
 	stagingDirectory: string,
 	backupDirectory: string,
 	binaryName: string,
+	originalBinaryPresent: boolean,
+	binarySha256: string | null,
+	originalIdentity: ReleaseUpdatePathIdentity | undefined,
 	phase: ReleaseUpdateTransactionPhase,
+	options: RecoverReleaseUpdateTransactionOptions,
 ): Promise<void> {
 	const currentBinary = join(installDirectory, binaryName);
 	const stagedBinary = join(stagingDirectory, binaryName);
@@ -1008,22 +1905,70 @@ async function rollbackBinary(
 		ownedPathExists(stagedBinary, "file"),
 		ownedPathExists(backupBinary, "file"),
 	]);
-	if (backup) {
-		if (staged) {
-			if (!current) throw new Error("Current binary disappeared before atomic replacement");
-			const [currentStats, backupStats] = await Promise.all([lstat(currentBinary), lstat(backupBinary)]);
-			if (currentStats.dev !== backupStats.dev || currentStats.ino !== backupStats.ino) {
-				throw new Error("Current and backup binaries do not share the expected pre-replacement identity");
+	if (!originalBinaryPresent) {
+		if (backup) throw new Error("Fresh install transaction unexpectedly contains a binary backup");
+		const claimedBinary = await findRollbackClaim(backupDirectory, binaryName, undefined, binarySha256 ?? undefined);
+		if (claimedBinary && current) throw new Error("Fresh install binary and rollback claim both exist");
+		if (staged && current) throw new Error("Ambiguous fresh install binary recovery layout");
+		if (staged) return;
+		if (current) {
+			if (!binarySha256 || (await calculateFileSha256(currentBinary)) !== binarySha256) {
+				throw new Error("Fresh install binary does not match the journal; refusing to remove it");
 			}
+			await claimRollbackPath(
+				currentBinary,
+				backupDirectory,
+				await captureOwnedPathIdentity(binaryName, currentBinary),
+				options,
+				binarySha256,
+			);
+			await syncDirectory(installDirectory);
 			return;
 		}
-		await rename(backupBinary, currentBinary);
+		if (!claimedBinary && phase !== "rolling_back") {
+			throw new Error("Fresh install binary cannot be identified safely");
+		}
+		return;
+	}
+	if (backup) {
+		const retainedOriginalIdentity = originalIdentity ?? (await captureOwnedPathIdentity(binaryName, backupBinary));
+		await assertPathIdentity(backupBinary, retainedOriginalIdentity);
+		const claimedBinary = await findRollbackClaim(backupDirectory, binaryName, undefined, binarySha256 ?? undefined);
+		if (current) {
+			const [currentStats, backupStats] = await Promise.all([
+				lstat(currentBinary, { bigint: true }),
+				lstat(backupBinary, { bigint: true }),
+			]);
+			if (currentStats.dev === backupStats.dev && currentStats.ino === backupStats.ino) return;
+			if (claimedBinary) throw new Error("Installed binary conflicts with its rollback claim");
+			if (binarySha256 && (await calculateFileSha256(currentBinary)) !== binarySha256) {
+				throw new Error("Installed binary changed before rollback");
+			}
+			await claimRollbackPath(
+				currentBinary,
+				backupDirectory,
+				await captureOwnedPathIdentity(binaryName, currentBinary),
+				options,
+				binarySha256 ?? undefined,
+			);
+		}
+		if (staged && !current && !claimedBinary) {
+			// The binary backup can exist before the staged executable is activated.
+			await publishRollbackPathWithoutOverwrite(backupBinary, currentBinary, retainedOriginalIdentity, options);
+			return;
+		}
+		await publishRollbackPathWithoutOverwrite(backupBinary, currentBinary, retainedOriginalIdentity, options);
 		await syncDirectory(installDirectory);
 		return;
 	}
+	const claimedBinary = await findRollbackClaim(backupDirectory, binaryName, undefined, binarySha256 ?? undefined);
 	if (!current || (!staged && phase !== "rolling_back")) {
+		if (!current && claimedBinary) {
+			throw new Error("Previous Magenta binary backup is missing while its rollback claim remains");
+		}
 		throw new Error("Previous Magenta binary cannot be identified safely");
 	}
+	if (originalIdentity) await assertPathIdentity(currentBinary, originalIdentity);
 }
 
 async function transactionLooksFullyActivated(
@@ -1031,15 +1976,93 @@ async function transactionLooksFullyActivated(
 	journal: ReleaseUpdateTransactionJournal,
 ): Promise<boolean> {
 	const paths = updateTransactionPaths(installDirectory, journal);
-	for (const resourceName of journal.resourceNames) {
+	for (const resourceName of journal.installResourceNames) {
 		if (await assertSafeResourceCandidate(join(paths.stagingDirectory, resourceName))) return false;
 		if (!(await assertSafeResourceCandidate(join(installDirectory, resourceName)))) return false;
+		if (journal.installedPathIdentities !== null) {
+			await assertPathIdentity(
+				join(installDirectory, resourceName),
+				requireInstalledPathIdentity(journal, resourceName),
+			);
+		}
+	}
+	for (const resourceName of journal.removeResourceNames) {
+		if (await assertSafeResourceCandidate(join(paths.stagingDirectory, resourceName))) return false;
+		if (await assertSafeResourceCandidate(join(installDirectory, resourceName))) return false;
 	}
 	if (journal.binaryName) {
+		const installedBinary = join(installDirectory, journal.binaryName);
 		if (await ownedPathExists(join(paths.stagingDirectory, journal.binaryName), "file")) return false;
-		if (!(await ownedPathExists(join(installDirectory, journal.binaryName), "file"))) return false;
+		if (!(await ownedPathExists(installedBinary, "file"))) return false;
+		if (journal.binarySha256 && (await calculateFileSha256(installedBinary)) !== journal.binarySha256) return false;
 	}
 	return true;
+}
+
+function defaultReleaseUpdateHelperIsAlive(pid: number): boolean {
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch (error) {
+		// EPERM means the process exists but is not inspectable by this user.
+		// Every other failure is treated as a dead PID; the journal remains
+		// authoritative and the normal recovery checks still fail closed.
+		return (error as NodeJS.ErrnoException).code === "EPERM";
+	}
+}
+
+const windowsProcessStartTimePattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{7}Z$/;
+
+export function getWindowsReleaseUpdateProcessStartTimeUtc(pid: number): string | undefined {
+	if (process.platform !== "win32") return undefined;
+	const safeEnvironment: NodeJS.ProcessEnv = {};
+	for (const key of ["PATH", "SystemRoot", "WINDIR", "ComSpec", "PATHEXT", "TEMP", "TMP", "USERPROFILE"]) {
+		const value = process.env[key];
+		if (value !== undefined) safeEnvironment[key] = value;
+	}
+	const command =
+		`$process = Get-Process -Id ${pid} -ErrorAction Stop; ` +
+		`$process.StartTime.ToUniversalTime().ToString('o', [Globalization.CultureInfo]::InvariantCulture)`;
+	const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", command], {
+		encoding: "utf8",
+		env: safeEnvironment,
+		maxBuffer: 16 * 1024,
+		timeout: 5_000,
+		windowsHide: true,
+	});
+	if (result.error || result.status !== 0) return undefined;
+	const value = result.stdout.trim();
+	return windowsProcessStartTimePattern.test(value) ? value : undefined;
+}
+
+async function windowsHelperIsAlive(
+	journal: ReleaseUpdateTransactionJournal,
+	options: RecoverReleaseUpdateTransactionOptions,
+): Promise<boolean> {
+	if (journal.kind !== "windows" || journal.helperPid === null) return false;
+	const isAlive = options.helperProcessIsAlive ?? defaultReleaseUpdateHelperIsAlive;
+	if (!(await isAlive(journal.helperPid))) return false;
+	if (journal.helperStartTimeUtc === null) return true;
+	// Windows transactions are only produced on Windows.  Keep deterministic
+	// non-Windows recovery tests (and cross-platform forensic tooling) usable
+	// when no OS-specific creation-time probe is available; the real Windows
+	// path below always queries Get-Process.StartTime and fails closed on error.
+	if (process.platform !== "win32" && options.helperProcessStartTimeUtc === undefined) return true;
+	const startTimeProbe = options.helperProcessStartTimeUtc ?? getWindowsReleaseUpdateProcessStartTimeUtc;
+	let observedStartTime: string | undefined;
+	try {
+		observedStartTime = await startTimeProbe(journal.helperPid);
+	} catch (error) {
+		throw new Error(
+			`Unable to verify Windows update helper PID ${journal.helperPid} creation time: ${error instanceof Error ? error.message : String(error)}`,
+		);
+	}
+	if (observedStartTime === undefined) {
+		throw new Error(
+			`Unable to verify Windows update helper PID ${journal.helperPid} creation time; refusing recovery`,
+		);
+	}
+	return observedStartTime === journal.helperStartTimeUtc;
 }
 
 /** Recover or finish the one journal-owned transaction for an installation. Must be called under the install lock. */
@@ -1048,6 +2071,27 @@ export async function recoverInterruptedReleaseUpdateTransaction(
 	options: RecoverReleaseUpdateTransactionOptions = {},
 ): Promise<boolean> {
 	await assertOwnedPath(installDirectory, { type: "directory" });
+	// Inspect both journal paths before readPendingJournal is allowed to promote
+	// or discard a temporary file.  A live detached helper owns the prepared
+	// transaction even though the parent process has already exited.
+	const durableJournalPath = join(installDirectory, RELEASE_UPDATE_JOURNAL_NAME);
+	const temporaryJournalPath = join(installDirectory, RELEASE_UPDATE_JOURNAL_TEMP_NAME);
+	if (await ownedPathExists(durableJournalPath, "file")) {
+		const durableJournal = await readJournalFile(durableJournalPath);
+		if (await windowsHelperIsAlive(durableJournal, options)) {
+			throw new Error(
+				`Windows update transaction is owned by live helper PID ${durableJournal.helperPid}; refusing recovery while it is running`,
+			);
+		}
+	}
+	if (await ownedPathExists(temporaryJournalPath, "file")) {
+		const temporaryJournal = await readJournalFile(temporaryJournalPath);
+		if (await windowsHelperIsAlive(temporaryJournal, options)) {
+			throw new Error(
+				`Windows update transaction is owned by live helper PID ${temporaryJournal.helperPid}; refusing recovery while it is running`,
+			);
+		}
+	}
 	const journal = await readPendingJournal(installDirectory);
 	if (!journal) return false;
 	const paths = updateTransactionPaths(installDirectory, journal);
@@ -1093,31 +2137,53 @@ export async function recoverInterruptedReleaseUpdateTransaction(
 			paths.stagingDirectory,
 			paths.backupDirectory,
 			journal.binaryName,
+			journal.originalBinaryPresent as boolean,
+			journal.binarySha256,
+			journal.originalPathIdentities === null || journal.originalBinaryPresent !== true
+				? undefined
+				: requireOriginalPathIdentity(journal, journal.binaryName),
 			journal.phase,
+			options,
 		);
 	}
 	const originalResourceNames = new Set(journal.originalResourceNames);
-	for (const resourceName of [...journal.resourceNames].reverse()) {
+	for (const resourceName of [...journal.installResourceNames, ...journal.removeResourceNames].reverse()) {
+		const hadOriginal = originalResourceNames.has(resourceName);
 		await rollbackResource(
 			installDirectory,
 			paths.stagingDirectory,
 			paths.backupDirectory,
 			resourceName,
-			originalResourceNames.has(resourceName),
+			hadOriginal,
+			journal.originalPathIdentities === null || !hadOriginal
+				? undefined
+				: requireOriginalPathIdentity(journal, resourceName),
+			journal.installedPathIdentities === null || !journal.installResourceNames.includes(resourceName)
+				? undefined
+				: requireInstalledPathIdentity(journal, resourceName),
 			journal.phase,
+			options,
 		);
 	}
 	await syncDirectory(installDirectory);
-	await cleanupTransactionArtifacts(installDirectory, journal);
+	await options.testBeforeRollbackTerminalJournal?.();
+	const terminalJournal = { ...journal, phase: "committed" as const };
+	await writeReleaseUpdateJournal(installDirectory, terminalJournal);
+	await cleanupTransactionArtifacts(installDirectory, terminalJournal);
 	return true;
 }
 
 export interface UnixUpdateTransactionOptions {
 	currentBinary: string;
+	/** Whether the target binary existed before this transaction. Defaults to true for self-update callers. */
+	originalBinaryPresent?: boolean;
 	operationId: string;
 	stagingDirectory: string;
 	backupDirectory: string;
+	/** Top-level resources copied from staging into the installation. */
 	resourceNames: readonly string[];
+	/** Optional explicit remove-only set; marker ownership is added automatically. */
+	removeResourceNames?: readonly string[];
 	targetVersion?: string;
 	verifyInstalled(): void | Promise<void>;
 	fileSystem?: UpdateTransactionFileSystem;
@@ -1130,7 +2196,10 @@ export interface ResourceUpdateTransactionOptions {
 	operationId: string;
 	stagingDirectory: string;
 	backupDirectory: string;
+	/** Top-level resources copied from staging into the installation. */
 	resourceNames: readonly string[];
+	/** Optional explicit remove-only set; marker ownership is added automatically. */
+	removeResourceNames?: readonly string[];
 	targetVersion?: string;
 	verifyInstalled(): void | Promise<void>;
 	fileSystem?: UpdateTransactionFileSystem;
@@ -1138,7 +2207,7 @@ export interface ResourceUpdateTransactionOptions {
 	testFaultInjector?(point: string): void;
 }
 
-class InjectedUpdateInterruption extends Error {}
+export class InjectedUpdateInterruption extends Error {}
 
 function injectUpdateFault(options: { testFaultInjector?(point: string): void }, point: string): void {
 	if (!options.testFaultInjector) return;
@@ -1154,9 +2223,12 @@ async function prepareReleaseUpdateJournal(options: {
 	operationId: string;
 	kind: ReleaseUpdateTransactionKind;
 	binaryName?: string;
+	originalBinaryPresent?: boolean;
+	binarySha256?: string;
 	stagingDirectory: string;
 	backupDirectory: string;
 	resourceNames: readonly string[];
+	removeResourceNames?: readonly string[];
 	targetVersion?: string;
 }): Promise<ReleaseUpdateTransactionJournal> {
 	assertTransactionOptionPaths(
@@ -1168,15 +2240,44 @@ async function prepareReleaseUpdateJournal(options: {
 	);
 	await assertOwnedPath(options.installDirectory, { type: "directory" });
 	await assertOwnedPath(options.stagingDirectory, { type: "directory" });
-	const resourceNames = [...new Set(options.resourceNames)];
-	if (resourceNames.length === 0) throw new Error("Update transaction contains no resources");
-	for (const resourceName of resourceNames) {
+	const installResourceNames = [...new Set(options.resourceNames)];
+	if (installResourceNames.length === 0) throw new Error("Update transaction contains no resources");
+	for (const resourceName of installResourceNames) {
 		if (!isSafeUpdateResourceName(resourceName) || resourceName === options.binaryName) {
 			throw new Error(`Unsafe update resource name: ${resourceName}`);
 		}
 		if (!(await assertSafeResourceCandidate(join(options.stagingDirectory, resourceName)))) {
 			throw new Error(`Staged resource is missing: ${resourceName}`);
 		}
+	}
+	const explicitRemoveResourceNames = [...new Set(options.removeResourceNames ?? [])];
+	if (
+		explicitRemoveResourceNames.some(
+			(name) => !isManagedReleaseResourceName(name) || installResourceNames.includes(name),
+		)
+	) {
+		throw new Error("Update transaction contains an unsafe or overlapping remove-only resource name");
+	}
+	// A valid ownership marker is the only durable proof that a top-level path
+	// created by an older release may be retired. Invalid/legacy markers are
+	// deliberately ignored so a repair can replace them without guessing.
+	let markerResourceNames: readonly string[] = [];
+	try {
+		const marker = await readInstalledReleaseOwnership(options.installDirectory);
+		markerResourceNames = marker.resourceNames ?? [];
+	} catch {
+		markerResourceNames = [];
+	}
+	const removeResourceNames = [
+		...new Set([
+			...explicitRemoveResourceNames,
+			...markerResourceNames.filter(
+				(name) => isManagedReleaseResourceName(name) && !installResourceNames.includes(name),
+			),
+		]),
+	];
+	if (removeResourceNames.some((name) => !isManagedReleaseResourceName(name))) {
+		throw new Error("Update transaction contains an unsafe remove-only resource name");
 	}
 
 	let journal = await readPendingJournal(options.installDirectory);
@@ -1186,6 +2287,7 @@ async function prepareReleaseUpdateJournal(options: {
 			operationId: options.operationId,
 			kind: options.kind,
 			binaryName: options.binaryName,
+			originalBinaryPresent: options.originalBinaryPresent,
 			targetVersion: options.targetVersion,
 		});
 		journal = await readPendingJournal(options.installDirectory);
@@ -1196,23 +2298,67 @@ async function prepareReleaseUpdateJournal(options: {
 		journal.operationId !== options.operationId ||
 		journal.kind !== options.kind ||
 		journal.binaryName !== (options.binaryName ?? null) ||
-		journal.targetVersion !== (options.targetVersion ?? null)
+		journal.originalBinaryPresent !== (options.kind === "resources" ? null : options.originalBinaryPresent) ||
+		journal.targetVersion !== (options.targetVersion ?? null) ||
+		journal.helperPid !== null ||
+		journal.helperStartTimeUtc !== null
 	) {
 		throw new Error("Update transaction journal does not match the staged update");
+	}
+	if (journal.version !== RELEASE_UPDATE_JOURNAL_VERSION && journal.phase !== "staging") {
+		throw new Error("Legacy prepared update journal has no original path identities; recover it before retrying");
+	}
+	if (journal.version < PREVIOUS_RELEASE_UPDATE_JOURNAL_VERSION && removeResourceNames.length > 0) {
+		throw new Error("Legacy update journal cannot represent remove-only resources; recover it first");
+	}
+	if (options.kind !== "resources") {
+		const currentBinary = join(options.installDirectory, options.binaryName as string);
+		const currentBinaryPresent = await ownedPathExists(currentBinary, "file");
+		if (currentBinaryPresent !== options.originalBinaryPresent) {
+			throw new Error("Installed binary no longer matches the transaction snapshot");
+		}
+		if (!options.binarySha256 || !/^[0-9a-f]{64}$/.test(options.binarySha256)) {
+			throw new Error("Update transaction requires a verified binary digest");
+		}
 	}
 	if (await ownedPathExists(options.backupDirectory)) {
 		throw new Error(`Update backup path already exists: ${options.backupDirectory}`);
 	}
 	const originalResourceNames: string[] = [];
-	for (const resourceName of resourceNames) {
+	for (const resourceName of [...installResourceNames, ...removeResourceNames]) {
 		if (await assertSafeResourceCandidate(join(options.installDirectory, resourceName))) {
 			originalResourceNames.push(resourceName);
 		}
 	}
+	const originalPathIdentities: ReleaseUpdatePathIdentity[] = [];
+	for (const resourceName of originalResourceNames) {
+		originalPathIdentities.push(
+			await captureOwnedPathIdentity(resourceName, join(options.installDirectory, resourceName)),
+		);
+	}
+	if (options.kind !== "resources" && options.originalBinaryPresent) {
+		originalPathIdentities.push(
+			await captureOwnedPathIdentity(
+				options.binaryName as string,
+				join(options.installDirectory, options.binaryName as string),
+			),
+		);
+	}
+	const installedPathIdentities: ReleaseUpdatePathIdentity[] = [];
+	for (const resourceName of installResourceNames) {
+		installedPathIdentities.push(
+			await captureOwnedPathIdentity(resourceName, join(options.stagingDirectory, resourceName)),
+		);
+	}
 	journal = {
 		...journal,
-		resourceNames,
+		version: RELEASE_UPDATE_JOURNAL_VERSION,
+		binarySha256: options.kind === "resources" ? null : (options.binarySha256 ?? null),
+		installResourceNames,
+		removeResourceNames,
 		originalResourceNames,
+		originalPathIdentities,
+		installedPathIdentities,
 		phase: "prepared",
 	};
 	await writeReleaseUpdateJournal(options.installDirectory, journal);
@@ -1225,28 +2371,80 @@ export interface PrepareWindowsReleaseUpdateTransactionOptions {
 	currentBinary: string;
 	stagingDirectory: string;
 	backupDirectory: string;
+	/** Top-level resources copied from staging into the installation. */
 	resourceNames: readonly string[];
+	/** Marker-owned resources removed because the new release no longer ships them. */
+	removeResourceNames?: readonly string[];
 	targetVersion: string;
+}
+
+export interface BindWindowsReleaseUpdateHelperOptions {
+	installDirectory: string;
+	operationId: string;
+	helperPid: number;
+	helperStartTimeUtc: string;
 }
 
 /** Persist the Windows helper's complete write-ahead intent before the parent process releases the install lock. */
 export async function prepareWindowsReleaseUpdateTransaction(
 	options: PrepareWindowsReleaseUpdateTransactionOptions,
-): Promise<void> {
+): Promise<{ removeResourceNames: string[] }> {
 	if (resolve(dirname(options.currentBinary)) !== resolve(options.installDirectory)) {
 		throw new Error("Windows update binary is outside the installation directory");
 	}
 	await assertOwnedPath(options.currentBinary, { type: "file" });
-	await assertOwnedPath(join(options.stagingDirectory, basename(options.currentBinary)), { type: "file" });
-	await prepareReleaseUpdateJournal({
+	const stagedBinary = join(options.stagingDirectory, basename(options.currentBinary));
+	await assertOwnedPath(stagedBinary, { type: "file" });
+	const journal = await prepareReleaseUpdateJournal({
 		installDirectory: options.installDirectory,
 		operationId: options.operationId,
 		kind: "windows",
 		binaryName: basename(options.currentBinary),
+		originalBinaryPresent: true,
+		binarySha256: await calculateFileSha256(stagedBinary),
 		stagingDirectory: options.stagingDirectory,
 		backupDirectory: options.backupDirectory,
 		resourceNames: options.resourceNames,
+		removeResourceNames: options.removeResourceNames,
 		targetVersion: options.targetVersion,
+	});
+	return { removeResourceNames: journal.removeResourceNames };
+}
+
+/**
+ * Bind a detached Windows helper to the prepared journal while the launching
+ * process still owns the installation lock.  The helper cannot safely mutate
+ * the transaction until this field is durably visible; a competing Magenta
+ * process therefore defers recovery while the exact PID is alive.
+ */
+export async function bindWindowsReleaseUpdateHelper(options: BindWindowsReleaseUpdateHelperOptions): Promise<void> {
+	assertSafeOperationId(options.operationId);
+	if (!Number.isSafeInteger(options.helperPid) || options.helperPid <= 0 || options.helperPid > 0x7fffffff) {
+		throw new Error("Windows update helper PID is invalid");
+	}
+	if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{7}Z$/.test(options.helperStartTimeUtc)) {
+		throw new Error("Windows update helper start time is invalid");
+	}
+	const journal = await readPendingJournal(options.installDirectory);
+	if (
+		!journal ||
+		journal.kind !== "windows" ||
+		journal.operationId !== options.operationId ||
+		journal.phase !== "prepared"
+	) {
+		throw new Error("Windows update journal is not the prepared transaction being launched");
+	}
+	if (journal.helperPid !== null && journal.helperPid !== options.helperPid) {
+		throw new Error("Windows update journal is already bound to a different helper PID");
+	}
+	if (journal.helperStartTimeUtc !== null && journal.helperStartTimeUtc !== options.helperStartTimeUtc) {
+		throw new Error("Windows update journal is already bound to a different helper identity");
+	}
+	if (journal.helperPid === options.helperPid && journal.helperStartTimeUtc === options.helperStartTimeUtc) return;
+	await writeReleaseUpdateJournal(options.installDirectory, {
+		...journal,
+		helperPid: options.helperPid,
+		helperStartTimeUtc: options.helperStartTimeUtc,
 	});
 }
 
@@ -1296,25 +2494,38 @@ export async function applyResourceUpdateTransaction(options: ResourceUpdateTran
 		stagingDirectory: options.stagingDirectory,
 		backupDirectory: options.backupDirectory,
 		resourceNames: options.resourceNames,
+		removeResourceNames: options.removeResourceNames,
 		targetVersion: options.targetVersion,
 	});
 	try {
 		injectUpdateFault(options, "journal:prepared");
 		await fileSystem.makeDirectory(options.backupDirectory);
 		for (const resourceName of journal.originalResourceNames) {
+			const originalIdentity = findOriginalPathIdentity(journal, resourceName);
+			if (journal.originalPathIdentities !== null) {
+				if (!originalIdentity)
+					throw new Error(`Update transaction has no identity for original resource: ${resourceName}`);
+				await assertPathIdentity(join(options.installDirectory, resourceName), originalIdentity);
+			}
 			await fileSystem.movePath(
 				join(options.installDirectory, resourceName),
 				join(options.backupDirectory, resourceName),
 			);
+			if (originalIdentity) {
+				await assertPathIdentity(join(options.backupDirectory, resourceName), originalIdentity);
+			}
 			await syncDirectory(options.backupDirectory);
 			await syncDirectory(options.installDirectory);
 			injectUpdateFault(options, `resource-backup:${resourceName}`);
 		}
-		for (const resourceName of journal.resourceNames) {
+		for (const resourceName of journal.installResourceNames) {
+			const installedIdentity = requireInstalledPathIdentity(journal, resourceName);
+			await assertPathIdentity(join(options.stagingDirectory, resourceName), installedIdentity);
 			await fileSystem.movePath(
 				join(options.stagingDirectory, resourceName),
 				join(options.installDirectory, resourceName),
 			);
+			await assertPathIdentity(join(options.installDirectory, resourceName), installedIdentity);
 			await syncDirectory(options.stagingDirectory);
 			await syncDirectory(options.installDirectory);
 			injectUpdateFault(options, `resource-install:${resourceName}`);
@@ -1344,16 +2555,25 @@ export async function applyUnixUpdateTransaction(options: UnixUpdateTransactionO
 	);
 	const stagedBinary = join(options.stagingDirectory, binaryName);
 	const backupBinary = join(options.backupDirectory, binaryName);
-	await assertOwnedPath(options.currentBinary, { type: "file" });
+	const originalBinaryPresent = options.originalBinaryPresent ?? true;
+	if (originalBinaryPresent) {
+		await assertOwnedPath(options.currentBinary, { type: "file" });
+	} else if (await ownedPathExists(options.currentBinary)) {
+		throw new Error("Fresh install target binary already exists");
+	}
 	await assertOwnedPath(stagedBinary, { type: "file" });
+	const binarySha256 = await calculateFileSha256(stagedBinary);
 	const journal = await prepareReleaseUpdateJournal({
 		installDirectory,
 		operationId: options.operationId,
 		kind: "unix",
 		binaryName,
+		originalBinaryPresent,
+		binarySha256,
 		stagingDirectory: options.stagingDirectory,
 		backupDirectory: options.backupDirectory,
 		resourceNames: options.resourceNames,
+		removeResourceNames: options.removeResourceNames,
 		targetVersion: options.targetVersion,
 	});
 
@@ -1361,23 +2581,43 @@ export async function applyUnixUpdateTransaction(options: UnixUpdateTransactionO
 		injectUpdateFault(options, "journal:prepared");
 		await fileSystem.makeDirectory(options.backupDirectory);
 		for (const resourceName of journal.originalResourceNames) {
+			const originalIdentity = findOriginalPathIdentity(journal, resourceName);
+			if (journal.originalPathIdentities !== null) {
+				if (!originalIdentity)
+					throw new Error(`Update transaction has no identity for original resource: ${resourceName}`);
+				await assertPathIdentity(join(installDirectory, resourceName), originalIdentity);
+			}
 			await fileSystem.movePath(join(installDirectory, resourceName), join(options.backupDirectory, resourceName));
+			if (originalIdentity) {
+				await assertPathIdentity(join(options.backupDirectory, resourceName), originalIdentity);
+			}
 			await syncDirectory(options.backupDirectory);
 			await syncDirectory(installDirectory);
 			injectUpdateFault(options, `resource-backup:${resourceName}`);
 		}
-		for (const resourceName of journal.resourceNames) {
+		for (const resourceName of journal.installResourceNames) {
+			const installedIdentity = requireInstalledPathIdentity(journal, resourceName);
+			await assertPathIdentity(join(options.stagingDirectory, resourceName), installedIdentity);
 			await fileSystem.movePath(join(options.stagingDirectory, resourceName), join(installDirectory, resourceName));
+			await assertPathIdentity(join(installDirectory, resourceName), installedIdentity);
 			await syncDirectory(options.stagingDirectory);
 			await syncDirectory(installDirectory);
 			injectUpdateFault(options, `resource-install:${resourceName}`);
 		}
 
-		await link(options.currentBinary, backupBinary);
-		await syncFile(backupBinary);
-		await syncDirectory(options.backupDirectory);
+		if (originalBinaryPresent) {
+			const originalBinaryIdentity = requireOriginalPathIdentity(journal, binaryName);
+			await assertPathIdentity(options.currentBinary, originalBinaryIdentity);
+			await link(options.currentBinary, backupBinary);
+			await syncFile(backupBinary);
+			await assertPathIdentity(backupBinary, originalBinaryIdentity);
+			await syncDirectory(options.backupDirectory);
+		}
 		injectUpdateFault(options, "binary-backup:complete");
-		// POSIX rename replaces the executable in one atomic step; currentBinary is never absent.
+		if ((await calculateFileSha256(stagedBinary)) !== binarySha256) {
+			throw new Error("Staged Magenta binary changed before activation");
+		}
+		// POSIX rename replaces an existing executable in one atomic step.
 		await fileSystem.movePath(stagedBinary, options.currentBinary);
 		await syncDirectory(options.stagingDirectory);
 		await syncDirectory(installDirectory);
@@ -1401,11 +2641,16 @@ export function quotePowerShellLiteral(value: string): string {
 
 export interface WindowsUpdateScriptOptions {
 	parentProcessId: number;
+	/** Optional invariant UTC start time used to reject a reused parent PID. */
+	parentProcessStartTimeUtc?: string;
 	operationId: string;
 	currentBinary: string;
 	stagingDirectory: string;
 	backupDirectory: string;
+	/** Top-level resources copied from staging into the installation. */
 	resourceNames: readonly string[];
+	/** Marker-owned resources removed because the new release no longer ships them. */
+	removeResourceNames?: readonly string[];
 	targetVersion: string;
 	scriptPath: string;
 	errorLogPath: string;
@@ -1415,6 +2660,12 @@ export function buildWindowsUpdateScript(options: WindowsUpdateScriptOptions): s
 	const binaryName = basename(options.currentBinary);
 	const installDirectory = dirname(options.currentBinary);
 	assertSafeOperationId(options.operationId);
+	if (
+		options.parentProcessStartTimeUtc !== undefined &&
+		!windowsProcessStartTimePattern.test(options.parentProcessStartTimeUtc)
+	) {
+		throw new Error("Windows parent process start time is invalid");
+	}
 	assertTransactionOptionPaths(
 		installDirectory,
 		options.operationId,
@@ -1429,7 +2680,22 @@ export function buildWindowsUpdateScript(options: WindowsUpdateScriptOptions): s
 			throw new Error(`Unsafe update resource name: ${resourceName}`);
 		}
 	}
+	const removeResourceNames = [...new Set(options.removeResourceNames ?? [])];
+	if (
+		removeResourceNames.some((name) => !isManagedReleaseResourceName(name) || options.resourceNames.includes(name))
+	) {
+		throw new Error("Unsafe or overlapping remove-only resource name");
+	}
 	const resourceLines = options.resourceNames.map((name) => `    ${quotePowerShellLiteral(name)}`).join(",\n");
+	const removeResourceLines = removeResourceNames.map((name) => `    ${quotePowerShellLiteral(name)}`).join(",\n");
+	const managedResourceLines = [
+		...RESOURCE_DIRECTORY_NAMES,
+		...RESOURCE_FILE_NAMES,
+		RELEASE_RESOURCE_MARKER_NAME,
+		"_magenta",
+	]
+		.map((name) => `    ${quotePowerShellLiteral(name)}`)
+		.join(",\n");
 	const requiredDirectoryLines = RESOURCE_DIRECTORY_NAMES.map((name) => `    ${quotePowerShellLiteral(name)}`).join(
 		",\n",
 	);
@@ -1438,6 +2704,8 @@ export function buildWindowsUpdateScript(options: WindowsUpdateScriptOptions): s
 
 	return `$ErrorActionPreference = "Stop"
 $parentProcessId = ${options.parentProcessId}
+$parentProcessStartTimeUtc = ${options.parentProcessStartTimeUtc ? quotePowerShellLiteral(options.parentProcessStartTimeUtc) : "$null"}
+$helperProcessId = $PID
 $operationId = ${quotePowerShellLiteral(options.operationId)}
 $installDirectory = ${quotePowerShellLiteral(installDirectory)}
 $currentBinary = ${quotePowerShellLiteral(options.currentBinary)}
@@ -1451,8 +2719,15 @@ $lockDirectory = Join-Path $installDirectory ${quotePowerShellLiteral(RELEASE_IN
 $journalPath = Join-Path $installDirectory ${quotePowerShellLiteral(RELEASE_UPDATE_JOURNAL_NAME)}
 $journalTempPath = Join-Path $installDirectory ${quotePowerShellLiteral(RELEASE_UPDATE_JOURNAL_TEMP_NAME)}
 $currentUserSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-$resourceNames = @(
+	$resourceNames = @(
 ${resourceLines}
+)
+$removeResourceNames = @(
+${removeResourceLines}
+)
+	$transactionResourceNames = @($resourceNames + $removeResourceNames | Select-Object -Unique)
+$managedResourceNames = @(
+${managedResourceLines}
 )
 $requiredResourceDirectories = @(
 ${requiredDirectoryLines}
@@ -1474,8 +2749,134 @@ $lockHeartbeatJob = $null
 $lockHeartbeatSource = "magenta-update-lock-$operationId"
 $nextForegroundHeartbeatUtc = [DateTime]::MinValue
 $transactionSucceeded = $false
-$backupBinary = Join-Path $backupDirectory $binaryName
-$stagedBinary = Join-Path $stagingDirectory $binaryName
+	$backupBinary = Join-Path $backupDirectory $binaryName
+	$stagedBinary = Join-Path $stagingDirectory $binaryName
+
+if ($null -eq ("Magenta.NativeFileIdentity" -as [type])) {
+Add-Type -TypeDefinition @"
+using System;
+using System.ComponentModel;
+using System.Globalization;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+
+namespace Magenta {
+    public static class NativeFileIdentity {
+        private const uint FileShareRead = 0x00000001;
+        private const uint FileShareWrite = 0x00000002;
+        private const uint FileShareDelete = 0x00000004;
+        private const uint OpenExisting = 3;
+        private const uint FileFlagBackupSemantics = 0x02000000;
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct ByHandleFileInformation {
+            public uint FileAttributes;
+            public uint CreationTimeLow;
+            public uint CreationTimeHigh;
+            public uint LastAccessTimeLow;
+            public uint LastAccessTimeHigh;
+            public uint LastWriteTimeLow;
+            public uint LastWriteTimeHigh;
+            public uint VolumeSerialNumber;
+            public uint FileSizeHigh;
+            public uint FileSizeLow;
+            public uint NumberOfLinks;
+            public uint FileIndexHigh;
+            public uint FileIndexLow;
+        }
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern SafeFileHandle CreateFile(
+            string fileName,
+            uint desiredAccess,
+            uint shareMode,
+            IntPtr securityAttributes,
+            uint creationDisposition,
+            uint flagsAndAttributes,
+            IntPtr templateFile);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool GetFileInformationByHandle(
+            SafeFileHandle fileHandle,
+            out ByHandleFileInformation information);
+
+        public static string[] Get(string path) {
+            using (SafeFileHandle handle = CreateFile(
+                path,
+                0,
+                FileShareRead | FileShareWrite | FileShareDelete,
+                IntPtr.Zero,
+                OpenExisting,
+                FileFlagBackupSemantics,
+                IntPtr.Zero)) {
+                if (handle.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
+                ByHandleFileInformation information;
+                if (!GetFileInformationByHandle(handle, out information)) {
+                    throw new Win32Exception(Marshal.GetLastWin32Error());
+                }
+                ulong fileIndex = ((ulong)information.FileIndexHigh << 32) | information.FileIndexLow;
+                return new[] {
+                    information.VolumeSerialNumber.ToString(CultureInfo.InvariantCulture),
+                    fileIndex.ToString(CultureInfo.InvariantCulture)
+                };
+            }
+        }
+    }
+}
+"@
+}
+
+function Convert-MagentaUtcToMilliseconds([DateTime]$value) {
+    $epochTicks = [DateTime]::new(1970, 1, 1, 0, 0, 0, [DateTimeKind]::Utc).Ticks
+    $ticksSinceEpoch = [double]($value.ToUniversalTime().Ticks - $epochTicks)
+    return [string][long][Math]::Floor(($ticksSinceEpoch / 10000.0) + 0.5)
+}
+
+function Get-MagentaPathIdentity([string]$name, [string]$path) {
+    $item = Get-Item -LiteralPath $path -Force -ErrorAction Stop
+    if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+        throw "Original update path is a reparse point: $name"
+    }
+	$nativeIdentity = [Magenta.NativeFileIdentity]::Get($path)
+    $isDirectory = [bool]$item.PSIsContainer
+    [pscustomobject]@{
+        name = $name
+        type = if ($isDirectory) { "directory" } else { "file" }
+        device = [string]$nativeIdentity[0]
+        inode = [string]$nativeIdentity[1]
+        # Node's Windows mode bits are compatibility metadata; the native file
+        # id, type, size, and timestamps provide the object binding below.
+        size = if ($isDirectory) { "0" } else { [string][long]$item.Length }
+        mode = if ($isDirectory) { "511" } else { "438" }
+        birthtimeMs = Convert-MagentaUtcToMilliseconds $item.CreationTimeUtc
+        mtimeMs = Convert-MagentaUtcToMilliseconds $item.LastWriteTimeUtc
+    }
+}
+
+function Get-MagentaOriginalPathIdentity($journal, [string]$name) {
+	foreach ($identity in @($journal.originalPathIdentities)) {
+        if ($identity.name -ceq $name) { return $identity }
+    }
+    return $null
+}
+
+function Get-MagentaInstalledPathIdentity($journal, [string]$name) {
+	foreach ($identity in @($journal.installedPathIdentities)) {
+		if ($identity.name -ceq $name) { return $identity }
+	}
+	return $null
+}
+
+function Test-MagentaPathIdentity([string]$name, [string]$path, $expected) {
+	if ($null -eq $expected) { throw "Update transaction has no identity for path: $name" }
+	if (-not (Test-MagentaOwnedTransactionPath $path)) { throw "Update path is missing or unsafe: $name" }
+	$actual = Get-MagentaPathIdentity $name $path
+    foreach ($identityProperty in @("type", "device", "inode", "size", "birthtimeMs", "mtimeMs")) {
+        if ([string]$actual.$identityProperty -cne [string]$expected.$identityProperty) {
+            throw "Update transaction path identity changed: $path"
+        }
+    }
+}
 
 function Get-MagentaOwnerSid([string]$path) {
     try {
@@ -1701,6 +3102,98 @@ function Remove-MagentaSafeTree([string]$path) {
     Remove-MagentaSafeTreeCore $path
 }
 
+function Move-MagentaPathWithoutOverwrite([string]$sourcePath, [string]$destinationPath) {
+	$sourceItem = Get-Item -LiteralPath $sourcePath -Force -ErrorAction Stop
+	if ($sourceItem.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+		throw "Refusing to move a reparse point during update rollback: $sourcePath"
+	}
+	if (-not (Test-MagentaOwnedItem $sourceItem)) {
+		throw "Refusing to move a rollback path not owned by the current user: $sourcePath"
+	}
+	if (Test-Path -LiteralPath $destinationPath) {
+		throw "Refusing to overwrite a path during update rollback: $destinationPath"
+	}
+	if ($sourceItem.PSIsContainer) {
+		[IO.Directory]::Move($sourcePath, $destinationPath)
+	} else {
+		[IO.File]::Move($sourcePath, $destinationPath)
+	}
+}
+
+function Get-MagentaRollbackQuarantinePrefix([string]$name) {
+	$sha256 = [Security.Cryptography.SHA256]::Create()
+	try {
+		$nameBytes = [Text.UTF8Encoding]::new($false).GetBytes($name)
+		$nameDigest = [BitConverter]::ToString($sha256.ComputeHash($nameBytes)).Replace("-", "").ToLowerInvariant()
+	} finally {
+		$sha256.Dispose()
+	}
+	return ".magenta-rollback-quarantine-$nameDigest-"
+}
+
+function New-MagentaRollbackQuarantinePath([string]$name) {
+	$prefix = Get-MagentaRollbackQuarantinePrefix $name
+	for ($attempt = 0; $attempt -lt 16; $attempt++) {
+		$candidate = Join-Path $backupDirectory ($prefix + [Guid]::NewGuid().ToString("N"))
+		if (-not (Test-Path -LiteralPath $candidate -Force)) { return $candidate }
+	}
+	throw "Unable to allocate a unique rollback quarantine path."
+}
+
+function Move-MagentaRollbackCandidateToQuarantine(
+	[string]$name,
+	[string]$path,
+	$expectedIdentity,
+	[AllowNull()][string]$expectedSha256
+) {
+	Test-MagentaPathIdentity $name $path $expectedIdentity
+	if ($null -ne $expectedSha256 -and (Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash.ToLowerInvariant() -cne $expectedSha256) {
+		throw "Rollback candidate digest changed before claim: $path"
+	}
+	$quarantinePath = New-MagentaRollbackQuarantinePath $name
+	Move-MagentaPathWithoutOverwrite $path $quarantinePath
+	try {
+		Test-MagentaPathIdentity $name $quarantinePath $expectedIdentity
+		if ($null -ne $expectedSha256 -and (Get-FileHash -Algorithm SHA256 -LiteralPath $quarantinePath).Hash.ToLowerInvariant() -cne $expectedSha256) {
+			throw "Rollback candidate digest changed after claim: $path"
+		}
+	} catch {
+		$validationError = $_
+		$disposition = "preserved at $quarantinePath"
+		try {
+			Move-MagentaPathWithoutOverwrite $quarantinePath $path
+			$disposition = "restored to $path"
+		} catch {
+			$disposition += " (automatic restore failed: $_)"
+		}
+		throw ("Rollback candidate changed during the validation-to-mutation window and was " + $disposition + ": " + $validationError)
+	}
+	return $quarantinePath
+}
+
+function Move-MagentaValidatedRollbackPath(
+	[string]$name,
+	[string]$sourcePath,
+	[string]$destinationPath,
+	$expectedIdentity
+) {
+	Test-MagentaPathIdentity $name $sourcePath $expectedIdentity
+	Move-MagentaPathWithoutOverwrite $sourcePath $destinationPath
+	try {
+		Test-MagentaPathIdentity $name $destinationPath $expectedIdentity
+	} catch {
+		$validationError = $_
+		$disposition = "preserved at $destinationPath"
+		try {
+			Move-MagentaPathWithoutOverwrite $destinationPath $sourcePath
+			$disposition = "restored to $sourcePath"
+		} catch {
+			$disposition += " (automatic restore failed: $_)"
+		}
+		throw ("Rollback source changed during the validation-to-publication window and was " + $disposition + ": " + $validationError)
+	}
+}
+
 function Test-MagentaStringArraysEqual($left, $right) {
 	$leftValues = @($left)
 	$rightValues = @($right)
@@ -1711,14 +3204,33 @@ function Test-MagentaStringArraysEqual($left, $right) {
 	return $true
 }
 
+function Set-MagentaVerificationEnvironment {
+	$allowedEnvironmentNames = @(
+		"PATH", "HOME", "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "APPDATA", "LOCALAPPDATA",
+		"TEMP", "TMP", "TMPDIR", "SystemRoot", "WINDIR", "ComSpec", "PATHEXT", "OS",
+		"LANG", "LC_ALL", "LC_CTYPE", "TERM", "TERM_PROGRAM", "COLORTERM", "NO_COLOR",
+		"XDG_RUNTIME_DIR", "PSModulePath", "PSHOME", "PI_PACKAGE_DIR", "PI_OFFLINE", "PI_SKIP_VERSION_CHECK"
+	)
+	foreach ($environmentName in @([Environment]::GetEnvironmentVariables().Keys)) {
+		if ($allowedEnvironmentNames -notcontains [string]$environmentName) {
+			Remove-Item -LiteralPath "Env:$environmentName" -ErrorAction SilentlyContinue
+		}
+	}
+	$env:PI_PACKAGE_DIR = $installDirectory
+	$env:PI_OFFLINE = "1"
+	$env:PI_SKIP_VERSION_CHECK = "1"
+}
+
 function Read-MagentaValidatedJournal([string]$path, [AllowNull()][string]$expectedPhase, [bool]$validateOriginalLayout) {
 	if (-not (Test-MagentaResourceFile $path)) { throw "Update transaction journal is missing or unsafe: $path" }
+	$journalItem = Get-Item -LiteralPath $path -Force -ErrorAction Stop
+	if ($journalItem.Length -gt 65536) { throw "Update transaction journal is too large: $path" }
 	try {
 		$journal = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
 	} catch {
 		throw "Update transaction journal is not valid JSON: $path"
 	}
-	$expectedProperties = @("binaryName", "kind", "operationId", "originalResourceNames", "phase", "resourceNames", "targetVersion", "version") | Sort-Object
+	$expectedProperties = @("binaryName", "binarySha256", "helperPid", "helperStartTimeUtc", "installResourceNames", "installedPathIdentities", "kind", "operationId", "originalBinaryPresent", "originalPathIdentities", "originalResourceNames", "phase", "removeResourceNames", "targetVersion", "version") | Sort-Object
 	$actualProperties = @($journal.PSObject.Properties.Name | Sort-Object)
 	if ($actualProperties.Count -ne $expectedProperties.Count -or @(Compare-Object $expectedProperties $actualProperties -CaseSensitive).Count -ne 0) {
 		throw "Update transaction journal has an unsupported schema: $path"
@@ -1726,17 +3238,41 @@ function Read-MagentaValidatedJournal([string]$path, [AllowNull()][string]$expec
 	if (-not ($journal.version -is [System.Int32]) -and -not ($journal.version -is [System.Int64])) {
 		throw "Update transaction journal version has an invalid type: $path"
 	}
+	if (-not ($journal.helperPid -is [System.Int32]) -and -not ($journal.helperPid -is [System.Int64])) {
+		throw "Windows update journal helper PID has an invalid type: $path"
+	}
+	if ($journal.helperPid -le 0 -or $journal.helperPid -gt 2147483647 -or $journal.helperPid -ne $helperProcessId) {
+		throw "Windows update journal helper PID does not identify this helper: $path"
+	}
+	if (-not ($journal.helperStartTimeUtc -is [string]) -or $journal.helperStartTimeUtc -cnotmatch '^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{7}Z$') {
+		throw "Windows update journal helper start time has an invalid type or format: $path"
+	}
+	$actualHelperStartTimeUtc = (Get-Process -Id $helperProcessId -ErrorAction Stop).StartTime.ToUniversalTime().ToString("o", [Globalization.CultureInfo]::InvariantCulture)
+	if ($journal.helperStartTimeUtc -cne $actualHelperStartTimeUtc) {
+		throw "Windows update journal helper start time does not identify this helper: $path"
+	}
 	foreach ($stringProperty in @("operationId", "kind", "binaryName", "targetVersion", "phase")) {
 		if (-not ($journal.$stringProperty -is [string])) {
 			throw "Update transaction journal property $stringProperty has an invalid type: $path"
 		}
 	}
-	if (-not ($journal.resourceNames -is [System.Array]) -or -not ($journal.originalResourceNames -is [System.Array])) {
-		throw "Update transaction journal resource lists must be arrays: $path"
+	if (-not ($journal.installResourceNames -is [System.Array]) -or -not ($journal.removeResourceNames -is [System.Array]) -or -not ($journal.originalResourceNames -is [System.Array]) -or -not ($journal.originalPathIdentities -is [System.Array]) -or -not ($journal.installedPathIdentities -is [System.Array])) {
+		throw "Update transaction journal resource and identity lists must be arrays: $path"
 	}
-	foreach ($resourceValue in @($journal.resourceNames) + @($journal.originalResourceNames)) {
+	if (-not ($journal.originalBinaryPresent -is [bool]) -or -not $journal.originalBinaryPresent) {
+		throw "Windows update journal has invalid previous binary state: $path"
+	}
+	if (-not ($journal.binarySha256 -is [string]) -or $journal.binarySha256 -cnotmatch '^[0-9a-f]{64}$') {
+		throw "Windows update journal has an invalid binary digest: $path"
+	}
+	foreach ($resourceValue in @($journal.installResourceNames) + @($journal.removeResourceNames) + @($journal.originalResourceNames)) {
 		if (-not ($resourceValue -is [string])) {
 			throw "Update transaction journal resource names must be strings: $path"
+		}
+	}
+	foreach ($removeName in @($journal.removeResourceNames)) {
+		if ($resourceNames -contains $removeName -or (($managedResourceNames -notcontains $removeName) -and $removeName -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]*\\.wasm$')) {
+			throw "Update transaction journal has an invalid remove-only resource list: $path"
 		}
 	}
 	if (
@@ -1752,20 +3288,96 @@ function Read-MagentaValidatedJournal([string]$path, [AllowNull()][string]$expec
 	if ($null -ne $expectedPhase -and $journal.phase -cne $expectedPhase) {
 		throw "Update transaction journal phase is invalid: $path"
 	}
-	if (-not (Test-MagentaStringArraysEqual @($journal.resourceNames) $resourceNames)) {
+	if (-not (Test-MagentaStringArraysEqual @($journal.installResourceNames) $resourceNames)) {
 		throw "Update transaction journal resource list does not match this helper: $path"
+	}
+	if (-not (Test-MagentaStringArraysEqual @($journal.removeResourceNames) $removeResourceNames)) {
+		throw "Update transaction journal remove-only resource list does not match this helper: $path"
 	}
 	$originalNames = @($journal.originalResourceNames)
 	$seenOriginalNames = @{}
 	foreach ($originalName in $originalNames) {
-		if ($seenOriginalNames.ContainsKey($originalName) -or $resourceNames -cnotcontains $originalName) {
+		if ($seenOriginalNames.ContainsKey($originalName) -or $transactionResourceNames -cnotcontains $originalName) {
 			throw "Update transaction journal has an invalid original resource list: $path"
 		}
 		$seenOriginalNames[$originalName] = $true
 	}
+	$expectedIdentityProperties = @("birthtimeMs", "device", "inode", "mode", "mtimeMs", "name", "size", "type") | Sort-Object
+	$seenIdentityNames = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+	foreach ($identity in @($journal.originalPathIdentities)) {
+		if ($null -eq $identity -or $identity -isnot [pscustomobject]) {
+			throw "Update transaction journal contains an invalid original path identity: $path"
+		}
+		$actualIdentityProperties = @($identity.PSObject.Properties.Name | Sort-Object)
+		if ($actualIdentityProperties.Count -ne $expectedIdentityProperties.Count -or @(Compare-Object $expectedIdentityProperties $actualIdentityProperties -CaseSensitive).Count -ne 0) {
+			throw "Update transaction journal has an unsupported original path identity schema: $path"
+		}
+		if (-not ($identity.name -is [string]) -or -not ($identity.type -is [string])) {
+			throw "Update transaction journal original path identity names and types must be strings: $path"
+		}
+		if (@("file", "directory") -cnotcontains $identity.type) {
+			throw "Update transaction journal has an invalid original path identity type: $path"
+		}
+		foreach ($numericIdentityProperty in @("device", "inode", "size", "mode", "birthtimeMs", "mtimeMs")) {
+			if (-not ($identity.$numericIdentityProperty -is [string]) -or $identity.$numericIdentityProperty -cnotmatch '^[0-9]+$') {
+				throw "Update transaction journal original path identity metadata is invalid: $path"
+			}
+		}
+		if (-not $seenIdentityNames.Add($identity.name)) {
+			throw "Update transaction journal has duplicate original path identities: $path"
+		}
+		if ($identity.name -cne $binaryName -and $transactionResourceNames -cnotcontains $identity.name) {
+			throw "Update transaction journal has an unexpected original path identity: $path"
+		}
+	}
+	$expectedIdentityNames = @($originalNames) + @($binaryName)
+	if ($seenIdentityNames.Count -ne $expectedIdentityNames.Count) {
+		throw "Update transaction journal original path identities do not match its original paths: $path"
+	}
+	foreach ($expectedIdentityName in $expectedIdentityNames) {
+		if (-not $seenIdentityNames.Contains($expectedIdentityName)) {
+			throw "Update transaction journal original path identities do not match its original paths: $path"
+		}
+	}
+	$seenInstalledIdentityNames = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+	foreach ($identity in @($journal.installedPathIdentities)) {
+		if ($null -eq $identity -or $identity -isnot [pscustomobject]) {
+			throw "Update transaction journal contains an invalid installed path identity: $path"
+		}
+		$actualIdentityProperties = @($identity.PSObject.Properties.Name | Sort-Object)
+		if ($actualIdentityProperties.Count -ne $expectedIdentityProperties.Count -or @(Compare-Object $expectedIdentityProperties $actualIdentityProperties -CaseSensitive).Count -ne 0) {
+			throw "Update transaction journal has an unsupported installed path identity schema: $path"
+		}
+		if (-not ($identity.name -is [string]) -or -not ($identity.type -is [string]) -or @("file", "directory") -cnotcontains $identity.type) {
+			throw "Update transaction journal installed path identity name or type is invalid: $path"
+		}
+		foreach ($numericIdentityProperty in @("device", "inode", "size", "mode", "birthtimeMs", "mtimeMs")) {
+			if (-not ($identity.$numericIdentityProperty -is [string]) -or $identity.$numericIdentityProperty -cnotmatch '^[0-9]+$') {
+				throw "Update transaction journal installed path identity metadata is invalid: $path"
+			}
+		}
+		if (-not $seenInstalledIdentityNames.Add($identity.name) -or $resourceNames -cnotcontains $identity.name) {
+			throw "Update transaction journal has an unexpected or duplicate installed path identity: $path"
+		}
+	}
+	$expectedInstalledIdentityNames = @($resourceNames)
+	if ($seenInstalledIdentityNames.Count -ne $expectedInstalledIdentityNames.Count) {
+		throw "Update transaction journal installed path identities do not match its installed paths: $path"
+	}
+	foreach ($expectedIdentityName in $expectedInstalledIdentityNames) {
+		if (-not $seenInstalledIdentityNames.Contains($expectedIdentityName)) {
+			throw "Update transaction journal installed path identities do not match its installed paths: $path"
+		}
+	}
 	if ($validateOriginalLayout) {
+		if (-not (Test-MagentaResourceFile $stagedBinary)) {
+			throw "Staged binary is missing or unsafe: $stagedBinary"
+		}
+		if ((Get-FileHash -Algorithm SHA256 -LiteralPath $stagedBinary).Hash.ToLowerInvariant() -cne $journal.binarySha256) {
+			throw "Staged binary no longer matches the update journal: $path"
+		}
 		$actualOriginalNames = New-Object System.Collections.Generic.List[string]
-		foreach ($resourceName in $resourceNames) {
+		foreach ($resourceName in $transactionResourceNames) {
 			$installedPath = Join-Path $installDirectory $resourceName
 			if (Test-Path -LiteralPath $installedPath) {
 				if (-not (Test-MagentaOwnedTransactionPath $installedPath)) {
@@ -1777,6 +3389,14 @@ function Read-MagentaValidatedJournal([string]$path, [AllowNull()][string]$expec
 		if (-not (Test-MagentaStringArraysEqual $originalNames $actualOriginalNames)) {
 			throw "Installed resources no longer match the journal snapshot."
 		}
+		foreach ($identity in @($journal.originalPathIdentities)) {
+			$identityPath = if ($identity.name -ceq $binaryName) { $currentBinary } else { Join-Path $installDirectory $identity.name }
+			Test-MagentaPathIdentity $identity.name $identityPath $identity
+		}
+		foreach ($identity in @($journal.installedPathIdentities)) {
+			$identityPath = Join-Path $stagingDirectory $identity.name
+			Test-MagentaPathIdentity $identity.name $identityPath $identity
+		}
 	}
 	return $journal
 }
@@ -1784,7 +3404,8 @@ function Read-MagentaValidatedJournal([string]$path, [AllowNull()][string]$expec
 function Write-MagentaUpdateJournalPhase([string]$phase) {
 	if (@("rolling_back", "committed") -cnotcontains $phase) { throw "Unsupported update journal transition: $phase" }
     if (Test-Path -LiteralPath $journalTempPath) { throw "Update transaction journal temporary file already exists." }
-	$journal = Read-MagentaValidatedJournal $journalPath "prepared" $false
+	$expectedPhase = if ($phase -ceq "rolling_back") { "prepared" } else { "rolling_back" }
+	$journal = Read-MagentaValidatedJournal $journalPath $expectedPhase $false
     $journal.phase = $phase
     $journalJson = $journal | ConvertTo-Json -Compress -Depth 5
 	$journalBytes = (New-Object Text.UTF8Encoding($false)).GetBytes($journalJson + [Environment]::NewLine)
@@ -1807,7 +3428,18 @@ function Write-MagentaUpdateJournalPhase([string]$phase) {
     [IO.File]::Replace($journalTempPath, $journalPath, $null, $true)
 }
 
-while (Get-Process -Id $parentProcessId -ErrorAction SilentlyContinue) {
+while ($true) {
+    $parentProcess = Get-Process -Id $parentProcessId -ErrorAction SilentlyContinue
+    if ($null -eq $parentProcess) { break }
+    if ($null -ne $parentProcessStartTimeUtc) {
+        try {
+            $observedParentStartTimeUtc = $parentProcess.StartTime.ToUniversalTime().ToString("o", [Globalization.CultureInfo]::InvariantCulture)
+            if ($observedParentStartTimeUtc -cne $parentProcessStartTimeUtc) { break }
+        } catch {
+            # Keep waiting while the original parent is still present; a
+            # transient process-query failure must not release the transaction.
+        }
+    }
     Start-Sleep -Milliseconds 250
 }
 
@@ -1874,9 +3506,9 @@ try {
 	}
 
 	if (-not (Test-MagentaResourceFile $currentBinary)) { throw "Current binary is missing or unsafe: $currentBinary" }
-    $env:PI_PACKAGE_DIR = $installDirectory
+	Set-MagentaVerificationEnvironment
 	Update-MagentaLockHeartbeat
-    $currentVersionOutput = @(& $currentBinary --version 2>&1)
+	$currentVersionOutput = @(& $currentBinary --version 2>&1)
 	Update-MagentaLockHeartbeat
     $currentVersionExitCode = $LASTEXITCODE
     $currentInstalledVersion = (($currentVersionOutput | ForEach-Object { "$_" }) -join [Environment]::NewLine).Trim()
@@ -1933,32 +3565,38 @@ try {
 
     if (-not $transactionSucceeded) {
 	if (-not (Test-MagentaResourceFile $stagedBinary)) { throw "Staged binary is missing or unsafe: $stagedBinary" }
-    foreach ($resourceName in $resourceNames) {
+	    foreach ($resourceName in $resourceNames) {
         $stagedPath = Join-Path $stagingDirectory $resourceName
 		if (-not (Test-MagentaOwnedTransactionPath $stagedPath)) { throw "Staged resource is missing or unsafe: $resourceName" }
     }
     New-Item -ItemType Directory -Path $backupDirectory | Out-Null
 	if ($null -eq (Get-MagentaPlainDirectory $backupDirectory)) { throw "New update backup directory is unsafe." }
 
-    foreach ($resourceName in $resourceNames) {
+	foreach ($resourceName in $transactionResourceNames) {
 		Update-MagentaLockHeartbeat
-        $installedPath = Join-Path $installDirectory $resourceName
-        $backupPath = Join-Path $backupDirectory $resourceName
-        if (Test-Path -LiteralPath $installedPath) {
+		$installedPath = Join-Path $installDirectory $resourceName
+		$backupPath = Join-Path $backupDirectory $resourceName
+		if (Test-Path -LiteralPath $installedPath) {
 			if (-not (Test-MagentaOwnedTransactionPath $installedPath)) { throw "Installed resource is unsafe: $resourceName" }
-            Move-Item -LiteralPath $installedPath -Destination $backupPath
-            $movedOldResources.Add($resourceName)
-        }
-    }
+			$originalIdentity = Get-MagentaOriginalPathIdentity $initialJournal $resourceName
+			if ($null -eq $originalIdentity) { throw "Unexpected installed resource appeared after transaction prepare: $resourceName" }
+			Test-MagentaPathIdentity $resourceName $installedPath $originalIdentity
+			Move-Item -LiteralPath $installedPath -Destination $backupPath
+			$movedOldResources.Add($resourceName)
+			Test-MagentaPathIdentity $resourceName $backupPath $originalIdentity
+		}
+	}
 
     foreach ($resourceName in $resourceNames) {
 		Update-MagentaLockHeartbeat
         $stagedPath = Join-Path $stagingDirectory $resourceName
         $installedPath = Join-Path $installDirectory $resourceName
-        if (Test-Path -LiteralPath $stagedPath) {
-			if (-not (Test-MagentaOwnedTransactionPath $stagedPath)) { throw "Staged resource changed before activation: $resourceName" }
-            Move-Item -LiteralPath $stagedPath -Destination $installedPath
-            $movedNewResources.Add($resourceName)
+		if (Test-Path -LiteralPath $stagedPath) {
+			$installedIdentity = Get-MagentaInstalledPathIdentity $initialJournal $resourceName
+			Test-MagentaPathIdentity $resourceName $stagedPath $installedIdentity
+			Move-Item -LiteralPath $stagedPath -Destination $installedPath
+			$movedNewResources.Add($resourceName)
+			Test-MagentaPathIdentity $resourceName $installedPath $installedIdentity
         }
     }
 
@@ -1967,9 +3605,15 @@ try {
 	if (-not (Test-MagentaResourceFile $currentBinary) -or -not (Test-MagentaResourceFile $stagedBinary)) {
 		throw "Binary paths changed before atomic replacement."
 	}
-    [IO.File]::Replace($stagedBinary, $currentBinary, $backupBinary, $true)
+	$originalBinaryIdentity = Get-MagentaOriginalPathIdentity $initialJournal $binaryName
+	Test-MagentaPathIdentity $binaryName $currentBinary $originalBinaryIdentity
+	if ((Get-FileHash -Algorithm SHA256 -LiteralPath $stagedBinary).Hash.ToLowerInvariant() -cne $initialJournal.binarySha256) {
+		throw "Staged binary changed before atomic replacement."
+	}
+	[IO.File]::Replace($stagedBinary, $currentBinary, $backupBinary, $true)
 	$movedOldBinary = $true
-    $movedNewBinary = $true
+	$movedNewBinary = $true
+	Test-MagentaPathIdentity $binaryName $backupBinary $originalBinaryIdentity
 
 	Update-MagentaLockHeartbeat
     $versionOutput = @(& $currentBinary --version 2>&1)
@@ -2001,33 +3645,65 @@ try {
 		$rollbackErrors.Add("install/update lock was not acquired; transaction left for the lock owner")
 	}
 
-	if ($rollbackIntentPersisted) {
-		if ($movedOldBinary) {
-			try {
+		if ($rollbackIntentPersisted) {
+			if ($movedOldBinary) {
+				try {
 				if (-not (Test-MagentaResourceFile $backupBinary) -or -not (Test-MagentaResourceFile $currentBinary)) {
 					throw "Binary rollback paths are missing or unsafe."
 				}
-				[IO.File]::Replace($backupBinary, $currentBinary, $null, $true)
-			} catch { $rollbackErrors.Add("restore old binary: $_") }
-		}
-		for ($index = $movedNewResources.Count - 1; $index -ge 0; $index--) {
+				$originalBinaryIdentity = Get-MagentaOriginalPathIdentity $initialJournal $binaryName
+				Test-MagentaPathIdentity $binaryName $backupBinary $originalBinaryIdentity
+					if ((Get-FileHash -Algorithm SHA256 -LiteralPath $currentBinary).Hash.ToLowerInvariant() -cne $initialJournal.binarySha256) {
+						throw "Installed binary changed before rollback."
+					}
+					$installedBinaryIdentity = Get-MagentaPathIdentity $binaryName $currentBinary
+					$claimedBinary = Move-MagentaRollbackCandidateToQuarantine $binaryName $currentBinary $installedBinaryIdentity $initialJournal.binarySha256
+					try {
+						Move-MagentaValidatedRollbackPath $binaryName $backupBinary $currentBinary $originalBinaryIdentity
+					} catch {
+						$publicationError = $_
+						$disposition = "preserved at $claimedBinary"
+						try {
+							Move-MagentaPathWithoutOverwrite $claimedBinary $currentBinary
+							$disposition = "restored to $currentBinary"
+						} catch {
+							$disposition += " (automatic restore failed: $_)"
+						}
+						throw ("Old binary publication failed; the claimed binary was " + $disposition + ": " + $publicationError)
+					}
+					Remove-MagentaSafeTree $claimedBinary
+				} catch { $rollbackErrors.Add("restore old binary: $_") }
+			}
+			for ($index = $movedNewResources.Count - 1; $index -ge 0; $index--) {
 			$resourceName = $movedNewResources[$index]
 			try {
-				$installedPath = Join-Path $installDirectory $resourceName
-				Remove-MagentaSafeTree $installedPath
-			} catch { $rollbackErrors.Add("remove new $($resourceName): $_") }
-		}
+					$installedPath = Join-Path $installDirectory $resourceName
+					$installedIdentity = Get-MagentaInstalledPathIdentity $initialJournal $resourceName
+					$claimedResource = Move-MagentaRollbackCandidateToQuarantine $resourceName $installedPath $installedIdentity $null
+					Remove-MagentaSafeTree $claimedResource
+				} catch { $rollbackErrors.Add("remove new $($resourceName): $_") }
+			}
 		for ($index = $movedOldResources.Count - 1; $index -ge 0; $index--) {
 			$resourceName = $movedOldResources[$index]
 			try {
 				$backupPath = Join-Path $backupDirectory $resourceName
 				$installedPath = Join-Path $installDirectory $resourceName
 				Assert-MagentaSafeTree $backupPath
-				if (-not (Test-MagentaOwnedTransactionPath $backupPath)) { throw "Backup resource changed before restore." }
-				Move-Item -LiteralPath $backupPath -Destination $installedPath
-			} catch { $rollbackErrors.Add("restore old $($resourceName): $_") }
+					if (-not (Test-MagentaOwnedTransactionPath $backupPath)) { throw "Backup resource changed before restore." }
+					$originalIdentity = Get-MagentaOriginalPathIdentity $initialJournal $resourceName
+					Move-MagentaValidatedRollbackPath $resourceName $backupPath $installedPath $originalIdentity
+				} catch { $rollbackErrors.Add("restore old $($resourceName): $_") }
 		}
     }
+	if ($rollbackIntentPersisted -and $rollbackErrors.Count -eq 0) {
+		try {
+			# A terminal journal makes a crash during artifact cleanup replay as cleanup
+			# only; no restored path is reclassified as an activated update object.
+			Write-MagentaUpdateJournalPhase "committed"
+		} catch {
+			$rollbackErrors.Add("persist completed rollback: $_")
+		}
+	}
 
     $failureMessage = "Update failed: $installError"
     if ($rollbackErrors.Count -gt 0) {

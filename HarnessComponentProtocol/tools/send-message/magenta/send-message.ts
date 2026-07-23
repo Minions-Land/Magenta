@@ -26,7 +26,6 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { existsSync, unlinkSync } from "node:fs";
 import { createConnection, createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -35,6 +34,7 @@ import { type Static, Type } from "typebox";
 import { truncateModelText } from "../../../_magenta/utils/pi/truncate.ts";
 import { ToolExecutionError } from "../../tool-error.ts";
 import { MessageStore, type PresenceState } from "./message-store.ts";
+import { scheduleStaleWakeSocketCleanup } from "./wake-socket-gc.ts";
 
 /** customType used for injected peer messages. Namespaced to mark it Magenta. */
 export const PEER_MESSAGE_CUSTOM_TYPE = "magenta-peer-message";
@@ -129,6 +129,7 @@ export class SendMessageController {
 		this.drainCap = deps.drainCap ?? DEFAULT_PEER_MESSAGE_DRAIN_CAP;
 		this.bootId = randomUUID();
 
+		scheduleStaleWakeSocketCleanup();
 		if (this.wakeForMessages) this.installWakeServer();
 
 		// Advertise presence immediately, before the first agent loop runs. A freshly
@@ -153,7 +154,6 @@ export class SendMessageController {
 				? `\\\\.\\pipe\\magenta-wake-${process.pid}-${token}`
 				: join(tmpdir(), `magenta-wake-${process.pid}-${token}.sock`);
 		try {
-			if (process.platform !== "win32" && existsSync(wakePath)) unlinkSync(wakePath);
 			const server = createServer((socket) => {
 				socket.destroy();
 				this.onWakeRequest();
@@ -369,7 +369,6 @@ export class SendMessageController {
 	shutdown(): void {
 		if (this.closed) return;
 		this.closed = true;
-		const wakePath = this.wakePath;
 		this.wakePath = undefined;
 		if (this.wakeServer) {
 			try {
@@ -379,13 +378,9 @@ export class SendMessageController {
 			}
 			this.wakeServer = undefined;
 		}
-		if (wakePath && process.platform !== "win32") {
-			try {
-				if (existsSync(wakePath)) unlinkSync(wakePath);
-			} catch {
-				// A random stale path is harmless and will never be advertised again.
-			}
-		}
+		// `server.close()` removes a Unix socket it owns. If shutdown races the
+		// listen callback, leave any uncertain path for the bounded stale-socket
+		// maintenance pass rather than unlinking a replaced inode by name.
 		// Best-effort: mark this session offline so peers stop expecting replies and
 		// stop connecting to this process's retired wake capability.
 		this.recordPresence("offline");

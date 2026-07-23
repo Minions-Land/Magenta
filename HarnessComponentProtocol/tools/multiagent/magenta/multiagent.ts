@@ -183,6 +183,7 @@ type LiveHandle = {
 	logClosed: Promise<void>;
 	suppressedMessageUpdates: number;
 	generation: number;
+	interruptInFlight?: NonNullable<MultiagentRecord["pendingInterrupt"]>;
 	pending: Map<string, PendingRpc>;
 	stopPromise?: Promise<void>;
 	exitPromise: Promise<void>;
@@ -795,7 +796,11 @@ export class MultiagentController {
 			) {
 				return;
 			}
-			record.observedProcessState = state.isStreaming === true ? "active" : "idle";
+			record.observedProcessState = record.pendingInterrupt
+				? "interrupting"
+				: state.isStreaming === true
+					? "active"
+					: "idle";
 			await this.persist(record);
 			this.monitor.update();
 			if (record.pendingInterrupt) this.track(this.applyPendingInterrupt(record));
@@ -921,14 +926,16 @@ export class MultiagentController {
 
 	private async applyPendingInterrupt(record: MultiagentRecord): Promise<void> {
 		const pending = record.pendingInterrupt;
-		if (!pending || !this.handles.has(record.sessionId)) return;
+		const handle = this.handles.get(record.sessionId);
+		if (!pending || !handle || handle.interruptInFlight === pending) return;
+		handle.interruptInFlight = pending;
 		try {
-			this.handles.get(record.sessionId)?.log.flush();
+			handle.log.flush();
 			await this.sendRpc(record, { type: "abort" });
 			if (
 				record.pendingInterrupt !== pending ||
 				record.desiredProcessState !== "running" ||
-				!this.handles.has(record.sessionId)
+				this.handles.get(record.sessionId) !== handle
 			) {
 				return;
 			}
@@ -941,8 +948,10 @@ export class MultiagentController {
 		} catch (error) {
 			if (record.pendingInterrupt !== pending || record.desiredProcessState !== "running") return;
 			record.lastError = `Interrupt failed: ${error instanceof Error ? error.message : String(error)}`;
-			record.observedProcessState = this.handles.has(record.sessionId) ? "running" : "failed";
+			record.observedProcessState = this.handles.get(record.sessionId) === handle ? "running" : "failed";
 			await this.persist(record);
+		} finally {
+			if (handle.interruptInFlight === pending) handle.interruptInFlight = undefined;
 		}
 		this.monitor.update();
 	}

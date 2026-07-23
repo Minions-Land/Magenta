@@ -12,8 +12,9 @@
  * The `presence` table is a Magenta addition on top of that kernel: every agent
  * records whether it is `active` (in an agent loop), `idle` (process alive, not
  * looping), or `offline` (cleanly shut down), along with its owning process's
- * pid, per-process boot id, and random wake-socket capability. Liveness is
- * probed from the pid (`kill(pid, 0)`) rather than a heartbeat. Wake requests
+ * pid, per-process boot id, OS process-start identity, and random wake-socket
+ * capability. Liveness is probed from the exact process identity (with
+ * `kill(pid, 0)` as a preliminary check) rather than a heartbeat. Wake requests
  * connect to the boot-scoped Unix socket / named pipe instead of signalling the
  * pid, so stale presence cannot terminate a PID-reused process. When messages
  * are drained they are enriched with the *sender's* presence at that moment, so
@@ -30,6 +31,12 @@ import { randomUUID } from "node:crypto";
 import { chmodSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { isDeepStrictEqual } from "node:util";
+import {
+	getProcessInstanceStatus,
+	getProcessStartIdentity,
+	isProcessAlive,
+	isProcessInstanceAlive,
+} from "../../../_magenta/process-instance.ts";
 import { DEFAULT_PEER_LINK_HOPS } from "./peer-link-protocol.ts";
 import { DatabaseSync } from "./sqlite-adapter.ts";
 
@@ -133,24 +140,43 @@ export type MessageStoreOptions = {
 	peerSeenRetentionMs?: number;
 	/** Optional fixed id for a new store. Must match when reopening it. */
 	storeId?: string;
+	/** Retention period before an explicitly-authorized orphan presence row may be removed. */
+	presenceRetentionMs?: number;
+};
+
+/** Explicit references supplied by the host before orphan presence GC runs. */
+export type PresenceGcOptions = {
+	/** Session ids whose on-disk Session file still exists. Required for safety. */
+	sessionIds: Iterable<string>;
+	/** Session ids still referenced by a durable multiagent registry. */
+	registrySessionIds?: Iterable<string>;
+	/** Override the store retention window for this bounded pass. */
+	retentionMs?: number;
+	/** Logical clock used by tests and maintenance callers. */
+	nowMs?: number;
+	/** Maximum rows inspected/deleted in this pass. */
+	limit?: number;
 };
 
 /** A snapshot of one agent's presence, as seen at read time. */
 export type Presence = {
 	/** Last explicitly-recorded state. */
 	state: PresenceState;
-	/** RFC3339 timestamp of the last heartbeat / state change. */
+	/** RFC3339 timestamp of the last durable state or process-identity change. */
 	lastSeen: string;
 	/**
-	 * Effective online flag computed at read time: true when the row is not
-	 * offline and its recorded pid currently exists. Wake safety does not rely on
-	 * this hint; it uses the boot-scoped socket capability below.
+	 * Effective online flag computed at read time: true only when the row is not
+	 * offline and its recorded PID still has the same OS process-start identity.
+	 * Wake safety does not rely on this hint; it uses the boot-scoped socket
+	 * capability below.
 	 */
 	online: boolean;
 	/** Process ID of the agent, when it's running. Null when offline. */
 	pid: number | null;
 	/** Random identifier for the process instance that owns this presence row. */
 	bootId: string | null;
+	/** OS process-start identity used to reject PID reuse. */
+	processStartId: string | null;
 	/** Per-process Unix socket / named-pipe capability used for safe mailbox wake. */
 	wakePath: string | null;
 };
@@ -222,7 +248,8 @@ CREATE TABLE IF NOT EXISTS presence (
     last_seen  TEXT NOT NULL,
     pid        INTEGER,
     boot_id    TEXT,
-    wake_path  TEXT
+    wake_path  TEXT,
+    process_start_id TEXT
 );
 
 CREATE TABLE IF NOT EXISTS store_identity (
@@ -325,6 +352,7 @@ export class MessageStore {
 	private readonly peerOutboxClaimTimeoutMs: number;
 	private readonly peerOutboxRetentionMs: number;
 	private readonly peerSeenRetentionMs: number;
+	private readonly presenceRetentionMs: number;
 	private readonly maintenanceOwnerId = randomUUID();
 	private lastMaintenanceAt = 0;
 	/** Stable identity persisted in the database and advertised to peer stores. */
@@ -345,6 +373,7 @@ export class MessageStore {
 		this.readMessageRetentionMs = options?.readMessageRetentionMs ?? DEFAULT_OUTBOX_RETENTION_MS;
 		this.peerOutboxClaimTimeoutMs = options?.peerOutboxClaimTimeoutMs ?? 30_000;
 		this.peerOutboxRetentionMs = options?.peerOutboxRetentionMs ?? DEFAULT_OUTBOX_RETENTION_MS;
+		this.presenceRetentionMs = options?.presenceRetentionMs ?? DEFAULT_OUTBOX_RETENTION_MS;
 		if (!Number.isFinite(this.readMessageRetentionMs) || this.readMessageRetentionMs < 0) {
 			this.db.close();
 			throw new TypeError("read message retention must be a non-negative finite number");
@@ -356,6 +385,10 @@ export class MessageStore {
 		if (!Number.isFinite(this.peerOutboxRetentionMs) || this.peerOutboxRetentionMs < 0) {
 			this.db.close();
 			throw new TypeError("peer outbox retention must be a non-negative finite number");
+		}
+		if (!Number.isFinite(this.presenceRetentionMs) || this.presenceRetentionMs < 0) {
+			this.db.close();
+			throw new TypeError("presence retention must be a non-negative finite number");
 		}
 		const minimumPeerSeenRetentionMs = this.peerOutboxRetentionMs * DEFAULT_PEER_LINK_HOPS;
 		this.peerSeenRetentionMs = options?.peerSeenRetentionMs ?? minimumPeerSeenRetentionMs;
@@ -380,6 +413,9 @@ export class MessageStore {
 	 *  - `priority`: added for urgent vs normal message delivery.
 	 *  - presence `pid` + `boot_id`: added for signal-based idle wake (a sender
 	 *    signals an idle recipient's process to make it drain immediately).
+	 *  - presence `process_start_id`: added to distinguish a live process instance
+	 *    from a reused PID. Rows from older schemas fail closed until their owner
+	 *    records presence again.
 	 *  - messages `metadata_json`: structured metadata preserved during delivery.
 	 * Federation tables are created by {@link SCHEMA}; existing local message ids
 	 * are also seeded into `peer_seen` so a message cannot loop back after upgrade.
@@ -431,6 +467,10 @@ export class MessageStore {
 			}
 			if (!presCols.some((c) => c.name === "wake_path")) {
 				this.db.exec(`ALTER TABLE presence ADD COLUMN wake_path TEXT`);
+			}
+			if (!presCols.some((c) => c.name === "process_start_id")) {
+				schemaUpgraded = true;
+				this.db.exec(`ALTER TABLE presence ADD COLUMN process_start_id TEXT`);
 			}
 			const outboxCols = this.db.prepare(`PRAGMA table_info(peer_outbox)`).all() as Array<{ name: string }>;
 			if (!outboxCols.some((c) => c.name === "status")) {
@@ -722,10 +762,14 @@ export class MessageStore {
 	}
 
 	/**
-	 * Atomically replace all session advertisements from one peer. Under pure
-	 * gossip, this is retained for observability (the route table is no longer
-	 * consulted for forwarding decisions), but session advertisement/sync still
-	 * happens during handshake. Routes pointing to local sessions are filtered out.
+	 * Reconcile one peer's advertised session set. Under pure gossip, this is
+	 * retained for observability (the route table is no longer consulted for
+	 * forwarding decisions), but session advertisement/sync still happens during
+	 * handshake. The reconciliation is a true set diff: unchanged rows retain
+	 * their original `updated_at`, and only additions/removals write SQLite rows.
+	 * This matters because presence state changes can refresh advertisements every
+	 * second; a DELETE + full INSERT cycle would churn the WAL without changing
+	 * membership. Routes pointing to local sessions are filtered out.
 	 */
 	replacePeerRoutes(peerStoreId: string, sessionIds: readonly string[]): void {
 		if (peerStoreId.length === 0) throw new TypeError("peer store id must not be empty");
@@ -736,16 +780,28 @@ export class MessageStore {
 		}
 		const now = new Date().toISOString();
 		this.transaction(() => {
-			this.db.prepare(`DELETE FROM peer_routes WHERE peer_store_id = ?`).run(peerStoreId);
-			const insert = this.db.prepare(
-				`INSERT INTO peer_routes (session_id, peer_store_id, updated_at) VALUES (?, ?, ?)
-				 ON CONFLICT(session_id) DO UPDATE SET updated_at = excluded.updated_at
-				 WHERE peer_routes.peer_store_id = excluded.peer_store_id`,
-			);
 			const isLocal = this.db.prepare(`SELECT 1 AS found FROM presence WHERE agent_id = ?`);
+			const desired = new Set<string>();
 			for (const sessionId of uniqueSessionIds) {
-				if (isLocal.get(sessionId)) continue;
-				insert.run(sessionId, peerStoreId, now);
+				if (!isLocal.get(sessionId)) desired.add(sessionId);
+			}
+
+			const currentRows = this.db
+				.prepare(`SELECT session_id FROM peer_routes WHERE peer_store_id = ?`)
+				.all(peerStoreId) as Array<{ session_id: string }>;
+			const current = new Set(currentRows.map((row) => row.session_id));
+			const remove = this.db.prepare(`DELETE FROM peer_routes WHERE peer_store_id = ? AND session_id = ?`);
+			for (const sessionId of current) {
+				if (!desired.has(sessionId)) remove.run(peerStoreId, sessionId);
+			}
+
+			const insert = this.db.prepare(
+				`INSERT INTO peer_routes (session_id, peer_store_id, updated_at)
+				 VALUES (?, ?, ?)
+				 ON CONFLICT(session_id) DO NOTHING`,
+			);
+			for (const sessionId of desired) {
+				if (!current.has(sessionId)) insert.run(sessionId, peerStoreId, now);
 			}
 		});
 	}
@@ -771,35 +827,16 @@ export class MessageStore {
 	}
 
 	/**
-	 * All sessions registered locally through the presence table, ordered for a
-	 * bounded peer advertisement. Live active sessions come first, then live idle
-	 * sessions; stale/offline rows follow from most recently updated to oldest.
-	 * Stable id ordering breaks timestamp ties so every process advertises the same
-	 * prefix when a V1 frame cannot fit the complete durable presence history.
+	 * All sessions registered locally through the presence table, in a stable
+	 * member order. Presence state, heartbeat timestamps, and process liveness are
+	 * deliberately excluded: those fields are volatile and must not cause a peer
+	 * to receive a different membership prefix on every refresh tick.
 	 */
 	listRegisteredSessionIds(): string[] {
-		type Row = { agent_id: string; state: PresenceState; last_seen: string; pid: number | null };
-		const rows = this.db.prepare(`SELECT agent_id, state, last_seen, pid FROM presence`).all() as Row[];
-		const processLiveness = new Map<number, boolean>();
-		const ranked = rows.map((row) => {
-			let live = false;
-			if (row.state !== "offline" && row.pid !== null) {
-				const cached = processLiveness.get(row.pid);
-				live = cached ?? MessageStore.isProcessAlive(row.pid);
-				if (cached === undefined) processLiveness.set(row.pid, live);
-			}
-			return {
-				...row,
-				rank: live ? (row.state === "active" ? 0 : 1) : 2,
-			};
-		});
-		ranked.sort((left, right) => {
-			if (left.rank !== right.rank) return left.rank - right.rank;
-			if (left.last_seen !== right.last_seen) return left.last_seen > right.last_seen ? -1 : 1;
-			if (left.agent_id === right.agent_id) return 0;
-			return left.agent_id < right.agent_id ? -1 : 1;
-		});
-		return ranked.map((row) => row.agent_id);
+		const rows = this.db.prepare(`SELECT agent_id FROM presence ORDER BY agent_id`).all() as Array<{
+			agent_id: string;
+		}>;
+		return rows.map((row) => row.agent_id);
 	}
 
 	/** Whether a session has any durable local presence row, regardless of state. */
@@ -1063,8 +1100,8 @@ export class MessageStore {
 			const acceptedPlaceholders = accepted.map(() => "?").join(",");
 			this.db
 				.prepare(
-					`UPDATE peer_outbox SET settled_at = COALESCE(settled_at, ?)
-					 WHERE message_id IN (${acceptedPlaceholders})`,
+					`UPDATE peer_outbox SET settled_at = ?
+					 WHERE settled_at IS NULL AND message_id IN (${acceptedPlaceholders})`,
 				)
 				.run(new Date().toISOString(), ...accepted.map((row) => row.message_id));
 			return accepted.length;
@@ -1140,10 +1177,12 @@ export class MessageStore {
 				`INSERT INTO peer_endpoints
 				 (endpoint_id, remote, port, desired_state, observed_state, updated_at)
 				 VALUES (?, ?, ?, 'on', 'closed', ?)
-				 ON CONFLICT(endpoint_id) DO UPDATE SET
-				   remote = excluded.remote,
-				   port = excluded.port,
-				   updated_at = excluded.updated_at`,
+					ON CONFLICT(endpoint_id) DO UPDATE SET
+					  remote = excluded.remote,
+					  port = excluded.port,
+					  updated_at = excluded.updated_at
+					 WHERE peer_endpoints.remote IS NOT excluded.remote
+					    OR peer_endpoints.port IS NOT excluded.port`,
 			)
 			.run(id, remote, port ?? null, now);
 		return this.getPeerEndpoint(id)!;
@@ -1195,8 +1234,11 @@ export class MessageStore {
 
 	setPeerEndpointDesiredState(id: string, desiredState: PeerEndpointDesiredState): boolean {
 		const result = this.db
-			.prepare(`UPDATE peer_endpoints SET desired_state = ?, updated_at = ? WHERE endpoint_id = ?`)
-			.run(desiredState, new Date().toISOString(), id) as { changes: number | bigint };
+			.prepare(
+				`UPDATE peer_endpoints SET desired_state = ?, updated_at = ?
+				 WHERE endpoint_id = ? AND desired_state IS NOT ?`,
+			)
+			.run(desiredState, new Date().toISOString(), id, desiredState) as { changes: number | bigint };
 		return Number(result.changes) > 0;
 	}
 
@@ -1226,8 +1268,8 @@ export class MessageStore {
 		return this.transaction(() => {
 			const current = this.db
 				.prepare(
-					`SELECT desired_state, relay_pid, relay_boot_id, relay_generation
-						   FROM peer_endpoints WHERE endpoint_id = ?`,
+					`SELECT desired_state, relay_pid, relay_boot_id, relay_generation, observed_state, last_error
+					   FROM peer_endpoints WHERE endpoint_id = ?`,
 				)
 				.get(id) as
 				| {
@@ -1235,6 +1277,8 @@ export class MessageStore {
 						relay_pid: number | null;
 						relay_boot_id: string | null;
 						relay_generation: string | null;
+						observed_state: PeerEndpointObservedState;
+						last_error: string | null;
 				  }
 				| undefined;
 			if (!current || current.desired_state !== "on") return false;
@@ -1246,6 +1290,17 @@ export class MessageStore {
 				MessageStore.isProcessAlive(current.relay_pid)
 			) {
 				return false;
+			}
+			// A relay can re-enter its claim path after a supervisor poll or a
+			// handoff check. Once the same process has already published the exact
+			// connecting snapshot, avoid refreshing `updated_at` on every retry.
+			if (
+				current.relay_pid === pid &&
+				current.relay_boot_id === bootId &&
+				current.observed_state === "connecting" &&
+				current.last_error === null
+			) {
+				return true;
 			}
 			this.db
 				.prepare(
@@ -1263,18 +1318,57 @@ export class MessageStore {
 		observedState: PeerEndpointObservedState,
 		options?: { remoteStoreId?: string; lastError?: string },
 	): boolean {
+		const current = this.db
+			.prepare(
+				`SELECT observed_state, remote_store_id, last_error
+				   FROM peer_endpoints
+				  WHERE endpoint_id = ? AND relay_boot_id = ?`,
+			)
+			.get(id, bootId) as
+			| {
+					observed_state: PeerEndpointObservedState;
+					remote_store_id: string | null;
+					last_error: string | null;
+			  }
+			| undefined;
+		if (!current) return false;
+
+		// `remoteStoreId` has always been a partial update: an omitted value (and
+		// the historical explicit null) preserves the last remote identity. Error
+		// diagnostics, on the other hand, are replaced by the supplied value and
+		// therefore clear when omitted, matching the old COALESCE/NULL binding.
+		const remoteStoreId = options?.remoteStoreId ?? current.remote_store_id;
+		const lastError = options?.lastError ?? null;
+		if (
+			current.observed_state === observedState &&
+			current.remote_store_id === remoteStoreId &&
+			current.last_error === lastError
+		) {
+			return false;
+		}
+
+		// Recheck the values in the UPDATE predicate. Another relay may have
+		// published a state between the read above and this write; in that case do
+		// not overwrite its newer state or create a redundant WAL frame.
 		const result = this.db
 			.prepare(
-				`UPDATE peer_endpoints SET observed_state = ?, remote_store_id = COALESCE(?, remote_store_id),
-				 last_error = ?, updated_at = ? WHERE endpoint_id = ? AND relay_boot_id = ?`,
+				`UPDATE peer_endpoints
+					SET observed_state = ?, remote_store_id = ?, last_error = ?, updated_at = ?
+				  WHERE endpoint_id = ? AND relay_boot_id = ?
+					AND observed_state IS ?
+					AND remote_store_id IS ?
+					AND last_error IS ?`,
 			)
 			.run(
 				observedState,
-				options?.remoteStoreId ?? null,
-				options?.lastError ?? null,
+				remoteStoreId,
+				lastError,
 				new Date().toISOString(),
 				id,
 				bootId,
+				current.observed_state,
+				current.remote_store_id,
+				current.last_error,
 			) as { changes: number | bigint };
 		return Number(result.changes) > 0;
 	}
@@ -1292,9 +1386,16 @@ export class MessageStore {
 	/** Unique live Magenta process ids advertised by local session presence rows. */
 	listLiveSessionPids(): number[] {
 		const rows = this.db
-			.prepare(`SELECT DISTINCT pid FROM presence WHERE state != 'offline' AND pid IS NOT NULL ORDER BY pid`)
-			.all() as Array<{ pid: number }>;
-		return rows.map((row) => row.pid).filter((pid) => MessageStore.isProcessAlive(pid));
+			.prepare(
+				`SELECT DISTINCT pid, process_start_id
+				   FROM presence
+				  WHERE state != 'offline' AND pid IS NOT NULL
+				  ORDER BY pid`,
+			)
+			.all() as Array<{ pid: number; process_start_id: string | null }>;
+		return rows
+			.filter((row) => MessageStore.isProcessInstanceAlive(row.pid, row.process_start_id))
+			.map((row) => row.pid);
 	}
 
 	/**
@@ -1454,8 +1555,15 @@ export class MessageStore {
 			)
 			.run(recipient, cutoff);
 
-		const presence = this.db.prepare(`SELECT state, pid, boot_id FROM presence WHERE agent_id = ?`).get(recipient) as
-			| { state: PresenceState; pid: number | null; boot_id: string | null }
+		const presence = this.db
+			.prepare(`SELECT state, pid, boot_id, process_start_id FROM presence WHERE agent_id = ?`)
+			.get(recipient) as
+			| {
+					state: PresenceState;
+					pid: number | null;
+					boot_id: string | null;
+					process_start_id: string | null;
+			  }
 			| undefined;
 		const claims = this.db
 			.prepare(
@@ -1471,7 +1579,7 @@ export class MessageStore {
 				presence?.boot_id === claim.claim_owner &&
 				claim.claim_pid !== null &&
 				(presence.pid === null || presence.pid === claim.claim_pid) &&
-				MessageStore.isProcessAlive(claim.claim_pid);
+				MessageStore.isProcessInstanceAlive(claim.claim_pid, presence.process_start_id);
 			if (ownerStillCurrent) continue;
 			this.db
 				.prepare(
@@ -1492,12 +1600,13 @@ export class MessageStore {
 	}
 
 	/**
-	 * Record an agent's presence. Upserts state, records the owning process's pid
-	 * and boot id, and stamps the update time. Called on state transitions
+	 * Record an agent's presence. Upserts state, records the owning process's pid,
+	 * boot id, and process-start identity, and stamps the update time only when
+	 * one of those durable fields changes. Called on state transitions
 	 * (active/idle/offline). Unlike the old design there is no periodic heartbeat:
 	 * liveness is probed directly from the pid at read time (see {@link getPresence}).
 	 *
-	 * `pid`/`bootId` identify the concrete process instance. `wakePath` is a
+	 * `pid`/`bootId`/`processStartId` identify the concrete process instance. `wakePath` is a
 	 * random per-process Unix socket or named-pipe capability; unlike a POSIX
 	 * signal, a stale path cannot terminate an unrelated PID-reused process.
 	 * On a clean `offline` transition all three fields are cleared.
@@ -1505,36 +1614,57 @@ export class MessageStore {
 	updatePresence(
 		agentId: string,
 		state: PresenceState,
-		opts?: { pid?: number | null; bootId?: string | null; wakePath?: string | null },
+		opts?: {
+			pid?: number | null;
+			bootId?: string | null;
+			wakePath?: string | null;
+			processStartId?: string | null;
+		},
 	): void {
-		const now = new Date().toISOString();
 		const pid = state === "offline" ? null : (opts?.pid ?? null);
 		const bootId = state === "offline" ? null : (opts?.bootId ?? null);
 		const wakePath = state === "offline" ? null : (opts?.wakePath ?? null);
+		const processStartId =
+			state === "offline" || pid === null
+				? null
+				: (opts?.processStartId ?? MessageStore.getProcessStartIdentity(pid));
+		const now = new Date().toISOString();
 		this.db
 			.prepare(
-				`INSERT INTO presence (agent_id, state, last_seen, pid, boot_id, wake_path) VALUES (?, ?, ?, ?, ?, ?)
+				`INSERT INTO presence
+					(agent_id, state, last_seen, pid, boot_id, wake_path, process_start_id)
+				 VALUES (?, ?, ?, ?, ?, ?, ?)
 				 ON CONFLICT(agent_id) DO UPDATE SET
 				   state = excluded.state,
 				   last_seen = excluded.last_seen,
 				   pid = excluded.pid,
 				   boot_id = excluded.boot_id,
-				   wake_path = excluded.wake_path`,
+				   wake_path = excluded.wake_path,
+				   process_start_id = excluded.process_start_id
+				 WHERE presence.state IS NOT excluded.state
+				    OR presence.pid IS NOT excluded.pid
+				    OR presence.boot_id IS NOT excluded.boot_id
+				    OR presence.wake_path IS NOT excluded.wake_path
+				    OR presence.process_start_id IS NOT excluded.process_start_id`,
 			)
-			.run(agentId, state, now, pid, bootId, wakePath);
+			.run(agentId, state, now, pid, bootId, wakePath, processStartId);
 	}
 
 	/**
 	 * Read an agent's presence, computing the effective `online` flag by probing
-	 * the recorded pid directly (no heartbeat). Online means: not cleanly offline,
-	 * a pid is recorded, and that pid is currently a live process. A crashed agent
-	 * leaves a stale `active`/`idle` row whose pid is dead, so it reads as offline
-	 * the instant its process is gone — more immediate and precise than a staleness
-	 * window. Returns undefined when the agent has no record.
+	 * the recorded process identity directly (no heartbeat). Online means: not
+	 * cleanly offline, a pid and process-start identity are recorded, and the
+	 * current OS process has the exact same start identity. A reused PID therefore
+	 * fails closed even when `kill(pid, 0)` succeeds. Rows from pre-identity
+	 * schemas remain offline until their owner records a fresh presence.
+	 * Returns undefined when the agent has no record.
 	 */
 	getPresence(agentId: string): Presence | undefined {
 		const row = this.db
-			.prepare(`SELECT state, last_seen, pid, boot_id, wake_path FROM presence WHERE agent_id = ?`)
+			.prepare(
+				`SELECT state, last_seen, pid, boot_id, wake_path, process_start_id
+				   FROM presence WHERE agent_id = ?`,
+			)
 			.get(agentId) as
 			| {
 					state: PresenceState;
@@ -1542,42 +1672,178 @@ export class MessageStore {
 					pid: number | null;
 					boot_id: string | null;
 					wake_path: string | null;
+					process_start_id: string | null;
 			  }
 			| undefined;
 		if (!row) return undefined;
-		const alive = row.pid != null && MessageStore.isProcessAlive(row.pid);
+		const alive = row.pid != null && MessageStore.isProcessInstanceAlive(row.pid, row.process_start_id);
 		return {
 			state: row.state,
 			lastSeen: row.last_seen,
 			online: row.state !== "offline" && alive,
 			pid: row.pid,
 			bootId: row.boot_id,
+			processStartId: row.process_start_id,
 			wakePath: row.wake_path,
 		};
 	}
 
 	/**
+	 * Return an OS-backed process-start identity. A random `boot_id` is useful for
+	 * wake capabilities, but it is not observable by a different process and thus
+	 * cannot reject a reused PID on its own. Unix procfs exposes a monotonic start
+	 * tick (combined with the kernel boot id); macOS and Windows provide an
+	 * equivalent start timestamp through their native process tools.
+	 *
+	 * The current process identity is cached because every presence transition in
+	 * one AgentSession refers to the same PID. Identities for other PIDs are read
+	 * fresh on every probe so a PID reuse is never hidden by a long-lived cache.
+	 */
+	static getProcessStartIdentity(pid: number): string | null {
+		return getProcessStartIdentity(pid);
+	}
+
+	/**
+	 * Probe whether a pid is the exact process instance recorded in a presence
+	 * row. `kill(pid, 0)` remains a cheap first check, but it is never sufficient:
+	 * the OS start identity must also match. Missing identities fail closed.
+	 */
+	static isProcessInstanceAlive(pid: number, expectedStartId: string | null): boolean {
+		return isProcessInstanceAlive(pid, expectedStartId);
+	}
+
+	private static processInstanceStatus(pid: number, expectedStartId: string | null): "alive" | "dead" | "unknown" {
+		return getProcessInstanceStatus(pid, expectedStartId);
+	}
+
+	/**
+	 * Remove stale presence rows only when the host proves that no persisted
+	 * Session or multiagent registry record still names the id. The proof is
+	 * intentionally explicit: MessageStore does not guess a Session directory
+	 * layout or scan the user's home directory.
+	 *
+	 * Database custody is checked in the same transaction as each delete. Unread
+	 * or pending inbox rows and every unsettled peer outbox payload protect both
+	 * their sender and recipient identities, regardless of age. Rows whose PID
+	 * cannot be checked against a recorded process-start identity are retained;
+	 * only a confirmed dead PID, a confirmed PID reuse, or a row with no PID is
+	 * eligible. Work is bounded to one batch to keep WAL growth predictable.
+	 */
+	purgeOrphanPresence(options: PresenceGcOptions): number {
+		if (!options || options.sessionIds === undefined) {
+			throw new TypeError("presence GC requires the current on-disk Session id set");
+		}
+		const toSet = (values: Iterable<string>): Set<string> => {
+			if (typeof values === "string") return new Set([values]);
+			return new Set([...values].filter((value): value is string => typeof value === "string"));
+		};
+		const protectedSessionIds = toSet(options.sessionIds);
+		const protectedRegistryIds = toSet(options.registrySessionIds ?? []);
+		const retentionMs = options.retentionMs ?? this.presenceRetentionMs;
+		const nowMs = options.nowMs ?? Date.now();
+		const limit =
+			typeof options.limit === "number" && Number.isFinite(options.limit) && options.limit > 0
+				? Math.min(MAINTENANCE_BATCH_SIZE, Math.floor(options.limit))
+				: MAINTENANCE_BATCH_SIZE;
+		if (!Number.isFinite(retentionMs) || retentionMs < 0) {
+			throw new TypeError("presence retention must be a non-negative finite number");
+		}
+		if (!Number.isFinite(nowMs)) throw new TypeError("presence GC clock must be finite");
+
+		const cutoff = new Date(nowMs - retentionMs).toISOString();
+		type Candidate = {
+			agent_id: string;
+			state: PresenceState;
+			last_seen: string;
+			pid: number | null;
+			boot_id: string | null;
+			process_start_id: string | null;
+		};
+		const candidates = this.db
+			.prepare(
+				`SELECT agent_id, state, last_seen, pid, boot_id, process_start_id
+				   FROM presence
+				  WHERE last_seen <= ?
+				  ORDER BY last_seen, agent_id
+				  LIMIT ?`,
+			)
+			.all(cutoff, limit) as Candidate[];
+		if (candidates.length === 0) return 0;
+
+		// `DatabaseSync` statements intentionally expose only run/get/all. Keep the
+		// custody checks on those portable methods rather than relying on `.bind`,
+		// which Bun's adapter does not implement.
+		const inboxCustody = this.db.prepare(`
+			SELECT 1 AS found
+			 FROM messages
+			WHERE (sender = ? OR recipient = ?)
+			  AND status IN ('unread', 'pending')
+			LIMIT 1
+		`);
+		const outboxCustody = this.db.prepare(`
+			SELECT 1 AS found
+			 FROM peer_outbox
+			WHERE (sender = ? OR recipient = ?)
+			  AND settled_at IS NULL
+			LIMIT 1
+		`);
+
+		let deleted = 0;
+		this.transaction(() => {
+			const deletePresence = this.db.prepare(`
+				DELETE FROM presence
+				 WHERE agent_id = ?
+				   AND state = ?
+				   AND last_seen = ?
+				   AND pid IS ?
+				   AND process_start_id IS ?
+				   AND NOT EXISTS (
+					 SELECT 1 FROM messages
+					  WHERE (sender = ? OR recipient = ?)
+					    AND status IN ('unread', 'pending')
+				   )
+				   AND NOT EXISTS (
+					 SELECT 1 FROM peer_outbox
+					  WHERE (sender = ? OR recipient = ?)
+					    AND settled_at IS NULL
+				   )
+			`);
+			for (const row of candidates) {
+				if (protectedSessionIds.has(row.agent_id) || protectedRegistryIds.has(row.agent_id)) continue;
+				const processStatus =
+					row.pid === null ? "dead" : MessageStore.processInstanceStatus(row.pid, row.process_start_id);
+				if (processStatus !== "dead") continue;
+				// Keep these explicit probes as a readable guard alongside the DELETE's
+				// NOT EXISTS clauses. They also make the custody invariant testable on
+				// SQLite/Bun adapters with different `changes` implementations.
+				if (inboxCustody.get(row.agent_id, row.agent_id)) continue;
+				if (outboxCustody.get(row.agent_id, row.agent_id)) continue;
+				const result = deletePresence.run(
+					row.agent_id,
+					row.state,
+					row.last_seen,
+					row.pid,
+					row.process_start_id,
+					row.agent_id,
+					row.agent_id,
+					row.agent_id,
+					row.agent_id,
+				) as { changes: number | bigint };
+				deleted += Number(result.changes);
+			}
+		});
+		return deleted;
+	}
+
+	/**
 	 * Probe whether a pid is a currently-live process on this machine. Uses the
 	 * POSIX signal-0 trick: `kill(pid, 0)` delivers nothing but performs the
-	 * existence + permission check the kernel would do for a real signal.
-	 *  - no throw  → process exists and is signalable → alive.
-	 *  - ESRCH     → no such process → dead.
-	 *  - EPERM     → process exists but owned by another user → alive for our
-	 *                purposes (it is running; we just can't signal it).
-	 * NOTE: this cannot distinguish the original process from a PID the OS has
-	 * reused. It is only a liveness hint; mailbox wake uses a random boot-scoped
-	 * socket capability and never sends a signal to this pid.
+	 * existence + permission check the kernel would do for a real signal. This is
+	 * intentionally only a low-level primitive; presence liveness must call
+	 * {@link isProcessInstanceAlive} so PID reuse fails closed.
 	 */
 	static isProcessAlive(pid: number): boolean {
-		if (!Number.isInteger(pid) || pid <= 0) return false;
-		try {
-			process.kill(pid, 0);
-			return true;
-		} catch (e) {
-			const code = (e as NodeJS.ErrnoException).code;
-			if (code === "EPERM") return true;
-			return false;
-		}
+		return isProcessAlive(pid);
 	}
 
 	/**

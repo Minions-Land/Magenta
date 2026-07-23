@@ -44,7 +44,12 @@ import { assertValidSessionId, SessionManager } from "./core/session-manager.ts"
 import { SettingsManager } from "./core/settings-manager.ts";
 import { printTimings, resetTimings, time } from "./core/timings.ts";
 import { hasTrustRequiringProjectResources, ProjectTrustStore } from "./core/trust-manager.ts";
-import { migrateLegacyPiAgentDirToCurrentConfigDir, runMigrations, showDeprecationWarnings } from "./migrations.ts";
+import {
+	migrateLegacyPiAgentDirToCurrentConfigDir,
+	runMigrations,
+	runStartupOrphanMaintenance,
+	showDeprecationWarnings,
+} from "./migrations.ts";
 import { InteractiveMode, runPrintMode, runRpcMode } from "./modes/index.ts";
 import { initTheme, stopThemeWatcher } from "./modes/interactive/theme/theme.ts";
 import { handleConfigCommand, handlePackageCommand } from "./package-manager-cli.ts";
@@ -713,6 +718,10 @@ export async function main(args: string[], options?: MainOptions) {
 		(parsed.sessionDir ? normalizePath(parsed.sessionDir) : undefined) ??
 		(envSessionDir ? expandTildePath(envSessionDir) : undefined) ??
 		startupSettingsManager.getSessionDir();
+	// Presence GC runs once after the effective Session directory is known. The
+	// scanner is deliberately read-only and skips the pass on any ambiguity, so
+	// startup never trades a malformed Session tree for mailbox data loss.
+	await runStartupOrphanMaintenance({ sessionDir });
 	let sessionManager = await createSessionManager(parsed, cwd, sessionDir, startupSettingsManager);
 	const missingSessionCwdIssue = getMissingSessionCwdIssue(sessionManager, cwd);
 	if (missingSessionCwdIssue) {

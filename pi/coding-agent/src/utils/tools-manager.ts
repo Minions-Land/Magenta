@@ -1,4 +1,4 @@
-import { getEmbeddedToolPath } from "@magenta/harness";
+import { configureEmbeddedHelperCacheRoot, getEmbeddedToolPath } from "@magenta/harness";
 import chalk from "chalk";
 import { type SpawnSyncReturns, spawnSync } from "child_process";
 import { chmodSync, createWriteStream, existsSync, mkdirSync, readdirSync, renameSync, rmSync } from "fs";
@@ -6,7 +6,7 @@ import { arch, platform } from "os";
 import { join } from "path";
 import { Readable } from "stream";
 import { pipeline } from "stream/promises";
-import { APP_NAME, getBinDir } from "../config.ts";
+import { APP_NAME, getBinDir, getConfigRootDir } from "../config.ts";
 import { resolveGitHubUrl } from "./github-mirror.ts";
 
 const TOOLS_DIR = getBinDir();
@@ -89,6 +89,7 @@ export function getToolPath(tool: "fd" | "rg"): string | null {
 	if (!config) return null;
 
 	// Check if tool is available as embedded binary (Bun compiled binary)
+	configureEmbeddedHelperCacheRoot(join(getConfigRootDir(), "cache"));
 	const embeddedPath = getEmbeddedToolPath(tool);
 	if (embeddedPath && existsSync(embeddedPath)) {
 		return embeddedPath;

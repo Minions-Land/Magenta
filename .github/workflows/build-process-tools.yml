@@ -7,6 +7,9 @@ on:
       - 'HarnessComponentProtocol/_magenta/process-tools/**'
       - '.github/workflows/build-process-tools.yml'
 
+permissions:
+  contents: read
+
 jobs:
   build:
     strategy:
@@ -29,6 +32,8 @@ jobs:
     
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
@@ -105,6 +110,8 @@ jobs:
     
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
 
       - name: Download all artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8

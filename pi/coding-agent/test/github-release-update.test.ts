@@ -1,14 +1,16 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { chmod, copyFile, lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, copyFile, lstat, mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { gzipSync } from "node:zlib";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { _clearMirrorCache } from "../src/utils/github-mirror.ts";
 import {
 	assertPackagedProcessToolsStart,
 	assertStagedBinaryStartup,
+	buildVerificationEnvironment,
 	checkForUpdate,
 	consumePreviousWindowsUpdateError,
 	downloadReleaseAsset,
@@ -23,12 +25,15 @@ import {
 import {
 	applyResourceUpdateTransaction,
 	applyUnixUpdateTransaction,
+	bindWindowsReleaseUpdateHelper,
 	buildWindowsUpdateScript,
 	currentReleaseResourcesAreValid,
 	getInstalledRequiredResourcePaths,
 	inspectReleaseResourceArchive,
 	NODE_UPDATE_TRANSACTION_FILE_SYSTEM,
+	parseReleaseArchive,
 	parseReleaseChecksums,
+	prepareWindowsReleaseUpdateTransaction,
 	quotePowerShellLiteral,
 	RELEASE_CHECKSUMS_ASSET_NAME,
 	RELEASE_RESOURCE_MARKER_NAME,
@@ -38,6 +43,7 @@ import {
 	RESOURCE_DIRECTORY_NAMES,
 	RESOURCE_FILE_NAMES,
 	type ReleaseArchiveEntry,
+	readInstalledReleaseOwnership,
 	recoverInterruptedReleaseUpdateTransaction,
 	resolveReleaseAssetPlan,
 	shouldUseMirrorForReleaseAsset,
@@ -45,6 +51,7 @@ import {
 	validateReleaseArchiveEntries,
 	verifyReleaseArtifactChecksums,
 	verifyReleaseAssetDigest,
+	writeInstalledReleaseOwnership,
 } from "../src/utils/github-release-update-support.ts";
 
 const RESOURCE_UPDATE_OPERATION_ID = "a".repeat(32);
@@ -377,6 +384,21 @@ describe("release resource archive validation", () => {
 		await expect(validateExtractedReleaseResources(resourceRoot, topLevelNames)).resolves.toBeUndefined();
 	});
 
+	it("rejects gzip expansion beyond the configured archive safety limit", () => {
+		const compressed = gzipSync(Buffer.alloc(4096));
+		expect(() => parseReleaseArchive(compressed, { maxExpandedBytes: 1024 })).toThrow(/expanded size limit/i);
+	});
+
+	it("enforces configured tar record-count and per-entry limits", async () => {
+		const root = await makeTemporaryDirectory();
+		const archivePath = await createValidResourceArchive(root);
+		const compressed = await readFile(archivePath);
+		expect(() => parseReleaseArchive(compressed, { maxEntryCount: 0 })).toThrow(/entry-count limit is invalid/i);
+		expect(() => parseReleaseArchive(compressed, { maxEntryCount: 1 })).toThrow(/more than 1 tar entries/i);
+		expect(() => parseReleaseArchive(compressed, { maxEntryBytes: 0 })).toThrow(/per-entry byte limit is invalid/i);
+		expect(() => parseReleaseArchive(compressed, { maxEntryBytes: 1 })).toThrow(/per-entry size limit/i);
+	});
+
 	it("adds a version marker when repairing resources from a legacy archive", async () => {
 		const root = await makeTemporaryDirectory();
 		await makeValidResourceTree(root, "0.0.11");
@@ -385,7 +407,10 @@ describe("release resource archive validation", () => {
 		const topLevelNames = validateReleaseArchiveEntries(entries);
 
 		await validateExtractedReleaseResources(root, topLevelNames, "0.0.11");
-		expect(await readFile(join(root, RELEASE_RESOURCE_MARKER_NAME), "utf8")).toBe('{"version":"0.0.11"}\n');
+		expect(await readInstalledReleaseOwnership(root)).toMatchObject({
+			version: "0.0.11",
+			resourceNames: expect.arrayContaining(["_magenta", "runtime", RELEASE_RESOURCE_MARKER_NAME]),
+		});
 	});
 });
 
@@ -423,9 +448,10 @@ describe("startup resource bootstrap", () => {
 			}),
 		).resolves.toBe(true);
 
-		expect(await readFile(join(installDirectory, RELEASE_RESOURCE_MARKER_NAME), "utf8")).toBe(
-			'{"version":"0.0.12"}\n',
-		);
+		expect(await readInstalledReleaseOwnership(installDirectory)).toMatchObject({
+			version: "0.0.12",
+			resourceNames: expect.arrayContaining(["_magenta", "runtime", RELEASE_RESOURCE_MARKER_NAME]),
+		});
 		expect(await readFile(join(installDirectory, "theme", "dark.json"), "utf8")).toBe("{}\n");
 		expect(await readFile(join(installDirectory, "other-program"), "utf8")).toBe("do not touch");
 		expect(fetchMock).toHaveBeenCalledTimes(2);
@@ -439,6 +465,45 @@ describe("startup resource bootstrap", () => {
 			}),
 		).resolves.toBe(false);
 		expect(fetchMock).toHaveBeenCalledTimes(2);
+	});
+
+	it("does not hold the installation lock while a resource download is slow", async () => {
+		const root = await makeTemporaryDirectory();
+		const installDirectory = join(root, "install");
+		await mkdir(installDirectory, { recursive: true });
+		const archivePath = await createValidResourceArchive(join(root, "release"), "0.0.12");
+		const archiveBytes = await readFile(archivePath);
+		const archiveChecksum = createHash("sha256").update(archiveBytes).digest("hex");
+		const assetBaseUrl = "https://example.test/releases/download/v0.0.12";
+		let releaseChecksums!: () => void;
+		const checksumsReady = new Promise<void>((resolve) => {
+			releaseChecksums = resolve;
+		});
+		const fetchMock = vi.fn(async (input: string | URL | Request) => {
+			const url = String(input);
+			if (url === `${assetBaseUrl}/${RELEASE_CHECKSUMS_ASSET_NAME}`) {
+				await checksumsReady;
+				return new Response(`${archiveChecksum}  ${RELEASE_RESOURCES_ASSET_NAME}\n`);
+			}
+			if (url === `${assetBaseUrl}/${RELEASE_RESOURCES_ASSET_NAME}`) return new Response(archiveBytes);
+			return new Response("not found", { status: 404 });
+		});
+		vi.stubGlobal("fetch", fetchMock);
+
+		const heldLock = await lockInstallMutation(installDirectory, { retries: 0 });
+		const pendingRepair = ensureCurrentReleaseResources({
+			force: true,
+			installDirectory,
+			version: "0.0.12",
+			assetBaseUrl,
+		});
+		await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+		releaseChecksums();
+		await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+		await heldLock();
+
+		await expect(pendingRepair).resolves.toBe(true);
+		expect(existsSync(join(installDirectory, ".magenta-install-update.lock"))).toBe(false);
 	});
 
 	it("does not continue with mismatched resources in offline mode", async () => {
@@ -509,6 +574,342 @@ describe("startup resource bootstrap", () => {
 		);
 		expect(await readFile(join(installDirectory, "other-program"), "utf8")).toBe("do not touch");
 	});
+
+	it("removes only retired marker-owned resources after a verified resource repair", async () => {
+		const installDirectory = await makeTemporaryDirectory();
+		const stagingDirectory = join(installDirectory, `.magenta-resource-staging-${RESOURCE_UPDATE_OPERATION_ID}`);
+		const backupDirectory = join(installDirectory, `.magenta-resource-backup-${RESOURCE_UPDATE_OPERATION_ID}`);
+		await writeText(join(installDirectory, "theme"), "old theme");
+		await writeText(join(installDirectory, "retired.wasm"), "old wasm");
+		await writeText(join(installDirectory, "operator-note"), "preserve me");
+		await writeInstalledReleaseOwnership(installDirectory, "0.0.11", ["theme", "retired.wasm"]);
+		await writeText(join(stagingDirectory, "theme"), "new theme");
+		await writeInstalledReleaseOwnership(stagingDirectory, "0.0.12", ["theme"]);
+
+		await expect(
+			applyResourceUpdateTransaction({
+				installDirectory,
+				operationId: RESOURCE_UPDATE_OPERATION_ID,
+				stagingDirectory,
+				backupDirectory,
+				resourceNames: ["theme", RELEASE_RESOURCE_MARKER_NAME],
+				verifyInstalled: () => {
+					expect(existsSync(join(installDirectory, "retired.wasm"))).toBe(false);
+				},
+			}),
+		).resolves.toEqual([]);
+
+		expect(await readFile(join(installDirectory, "theme"), "utf8")).toBe("new theme");
+		expect(existsSync(join(installDirectory, "retired.wasm"))).toBe(false);
+		expect(await readFile(join(installDirectory, "operator-note"), "utf8")).toBe("preserve me");
+		expect((await readInstalledReleaseOwnership(installDirectory)).resourceNames).not.toContain("retired.wasm");
+	});
+
+	it("restores a retired resource after verification failure and interrupted recovery", async () => {
+		for (const [operationId, interrupt] of [
+			["7".repeat(32), false],
+			["8".repeat(32), true],
+		] as const) {
+			const installDirectory = await makeTemporaryDirectory();
+			const stagingDirectory = join(installDirectory, `.magenta-resource-staging-${operationId}`);
+			const backupDirectory = join(installDirectory, `.magenta-resource-backup-${operationId}`);
+			await writeText(join(installDirectory, "theme"), "old theme");
+			await writeText(join(installDirectory, "retired.wasm"), "old wasm");
+			await writeInstalledReleaseOwnership(installDirectory, "0.0.11", ["theme", "retired.wasm"]);
+			await writeText(join(stagingDirectory, "theme"), "new theme");
+			await writeInstalledReleaseOwnership(stagingDirectory, "0.0.12", ["theme"]);
+
+			await expect(
+				applyResourceUpdateTransaction({
+					installDirectory,
+					operationId,
+					stagingDirectory,
+					backupDirectory,
+					resourceNames: ["theme", RELEASE_RESOURCE_MARKER_NAME],
+					verifyInstalled: () => {
+						if (!interrupt) throw new Error("verification failed");
+					},
+					testFaultInjector(point) {
+						if (interrupt && point === "resource-backup:retired.wasm") throw new Error("simulated stop");
+					},
+				}),
+			).rejects.toThrow(interrupt ? /simulated stop/i : /previous resources were restored/i);
+			if (interrupt) {
+				await expect(recoverInterruptedReleaseUpdateTransaction(installDirectory)).resolves.toBe(true);
+			}
+
+			expect(await readFile(join(installDirectory, "theme"), "utf8")).toBe("old theme");
+			expect(await readFile(join(installDirectory, "retired.wasm"), "utf8")).toBe("old wasm");
+			expect((await readInstalledReleaseOwnership(installDirectory)).resourceNames).toContain("retired.wasm");
+			expect(existsSync(join(installDirectory, RELEASE_UPDATE_JOURNAL_NAME))).toBe(false);
+		}
+	});
+
+	it("rejects remove-only paths that are not managed release resource names", async () => {
+		const installDirectory = await makeTemporaryDirectory();
+		const operationId = "9".repeat(32);
+		const stagingDirectory = join(installDirectory, `.magenta-resource-staging-${operationId}`);
+		const backupDirectory = join(installDirectory, `.magenta-resource-backup-${operationId}`);
+		await writeText(join(installDirectory, "operator-note"), "preserve me");
+		await writeText(join(stagingDirectory, "theme"), "new theme");
+
+		await expect(
+			applyResourceUpdateTransaction({
+				installDirectory,
+				operationId,
+				stagingDirectory,
+				backupDirectory,
+				resourceNames: ["theme"],
+				removeResourceNames: ["operator-note"],
+				verifyInstalled: () => undefined,
+			}),
+		).rejects.toThrow(/unsafe or overlapping remove-only/i);
+		expect(await readFile(join(installDirectory, "operator-note"), "utf8")).toBe("preserve me");
+	});
+
+	it("fails closed when an original resource is replaced after prepare", async () => {
+		const root = await makeTemporaryDirectory();
+		const installDirectory = join(root, "install");
+		const operationId = "d".repeat(32);
+		const stagingDirectory = join(installDirectory, `.magenta-resource-staging-${operationId}`);
+		const backupDirectory = join(installDirectory, `.magenta-resource-backup-${operationId}`);
+		const originalPath = join(installDirectory, "theme");
+		await writeText(originalPath, "original theme");
+		await writeText(join(stagingDirectory, "theme"), "new theme");
+
+		await expect(
+			applyResourceUpdateTransaction({
+				installDirectory,
+				operationId,
+				stagingDirectory,
+				backupDirectory,
+				resourceNames: ["theme"],
+				verifyInstalled: () => undefined,
+				fileSystem: {
+					...NODE_UPDATE_TRANSACTION_FILE_SYSTEM,
+					async makeDirectory(path) {
+						await rm(originalPath, { force: false });
+						await writeFile(originalPath, "replacement theme", "utf8");
+						await NODE_UPDATE_TRANSACTION_FILE_SYSTEM.makeDirectory(path);
+					},
+				},
+			}),
+		).rejects.toThrow(/crash-safe rollback was incomplete|path identity changed/i);
+
+		// The replacement is never accepted as the old backup.  Recovery artifacts
+		// remain for an operator because automatic rollback cannot prove ownership.
+		expect(await readFile(originalPath, "utf8")).toBe("replacement theme");
+		expect(existsSync(join(installDirectory, RELEASE_UPDATE_JOURNAL_NAME))).toBe(true);
+		expect(existsSync(stagingDirectory)).toBe(true);
+		expect(existsSync(backupDirectory)).toBe(true);
+	});
+
+	it("preserves a replacement that appears at an activated resource path before recovery", async () => {
+		const root = await makeTemporaryDirectory();
+		const installDirectory = join(root, "install");
+		const operationId = "c".repeat(32);
+		const stagingDirectory = join(installDirectory, `.magenta-resource-staging-${operationId}`);
+		const backupDirectory = join(installDirectory, `.magenta-resource-backup-${operationId}`);
+		const installedPath = join(installDirectory, "theme");
+		await writeText(installedPath, "old theme");
+		await writeText(join(stagingDirectory, "theme"), "new theme");
+
+		await expect(
+			applyResourceUpdateTransaction({
+				installDirectory,
+				operationId,
+				stagingDirectory,
+				backupDirectory,
+				resourceNames: ["theme"],
+				verifyInstalled: () => undefined,
+				testFaultInjector(point) {
+					if (point === "resource-install:theme") throw new Error("simulated stop");
+				},
+			}),
+		).rejects.toThrow(/simulated stop/i);
+
+		await rm(installedPath, { recursive: true, force: false });
+		await writeText(installedPath, "operator replacement");
+		await expect(recoverInterruptedReleaseUpdateTransaction(installDirectory)).rejects.toThrow(
+			/path identity changed/i,
+		);
+		expect(await readFile(installedPath, "utf8")).toBe("operator replacement");
+		expect(await readFile(join(backupDirectory, "theme"), "utf8")).toBe("old theme");
+		expect(existsSync(join(installDirectory, RELEASE_UPDATE_JOURNAL_NAME))).toBe(true);
+	});
+
+	it("restores a resource replacement introduced after rollback validation", async () => {
+		const root = await makeTemporaryDirectory();
+		const installDirectory = join(root, "install");
+		const operationId = "8".repeat(32);
+		const stagingDirectory = join(installDirectory, `.magenta-resource-staging-${operationId}`);
+		const backupDirectory = join(installDirectory, `.magenta-resource-backup-${operationId}`);
+		const installedPath = join(installDirectory, "theme");
+		await writeText(installedPath, "old theme");
+		await writeText(join(stagingDirectory, "theme"), "new theme");
+
+		await expect(
+			applyResourceUpdateTransaction({
+				installDirectory,
+				operationId,
+				stagingDirectory,
+				backupDirectory,
+				resourceNames: ["theme"],
+				verifyInstalled: () => undefined,
+				testFaultInjector(point) {
+					if (point === "resource-install:theme") throw new Error("simulated stop");
+				},
+			}),
+		).rejects.toThrow(/simulated stop/i);
+
+		let replaced = false;
+		await expect(
+			recoverInterruptedReleaseUpdateTransaction(installDirectory, {
+				async testBeforeRollbackMutation(path) {
+					if (path !== installedPath || replaced) return;
+					replaced = true;
+					await rm(installedPath, { recursive: true, force: false });
+					await writeText(installedPath, "operator replacement in rollback window");
+				},
+			}),
+		).rejects.toThrow(/validation-to-mutation window/i);
+		expect(await readFile(installedPath, "utf8")).toBe("operator replacement in rollback window");
+		expect(await readFile(join(backupDirectory, "theme"), "utf8")).toBe("old theme");
+		expect(existsSync(join(installDirectory, RELEASE_UPDATE_JOURNAL_NAME))).toBe(true);
+	});
+
+	it("re-enters a directory restore after publication crashes before cleanup", async () => {
+		const root = await makeTemporaryDirectory();
+		const installDirectory = join(root, "install");
+		const operationId = "1".repeat(32);
+		const stagingDirectory = join(installDirectory, `.magenta-resource-staging-${operationId}`);
+		const backupDirectory = join(installDirectory, `.magenta-resource-backup-${operationId}`);
+		const installedPath = join(installDirectory, "theme");
+		const backupPath = join(backupDirectory, "theme");
+		await writeText(join(installedPath, "dark.json"), "old theme\n");
+		await writeText(join(stagingDirectory, "theme", "dark.json"), "new theme\n");
+
+		await expect(
+			applyResourceUpdateTransaction({
+				installDirectory,
+				operationId,
+				stagingDirectory,
+				backupDirectory,
+				resourceNames: ["theme"],
+				verifyInstalled: () => undefined,
+				testFaultInjector(point) {
+					if (point === "resource-install:theme") throw new Error("simulated stop");
+				},
+			}),
+		).rejects.toThrow(/simulated stop/i);
+
+		let crashed = false;
+		await expect(
+			recoverInterruptedReleaseUpdateTransaction(installDirectory, {
+				async testAfterRollbackPublication(_sourcePath, destinationPath) {
+					if (!crashed && destinationPath === installedPath) {
+						crashed = true;
+						throw new Error("simulated publication crash");
+					}
+				},
+			}),
+		).rejects.toThrow(/simulated publication crash/i);
+		expect(await readFile(join(installedPath, "dark.json"), "utf8")).toBe("old theme\n");
+		expect(await readFile(join(backupPath, "dark.json"), "utf8")).toBe("old theme\n");
+		expect((await lstat(backupPath)).ino).not.toBe((await lstat(installedPath)).ino);
+		expect(existsSync(join(installDirectory, RELEASE_UPDATE_JOURNAL_NAME))).toBe(true);
+
+		await expect(recoverInterruptedReleaseUpdateTransaction(installDirectory)).resolves.toBe(true);
+		expect(existsSync(join(installDirectory, RELEASE_UPDATE_JOURNAL_NAME))).toBe(false);
+		expect(existsSync(backupDirectory)).toBe(false);
+		expect(await readFile(join(installedPath, "dark.json"), "utf8")).toBe("old theme\n");
+	});
+
+	it("re-enters a file restore after terminal journal publication crashes", async () => {
+		const root = await makeTemporaryDirectory();
+		const installDirectory = join(root, "install");
+		const operationId = "2".repeat(32);
+		const stagingDirectory = join(installDirectory, `.magenta-resource-staging-${operationId}`);
+		const backupDirectory = join(installDirectory, `.magenta-resource-backup-${operationId}`);
+		const installedPath = join(installDirectory, "theme");
+		const backupPath = join(backupDirectory, "theme");
+		await writeText(installedPath, "old theme\n");
+		await writeText(join(stagingDirectory, "theme"), "new theme\n");
+
+		await expect(
+			applyResourceUpdateTransaction({
+				installDirectory,
+				operationId,
+				stagingDirectory,
+				backupDirectory,
+				resourceNames: ["theme"],
+				verifyInstalled: () => undefined,
+				testFaultInjector(point) {
+					if (point === "resource-install:theme") throw new Error("simulated stop");
+				},
+			}),
+		).rejects.toThrow(/simulated stop/i);
+
+		await expect(
+			recoverInterruptedReleaseUpdateTransaction(installDirectory, {
+				async testBeforeRollbackTerminalJournal() {
+					throw new Error("simulated terminal-journal crash");
+				},
+			}),
+		).rejects.toThrow(/simulated terminal-journal crash/i);
+		expect(await readFile(installedPath, "utf8")).toBe("old theme\n");
+		expect(await readFile(backupPath, "utf8")).toBe("old theme\n");
+		expect(existsSync(join(installDirectory, RELEASE_UPDATE_JOURNAL_NAME))).toBe(true);
+
+		await expect(recoverInterruptedReleaseUpdateTransaction(installDirectory)).resolves.toBe(true);
+		expect(existsSync(join(installDirectory, RELEASE_UPDATE_JOURNAL_NAME))).toBe(false);
+		expect(existsSync(backupDirectory)).toBe(false);
+		expect(await readFile(installedPath, "utf8")).toBe("old theme\n");
+	});
+
+	it("re-enters a claimed rollback object after a crash before identity verification", async () => {
+		const root = await makeTemporaryDirectory();
+		const installDirectory = join(root, "install");
+		const operationId = "3".repeat(32);
+		const stagingDirectory = join(installDirectory, `.magenta-resource-staging-${operationId}`);
+		const backupDirectory = join(installDirectory, `.magenta-resource-backup-${operationId}`);
+		const installedPath = join(installDirectory, "theme");
+		await writeText(installedPath, "old theme\n");
+		await writeText(join(stagingDirectory, "theme"), "new theme\n");
+
+		await expect(
+			applyResourceUpdateTransaction({
+				installDirectory,
+				operationId,
+				stagingDirectory,
+				backupDirectory,
+				resourceNames: ["theme"],
+				verifyInstalled: () => undefined,
+				testFaultInjector(point) {
+					if (point === "resource-install:theme") throw new Error("simulated stop");
+				},
+			}),
+		).rejects.toThrow(/simulated stop/i);
+
+		await expect(
+			recoverInterruptedReleaseUpdateTransaction(installDirectory, {
+				async testAfterRollbackClaim() {
+					throw new Error("simulated claim crash");
+				},
+			}),
+		).rejects.toThrow(/simulated claim crash/i);
+		expect(existsSync(installedPath)).toBe(false);
+		const quarantineNames = (await readdir(backupDirectory)).filter((name) =>
+			name.startsWith(".magenta-rollback-quarantine-"),
+		);
+		expect(quarantineNames).toHaveLength(1);
+		expect(await readFile(join(backupDirectory, quarantineNames[0] as string), "utf8")).toBe("new theme\n");
+		expect(existsSync(join(installDirectory, RELEASE_UPDATE_JOURNAL_NAME))).toBe(true);
+
+		await expect(recoverInterruptedReleaseUpdateTransaction(installDirectory)).resolves.toBe(true);
+		expect(await readFile(installedPath, "utf8")).toBe("old theme\n");
+		expect(existsSync(backupDirectory)).toBe(false);
+	});
 });
 
 describe("Unix update transaction", () => {
@@ -520,6 +921,21 @@ describe("Unix update transaction", () => {
 		await expect(shouldSkipConcurrentUpdateTransaction(installDirectory, "0.0.12", "0.0.12")).resolves.toBe(true);
 		await rm(join(installDirectory, "photon_rs_bg.wasm"));
 		await expect(shouldSkipConcurrentUpdateTransaction(installDirectory, "0.0.12", "0.0.12")).resolves.toBe(false);
+	});
+
+	it("does not skip a same-version target whose marker still owns a retired resource", async () => {
+		const root = await makeTemporaryDirectory();
+		const installDirectory = join(root, "bin");
+		await makeValidResourceTree(installDirectory, "0.0.12");
+		await writeText(join(installDirectory, "retired.wasm"), "retired");
+		await writeInstalledReleaseOwnership(installDirectory, "0.0.12", ["theme", "retired.wasm"]);
+
+		await expect(
+			shouldSkipConcurrentUpdateTransaction(installDirectory, "0.0.12", "0.0.12", [
+				"theme",
+				RELEASE_RESOURCE_MARKER_NAME,
+			]),
+		).resolves.toBe(false);
 	});
 
 	it("never lets an older concurrent transaction replace a newer incomplete release", async () => {
@@ -587,6 +1003,70 @@ describe("Unix update transaction", () => {
 		expect(await readFile(join(installDirectory, "other-program"), "utf8")).toBe("do not touch");
 		expect(existsSync(stagingDirectory)).toBe(false);
 		expect(existsSync(backupDirectory)).toBe(false);
+	});
+
+	it("retire marker-owned resources during a verified Unix binary update", async () => {
+		const root = await makeTemporaryDirectory();
+		const installDirectory = join(root, "bin");
+		const stagingDirectory = join(installDirectory, `.magenta-update-staging-${BINARY_UPDATE_OPERATION_ID}`);
+		const backupDirectory = join(installDirectory, `.magenta-update-backup-${BINARY_UPDATE_OPERATION_ID}`);
+		const currentBinary = join(installDirectory, "magenta");
+		await writeText(currentBinary, "old binary");
+		await writeText(join(installDirectory, "theme"), "old theme");
+		await writeText(join(installDirectory, "retired.wasm"), "old wasm");
+		await writeInstalledReleaseOwnership(installDirectory, "0.0.11", ["theme", "retired.wasm"]);
+		await writeText(join(stagingDirectory, "magenta"), "new binary");
+		await writeText(join(stagingDirectory, "theme"), "new theme");
+		await writeInstalledReleaseOwnership(stagingDirectory, "0.0.12", ["theme"]);
+
+		await expect(
+			applyUnixUpdateTransaction({
+				currentBinary,
+				operationId: BINARY_UPDATE_OPERATION_ID,
+				stagingDirectory,
+				backupDirectory,
+				resourceNames: ["theme", RELEASE_RESOURCE_MARKER_NAME],
+				verifyInstalled: () => undefined,
+			}),
+		).resolves.toEqual([]);
+
+		expect(await readFile(currentBinary, "utf8")).toBe("new binary");
+		expect(await readFile(join(installDirectory, "theme"), "utf8")).toBe("new theme");
+		expect(existsSync(join(installDirectory, "retired.wasm"))).toBe(false);
+	});
+
+	it("restores retired Unix resources after an interrupted backup", async () => {
+		const root = await makeTemporaryDirectory();
+		const installDirectory = join(root, "bin");
+		const operationId = "a".repeat(32);
+		const stagingDirectory = join(installDirectory, `.magenta-update-staging-${operationId}`);
+		const backupDirectory = join(installDirectory, `.magenta-update-backup-${operationId}`);
+		const currentBinary = join(installDirectory, "magenta");
+		await writeText(currentBinary, "old binary");
+		await writeText(join(installDirectory, "theme"), "old theme");
+		await writeText(join(installDirectory, "retired.wasm"), "old wasm");
+		await writeInstalledReleaseOwnership(installDirectory, "0.0.11", ["theme", "retired.wasm"]);
+		await writeText(join(stagingDirectory, "magenta"), "new binary");
+		await writeText(join(stagingDirectory, "theme"), "new theme");
+		await writeInstalledReleaseOwnership(stagingDirectory, "0.0.12", ["theme"]);
+
+		await expect(
+			applyUnixUpdateTransaction({
+				currentBinary,
+				operationId,
+				stagingDirectory,
+				backupDirectory,
+				resourceNames: ["theme", RELEASE_RESOURCE_MARKER_NAME],
+				verifyInstalled: () => undefined,
+				testFaultInjector(point) {
+					if (point === "resource-backup:retired.wasm") throw new Error("simulated stop");
+				},
+			}),
+		).rejects.toThrow(/simulated stop/i);
+		await expect(recoverInterruptedReleaseUpdateTransaction(installDirectory)).resolves.toBe(true);
+		expect(await readFile(currentBinary, "utf8")).toBe("old binary");
+		expect(await readFile(join(installDirectory, "retired.wasm"), "utf8")).toBe("old wasm");
+		expect((await readInstalledReleaseOwnership(installDirectory)).resourceNames).toContain("retired.wasm");
 	});
 
 	it("restores every old item when a resource rename fails", async () => {
@@ -672,6 +1152,222 @@ describe("Unix update transaction", () => {
 			),
 		).toBe("old helper");
 		expect(existsSync(join(installDirectory, "package.json"))).toBe(false);
+	});
+
+	it("installs a fresh binary and resources without requiring a placeholder executable", async () => {
+		const root = await makeTemporaryDirectory();
+		const installDirectory = join(root, "bin");
+		const stagingDirectory = join(installDirectory, `.magenta-update-staging-${BINARY_UPDATE_OPERATION_ID}`);
+		const backupDirectory = join(installDirectory, `.magenta-update-backup-${BINARY_UPDATE_OPERATION_ID}`);
+		const currentBinary = join(installDirectory, "magenta");
+		await writeText(join(installDirectory, "unrelated"), "keep me");
+		await writeText(join(stagingDirectory, "magenta"), "new binary");
+		await writeText(join(stagingDirectory, "theme"), "new theme");
+
+		await expect(
+			applyUnixUpdateTransaction({
+				currentBinary,
+				originalBinaryPresent: false,
+				operationId: BINARY_UPDATE_OPERATION_ID,
+				stagingDirectory,
+				backupDirectory,
+				resourceNames: ["theme"],
+				verifyInstalled: () => undefined,
+			}),
+		).resolves.toEqual([]);
+
+		expect(await readFile(currentBinary, "utf8")).toBe("new binary");
+		expect(await readFile(join(installDirectory, "theme"), "utf8")).toBe("new theme");
+		expect(await readFile(join(installDirectory, "unrelated"), "utf8")).toBe("keep me");
+		expect(existsSync(backupDirectory)).toBe(false);
+	});
+
+	it("fails closed when the original binary is replaced after prepare", async () => {
+		const root = await makeTemporaryDirectory();
+		const installDirectory = join(root, "bin");
+		const operationId = "e".repeat(32);
+		const stagingDirectory = join(installDirectory, `.magenta-update-staging-${operationId}`);
+		const backupDirectory = join(installDirectory, `.magenta-update-backup-${operationId}`);
+		const currentBinary = join(installDirectory, "magenta");
+		await writeText(currentBinary, "old binary");
+		await writeText(join(stagingDirectory, "magenta"), "new binary");
+		await writeText(join(stagingDirectory, "theme"), "new theme");
+
+		await expect(
+			applyUnixUpdateTransaction({
+				currentBinary,
+				operationId,
+				stagingDirectory,
+				backupDirectory,
+				resourceNames: ["theme"],
+				verifyInstalled: () => undefined,
+				fileSystem: {
+					...NODE_UPDATE_TRANSACTION_FILE_SYSTEM,
+					async makeDirectory(path) {
+						await rm(currentBinary, { force: false });
+						await writeFile(currentBinary, "replacement binary", "utf8");
+						await NODE_UPDATE_TRANSACTION_FILE_SYSTEM.makeDirectory(path);
+					},
+				},
+			}),
+		).rejects.toThrow(/crash-safe rollback was incomplete|path identity changed/i);
+
+		expect(await readFile(currentBinary, "utf8")).toBe("replacement binary");
+		expect(existsSync(join(installDirectory, RELEASE_UPDATE_JOURNAL_NAME))).toBe(true);
+		expect(existsSync(stagingDirectory)).toBe(true);
+		expect(existsSync(backupDirectory)).toBe(true);
+	});
+
+	it("preserves a replacement that appears at the activated binary path before recovery", async () => {
+		const root = await makeTemporaryDirectory();
+		const installDirectory = join(root, "bin");
+		const operationId = "b".repeat(32);
+		const stagingDirectory = join(installDirectory, `.magenta-update-staging-${operationId}`);
+		const backupDirectory = join(installDirectory, `.magenta-update-backup-${operationId}`);
+		const currentBinary = join(installDirectory, "magenta");
+		await writeText(currentBinary, "old binary");
+		await writeText(join(stagingDirectory, "magenta"), "new binary");
+		await writeText(join(stagingDirectory, "theme"), "new theme");
+
+		await expect(
+			applyUnixUpdateTransaction({
+				currentBinary,
+				operationId,
+				stagingDirectory,
+				backupDirectory,
+				resourceNames: ["theme"],
+				verifyInstalled: () => undefined,
+				testFaultInjector(point) {
+					if (point === "binary-install:complete") throw new Error("simulated stop");
+				},
+			}),
+		).rejects.toThrow(/simulated stop/i);
+
+		await rm(currentBinary, { force: false });
+		await writeText(currentBinary, "operator binary");
+		await expect(recoverInterruptedReleaseUpdateTransaction(installDirectory)).rejects.toThrow(
+			/path identity changed|installed binary changed/i,
+		);
+		expect(await readFile(currentBinary, "utf8")).toBe("operator binary");
+		expect(await readFile(join(backupDirectory, "magenta"), "utf8")).toBe("old binary");
+		expect(existsSync(join(installDirectory, RELEASE_UPDATE_JOURNAL_NAME))).toBe(true);
+	});
+
+	it("restores a binary replacement introduced after rollback validation", async () => {
+		const root = await makeTemporaryDirectory();
+		const installDirectory = join(root, "bin");
+		const operationId = "6".repeat(32);
+		const stagingDirectory = join(installDirectory, `.magenta-update-staging-${operationId}`);
+		const backupDirectory = join(installDirectory, `.magenta-update-backup-${operationId}`);
+		const currentBinary = join(installDirectory, "magenta");
+		await writeText(currentBinary, "old binary");
+		await writeText(join(stagingDirectory, "magenta"), "new binary");
+		await writeText(join(stagingDirectory, "theme"), "new theme");
+
+		await expect(
+			applyUnixUpdateTransaction({
+				currentBinary,
+				operationId,
+				stagingDirectory,
+				backupDirectory,
+				resourceNames: ["theme"],
+				verifyInstalled: () => undefined,
+				testFaultInjector(point) {
+					if (point === "binary-install:complete") throw new Error("simulated stop");
+				},
+			}),
+		).rejects.toThrow(/simulated stop/i);
+
+		let replaced = false;
+		await expect(
+			recoverInterruptedReleaseUpdateTransaction(installDirectory, {
+				async testBeforeRollbackMutation(path) {
+					if (path !== currentBinary || replaced) return;
+					replaced = true;
+					await rm(currentBinary, { force: false });
+					await writeText(currentBinary, "operator binary in rollback window");
+				},
+			}),
+		).rejects.toThrow(/validation-to-mutation window/i);
+		expect(await readFile(currentBinary, "utf8")).toBe("operator binary in rollback window");
+		expect(await readFile(join(backupDirectory, "magenta"), "utf8")).toBe("old binary");
+		expect(existsSync(join(installDirectory, RELEASE_UPDATE_JOURNAL_NAME))).toBe(true);
+	});
+
+	for (const [index, faultPoint] of [
+		"journal:prepared",
+		"resource-install:theme",
+		"binary-backup:complete",
+		"binary-install:complete",
+		"verification:complete",
+		"journal:committed",
+	].entries()) {
+		it(`recovers a fresh install idempotently after ${faultPoint}`, async () => {
+			const root = await makeTemporaryDirectory();
+			const installDirectory = join(root, "bin");
+			const operationId = (index + 9).toString(16).padStart(32, "0");
+			const stagingDirectory = join(installDirectory, `.magenta-update-staging-${operationId}`);
+			const backupDirectory = join(installDirectory, `.magenta-update-backup-${operationId}`);
+			const currentBinary = join(installDirectory, "magenta");
+			await writeText(join(installDirectory, "unrelated"), "keep me");
+			await writeText(join(stagingDirectory, "magenta"), "new binary");
+			await writeText(join(stagingDirectory, "theme"), "new theme");
+
+			await expect(
+				applyUnixUpdateTransaction({
+					currentBinary,
+					originalBinaryPresent: false,
+					operationId,
+					stagingDirectory,
+					backupDirectory,
+					resourceNames: ["theme"],
+					verifyInstalled: () => undefined,
+					testFaultInjector(point) {
+						if (point === faultPoint) throw new Error(`stop at ${point}`);
+					},
+				}),
+			).rejects.toThrow(/stop at/);
+
+			await expect(recoverInterruptedReleaseUpdateTransaction(installDirectory)).resolves.toBe(true);
+			await expect(recoverInterruptedReleaseUpdateTransaction(installDirectory)).resolves.toBe(false);
+			const committed = faultPoint === "journal:committed";
+			expect(existsSync(currentBinary)).toBe(committed);
+			expect(existsSync(join(installDirectory, "theme"))).toBe(committed);
+			expect(await readFile(join(installDirectory, "unrelated"), "utf8")).toBe("keep me");
+			expect(existsSync(stagingDirectory)).toBe(false);
+			expect(existsSync(backupDirectory)).toBe(false);
+		});
+	}
+
+	it("recovers a version-one update journal written by an older binary", async () => {
+		const root = await makeTemporaryDirectory();
+		const installDirectory = join(root, "bin");
+		const operationId = "8".repeat(32);
+		const stagingDirectory = join(installDirectory, `.magenta-update-staging-${operationId}`);
+		const currentBinary = join(installDirectory, "magenta");
+		await writeText(currentBinary, "old binary");
+		await writeText(join(installDirectory, "theme"), "old theme");
+		await writeText(join(stagingDirectory, "magenta"), "new binary");
+		await writeText(join(stagingDirectory, "theme"), "new theme");
+		await writeFile(
+			join(installDirectory, RELEASE_UPDATE_JOURNAL_NAME),
+			`${JSON.stringify({
+				version: 1,
+				operationId,
+				kind: "unix",
+				binaryName: "magenta",
+				targetVersion: "0.0.12",
+				resourceNames: ["theme"],
+				originalResourceNames: ["theme"],
+				phase: "prepared",
+			})}\n`,
+			{ mode: 0o600 },
+		);
+
+		await expect(recoverInterruptedReleaseUpdateTransaction(installDirectory)).resolves.toBe(true);
+		expect(await readFile(currentBinary, "utf8")).toBe("old binary");
+		expect(await readFile(join(installDirectory, "theme"), "utf8")).toBe("old theme");
+		expect(existsSync(stagingDirectory)).toBe(false);
 	});
 
 	for (const [index, faultPoint] of [
@@ -825,6 +1521,207 @@ describe("Unix update transaction", () => {
 });
 
 describe("Windows update helper", () => {
+	async function writePreparedWindowsJournal(
+		installDirectory: string,
+		operationId: string,
+		helperPid: unknown,
+		version = 4,
+		helperStartTimeUtc: string | null = "2026-07-22T12:34:56.0000000Z",
+	): Promise<{ journalPath: string; stagingDirectory: string; currentBinary: string }> {
+		const stagingDirectory = join(installDirectory, `.magenta-update-staging-${operationId}`);
+		const currentBinary = join(installDirectory, "magenta.exe");
+		await writeText(currentBinary, "old binary");
+		await writeText(join(installDirectory, "theme"), "old theme");
+		await writeText(join(stagingDirectory, "magenta.exe"), "new binary");
+		await writeText(join(stagingDirectory, "theme"), "new theme");
+		const binarySha256 = createHash("sha256").update("new binary").digest("hex");
+		const journal = {
+			version,
+			operationId,
+			kind: "windows",
+			binaryName: "magenta.exe",
+			...(version >= 3 ? { helperPid } : {}),
+			...(version >= 4 ? { helperStartTimeUtc } : {}),
+			...(version === 1 ? {} : { binarySha256 }),
+			...(version === 1 ? {} : { originalBinaryPresent: true }),
+			targetVersion: "0.0.12",
+			...(version >= 5
+				? { installResourceNames: ["theme"], removeResourceNames: [] }
+				: { resourceNames: ["theme"] }),
+			originalResourceNames: ["theme"],
+			phase: "prepared",
+		};
+		const journalPath = join(installDirectory, RELEASE_UPDATE_JOURNAL_NAME);
+		await writeFile(journalPath, `${JSON.stringify(journal)}\n`, { mode: 0o600 });
+		return { journalPath, stagingDirectory, currentBinary };
+	}
+
+	it("fails closed while the journal-bound helper PID is live", async () => {
+		const installDirectory = await makeTemporaryDirectory();
+		const operationId = "e".repeat(32);
+		const fixture = await writePreparedWindowsJournal(installDirectory, operationId, 3210);
+
+		await expect(
+			recoverInterruptedReleaseUpdateTransaction(installDirectory, {
+				helperProcessIsAlive: (pid) => pid === 3210,
+				helperProcessStartTimeUtc: () => "2026-07-22T12:34:56.0000000Z",
+			}),
+		).rejects.toThrow(/live helper PID 3210/i);
+		expect(existsSync(fixture.journalPath)).toBe(true);
+		expect(existsSync(fixture.stagingDirectory)).toBe(true);
+		expect(await readFile(fixture.currentBinary, "utf8")).toBe("old binary");
+	});
+
+	it("recovers a prepared transaction after its bound helper PID is dead", async () => {
+		const installDirectory = await makeTemporaryDirectory();
+		const operationId = "f".repeat(32);
+		const fixture = await writePreparedWindowsJournal(installDirectory, operationId, 3211);
+
+		await expect(
+			recoverInterruptedReleaseUpdateTransaction(installDirectory, {
+				helperProcessIsAlive: () => false,
+			}),
+		).resolves.toBe(true);
+		expect(existsSync(fixture.journalPath)).toBe(false);
+		expect(existsSync(fixture.stagingDirectory)).toBe(false);
+		expect(await readFile(fixture.currentBinary, "utf8")).toBe("old binary");
+	});
+
+	it("recovers when a live PID has been reused by a different process identity", async () => {
+		const installDirectory = await makeTemporaryDirectory();
+		const operationId = "0".repeat(32);
+		const fixture = await writePreparedWindowsJournal(installDirectory, operationId, 3212);
+
+		await expect(
+			recoverInterruptedReleaseUpdateTransaction(installDirectory, {
+				helperProcessIsAlive: () => true,
+				helperProcessStartTimeUtc: () => "2026-07-22T12:34:57.0000000Z",
+			}),
+		).resolves.toBe(true);
+		expect(existsSync(fixture.journalPath)).toBe(false);
+	});
+
+	it("fails closed when a live helper creation time cannot be verified", async () => {
+		const installDirectory = await makeTemporaryDirectory();
+		const operationId = "6".repeat(32);
+		const fixture = await writePreparedWindowsJournal(installDirectory, operationId, 3216);
+
+		await expect(
+			recoverInterruptedReleaseUpdateTransaction(installDirectory, {
+				helperProcessIsAlive: () => true,
+				helperProcessStartTimeUtc: () => undefined,
+			}),
+		).rejects.toThrow(/creation time.*refusing recovery/i);
+		expect(existsSync(fixture.journalPath)).toBe(true);
+	});
+
+	it("binds the helper PID atomically to the prepared journal", async () => {
+		const installDirectory = await makeTemporaryDirectory();
+		const operationId = "1".repeat(32);
+		const fixture = await writePreparedWindowsJournal(installDirectory, operationId, null, 4, null);
+
+		await expect(
+			bindWindowsReleaseUpdateHelper({
+				installDirectory,
+				operationId,
+				helperPid: 4321,
+				helperStartTimeUtc: "2026-07-22T12:34:56.0000000Z",
+			}),
+		).resolves.toBeUndefined();
+		const bound = JSON.parse(await readFile(fixture.journalPath, "utf8")) as { helperPid: number };
+		expect(bound.helperPid).toBe(4321);
+		await expect(
+			bindWindowsReleaseUpdateHelper({
+				installDirectory,
+				operationId,
+				helperPid: 4322,
+				helperStartTimeUtc: "2026-07-22T12:34:56.0000000Z",
+			}),
+		).rejects.toThrow(/different helper PID/i);
+	});
+
+	it("persists install, remove-only, and original identity sets in a Windows v6 journal", async () => {
+		const installDirectory = await makeTemporaryDirectory();
+		const operationId = "a".repeat(32);
+		const stagingDirectory = join(installDirectory, `.magenta-update-staging-${operationId}`);
+		const backupDirectory = join(installDirectory, `.magenta-update-backup-${operationId}`);
+		const currentBinary = join(installDirectory, "magenta.exe");
+		await writeText(currentBinary, "old binary");
+		await writeText(join(installDirectory, "theme"), "old theme");
+		await writeText(join(installDirectory, "retired.wasm"), "old wasm");
+		await writeInstalledReleaseOwnership(installDirectory, "0.0.11", ["theme", "retired.wasm"]);
+		await writeText(join(stagingDirectory, "magenta.exe"), "new binary");
+		await writeText(join(stagingDirectory, "theme"), "new theme");
+		await writeInstalledReleaseOwnership(stagingDirectory, "0.0.12", ["theme"]);
+
+		const prepared = await prepareWindowsReleaseUpdateTransaction({
+			installDirectory,
+			operationId,
+			currentBinary,
+			stagingDirectory,
+			backupDirectory,
+			resourceNames: ["theme", RELEASE_RESOURCE_MARKER_NAME],
+			targetVersion: "0.0.12",
+		});
+		expect(prepared.removeResourceNames).toEqual(["retired.wasm"]);
+		const journal = JSON.parse(await readFile(join(installDirectory, RELEASE_UPDATE_JOURNAL_NAME), "utf8")) as Record<
+			string,
+			unknown
+		>;
+		expect(journal.version).toBe(6);
+		expect(journal.installResourceNames).toEqual(["theme", RELEASE_RESOURCE_MARKER_NAME]);
+		expect(journal.removeResourceNames).toEqual(["retired.wasm"]);
+		expect(journal.originalResourceNames).toEqual(["theme", RELEASE_RESOURCE_MARKER_NAME, "retired.wasm"]);
+		expect(journal.originalPathIdentities).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({ name: "theme", type: "file" }),
+				expect.objectContaining({ name: RELEASE_RESOURCE_MARKER_NAME, type: "file" }),
+				expect.objectContaining({ name: "retired.wasm", type: "file" }),
+				expect.objectContaining({ name: "magenta.exe", type: "file" }),
+			]),
+		);
+		expect((journal.originalPathIdentities as Array<{ name: string }>).map((identity) => identity.name)).toEqual([
+			"theme",
+			RELEASE_RESOURCE_MARKER_NAME,
+			"retired.wasm",
+			"magenta.exe",
+		]);
+
+		await expect(recoverInterruptedReleaseUpdateTransaction(installDirectory)).resolves.toBe(true);
+		expect(await readFile(join(installDirectory, "retired.wasm"), "utf8")).toBe("old wasm");
+	});
+
+	it("keeps strict helper PID typing and v2 journal compatibility", async () => {
+		const invalidDirectory = await makeTemporaryDirectory();
+		const invalidOperationId = "2".repeat(32);
+		await writePreparedWindowsJournal(invalidDirectory, invalidOperationId, "3213", 4);
+		await expect(recoverInterruptedReleaseUpdateTransaction(invalidDirectory)).rejects.toThrow(/helper PID/i);
+		const invalidStartDirectory = await makeTemporaryDirectory();
+		const invalidStartOperationId = "5".repeat(32);
+		await writePreparedWindowsJournal(invalidStartDirectory, invalidStartOperationId, 3215, 4, "not-a-start-time");
+		await expect(recoverInterruptedReleaseUpdateTransaction(invalidStartDirectory)).rejects.toThrow(/start time/i);
+
+		const legacyDirectory = await makeTemporaryDirectory();
+		const legacyOperationId = "3".repeat(32);
+		const legacy = await writePreparedWindowsJournal(legacyDirectory, legacyOperationId, null, 2);
+		await expect(recoverInterruptedReleaseUpdateTransaction(legacyDirectory)).resolves.toBe(true);
+		expect(existsSync(legacy.journalPath)).toBe(false);
+
+		const v3Directory = await makeTemporaryDirectory();
+		const v3OperationId = "4".repeat(32);
+		const v3 = await writePreparedWindowsJournal(v3Directory, v3OperationId, 3214, 3);
+		await expect(
+			recoverInterruptedReleaseUpdateTransaction(v3Directory, { helperProcessIsAlive: () => false }),
+		).resolves.toBe(true);
+		expect(existsSync(v3.journalPath)).toBe(false);
+
+		const v5Directory = await makeTemporaryDirectory();
+		const v5OperationId = "7".repeat(32);
+		const v5 = await writePreparedWindowsJournal(v5Directory, v5OperationId, null, 5, null);
+		await expect(recoverInterruptedReleaseUpdateTransaction(v5Directory)).resolves.toBe(true);
+		expect(existsSync(v5.journalPath)).toBe(false);
+	});
+
 	it("waits for the current PID and includes resource, binary, verification, and rollback steps", () => {
 		const script = buildWindowsUpdateScript({
 			parentProcessId: 4242,
@@ -840,6 +1737,8 @@ describe("Windows update helper", () => {
 
 		expect(script).toContain("Get-Process -Id $parentProcessId");
 		expect(script).toContain("$parentProcessId = 4242");
+		expect(script).toContain("$helperProcessId = $PID");
+		expect(script).toContain("$parentProcessStartTimeUtc = $null");
 		expect(script).not.toContain("tasklist");
 		expect(script).toContain(".magenta-install-update.lock");
 		expect(script).toContain("New-Item -ItemType Directory -Path $lockDirectory");
@@ -855,6 +1754,19 @@ describe("Windows update helper", () => {
 		expect(script).toContain("Get-MagentaOwnerSid");
 		expect(script).toContain("WindowsIdentity]::GetCurrent().User.Value");
 		expect(script).toContain("Read-MagentaValidatedJournal");
+		expect(script).toContain('"helperPid"');
+		expect(script).toContain('"helperStartTimeUtc"');
+		expect(script).toContain('"originalPathIdentities"');
+		expect(script).toContain("actualHelperStartTimeUtc");
+		expect(script).toContain("Magenta.NativeFileIdentity");
+		expect(script).toContain("GetFileInformationByHandle");
+		expect(script).toContain("Test-MagentaPathIdentity");
+		expect(script).toContain("Set-MagentaVerificationEnvironment");
+		expect(script).toContain('Remove-Item -LiteralPath "Env:$environmentName"');
+		expect(script).toContain("$journal.helperPid -ne $helperProcessId");
+		expect(script).toContain("$journal.installResourceNames -is [System.Array]");
+		expect(script).toContain("$journal.removeResourceNames -is [System.Array]");
+		expect(script).toContain("$transactionResourceNames");
 		expect(script).toContain("Installed resources no longer match the journal snapshot");
 		expect(script).toContain("[IO.FileOptions]::WriteThrough");
 		expect(script).toContain("$journalStream.Flush($true)");
@@ -875,6 +1787,7 @@ describe("Windows update helper", () => {
 		expect(script).toContain("refusing to overwrite it with older $targetVersion");
 		expect(script).toContain("Move-Item -LiteralPath $stagedPath -Destination $installedPath");
 		expect(script).toContain("[IO.File]::Replace($stagedBinary, $currentBinary, $backupBinary, $true)");
+		expect(script).toContain("Test-MagentaPathIdentity $binaryName $backupBinary $originalBinaryIdentity");
 		expect(script).toContain('Write-MagentaUpdateJournalPhase "committed"');
 		expect(script).toContain("$env:PI_PACKAGE_DIR = $installDirectory");
 		expect(script).toContain("for ($index = $movedNewResources.Count - 1; $index -ge 0; $index--)");
@@ -882,8 +1795,37 @@ describe("Windows update helper", () => {
 		expect(script).toContain("O''Brien");
 	});
 
+	it("does not expose arbitrary secrets to candidate verification", () => {
+		vi.stubEnv("MAGENTA_GITHUB_TOKEN", "github-secret");
+		vi.stubEnv("OPENAI_API_KEY", "openai-secret");
+		vi.stubEnv("PATH", "/safe/path");
+		const environment = buildVerificationEnvironment({ PI_OFFLINE: "1", OPENAI_API_KEY: "override-secret" });
+		expect(environment.PATH).toBe("/safe/path");
+		expect(environment.PI_OFFLINE).toBe("1");
+		expect(environment.MAGENTA_GITHUB_TOKEN).toBeUndefined();
+		expect(environment.OPENAI_API_KEY).toBeUndefined();
+	});
+
 	it("quotes PowerShell single-quoted path literals", () => {
 		expect(quotePowerShellLiteral("C:\\Users\\O'Brien\\Magenta")).toBe("'C:\\Users\\O''Brien\\Magenta'");
+	});
+
+	it("guards the parent wait against PID reuse", () => {
+		const script = buildWindowsUpdateScript({
+			parentProcessId: 4242,
+			parentProcessStartTimeUtc: "2026-07-22T12:34:56.0000000Z",
+			operationId: BINARY_UPDATE_OPERATION_ID,
+			currentBinary: "/Users/owner/Magenta/magenta.exe",
+			stagingDirectory: `/Users/owner/Magenta/.magenta-update-staging-${BINARY_UPDATE_OPERATION_ID}`,
+			backupDirectory: `/Users/owner/Magenta/.magenta-update-backup-${BINARY_UPDATE_OPERATION_ID}`,
+			resourceNames: ["theme"],
+			targetVersion: "0.0.12",
+			scriptPath: `/Users/owner/Magenta/.magenta-update-${BINARY_UPDATE_OPERATION_ID}.ps1`,
+			errorLogPath: "/Users/owner/Magenta/magenta.exe.update-error.log",
+		});
+		expect(script).toContain("$parentProcessStartTimeUtc = '2026-07-22T12:34:56.0000000Z'");
+		expect(script).toContain("observedParentStartTimeUtc");
+		expect(script).toContain("if ($observedParentStartTimeUtc -cne $parentProcessStartTimeUtc) { break }");
 	});
 
 	it("abandons lock ownership before a heartbeat failure can enter rollback", () => {
@@ -907,7 +1849,15 @@ describe("Windows update helper", () => {
 		);
 		const rollbackBody = script.slice(script.indexOf("$rollbackIntentPersisted = $false"));
 		expect(rollbackBody).toMatch(/if \(\$lockAcquired\) \{[\s\S]*Write-MagentaUpdateJournalPhase "rolling_back"/);
-		expect(rollbackBody).toMatch(/if \(\$rollbackIntentPersisted\) \{[\s\S]*\[IO\.File\]::Replace\(\$backupBinary/);
+		expect(rollbackBody).toMatch(
+			/if \(\$rollbackIntentPersisted\) \{[\s\S]*Move-MagentaRollbackCandidateToQuarantine[\s\S]*Move-MagentaValidatedRollbackPath/,
+		);
+		expect(rollbackBody).toContain('Write-MagentaUpdateJournalPhase "committed"');
+		expect(script).toContain("Get-MagentaRollbackQuarantinePrefix");
+		expect(script).toContain("[Security.Cryptography.SHA256]::Create()");
+		expect(script).toContain(
+			'$expectedPhase = if ($phase -ceq "rolling_back") { "prepared" } else { "rolling_back" }',
+		);
 	});
 
 	it("validates every Windows journal field type before coercion or mutation", () => {
@@ -925,9 +1875,12 @@ describe("Windows update helper", () => {
 		expect(script).toContain("$journal.version -is [System.Int32]");
 		expect(script).toContain("$journal.version -is [System.Int64]");
 		expect(script).toContain("$journal.$stringProperty -is [string]");
-		expect(script).toContain("$journal.resourceNames -is [System.Array]");
 		expect(script).toContain("$journal.originalResourceNames -is [System.Array]");
+		expect(script).toContain("$journal.originalPathIdentities -is [System.Array]");
+		expect(script).toContain("$journalItem.Length -gt 65536");
 		expect(script).toContain("$resourceValue -is [string]");
+		expect(script).toContain("$expectedIdentityProperties");
+		expect(script).toContain("$seenIdentityNames.Contains($expectedIdentityName)");
 		expect(script).toContain("Compare-Object $expectedProperties $actualProperties -CaseSensitive");
 		expect(script.indexOf('Read-MagentaValidatedJournal $journalPath "prepared" $true')).toBeLessThan(
 			script.indexOf("Move-Item -LiteralPath $installedPath -Destination $backupPath"),
@@ -949,6 +1902,25 @@ describe("Windows update helper", () => {
 });
 
 describe("checkForUpdate error surfacing", () => {
+	it("bounds release metadata body consumption after headers arrive", async () => {
+		const neverEndingBody = new ReadableStream<Uint8Array>({
+			start(controller) {
+				controller.enqueue(new TextEncoder().encode('{"tag_name":'));
+			},
+		});
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () => new Response(neverEndingBody, { status: 200 })),
+		);
+
+		const startedAt = Date.now();
+		const result = await checkForUpdate({ force: true, metadataTimeoutMs: 25 });
+
+		expect(Date.now() - startedAt).toBeLessThan(500);
+		expect(result.updateAvailable).toBe(false);
+		expect(result.error).toMatch(/metadata request timed out after 25ms/i);
+	});
+
 	it("fetches integrity-bearing release metadata directly even when a mirror is configured", async () => {
 		vi.stubEnv("MAGENTA_GITHUB_MIRROR", "https://untrusted-mirror.example");
 		_clearMirrorCache();
@@ -1041,6 +2013,23 @@ describe("checkForUpdate error surfacing", () => {
 		expect(result.updateAvailable).toBe(false);
 		expect(result.error).toContain("404 or empty response");
 	});
+
+	it("does not follow a symbolic-link update-check marker", async () => {
+		const root = await makeTemporaryDirectory();
+		const external = join(root, "external-marker");
+		await writeFile(external, "preserve-me\n", "utf8");
+		await symlink(external, join(root, "last-update-check"));
+		vi.stubEnv("MAGENTA_CODING_AGENT_DIR", join(root, "agent"));
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () => new Response("not found", { status: 404 })),
+		);
+
+		const result = await checkForUpdate({ force: true });
+
+		expect(result.error).toContain("404 or empty response");
+		await expect(readFile(external, "utf8")).resolves.toBe("preserve-me\n");
+	});
 });
 
 describe("downloadReleaseAsset resilience", () => {
@@ -1104,5 +2093,124 @@ describe("downloadReleaseAsset resilience", () => {
 
 		await expect(downloadReleaseAsset(makeAsset("magenta-linux-x64"), destination)).rejects.toThrow(/404/);
 		expect(fetchMock).toHaveBeenCalledTimes(1);
+	});
+
+	it("enforces the total wall-clock timeout even while data keeps arriving", async () => {
+		const directory = await makeTemporaryDirectory();
+		const destination = join(directory, "asset.bin");
+		let cancelled = false;
+		const trickleBody = new ReadableStream<Uint8Array>({
+			async pull(controller) {
+				await new Promise((resolve) => setTimeout(resolve, 5));
+				if (!cancelled) controller.enqueue(new Uint8Array([1]));
+			},
+			cancel() {
+				cancelled = true;
+			},
+		});
+		const fetchMock = vi.fn(async () => new Response(trickleBody, { status: 200 }));
+		vi.stubGlobal("fetch", fetchMock);
+
+		const startedAt = Date.now();
+		await expect(
+			downloadReleaseAsset(makeAsset("magenta-linux-x64"), destination, {
+				retryDelayMs: 0,
+				wallTimeoutMs: 60,
+				inactivityTimeoutMs: 25,
+			}),
+		).rejects.toThrow(/total wall-clock timeout/i);
+
+		expect(Date.now() - startedAt).toBeLessThan(500);
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+		expect(existsSync(destination)).toBe(false);
+	});
+
+	it("rejects a streamed body over the byte limit and removes its partial file", async () => {
+		const directory = await makeTemporaryDirectory();
+		const destination = join(directory, "asset.bin");
+		const body = new ReadableStream<Uint8Array>({
+			start(controller) {
+				controller.enqueue(new TextEncoder().encode("too-large"));
+				controller.close();
+			},
+		});
+		const response = new Response(body, { status: 200 });
+		expect(response.headers.get("content-length")).toBeNull();
+		const fetchMock = vi.fn(async () => response);
+		vi.stubGlobal("fetch", fetchMock);
+
+		await expect(
+			downloadReleaseAsset(makeAsset("magenta-linux-x64"), destination, {
+				retryDelayMs: 0,
+				maxBytes: 4,
+			}),
+		).rejects.toThrow(/exceeded the 4-byte limit while streaming/i);
+
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+		expect(existsSync(destination)).toBe(false);
+	});
+
+	it("rejects an oversized Content-Length before creating the destination", async () => {
+		const directory = await makeTemporaryDirectory();
+		const destination = join(directory, "asset.bin");
+		const fetchMock = vi.fn(
+			async () => new Response("not read", { status: 200, headers: { "content-length": "4096" } }),
+		);
+		vi.stubGlobal("fetch", fetchMock);
+
+		await expect(
+			downloadReleaseAsset(makeAsset("magenta-linux-x64"), destination, {
+				retryDelayMs: 0,
+				maxBytes: 1024,
+			}),
+		).rejects.toThrow(/declares 4096 bytes, exceeding the 1024-byte limit/i);
+
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+		expect(existsSync(destination)).toBe(false);
+	});
+
+	it("does not delete a pre-existing destination after exclusive creation fails", async () => {
+		const directory = await makeTemporaryDirectory();
+		const destination = join(directory, "asset.bin");
+		await writeFile(destination, "existing payload", "utf8");
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () => new Response("replacement", { status: 200 })),
+		);
+
+		await expect(
+			downloadReleaseAsset(makeAsset("magenta-linux-x64"), destination, { retryDelayMs: 0 }),
+		).rejects.toMatchObject({ code: "EEXIST" });
+		expect(await readFile(destination, "utf8")).toBe("existing payload");
+	});
+
+	it("never sends Authorization on direct public asset downloads", async () => {
+		const directory = await makeTemporaryDirectory();
+		const destination = join(directory, "asset.bin");
+		const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+			expect(new Headers(init?.headers).get("authorization")).toBeNull();
+			return new Response("payload", { status: 200 });
+		});
+		vi.stubGlobal("fetch", fetchMock);
+
+		await downloadReleaseAsset(makeAsset("magenta-linux-x64"), destination, {
+			useMirror: false,
+			retryDelayMs: 0,
+		});
+	});
+
+	it("never sends Authorization through a configured mirror", async () => {
+		const directory = await makeTemporaryDirectory();
+		const destination = join(directory, "asset.bin");
+		vi.stubEnv("MAGENTA_GITHUB_MIRROR", "https://mirror.example/releases");
+		_clearMirrorCache();
+		const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+			expect(url).toContain("mirror.example");
+			expect(new Headers(init?.headers).get("authorization")).toBeNull();
+			return new Response("payload", { status: 200 });
+		});
+		vi.stubGlobal("fetch", fetchMock);
+
+		await downloadReleaseAsset(makeAsset("magenta-linux-x64"), destination, { retryDelayMs: 0 });
 	});
 });

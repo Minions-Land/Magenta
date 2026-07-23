@@ -20,10 +20,12 @@ cannot be found, the build stages the checked-in prebuilt for the current
 supported platform instead. A Cargo command that starts but fails still fails
 the build, so compiler errors cannot be hidden by an older prebuilt.
 
-`target/release` is the canonical binary in Node/source development and is
-preferred over `prebuilt`. Bun-compiled releases continue to extract and hash
-verify their embedded platform binary before installing it into the runtime
-resource tree.
+`target/release` remains the canonical binary in Node/source development and is
+preferred over `prebuilt`. Bun-compiled releases extract the embedded platform
+binary into an owner-controlled `~/.magenta/cache/process-tools/<sha256>/`
+directory instead. During HCP assembly, the static manifest command is bound in
+process to that exact immutable path, so a concurrently installed Magenta
+version cannot replace the helper used by an already-running process.
 
 The checked-in Linux x64 prebuilt is a static
 `x86_64-unknown-linux-musl` executable. Release checks reject a Linux helper

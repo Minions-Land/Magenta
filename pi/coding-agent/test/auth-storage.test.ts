@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { registerOAuthProvider } from "@earendil-works/pi-ai/oauth";
@@ -535,6 +535,23 @@ describe("AuthStorage", () => {
 	});
 
 	describe("persistence semantics", () => {
+		test("atomically persists private files and refuses symbolic-link storage", () => {
+			authStorage = AuthStorage.create(authJsonPath);
+			authStorage.set("anthropic", { type: "api_key", key: "private-key" });
+			expect(lstatSync(authJsonPath).mode & 0o777).toBe(0o600);
+
+			const external = join(tempDir, "external-auth.json");
+			writeFileSync(external, JSON.stringify({ openai: { type: "api_key", key: "external" } }));
+			rmSync(authJsonPath);
+			symlinkSync(external, authJsonPath);
+
+			const linkedStorage = AuthStorage.create(authJsonPath);
+			expect(linkedStorage.drainErrors()).toHaveLength(1);
+			expect(JSON.parse(readFileSync(external, "utf8"))).toEqual({
+				openai: { type: "api_key", key: "external" },
+			});
+		});
+
 		test("set preserves unrelated external edits", () => {
 			writeAuthJson({
 				anthropic: { type: "api_key", key: "old-anthropic" },
@@ -581,7 +598,7 @@ describe("AuthStorage", () => {
 			expect(updated.google.key).toBe("google-key");
 		});
 
-		test("does not overwrite malformed auth file after load error", () => {
+		test("does not overwrite malformed auth file and exposes the load error to mutations", () => {
 			writeAuthJson({
 				anthropic: { type: "api_key", key: "anthropic-key" },
 			});
@@ -590,7 +607,7 @@ describe("AuthStorage", () => {
 			writeFileSync(authJsonPath, "{invalid-json", "utf-8");
 
 			authStorage.reload();
-			authStorage.set("openai", { type: "api_key", key: "openai-key" });
+			expect(() => authStorage.set("openai", { type: "api_key", key: "openai-key" })).toThrow();
 
 			const raw = readFileSync(authJsonPath, "utf-8");
 			expect(raw).toBe("{invalid-json");
@@ -617,7 +634,7 @@ describe("AuthStorage", () => {
 			expect(secondDrain).toHaveLength(0);
 		});
 
-		test("modify() throws on persist failure while set() records the error silently (CC-018)", async () => {
+		test("set(), remove(), and modify() expose persist failures without changing memory", async () => {
 			writeAuthJson({ anthropic: { type: "api_key", key: "anthropic-key" } });
 			authStorage = AuthStorage.create(authJsonPath);
 
@@ -626,15 +643,18 @@ describe("AuthStorage", () => {
 			fs.chmodSync(authJsonPath, 0o400);
 
 			try {
-				// set() swallows the persist error into the drainable error buffer.
-				authStorage.set("openai", { type: "api_key", key: "openai-key" });
+				expect(() => authStorage.set("openai", { type: "api_key", key: "openai-key" })).toThrow();
 				expect(authStorage.drainErrors().length).toBeGreaterThan(0);
+				expect(authStorage.get("openai")).toBeUndefined();
+				expect(authStorage.get("anthropic")).toEqual({ type: "api_key", key: "anthropic-key" });
 
-				// modify() propagates the persist error so /login can report failure
-				// instead of claiming success before the credential is written.
+				expect(() => authStorage.remove("anthropic")).toThrow();
+				expect(authStorage.get("anthropic")).toEqual({ type: "api_key", key: "anthropic-key" });
+
 				await expect(
 					authStorage.modify("google", async () => ({ type: "api_key", key: "google-key" })),
 				).rejects.toThrow();
+				expect(authStorage.get("google")).toBeUndefined();
 			} finally {
 				fs.chmodSync(authJsonPath, 0o600);
 			}

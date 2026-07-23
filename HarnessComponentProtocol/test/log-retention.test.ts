@@ -1,4 +1,5 @@
-import { mkdir, mkdtemp, readFile, realpath, rm, symlink, utimes, writeFile } from "node:fs/promises";
+import { renameSync } from "node:fs";
+import { link, mkdir, mkdtemp, readFile, realpath, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
@@ -121,6 +122,7 @@ describe("bounded diagnostic logs", () => {
 
 describe("log cleanup", () => {
 	it("deletes only selected old logs, preserves protected logs, and does not follow symlinks", async () => {
+		if (typeof process.getuid !== "function") return;
 		const root = await makeRoot();
 		const nested = join(root, "session");
 		await mkdir(nested);
@@ -158,6 +160,7 @@ describe("log cleanup", () => {
 	});
 
 	it("removes oldest logs until the namespace total and file count are bounded", async () => {
+		if (typeof process.getuid !== "function") return;
 		const root = await makeRoot();
 		for (const [index, name] of ["a.log", "b.log", "c.log"].entries()) {
 			const path = join(root, name);
@@ -182,6 +185,7 @@ describe("log cleanup", () => {
 	});
 
 	it("removes only approved empty directories after known artifacts are deleted", async () => {
+		if (typeof process.getuid !== "function") return;
 		const root = await makeRoot();
 		const removable = join(root, "known", "nested");
 		const unknown = join(root, "unknown");
@@ -213,5 +217,41 @@ describe("log cleanup", () => {
 		expect(await realpath(protectedDirectory)).toBe(
 			await realpath(root).then((canonicalRoot) => join(canonicalRoot, "known", "live")),
 		);
+	});
+
+	it("preserves hard-linked artifacts and a file replaced after scanning", async () => {
+		if (typeof process.getuid !== "function") return;
+		const root = await makeRoot();
+		const hardLinked = join(root, "hard-linked.log");
+		const alias = join(root, "alias.log");
+		const replaced = join(root, "replaced.log");
+		const replacement = join(root, "replacement.tmp");
+		await writeFile(hardLinked, "shared");
+		await link(hardLinked, alias);
+		await writeFile(replaced, "old");
+		await writeFile(replacement, "new");
+		const old = new Date(0);
+		await utimes(hardLinked, old, old);
+		await utimes(replaced, old, old);
+
+		const options: Parameters<typeof cleanupLogTree>[0] = {
+			root,
+			fileFilter: (path) => path === hardLinked || path === replaced,
+			maxAgeMs: 1,
+		};
+		Object.defineProperty(options, "now", {
+			get() {
+				// cleanupLogTree reads the clock after candidate discovery. Replacing
+				// the path here exercises the final inode/mtime identity check.
+				renameSync(replacement, replaced);
+				return Date.now();
+			},
+		});
+
+		const result = await cleanupLogTree(options);
+		expect(result.deletedFiles).toBe(0);
+		expect(await readFile(hardLinked, "utf8")).toBe("shared");
+		expect(await readFile(alias, "utf8")).toBe("shared");
+		expect(await readFile(replaced, "utf8")).toBe("new");
 	});
 });

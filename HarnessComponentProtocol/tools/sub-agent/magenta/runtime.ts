@@ -1,3 +1,4 @@
+import { dirname, join } from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import {
 	type AgentSessionEvent,
@@ -37,6 +38,9 @@ export class SubAgentRuntime {
 	constructor(settings: SubAgentRuntimeSettings) {
 		const workflowProvider = new MultiAgentOrchestrator({
 			cwd: settings.cwd,
+			// Keep workflow artifacts beside the configured sub-agent namespace,
+			// never in the caller's project working tree.
+			stateRoot: join(dirname(settings.workDirRoot), "workflows"),
 			resolveWorkerInvocation: settings.resolveAgentInvocation,
 		});
 		this.controller = new SubAgentController(settings.backgroundEvents, {

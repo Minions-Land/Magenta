@@ -24,6 +24,7 @@ export class HcpMagnet {
 		}
 		const packageContext = {
 			repoRoot: context.repoRoot,
+			cacheRoot: context.cacheRoot,
 			components: context.settings.components,
 			componentMap: context.settings.componentMap,
 			resolveCapability: context.resolveCapability ?? (() => undefined),
