@@ -4059,7 +4059,7 @@ export class AgentSession {
 		this.syncQueueModesFromSettings();
 		resetApiProviders();
 		// Refresh model registry to reload models.json and provider configurations
-		this._modelRegistry.refresh();
+		await this._modelRegistry.refresh();
 		const HcpClientpreservepackageloadevent = options?.HcpClientpreservepackageloadevent === true;
 		const candidateRuntimes: Partial<{
 			peerMessages: SendMessageRuntime;

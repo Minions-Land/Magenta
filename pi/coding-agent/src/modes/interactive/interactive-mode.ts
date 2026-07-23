@@ -6059,15 +6059,7 @@ export class InteractiveMode {
 			const providerId = decodeMenuValuePart(rawId);
 			const providerOption = this.getLoginProviderOptions(authType).find((p) => p.id === providerId);
 			if (!providerOption) return;
-			void (async () => {
-				if (providerOption.authType === "oauth") {
-					await this.showLoginDialog(providerOption.id, providerOption.name);
-				} else if (providerOption.id === BEDROCK_PROVIDER_ID) {
-					this.showBedrockSetupDialog(providerOption.id, providerOption.name);
-				} else {
-					await this.showApiKeyLoginDialog(providerOption.id, providerOption.name);
-				}
-			})();
+			this.deferProviderLogin(providerOption);
 			return;
 		}
 		if (item.value.startsWith("mcp:")) {
@@ -6186,7 +6178,7 @@ export class InteractiveMode {
 	}
 
 	private async openModelMenu(): Promise<void> {
-		this.session.modelRegistry.refresh();
+		await this.session.modelRegistry.refresh();
 		const items = this.modelMenuItems();
 		if (items.length === 0) {
 			this.showStatus("No models available");
@@ -7101,17 +7093,20 @@ export class InteractiveMode {
 			return this.session.scopedModels.map((scoped) => scoped.model);
 		}
 
-		this.session.modelRegistry.refresh();
 		try {
-			return await this.session.modelRegistry.getAvailable();
+			await this.session.modelRegistry.refresh();
+			return this.session.modelRegistry.getAvailable();
 		} catch {
 			return [];
 		}
 	}
 
-	/** Update the footer's available provider count from current model candidates */
-	private async updateAvailableProviderCount(): Promise<void> {
-		const models = await this.getModelCandidates();
+	/** Update the footer's available provider count from the current snapshot without refreshing catalogs. */
+	private updateAvailableProviderCount(): void {
+		const models =
+			this.session.scopedModels.length > 0
+				? this.session.scopedModels.map((scoped) => scoped.model)
+				: this.session.modelRuntime.getAvailableSnapshot();
 		const uniqueProviders = new Set(models.map((m) => m.provider));
 		this.footerDataProvider.setAvailableProviderCount(uniqueProviders.size);
 	}
@@ -7251,7 +7246,7 @@ export class InteractiveMode {
 
 	private async showModelsSelector(): Promise<void> {
 		// Get all available models
-		this.session.modelRegistry.refresh();
+		await this.session.modelRegistry.refresh();
 		const allModels = this.session.modelRegistry.getAvailable();
 
 		if (allModels.length === 0) {
@@ -7786,15 +7781,7 @@ export class InteractiveMode {
 			const providerId = decodeMenuValuePart(rawId);
 			const providerOption = this.getLoginProviderOptions(authType).find((provider) => provider.id === providerId);
 			if (!providerOption) return false;
-			void (async () => {
-				if (providerOption.authType === "oauth") {
-					await this.showLoginDialog(providerOption.id, providerOption.name);
-				} else if (providerOption.id === BEDROCK_PROVIDER_ID) {
-					this.showBedrockSetupDialog(providerOption.id, providerOption.name);
-				} else {
-					await this.showApiKeyLoginDialog(providerOption.id, providerOption.name);
-				}
-			})();
+			this.deferProviderLogin(providerOption);
 			return undefined;
 		});
 	}
@@ -7827,8 +7814,7 @@ export class InteractiveMode {
 					}
 
 					try {
-						this.session.authStorage.logout(providerOption.id);
-						this.session.modelRegistry.refresh();
+						await this.session.modelRuntime.logout(providerOption.id);
 						await this.updateAvailableProviderCount();
 						const message =
 							providerOption.authType === "oauth"
@@ -7916,13 +7902,25 @@ export class InteractiveMode {
 		}
 	}
 
+	/**
+	 * Launch a provider login from a floating-menu selection. Deferred to a microtask
+	 * so the menu's synchronous close-and-refocus runs first; otherwise it would steal
+	 * focus back to the editor and the login dialog/selector would stop receiving keys.
+	 */
+	private deferProviderLogin(providerOption: AuthSelectorProvider): void {
+		queueMicrotask(() => void this.startProviderLogin(providerOption));
+	}
+
 	private async completeProviderAuthentication(
 		providerId: string,
 		providerName: string,
 		authType: "oauth" | "api_key",
 		previousModel: Model<any> | undefined,
 	): Promise<void> {
-		this.session.modelRegistry.refresh();
+		// Full refresh, not just availability: the legacy authStorage login path bypasses
+		// runtime.login(), and the provider's remote catalog is only fetched once a
+		// credential exists (upstream refreshes inside ModelRuntime.login).
+		await this.session.modelRuntime.refresh();
 
 		const actionLabel = authType === "oauth" ? `Logged in to ${providerName}` : `Saved API key for ${providerName}`;
 
