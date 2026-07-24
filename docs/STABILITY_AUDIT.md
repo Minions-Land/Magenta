@@ -315,10 +315,10 @@ global search-and-replace. The exporter additionally blocks `Panther OS`,
 `BioMesh`, `BioMeshBatch`, `DA Code`, and `Q-Less` unless an owner-approved
 snapshot policy excludes or handles the containing paths.
 
-Neither private repository currently has an approved root `LICENSE` and
+Neither public repository currently has an approved root `LICENSE` and
 `NOTICE`. Copyright ownership and third-party redistribution terms must be
-decided by the repository owners before creating a public snapshot; this audit
-does not guess a license on their behalf.
+decided by the repository owners before treating public redistribution as
+licensed; this audit does not guess a license on their behalf.
 
 ## Remaining Limitations
 
@@ -329,21 +329,20 @@ the relay. Adding launchd/systemd ownership is a separate product and lifecycle
 decision, not an invariant claimed by this patch.
 
 Cache-cause attribution remains deliberately unavailable for Google, Vertex,
-Bedrock, and Mistral payloads. Publication is still externally blocked by the
-GitHub billing/spending failure above; the source repository currently has zero
-GitHub environments even though the workflow requires `macos-release` and
-`cli-release`; both source and distribution trust files still contain
-`UNCONFIGURED`; the source repository exposes no Apple signing/notary secrets;
-the distribution repository has not configured the new read-only
-`MAGENTA_SOURCE_READ_TOKEN`; and the audited host has zero valid Developer ID
-identities. The existing `MAGENTA_CLI_RELEASE_TOKEN` must also be reviewed and
-rotated before it is trusted for cross-repository publication. Mock contracts,
-local ad-hoc signatures, and dry-runs cannot substitute for one successful run
-on native Linux, macOS arm64, macOS Intel, and Windows infrastructure.
+Bedrock, and Mistral payloads. Public Actions are now executing successfully on
+Linux, macOS arm64, macOS Intel, and Windows, and the source repository has the
+required `macos-release` and `cli-release` environment names. Publication
+remains externally blocked because neither environment has its protected
+release credentials, both source and distribution trust files still contain
+`UNCONFIGURED`, and the audited host has zero valid Developer ID identities.
+The existing repository-level `MAGENTA_CLI_RELEASE_TOKEN` must be reviewed and
+rotated into `cli-release` before it is trusted for cross-repository
+publication. Mock contracts, local ad-hoc signatures, and dry-runs cannot
+substitute for one successful signed and notarized release workflow.
 
-Public-source migration is independently blocked until the historical PAT is
-confirmed revoked, an explicit package allowlist is approved, and root license
-and notice files are supplied by the owners.
+The repositories are already public. Copyright ownership, the missing root
+license and notice files, and any historical credential revocation remain owner
+decisions; public visibility does not resolve them automatically.
 
 ## Cleanup Boundary
 

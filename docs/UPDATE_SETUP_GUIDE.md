@@ -75,7 +75,7 @@ Before releasing:
 - organization Actions billing and spending limits allow macOS, Linux, and Windows jobs to start;
 - `scripts/macos-release-trust.json` contains the real 10-character Apple Team ID, `pi/coding-agent/src/macos-release-trust.generated.ts` has been regenerated from it, and the public CLI repository's tracked `.github/macos-release-trust.json` contains the same reviewed value;
 - a protected `cli-release` environment contains a rotated `MAGENTA_CLI_RELEASE_TOKEN` allowed to publish Releases in the public CLI repository;
-- the public CLI verifier has a separate `MAGENTA_SOURCE_READ_TOKEN` secret with read-only Contents access to the fixed private source repository, so it can prove the exact annotated source tag before executing downloaded assets;
+- the public CLI verifier anonymously reads the fixed public source repository, so it can prove the exact annotated source tag before executing downloaded assets without a cross-repository read token;
 - a protected `macos-release` environment contains the reviewed Developer ID and Apple notary credentials listed below;
 - the public `Magenta-CLI` verifier retains the legacy eight-asset contract and requires the current ten-asset contract, including the source-owned Unix installer and durable macOS signing receipt; it reads its Team ID only from tracked repository trust, never from a mutable Actions variable.
 
@@ -214,7 +214,7 @@ After the tag push:
 
 The public repository verifier is useful downstream evidence for asset digests, Windows installation,
 the native runtime, and uninstall. It consumes already-uploaded assets and does not build from the
-private source tag, so it cannot replace a successful source **Release** workflow or establish build
+public source tag, so it cannot replace a successful source **Release** workflow or establish build
 provenance by itself.
 
 The workflow extracts release notes from the matching coding-agent changelog heading and fails before publication if that complete dated section is absent or empty.
