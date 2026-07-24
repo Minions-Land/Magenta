@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { chmod, copyFile, lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -461,6 +461,8 @@ exit 2
 		const privateRoot = join(fixture.root, "private", "magenta");
 		await mkdir(privateRoot, { recursive: true });
 		const entrypointPath = join(fixture.installDirectory, "magenta");
+		const originalStats = await lstat(entrypointPath);
+		const replacement = "x".repeat(originalStats.size);
 		const options = {
 			...installOptions(fixture, "b".repeat(32)),
 			installDirectory: await realpath(privateRoot),
@@ -469,12 +471,13 @@ exit 2
 			testFaultInjector: (point: string) => {
 				if (point !== "entrypoint:prepared") return;
 				rmSync(entrypointPath);
-				writeFileSync(entrypointPath, "replacement executable\n", "utf8");
+				writeFileSync(entrypointPath, replacement, "utf8");
+				chmodSync(entrypointPath, originalStats.mode & 0o777);
 			},
 		};
 
 		await expect(installLocalUnixRelease(options)).rejects.toThrow(/changed after installer preflight/i);
-		expect(await readFile(entrypointPath, "utf8")).toBe("replacement executable\n");
+		expect(await readFile(entrypointPath, "utf8")).toBe(replacement);
 	});
 
 	it("rejects an active managed link replaced while the payload is staged", async () => {

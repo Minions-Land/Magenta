@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import type { BigIntStats } from "node:fs";
 import {
 	chmod,
 	copyFile,
@@ -50,8 +51,16 @@ import { verifyMacosReleaseCandidate } from "./macos-release-verification.ts";
 const operationIdPattern = /^[0-9a-f]{32}$/;
 const releaseVersionPattern = /^[0-9]+\.[0-9]+\.[0-9]+$/;
 const UNIX_LAYOUT_JOURNAL_NAME = ".magenta-unix-layout-journal.json";
-const UNIX_LAYOUT_JOURNAL_VERSION = 1;
+const UNIX_LAYOUT_JOURNAL_VERSION = 2;
 const UNIX_LAYOUT_JOURNAL_MAX_BYTES = 64 * 1024;
+const ENTRYPOINT_IDENTITY_KEYS = [
+	"birthtimeNanoseconds",
+	"device",
+	"inode",
+	"mode",
+	"mtimeNanoseconds",
+	"size",
+] as const;
 
 export interface InstallLocalUnixReleaseOptions {
 	installDirectory: string;
@@ -103,17 +112,18 @@ interface EntrypointPlan {
 	path: string;
 	parentDirectory: string;
 	state: "absent" | "active" | "legacy";
-	observedIdentity?: {
-		device: number | bigint;
-		inode: number | bigint;
-	};
+	observedIdentity?: EntrypointIdentity;
 	legacyOwnership?: InstallationOwnership;
 	legacyInstallDirectory?: string;
 }
 
 type EntrypointIdentity = {
+	birthtimeNanoseconds: string;
 	device: string;
 	inode: string;
+	mode: string;
+	mtimeNanoseconds: string;
+	size: string;
 };
 
 type UnixLayoutJournal = {
@@ -305,12 +315,27 @@ async function syncDirectory(path: string): Promise<void> {
 	}
 }
 
-function entrypointIdentity(stats: Awaited<ReturnType<typeof lstat>>): EntrypointIdentity {
-	return { device: String(stats.dev), inode: String(stats.ino) };
+async function lstatEntrypoint(path: string): Promise<BigIntStats> {
+	return lstat(path, { bigint: true });
+}
+
+function entrypointIdentity(stats: BigIntStats): EntrypointIdentity {
+	return {
+		birthtimeNanoseconds: String(stats.birthtimeNs),
+		device: String(stats.dev),
+		inode: String(stats.ino),
+		mode: String(stats.mode),
+		mtimeNanoseconds: String(stats.mtimeNs),
+		size: String(stats.size),
+	};
 }
 
 function identitiesMatch(left: EntrypointIdentity | undefined, right: EntrypointIdentity | null): boolean {
-	return left !== undefined && right !== null && left.device === right.device && left.inode === right.inode;
+	return left !== undefined && right !== null && ENTRYPOINT_IDENTITY_KEYS.every((key) => left[key] === right[key]);
+}
+
+function isOwnedByCurrentUser(stats: BigIntStats): boolean {
+	return typeof process.getuid !== "function" || stats.uid === BigInt(process.getuid());
 }
 
 function layoutJournalPath(installDirectory: string): string {
@@ -407,16 +432,20 @@ function parseLayoutJournal(content: string, installDirectory: string): UnixLayo
 			throw new Error("Unix installer layout journal has an invalid entrypoint identity");
 		}
 		const identity = candidate.originalIdentity as Record<string, unknown>;
-		assertExactObjectKeys(identity, ["device", "inode"], "Unix installer entrypoint identity");
-		if (
-			typeof identity.device !== "string" ||
-			typeof identity.inode !== "string" ||
-			!/^\d+$/.test(identity.device) ||
-			!/^\d+$/.test(identity.inode)
-		) {
-			throw new Error("Unix installer layout journal has an invalid entrypoint identity");
+		assertExactObjectKeys(identity, ENTRYPOINT_IDENTITY_KEYS, "Unix installer entrypoint identity");
+		for (const key of ENTRYPOINT_IDENTITY_KEYS) {
+			if (typeof identity[key] !== "string" || !/^\d+$/.test(identity[key])) {
+				throw new Error("Unix installer layout journal has an invalid entrypoint identity");
+			}
 		}
-		originalIdentity = { device: identity.device, inode: identity.inode };
+		originalIdentity = {
+			birthtimeNanoseconds: identity.birthtimeNanoseconds as string,
+			device: identity.device as string,
+			inode: identity.inode as string,
+			mode: identity.mode as string,
+			mtimeNanoseconds: identity.mtimeNanoseconds as string,
+			size: identity.size as string,
+		};
 	}
 	if ((originalState === "legacy") !== (originalIdentity !== null)) {
 		throw new Error("Unix installer layout journal identity does not match its original state");
@@ -461,9 +490,9 @@ async function removeLayoutJournal(installDirectory: string): Promise<void> {
 }
 
 async function removeOwnedEntrypointArtifact(path: string, assertIdentity?: EntrypointIdentity | null): Promise<void> {
-	let stats: Awaited<ReturnType<typeof lstat>>;
+	let stats: BigIntStats;
 	try {
-		stats = await lstat(path);
+		stats = await lstatEntrypoint(path);
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
 		throw error;
@@ -471,7 +500,7 @@ async function removeOwnedEntrypointArtifact(path: string, assertIdentity?: Entr
 	if (stats.isSymbolicLink()) {
 		throw new Error(`Unix installer artifact unexpectedly became a symbolic link: ${path}`);
 	}
-	if (!stats.isFile() || (typeof process.getuid === "function" && stats.uid !== process.getuid())) {
+	if (!stats.isFile() || !isOwnedByCurrentUser(stats)) {
 		throw new Error(`Unix installer artifact has an unsafe identity: ${path}`);
 	}
 	if (assertIdentity && !identitiesMatch(entrypointIdentity(stats), assertIdentity)) {
@@ -542,9 +571,9 @@ async function prepareEntrypointPlan(
 		await assertOwnedPath(legacyDirectory, "directory");
 	}
 
-	let stats: Awaited<ReturnType<typeof lstat>> | undefined;
+	let stats: BigIntStats | undefined;
 	try {
-		stats = await lstat(entrypoint.path);
+		stats = await lstatEntrypoint(entrypoint.path);
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
 	}
@@ -560,13 +589,13 @@ async function prepareEntrypointPlan(
 			path: entrypoint.path,
 			parentDirectory: entrypoint.parent,
 			state: "active",
-			observedIdentity: { device: stats.dev, inode: stats.ino },
+			observedIdentity: entrypointIdentity(stats),
 			legacyInstallDirectory: legacyDirectory,
 			legacyOwnership,
 		};
 	}
 	if (stats) {
-		if (!stats.isFile() || (typeof process.getuid === "function" && stats.uid !== process.getuid())) {
+		if (!stats.isFile() || !isOwnedByCurrentUser(stats)) {
 			throw new Error(`Entrypoint is not a user-owned regular file: ${entrypoint.path}`);
 		}
 		if (!legacyDirectory)
@@ -576,7 +605,7 @@ async function prepareEntrypointPlan(
 			path: entrypoint.path,
 			parentDirectory: entrypoint.parent,
 			state: "legacy",
-			observedIdentity: { device: stats.dev, inode: stats.ino },
+			observedIdentity: entrypointIdentity(stats),
 			legacyInstallDirectory: legacyDirectory,
 			legacyOwnership,
 		};
@@ -595,9 +624,9 @@ async function prepareEntrypointPlan(
 }
 
 async function assertEntrypointPlanUnchanged(plan: EntrypointPlan, currentBinary: string): Promise<void> {
-	let stats: Awaited<ReturnType<typeof lstat>> | undefined;
+	let stats: BigIntStats | undefined;
 	try {
-		stats = await lstat(plan.path);
+		stats = await lstatEntrypoint(plan.path);
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
 	}
@@ -608,7 +637,7 @@ async function assertEntrypointPlanUnchanged(plan: EntrypointPlan, currentBinary
 	if (!stats || !plan.observedIdentity) {
 		throw new Error(`Entrypoint changed after installer preflight: ${plan.path}`);
 	}
-	if (stats.dev !== plan.observedIdentity.device || stats.ino !== plan.observedIdentity.inode) {
+	if (!identitiesMatch(entrypointIdentity(stats), plan.observedIdentity)) {
 		throw new Error(`Entrypoint changed after installer preflight: ${plan.path}`);
 	}
 	if (plan.state === "active") {
@@ -617,7 +646,7 @@ async function assertEntrypointPlanUnchanged(plan: EntrypointPlan, currentBinary
 		}
 		return;
 	}
-	if (!stats.isFile() || (typeof process.getuid === "function" && stats.uid !== process.getuid())) {
+	if (!stats.isFile() || !isOwnedByCurrentUser(stats)) {
 		throw new Error(`Entrypoint changed after installer preflight: ${plan.path}`);
 	}
 }
@@ -644,9 +673,9 @@ async function syncFile(path: string): Promise<void> {
 type ObservedEntrypointState = "absent" | "original" | "target";
 
 async function observeJournalEntrypoint(journal: UnixLayoutJournal): Promise<ObservedEntrypointState> {
-	let stats: Awaited<ReturnType<typeof lstat>>;
+	let stats: BigIntStats;
 	try {
-		stats = await lstat(journal.entrypointPath);
+		stats = await lstatEntrypoint(journal.entrypointPath);
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code === "ENOENT") return "absent";
 		throw error;
@@ -660,7 +689,7 @@ async function observeJournalEntrypoint(journal: UnixLayoutJournal): Promise<Obs
 	if (
 		journal.originalState === "legacy" &&
 		stats.isFile() &&
-		(typeof process.getuid !== "function" || stats.uid === process.getuid()) &&
+		isOwnedByCurrentUser(stats) &&
 		identitiesMatch(entrypointIdentity(stats), journal.originalIdentity)
 	) {
 		return "original";
@@ -683,9 +712,9 @@ async function validateLayoutArtifactSymlink(path: string, currentBinary: string
 }
 
 async function validateLayoutBackup(journal: UnixLayoutJournal): Promise<boolean> {
-	let stats: Awaited<ReturnType<typeof lstat>>;
+	let stats: BigIntStats;
 	try {
-		stats = await lstat(journal.backupPath);
+		stats = await lstatEntrypoint(journal.backupPath);
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
 		throw error;
@@ -694,7 +723,7 @@ async function validateLayoutBackup(journal: UnixLayoutJournal): Promise<boolean
 		journal.originalState !== "legacy" ||
 		!stats.isFile() ||
 		stats.isSymbolicLink() ||
-		(typeof process.getuid === "function" && stats.uid !== process.getuid()) ||
+		!isOwnedByCurrentUser(stats) ||
 		!identitiesMatch(entrypointIdentity(stats), journal.originalIdentity)
 	) {
 		throw new Error(`Unix entrypoint backup changed identity: ${journal.backupPath}`);
@@ -801,9 +830,7 @@ function createLayoutJournal(
 	if (!plan.legacyInstallDirectory || plan.legacyInstallDirectory !== plan.parentDirectory) {
 		throw new Error("Unix entrypoint activation requires its canonical legacy directory");
 	}
-	const originalIdentity = plan.observedIdentity
-		? { device: String(plan.observedIdentity.device), inode: String(plan.observedIdentity.inode) }
-		: null;
+	const originalIdentity = plan.observedIdentity ?? null;
 	if ((plan.state === "legacy") !== (originalIdentity !== null)) {
 		throw new Error("Unix entrypoint preflight identity does not match its state");
 	}
