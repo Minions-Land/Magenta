@@ -226,12 +226,12 @@ handoff. The Unix bootstrap resolves one GitHub API tag and installer digest,
 then pins that exact tag into the full installer; the documented Windows path
 performs the same unique-asset, size, digest, and exact-tag checks. Windows and
 macOS verification download by immutable GitHub asset ID with bounded streaming.
-For releases using the current source-bound contract, a dedicated fine-grained read-only token peels the exact
-annotated tag in the private source repository and compares it with
-`SOURCE_COMMIT` before downloaded code runs. Native Apple Silicon and Intel jobs
-then materialize process-tools, fd, and ripgrep in isolated secret-free homes
-and bind all six helper bytes, identifiers, Team IDs, signatures, and receipt
-hashes independently of the source workflow.
+For releases using the current source-bound contract, the verifier anonymously
+peels the exact annotated tag in the fixed public source repository and compares
+it with `SOURCE_COMMIT` before downloaded code runs. Native Apple Silicon and
+Intel jobs then materialize process-tools, fd, and ripgrep in isolated
+secret-free homes and bind all six helper bytes, identifiers, Team IDs,
+signatures, and receipt hashes independently of the source workflow.
 
 The local release rehearsal exposed one first-install defect before publication:
 the compiled helper-proof command treated a missing `~/.magenta` directory as an
@@ -251,17 +251,15 @@ are never overwritten in place. Directory fsync failures propagate, and prior
 artifact/checksum backups remain available until replacement names are durable.
 
 Public macOS release remains blocked until organization-owned Developer ID and
-notary credentials are configured in the protected release environment. The
-latest source jobs did not execute a single build step: GitHub annotated them
-with "The job was not started because recent account payments have failed or
-your spending limit needs to be increased." The repository itself has Actions
-enabled, so changing workflow code or repository visibility does not solve this
-account-level runner block.
-A public asset set and downstream verifier exist and its `SOURCE_COMMIT` matches
-the source tag, but that downstream verification cannot replace missing
-source-build provenance. Do not assign a new release version to the current
-`Unreleased` work until Actions availability, signing, native platform jobs,
-review, and the normal version/tag flow are complete.
+notary credentials are configured in the protected release environment. After
+the repositories became public, source CI, all four process-tools matrix jobs,
+and package validation executed on hosted runners and passed; the earlier
+account billing rejection is no longer the active blocker. A public asset set
+and downstream verifier exist and its `SOURCE_COMMIT` matches the source tag,
+but that downstream verification cannot replace a successful signed source
+release. Do not assign a new release version to the current `Unreleased` work
+until Apple signing, notarization, native release smoke jobs, review, and the
+normal version/tag flow are complete.
 
 The Unix bootstrap is now source-owned, checksummed, and versioned with the
 Release. Its thin shell layer delegates to the same lock, durable journal,
@@ -275,22 +273,26 @@ do not need accumulating binary backup directories.
 
 ### Repository history and public-source publication
 
-The private source repository must not be made public in place. A forensic scan
-found one historical classic GitHub PAT in four paths. The current tree and all
-branch and tag tip trees are clean, but all four remote branch histories and 24
-release tags can still reach the leaked object. The token's SHA-256 fingerprint
-is `78ccf3a5e16d7419e2da6a5df081d304298ce9dcc0d8465ea721f7419436d7ed`;
-the secret itself is intentionally not reproduced. History rewriting cannot
-revoke a credential, so its owner must explicitly revoke it in GitHub before
-any public-source migration.
+A forensic scan found one historical classic GitHub PAT in four paths. Its
+SHA-256 fingerprint is
+`78ccf3a5e16d7419e2da6a5df081d304298ce9dcc0d8465ea721f7419436d7ed`;
+the secret itself is intentionally not reproduced. An authenticated API probe
+now returns `401`, confirming that the credential is no longer usable.
 
-The safe publication path is a new repository with one reviewed root commit
-created from an allowlisted current snapshot. Old branches, tags, Releases,
-pull-request refs, Actions artifacts, and workflow logs must not be imported.
-The existing source repository should remain private and may be archived after
-the replacement is verified. This avoids pretending that an in-place force
-push can retract objects already copied into release metadata, caches, or refs
-outside ordinary branch history.
+On 2026-07-24, an isolated `git-filter-repo` rewrite replaced only that exact
+token in the four audited paths. The rewrite preserved the current tree, 434
+reachable commits, and all 27 tags; 8 historical tree snapshots changed and 262
+descendant commit IDs were necessarily rewritten. `main` and every affected tag
+were pushed atomically with exact ref leases while the Release workflow was
+disabled, then the workflow was re-enabled. Fresh ordinary branch/tag scans and
+the maintained local object database no longer contain the token pattern.
+
+That ref rewrite is not a server-side purge. GitHub's hidden
+`refs/pull/1/head` still reaches the old ancestry, and the old commit remains
+available through the repository API. The repository owner must submit a
+GitHub Support sensitive-data removal request for the pull-request ref and
+cached commit views. Existing public clones cannot be recalled; revocation is
+the security boundary, while the support purge limits continued disclosure.
 
 The repository now includes a fail-closed snapshot exporter for that path. It
 reads only Git-tracked files from an explicit current-tree allowlist, requires a
@@ -302,14 +304,14 @@ Write mode creates a new local repository with one parentless `main` commit and
 verifies that no source history, remote, tags, or additional refs exist. It
 never creates a remote or pushes.
 
-`MagentaPackages` needs a separate content and license review before the same
-process. Its current product tree intentionally contains `Biomni`,
+`MagentaPackages` still needs a separate content and license review even though
+it is already public. Its current product tree intentionally contains `Biomni`,
 `PantheonOS`, and `BiomniBench` references (along with related package names),
-and existing private Releases and Actions artifacts name those packages.
+and existing Releases and Actions artifacts name those packages.
 Removing words from Git commit messages would neither remove the shipped code
 nor establish redistribution rights. `Codex` and `Claude Code` are also real
 provider and credential-interoperability contracts in Magenta; mechanically
-renaming them would break supported behavior. A public package snapshot
+renaming them would break supported behavior. Public package distribution
 therefore needs an explicit package allowlist and attribution review, not a
 global search-and-replace. The exporter additionally blocks `Panther OS`,
 `BioMesh`, `BioMeshBatch`, `DA Code`, and `Q-Less` unless an owner-approved
