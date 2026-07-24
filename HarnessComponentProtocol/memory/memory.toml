@@ -1,15 +1,15 @@
 kind = "memory"
 product = "capability"
 slot = "memory"
-autoload = true
+autoload = false
 name = "memory"
-description = "Session-grounding memory: retains and recalls local facts across sessions"
+description = "Experimental session-grounding memory provider; not connected to default coding-agent context."
 source = "magenta"
 
 [assumption]
-compensates = "The model is stateless across sessions and forgets user constraints, preferences, and project facts between runs, so memory persists and recalls them."
-rationale = "inferred"  # description + DEFAULT_CONTENT state WHAT (retain constraints across sessions), not an explicit "model forgets" rationale
+compensates = "If a host explicitly connects storage and context injection, memory can retain and recall user constraints, preferences, and project facts between runs."
+rationale = "inferred"  # provider describes the intended role; default coding-agent does not consume it
 calibrated_for = ["claude-sonnet-4-5", "claude-opus-4-5"]
 review_trigger = "model-change"
-load_bearing = "unmeasured"
+load_bearing = "unmeasured"  # explicit-selection experiment; no default session-grounding consumer
 eval_scenarios = []

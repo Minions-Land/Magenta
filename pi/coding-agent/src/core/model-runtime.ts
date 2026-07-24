@@ -126,6 +126,7 @@ export class ModelRuntime implements Models {
 	};
 	private availabilityRefresh: Promise<void> | undefined;
 	private availabilityError: string | undefined;
+	private modelRefreshErrors = new Map<string, string>();
 
 	private constructor(
 		credentials: RuntimeCredentials,
@@ -362,6 +363,9 @@ export class ModelRuntime implements Models {
 		for (const [providerId, error] of this.compositionErrors) {
 			errors.push(`Provider "${providerId}": ${error}`);
 		}
+		for (const [providerId, error] of this.modelRefreshErrors) {
+			errors.push(`Model refresh for "${providerId}": ${error}`);
+		}
 		if (this.availabilityError) errors.push(`Availability refresh: ${this.availabilityError}`);
 		return errors.length > 0 ? errors.join("\n\n") : undefined;
 	}
@@ -560,6 +564,7 @@ export class ModelRuntime implements Models {
 			aborted: refreshOptions.signal?.aborted ?? false,
 			errors: new Map(),
 		};
+		this.modelRefreshErrors = new Map([...result.errors].map(([providerId, error]) => [providerId, error.message]));
 		this.updateModelSnapshot();
 		try {
 			await this.forceRefreshAvailability();

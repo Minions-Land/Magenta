@@ -13,6 +13,55 @@ import { describe, expect, test, vi } from "vitest";
 import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
 
 describe("InteractiveMode /login <provider> (CC-028)", () => {
+	test("getLoginProviderOptions discovers provider-owned auth methods, including extension OAuth", () => {
+		const providers = [
+			{
+				id: "extension-oauth",
+				auth: { oauth: { login: vi.fn() } },
+			},
+			{
+				id: "dual-auth",
+				auth: { oauth: { login: vi.fn() }, apiKey: { login: vi.fn() } },
+			},
+			{
+				id: "ambient-only",
+				auth: { apiKey: { resolve: vi.fn() } },
+			},
+		];
+		const fakeThis: any = {
+			session: {
+				modelRuntime: { getProviders: vi.fn().mockReturnValue(providers) },
+				modelRegistry: { getProviderDisplayName: (id: string) => `Display ${id}` },
+			},
+		};
+
+		const result = (InteractiveMode as any).prototype.getLoginProviderOptions.call(fakeThis);
+
+		expect(result).toEqual([
+			{ id: "dual-auth", name: "Display dual-auth", authType: "oauth" },
+			{ id: "dual-auth", name: "Display dual-auth", authType: "api_key" },
+			{ id: "extension-oauth", name: "Display extension-oauth", authType: "oauth" },
+		]);
+	});
+
+	test("getLoginProviderOptions filters provider-owned auth methods", () => {
+		const fakeThis: any = {
+			session: {
+				modelRuntime: {
+					getProviders: () => [
+						{ id: "oauth", auth: { oauth: { login: vi.fn() } } },
+						{ id: "api", auth: { apiKey: { login: vi.fn() } } },
+					],
+				},
+				modelRegistry: { getProviderDisplayName: (id: string) => id },
+			},
+		};
+
+		const result = (InteractiveMode as any).prototype.getLoginProviderOptions.call(fakeThis, "oauth");
+
+		expect(result).toEqual([{ id: "oauth", name: "oauth", authType: "oauth" }]);
+	});
+
 	test("findLoginProviderOptions: exact id match (case-insensitive)", () => {
 		const fakeThis: any = {
 			getLoginProviderOptions: vi.fn().mockReturnValue([

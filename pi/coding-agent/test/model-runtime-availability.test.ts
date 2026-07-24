@@ -168,6 +168,40 @@ describe("ModelRuntime availability snapshot (CC-054)", () => {
 		expect(runtime.getRegisteredProviderIds()).not.toContain("broken-provider");
 	});
 
+	it("keeps the last catalog and reports provider refresh failures until recovery", async () => {
+		const runtime = await ModelRuntime.create({
+			credentials: createMagentaCredentialStore(AuthStorage.inMemory()),
+			modelsPath: null,
+			modelsStore: new InMemoryModelsStore(),
+			allowModelNetwork: false,
+		});
+		let shouldFail = false;
+		runtime.registerProvider("test-provider", {
+			baseUrl: "https://test.example/v1",
+			apiKey: "test-key",
+			api: "openai-completions",
+			models: [model("initial")],
+			refreshModels: async () => {
+				if (shouldFail) throw new Error("catalog unavailable");
+				return [model("refreshed")];
+			},
+		});
+
+		await runtime.refresh({ allowNetwork: false });
+		expect(runtime.getModels("test-provider").map((entry) => entry.id)).toEqual(["refreshed"]);
+		expect(runtime.getError()).toBeUndefined();
+
+		shouldFail = true;
+		const failed = await runtime.refresh({ allowNetwork: false });
+		expect(failed.errors.get("test-provider")?.message).toBe("catalog unavailable");
+		expect(runtime.getModels("test-provider").map((entry) => entry.id)).toEqual(["refreshed"]);
+		expect(runtime.getError()).toContain('Model refresh for "test-provider": catalog unavailable');
+
+		shouldFail = false;
+		await runtime.refresh({ allowNetwork: false });
+		expect(runtime.getError()).toBeUndefined();
+	});
+
 	it("snapshot remains consistent when a mutation occurs during in-flight refresh", async () => {
 		const runtime = await ModelRuntime.create({
 			credentials: createMagentaCredentialStore(AuthStorage.inMemory()),

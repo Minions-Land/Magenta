@@ -15,6 +15,8 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
+import type { TSchema } from "typebox";
+import { Compile } from "typebox/compile";
 import { DEFAULT_LOG_MAX_BYTES } from "../../../../_magenta/log-retention.ts";
 import { validateNodeTimeoutMs } from "../../../../_magenta/timeout.ts";
 import type { Isolation, WorkerResult, WorkerSlot, WorkerUsage } from "../workflow-types.ts";
@@ -126,6 +128,19 @@ type PiMessage = {
 		};
 	};
 	errorMessage?: string;
+};
+
+type PiRunEnd = {
+	type: "run_end";
+	protocolVersion: 1;
+	status: "success" | "error" | "aborted";
+	exitCode: number;
+	error?: string;
+};
+
+type WorkerProcessExit = {
+	code: number | null;
+	signal: NodeJS.Signals | null;
 };
 
 /**
@@ -259,6 +274,30 @@ export async function spawnWorker(
 			error: `refused: ${error instanceof Error ? error.message : String(error)}`,
 		};
 	}
+	if (signal?.aborted) {
+		return {
+			workerId: options.workerId,
+			text: "",
+			durationMs: 0,
+			success: false,
+			error: "cancelled",
+		};
+	}
+
+	let schemaValidator: ReturnType<typeof Compile> | undefined;
+	if (options.schema !== undefined) {
+		try {
+			schemaValidator = Compile(options.schema as TSchema);
+		} catch (error) {
+			return {
+				workerId: options.workerId,
+				text: "",
+				durationMs: 0,
+				success: false,
+				error: `invalid workflow worker schema: ${error instanceof Error ? error.message : String(error)}`,
+			};
+		}
+	}
 
 	const tools = sanitizeWorkerTools(options.tools);
 
@@ -295,9 +334,13 @@ export async function spawnWorker(
 	let errorMessage: string | undefined;
 	let collectorError: string | undefined;
 	let timedOut = false;
+	let cancelled = false;
+	let assistantTerminalSeen = false;
+	let runEnd: PiRunEnd | undefined;
+	let spawnError: string | undefined;
 
 	try {
-		const exitCode = await new Promise<number>((resolve) => {
+		const processExit = await new Promise<WorkerProcessExit>((resolve) => {
 			const invocation = resolveInvocation(args);
 			const child: ChildProcess = spawn(invocation.command, invocation.args, {
 				cwd: options.cwd ?? process.cwd(),
@@ -340,6 +383,10 @@ export async function spawnWorker(
 				}, TERM_GRACE_MS);
 				escalationTimer.unref?.();
 			};
+			const cancelProc = () => {
+				if (!timedOut) cancelled = true;
+				killProc();
+			};
 
 			const failCollector = (message: string) => {
 				if (collectorError) return;
@@ -351,15 +398,40 @@ export async function spawnWorker(
 				if (collectorError) return;
 				const line = lineBuffer.toString("utf8");
 				if (!line.trim()) return;
-				let event: { type?: string; message?: PiMessage };
+				let parsed: unknown;
 				try {
-					event = JSON.parse(line);
+					parsed = JSON.parse(line);
 				} catch {
+					failCollector("workflow worker emitted malformed NDJSON");
 					return;
 				}
-				if ((event.type === "message_end" || event.type === "tool_result_end") && event.message) {
+				if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+					failCollector("workflow worker emitted an invalid NDJSON event");
+					return;
+				}
+				const event = parsed as { type?: string; message?: PiMessage } & Partial<PiRunEnd>;
+				if (event.type === "run_end") {
+					if (runEnd) {
+						failCollector("workflow worker emitted multiple run_end records");
+						return;
+					}
+					if (
+						event.protocolVersion !== 1 ||
+						!(["success", "error", "aborted"] as const).includes(event.status as PiRunEnd["status"]) ||
+						!Number.isInteger(event.exitCode) ||
+						(event.exitCode ?? -1) < 0 ||
+						(event.error !== undefined && typeof event.error !== "string")
+					) {
+						failCollector("workflow worker emitted an invalid run_end record");
+						return;
+					}
+					runEnd = event as PiRunEnd;
+					return;
+				}
+				if (event.type === "message_end" && event.message) {
 					const msg = event.message;
 					if (msg.role === "assistant") {
+						assistantTerminalSeen = true;
 						if (retainedMessageBytes + lineBuffer.length > DEFAULT_LOG_MAX_BYTES) {
 							failCollector(
 								`workflow worker retained assistant messages exceeded ${DEFAULT_LOG_MAX_BYTES} bytes`,
@@ -438,19 +510,22 @@ export async function spawnWorker(
 				stderrBytes += data.length;
 			});
 
-			const finish = (code: number | null, flushFrame: boolean) => {
+			const finish = (code: number | null, processSignal: NodeJS.Signals | null, flushFrame: boolean) => {
 				if (finished) return;
 				finished = true;
 				if (timeoutTimer) clearTimeout(timeoutTimer);
 				if (escalationTimer) clearTimeout(escalationTimer);
-				signal?.removeEventListener("abort", killProc);
+				signal?.removeEventListener("abort", cancelProc);
 				if (!collectorError && flushFrame && stdoutFrameBytes > 0) {
 					processLine(Buffer.concat(stdoutFrameChunks, stdoutFrameBytes));
 				}
-				resolve(code ?? 0);
+				resolve({ code, signal: processSignal });
 			};
-			child.on("close", (code) => finish(code, true));
-			child.on("error", () => finish(1, false));
+			child.on("close", (code, processSignal) => finish(code, processSignal, true));
+			child.on("error", (error) => {
+				spawnError = error.message;
+				finish(null, null, false);
+			});
 
 			if (timeoutMs !== undefined) {
 				timeoutTimer = setTimeout(() => {
@@ -461,18 +536,51 @@ export async function spawnWorker(
 			}
 
 			if (signal) {
-				if (signal.aborted) killProc();
-				else signal.addEventListener("abort", killProc, { once: true });
+				if (signal.aborted) cancelProc();
+				else signal.addEventListener("abort", cancelProc, { once: true });
 			}
 		});
 
 		const text = finalAssistantText(messages);
 		const stderr = Buffer.concat(stderrChunks, stderrBytes).toString("utf8");
-		const success = exitCode === 0 && !errorMessage && !timedOut && !collectorError;
+		const structured = options.schema !== undefined ? tryParseStructured(text) : undefined;
+		let schemaError: string | undefined;
+		if (schemaValidator) {
+			if (structured === undefined) {
+				schemaError = "workflow worker structured output is not valid JSON";
+			} else if (!schemaValidator.Check(structured)) {
+				const details = [...schemaValidator.Errors(structured)]
+					.slice(0, 5)
+					.map((error) => `${error.instancePath || "/"}: ${error.message}`)
+					.join("; ");
+				schemaError = `workflow worker structured output failed schema validation${details ? `: ${details}` : ""}`;
+			}
+		}
+		const runEndError =
+			runEnd === undefined
+				? "workflow worker exited without a run_end record"
+				: runEnd.status !== "success" || runEnd.exitCode !== 0
+					? (runEnd.error ??
+						`workflow worker run ended with status ${runEnd.status} (exit code ${runEnd.exitCode})`)
+					: undefined;
+		const assistantError = assistantTerminalSeen
+			? undefined
+			: "workflow worker exited without an assistant message_end result";
+		const success =
+			processExit.code === 0 &&
+			processExit.signal === null &&
+			!errorMessage &&
+			!timedOut &&
+			!cancelled &&
+			!collectorError &&
+			!spawnError &&
+			!runEndError &&
+			!assistantError &&
+			!schemaError;
 		return {
 			workerId: options.workerId,
 			text,
-			structured: options.schema ? tryParseStructured(text) : undefined,
+			structured,
 			tokensUsed: totalTokens || undefined, // legacy compat
 			usage: usage.input + usage.output + usage.cacheRead + usage.cacheWrite > 0 ? usage : undefined,
 			durationMs: Date.now() - start,
@@ -482,7 +590,16 @@ export async function spawnWorker(
 				: (collectorError ??
 					(timedOut
 						? `worker timed out after ${timeoutMs!}ms`
-						: errorMessage || stderr.trim() || `exit code ${exitCode}`)),
+						: cancelled
+							? "cancelled"
+							: processExit.signal
+								? `worker terminated by signal ${processExit.signal}`
+								: (spawnError ??
+									errorMessage ??
+									runEndError ??
+									assistantError ??
+									schemaError ??
+									(stderr.trim() || `exit code ${processExit.code ?? "unknown"}`)))),
 		};
 	} catch (err) {
 		return {

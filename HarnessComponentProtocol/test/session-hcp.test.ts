@@ -23,17 +23,11 @@ describe("session HcpClient assembly", () => {
 		expect(result.hcp.resolveInstance<AgentTool>("tool:web-fetch")?.name).toBe("web-fetch");
 		expect(result.hcp.resolveInstance<AgentTool>("tool:web-search")?.name).toBe("web-search");
 
-		for (const slot of [
-			"compaction",
-			"context",
-			"hook",
-			"memory",
-			"policy",
-			"prompt-template",
-			"sandbox",
-			"system-prompt",
-		]) {
+		for (const slot of ["compaction", "context", "prompt-template", "sandbox", "system-prompt"]) {
 			expect(result.hcp.resolveCapability(slot), `capability:${slot}`).toBeDefined();
+		}
+		for (const slot of ["hook", "memory", "policy"]) {
+			expect(result.hcp.resolveCapability(slot), `capability:${slot}`).toBeUndefined();
 		}
 
 		expect(result.hcp.resolveCapability("multiagent")).toBeUndefined();
@@ -48,6 +42,18 @@ describe("session HcpClient assembly", () => {
 		for (const name of ["paper-analysis", "pptx", "research-orchestration", "self-evo"]) {
 			expect(result.hcp.resolve(`skill:${name}`)).toBe(result.hcp.resolveModule(`skills/${name}`));
 			expect(result.hcp.resolveInstance(`skill:${name}`)).toMatchObject({ kind: "skill", name });
+		}
+	});
+
+	it("keeps experimental policy, hooks, and memory available through explicit selection", async () => {
+		const result = await HcpClientbuildsession({
+			repoRoot: REPO_ROOT,
+			modules: ["hooks", "memory"],
+		});
+
+		expect(result.diagnostics).toEqual([]);
+		for (const slot of ["hook", "memory", "policy", "sandbox"]) {
+			expect(result.hcp.resolveCapability(slot), `capability:${slot}`).toBeDefined();
 		}
 	});
 

@@ -67,9 +67,8 @@ function extractUserMessageText(content: string | Array<{ type: string; text?: s
 /**
  * Owns the current AgentSession plus its cwd-bound services.
  *
- * Session replacement methods tear down the current runtime first, then create
- * and apply the next runtime. If creation fails, the error is propagated to the
- * caller. The caller is responsible for user-facing error handling.
+ * Session replacement methods prepare a candidate runtime before invalidating
+ * the current one wherever the target SessionManager can safely coexist.
  */
 export class AgentSessionRuntime {
 	private rebindSession?: (session: AgentSession) => Promise<void>;
@@ -174,6 +173,35 @@ export class AgentSessionRuntime {
 		await this.session.dispose();
 	}
 
+	private async disposeUnpublished(result: CreateAgentSessionRuntimeResult): Promise<void> {
+		try {
+			await result.session.dispose();
+		} catch {
+			// Preserve the replacement error; this candidate was never published to the host.
+		}
+	}
+
+	private async replaceCurrent(
+		reason: SessionShutdownEvent["reason"],
+		targetSessionFile: string | undefined,
+		createOptions: Parameters<CreateAgentSessionRuntimeFactory>[0],
+		options: {
+			prepare?: (result: CreateAgentSessionRuntimeResult) => Promise<void>;
+			withSession?: (ctx: ReplacedSessionContext) => Promise<void>;
+		} = {},
+	): Promise<void> {
+		const candidate = await this.createRuntime(createOptions);
+		try {
+			await options.prepare?.(candidate);
+			await this.teardownCurrent(reason, targetSessionFile);
+		} catch (error) {
+			await this.disposeUnpublished(candidate);
+			throw error;
+		}
+		this.apply(candidate);
+		await this.finishSessionReplacement(options.withSession);
+	}
+
 	private apply(result: CreateAgentSessionRuntimeResult): void {
 		this._session = result.session;
 		this._services = result.services;
@@ -206,17 +234,18 @@ export class AgentSessionRuntime {
 		const previousSessionFile = this.session.sessionFile;
 		const sessionManager = SessionManager.open(sessionPath, undefined, options?.cwdOverride);
 		assertSessionCwdExists(sessionManager, this.cwd);
-		await this.teardownCurrent("resume", sessionManager.getSessionFile());
-		this.apply(
-			await this.createRuntime({
+		await this.replaceCurrent(
+			"resume",
+			sessionManager.getSessionFile(),
+			{
 				cwd: sessionManager.getCwd(),
 				agentDir: this.services.agentDir,
 				sessionManager,
 				sessionStartEvent: { type: "session_start", reason: "resume", previousSessionFile },
 				projectTrustContext: options?.projectTrustContextFactory?.(sessionManager.getCwd()),
-			}),
+			},
+			{ withSession: options?.withSession },
 		);
-		await this.finishSessionReplacement(options?.withSession);
 		return { cancelled: false };
 	}
 
@@ -239,20 +268,25 @@ export class AgentSessionRuntime {
 			sessionManager.newSession({ parentSession: options.parentSession });
 		}
 
-		await this.teardownCurrent("new", sessionManager.getSessionFile());
-		this.apply(
-			await this.createRuntime({
+		await this.replaceCurrent(
+			"new",
+			sessionManager.getSessionFile(),
+			{
 				cwd: this.cwd,
 				agentDir: this.services.agentDir,
 				sessionManager,
 				sessionStartEvent: { type: "session_start", reason: "new", previousSessionFile },
-			}),
+			},
+			{
+				prepare: options?.setup
+					? async (candidate) => {
+							await options.setup!(sessionManager);
+							candidate.session.agent.state.messages = sessionManager.buildSessionContext().messages;
+						}
+					: undefined,
+				withSession: options?.withSession,
+			},
 		);
-		if (options?.setup) {
-			await options.setup(this.session.sessionManager);
-			this.session.agent.state.messages = this.session.sessionManager.buildSessionContext().messages;
-		}
-		await this.finishSessionReplacement(options?.withSession);
 		return { cancelled: false };
 	}
 
@@ -293,16 +327,17 @@ export class AgentSessionRuntime {
 			if (!targetLeafId) {
 				const sessionManager = SessionManager.create(this.cwd, sessionDir);
 				sessionManager.newSession({ parentSession: currentSessionFile });
-				await this.teardownCurrent("fork", sessionManager.getSessionFile());
-				this.apply(
-					await this.createRuntime({
+				await this.replaceCurrent(
+					"fork",
+					sessionManager.getSessionFile(),
+					{
 						cwd: this.cwd,
 						agentDir: this.services.agentDir,
 						sessionManager,
 						sessionStartEvent: { type: "session_start", reason: "fork", previousSessionFile },
-					}),
+					},
+					{ withSession: options?.withSession },
 				);
-				await this.finishSessionReplacement(options?.withSession);
 				return { cancelled: false, selectedText };
 			}
 
@@ -311,25 +346,40 @@ export class AgentSessionRuntime {
 			if (!forkedSessionPath) {
 				throw new Error("Failed to create forked session");
 			}
-			await this.teardownCurrent("fork", sessionManager.getSessionFile());
-			this.apply(
-				await this.createRuntime({
+			await this.replaceCurrent(
+				"fork",
+				sessionManager.getSessionFile(),
+				{
 					cwd: sessionManager.getCwd(),
 					agentDir: this.services.agentDir,
 					sessionManager,
 					sessionStartEvent: { type: "session_start", reason: "fork", previousSessionFile },
-				}),
+				},
+				{ withSession: options?.withSession },
 			);
-			await this.finishSessionReplacement(options?.withSession);
 			return { cancelled: false, selectedText };
 		}
 
-		const sessionManager = this.session.sessionManager;
 		if (!targetLeafId) {
-			sessionManager.newSession({ parentSession: this.session.sessionFile });
-		} else {
-			sessionManager.createBranchedSession(targetLeafId);
+			const sessionManager = SessionManager.inMemory(this.cwd);
+			await this.replaceCurrent(
+				"fork",
+				undefined,
+				{
+					cwd: this.cwd,
+					agentDir: this.services.agentDir,
+					sessionManager,
+					sessionStartEvent: { type: "session_start", reason: "fork", previousSessionFile },
+				},
+				{ withSession: options?.withSession },
+			);
+			return { cancelled: false, selectedText };
 		}
+
+		// A non-persisted mid-tree fork rewrites its only SessionManager in place.
+		// Keep the bounded legacy path rather than introducing a general clone protocol.
+		const sessionManager = this.session.sessionManager;
+		sessionManager.createBranchedSession(targetLeafId);
 		await this.teardownCurrent("fork", sessionManager.getSessionFile());
 		this.apply(
 			await this.createRuntime({
@@ -374,16 +424,12 @@ export class AgentSessionRuntime {
 
 		const sessionManager = SessionManager.open(destinationPath, sessionDir, cwdOverride);
 		assertSessionCwdExists(sessionManager, this.cwd);
-		await this.teardownCurrent("resume", sessionManager.getSessionFile());
-		this.apply(
-			await this.createRuntime({
-				cwd: sessionManager.getCwd(),
-				agentDir: this.services.agentDir,
-				sessionManager,
-				sessionStartEvent: { type: "session_start", reason: "resume", previousSessionFile },
-			}),
-		);
-		await this.finishSessionReplacement();
+		await this.replaceCurrent("resume", sessionManager.getSessionFile(), {
+			cwd: sessionManager.getCwd(),
+			agentDir: this.services.agentDir,
+			sessionManager,
+			sessionStartEvent: { type: "session_start", reason: "resume", previousSessionFile },
+		});
 		return { cancelled: false };
 	}
 

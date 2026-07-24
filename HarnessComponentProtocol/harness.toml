@@ -143,13 +143,13 @@ path = "tools/multiagent/multiagent.toml"
 [[components]]
 kind = "sandbox"
 name = "sandbox"
-description = "Sandbox profiles and selection provider migrated from Magenta1 general-harness."
+description = "Profiles for HCP runtime:process portable guards; no OS-level or universal native-tool enforcement."
 path = "sandbox/sandbox.toml"
 
 [[components]]
 kind = "runtime"
 name = "process"
-description = "Process runtime provider with portable sandbox guardrails."
+description = "Portable-guarded process runtime for explicit HCP consumers; not an OS sandbox."
 path = "runtime/runtime.toml"
 
 [[components]]
@@ -161,13 +161,13 @@ path = "runtime/script-runtimes.toml"
 [[components]]
 kind = "hook"
 name = "hooks"
-description = "Lifecycle hook provider migrated from Magenta1 general-harness."
+description = "Experimental lifecycle hook provider; not connected to default sessions."
 path = "hooks/hooks.toml"
 
 [[components]]
 kind = "policy"
 name = "policy"
-description = "Approval and shell policy providers migrated from Magenta1 general-harness."
+description = "Experimental policy decisions; not connected to default enforcement."
 path = "policy/policy.toml"
 
 [[components]]
@@ -222,5 +222,5 @@ path = "system-prompt/system-prompt.toml"
 [[components]]
 kind = "memory"
 name = "memory"
-description = "Embedding-based semantic memory storage and retrieval."
+description = "Experimental session-grounding memory; not connected to default context."
 path = "memory/memory.toml"

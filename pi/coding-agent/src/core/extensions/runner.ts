@@ -332,8 +332,8 @@ export class ExtensionRunner {
 
 	/**
 	 * Phase 4: Invoke a lifecycle hook via the cached HookProvider. Returns the
-	 * hook result (declarative actions) or undefined if no provider or error.
-	 * Phase 4 discards results (byte-identity); Phase 5 will consume pre-tool actions.
+	 * hook result or undefined if no provider or error. Current call sites do not
+	 * execute the provider's declarative actions.
 	 */
 	private async _invokeLifecycleHook(name: string, input: unknown): Promise<unknown> {
 		const provider = this.hookProvider;
@@ -341,8 +341,8 @@ export class ExtensionRunner {
 		try {
 			return provider.run(name, input);
 		} catch {
-			// Silently ignore hook errors to preserve byte-identity (INV-5.2). Phase 5
-			// may surface errors when hooks become actionable.
+			// The experimental hook provider is observational only; preserve the
+			// extension event result when an explicitly selected provider fails.
 			return undefined;
 		}
 	}
@@ -940,8 +940,8 @@ export class ExtensionRunner {
 		const ctx = this.createContext();
 		let result: ToolCallEventResult | undefined;
 
-		// Phase 4: pre-tool lifecycle hook fires before extension handlers (one path).
-		// Result discarded in Phase 4; Phase 5 will consume sandbox/approval/shell-policy.
+		// An explicitly selected hook fires before extension handlers. Its returned
+		// actions are intentionally not executed by the coding-agent host.
 		await this._invokeLifecycleHook("pre-tool", { tool: { name: event.toolName }, input: event.input });
 
 		for (const ext of this.extensions) {

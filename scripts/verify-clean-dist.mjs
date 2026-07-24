@@ -63,7 +63,10 @@ export function inspectCompiledDist(root = resolve(import.meta.dirname, "..")) {
 		if (!existsSync(workspaceRoot)) continue;
 		const sourceRoot = resolve(workspaceRoot, workspace.source);
 		const distRoot = join(workspaceRoot, "dist");
-		if (!existsSync(distRoot)) throw new Error(`Compiled dist is missing: ${distRoot}`);
+		if (!existsSync(distRoot)) {
+			missing.push(`${workspace.root}/dist`);
+			continue;
+		}
 
 		const sourceFiles = listFiles(sourceRoot, (path) => {
 			if (workspace.kind === "standard" || workspace.kind === "coding-agent") {

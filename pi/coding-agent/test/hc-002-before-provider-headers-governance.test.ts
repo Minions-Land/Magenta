@@ -69,6 +69,7 @@ function createDoneStream() {
 		stopReason: "stop",
 		timestamp: Date.now(),
 	};
+	stream.push({ type: "done", reason: "stop", message });
 	stream.end(message);
 	return stream;
 }
@@ -123,7 +124,12 @@ describe("HC-002 governance: before_provider_headers boundaries", () => {
 		});
 
 		try {
-			await session.agent.streamFn(model, { messages: [] }, requestHeaders ? { headers: requestHeaders } : {});
+			const stream = await session.agent.streamFn(
+				model,
+				{ messages: [] },
+				requestHeaders ? { headers: requestHeaders } : {},
+			);
+			await stream.result();
 			return capturedHeaders;
 		} finally {
 			await session.dispose();

@@ -38,7 +38,10 @@ describe("generated capability Magnet rows", () => {
 	});
 
 	it("assembles all selected slots through their real module Servers", async () => {
-		const result = await HcpClientbuildsession({ repoRoot: process.cwd() });
+		const result = await HcpClientbuildsession({
+			repoRoot: process.cwd(),
+			modules: CAPABILITY_COMPONENTS.map((entry) => entry.module),
+		});
 		const expectedSlots = CAPABILITY_COMPONENTS.map((entry) => entry.slot!);
 
 		for (const slot of expectedSlots) {

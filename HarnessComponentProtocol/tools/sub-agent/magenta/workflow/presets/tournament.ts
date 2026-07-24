@@ -39,6 +39,8 @@ export default async function tournament(args: unknown, ctx: any) {
 	// Elimination bracket: pairwise matches, winner advances, until one remains.
 	// N candidates -> exactly N-1 comparisons. Byes carry over on odd counts.
 	let matchNo = 0;
+	const failedApproach = approaches.find((approach: any) => !approach.success);
+	if (failedApproach) return { outcome: failedApproach, terminatedBy: "budget" };
 	let round = approaches.slice();
 	while (round.length > 1) {
 		const nextRound: any[] = [];
@@ -56,6 +58,14 @@ export default async function tournament(args: unknown, ctx: any) {
 				schema: WINNER_SCHEMA,
 			});
 			const winnerIdx = readNumberField(verdict, "winner");
+			if (!verdict.success || (winnerIdx !== 0 && winnerIdx !== 1)) {
+				return {
+					outcome: verdict.success
+						? { ...verdict, success: false, error: "tournament judge did not return winner 0 or 1" }
+						: verdict,
+					terminatedBy: "budget",
+				};
+			}
 			nextRound.push(winnerIdx === 1 ? b : a);
 		}
 		round = nextRound;

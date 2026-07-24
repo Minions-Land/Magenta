@@ -31,7 +31,6 @@ import {
 	getSupportedThinkingLevels,
 	isContextOverflow,
 	modelsAreEqual,
-	resetApiProviders,
 	streamSimple,
 } from "@earendil-works/pi-ai/compat";
 import {
@@ -44,9 +43,6 @@ import {
 	type MultiagentController,
 	PEER_MESSAGE_CUSTOM_TYPE,
 	type PeerEndpoint,
-	type PolicyProvider,
-	type ProcessRuntimeProvider,
-	type SandboxProvider,
 	type SendMessageRuntime,
 	type SshTarget,
 	type SshToolOperations,
@@ -453,17 +449,6 @@ export class AgentSession {
 	private _bashAbortController: AbortController | undefined = undefined;
 	private _pendingBashMessages: BashExecutionMessage[] = [];
 
-	// Phase 5: cached policy/sandbox/runtime providers resolved from session HCP.
-	// Resolved at _buildRuntime (including reload) so they stay current. RESOLVED
-	// but NOT enforced by default (policy defaults to yolo, sandbox to none) per
-	// C5.2/C5.3 parity requirement. Actual enforcement is opt-in only.
-	// biome-ignore lint/correctness/noUnusedPrivateClassMembers: retained for the explicit policy opt-in integration stage.
-	private _policyProvider?: PolicyProvider;
-	// biome-ignore lint/correctness/noUnusedPrivateClassMembers: retained for the explicit sandbox opt-in integration stage.
-	private _sandboxProvider?: SandboxProvider;
-	// biome-ignore lint/correctness/noUnusedPrivateClassMembers: retained for the managed runtime integration stage.
-	private _runtimeProvider?: ProcessRuntimeProvider;
-
 	// Extension system
 	private _extensionRunner!: ExtensionRunner;
 	private _turnIndex = 0;
@@ -606,6 +591,7 @@ export class AgentSession {
 				: getPeerMessageDbPath();
 		this._sideChat = new SideChatManager({
 			toolProgress: this._toolProgressTracker,
+			completeSimple: (model, context, options) => this._modelRuntime.completeSimple(model, context, options),
 			appendEntry: (customType, data) => this.sessionManager.appendCustomEntry(customType, data),
 			enqueueHumanHandoff: (request, ctx) => this._enqueueHumanSideHandoff(request, ctx),
 		});
@@ -855,35 +841,6 @@ export class AgentSession {
 			throw new Error('Session HCP is missing required capability slot "system-prompt"');
 		}
 		return provider;
-	}
-
-	/**
-	 * Phase 5: Resolve the command-execution safety capabilities from the session
-	 * HCP. These are RESOLVED (made consultable) but NOT consumed by default — pi's
-	 * bash execution keeps its local spawn with full shell env. This satisfies C5.1
-	 * (bash safety resolves through HCP) while preserving C5.2/C5.3 (default behavior
-	 * unchanged: policy defaults to `yolo` = allow-all no-prompt; shell classification
-	 * is advisory-only; sandbox enforcement is not-ported). Actual enforcement via
-	 * these providers is opt-in only (future work / non-default modes).
-	 *
-	 * Returns undefined for each slot when the loader exposes no HCP (null loader /
-	 * test double), in which case pi's current no-guard behavior applies — identical
-	 * either way.
-	 */
-	private _resolvePolicyProvider(): PolicyProvider | undefined {
-		const hcp: HcpClient | undefined = this._resourceLoader.HcpClientgetsession?.();
-		return hcp?.resolveCapability?.<PolicyProvider>("policy");
-	}
-
-	private _resolveSandboxProvider(): SandboxProvider | undefined {
-		const hcp: HcpClient | undefined = this._resourceLoader.HcpClientgetsession?.();
-		return hcp?.resolveCapability?.<SandboxProvider>("sandbox");
-	}
-
-	private _resolveRuntimeProvider(): ProcessRuntimeProvider | undefined {
-		const hcp: HcpClient | undefined = this._resourceLoader.HcpClientgetsession?.();
-		// runtime is multi-slot; the process runtime lives at `runtime:process`.
-		return hcp?.resolveCapability?.<ProcessRuntimeProvider>("runtime:process");
 	}
 
 	/**
@@ -3930,13 +3887,6 @@ export class AgentSession {
 		// hooks (pre-tool/post-tool/pre-llm/post-llm) to the HCP-resolved HookProvider.
 		// Runs on every _buildRuntime (including reload) so the provider stays current.
 		this._extensionRunner.HcpClientsetsession(sessionHcp);
-		// Phase 5: resolve command-execution safety capabilities from the session HCP
-		// so bash safety is HCP-routed (C5.1). These are cached for consultation but
-		// NOT enforced by default (policy=yolo, sandbox=none) so behavior is identical
-		// to pre-Phase-5 (C5.2/C5.3). undefined when no HCP — pi's local spawn applies.
-		this._policyProvider = this._resolvePolicyProvider();
-		this._sandboxProvider = this._resolveSandboxProvider();
-		this._runtimeProvider = this._resolveRuntimeProvider();
 		this._bindExtensionCore(this._extensionRunner);
 		this._applyExtensionBindings(this._extensionRunner);
 
@@ -4057,7 +4007,6 @@ export class AgentSession {
 		await emitSessionShutdownEvent(this._extensionRunner, { type: "session_shutdown", reason: "reload" });
 		await this.settingsManager.reload();
 		this.syncQueueModesFromSettings();
-		resetApiProviders();
 		// Refresh model registry to reload models.json and provider configurations
 		await this._modelRegistry.refresh();
 		const HcpClientpreservepackageloadevent = options?.HcpClientpreservepackageloadevent === true;

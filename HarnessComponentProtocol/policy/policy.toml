@@ -1,9 +1,9 @@
 kind = "policy"
 product = "capability"
 slot = "policy"
-autoload = true
+autoload = false
 name = "policy"
-description = "Approval and shell policy providers migrated from Magenta1 general-harness."
+description = "Experimental approval and shell policy decisions; not connected to default coding-agent enforcement."
 source = "magenta"
 origin = "magenta1-general-harness"
 origin_rel = "ported/adapted"
@@ -11,11 +11,11 @@ impl = ["policy/magenta/policy.ts", "policy/magenta/approval.ts", "policy/magent
 targets = ["approval://policy", "shell://policy"]
 
 [assumption]
-compensates = "Safety boundary: the model cannot be trusted to self-police dangerous or mutating actions, so approval tiers and shell-command classification are computed deterministically off the model surface (model_surface: false)."
+compensates = "When a host explicitly integrates this provider, approval tiers and shell-command classification are computed deterministically off the model surface instead of trusting the model to self-police dangerous or mutating actions."
 rationale = "stated"  # approval.ts/shell-policy.ts set model_surface:false, audience:operator
 calibrated_for = ["any"]
 review_trigger = "never"
-load_bearing = "verified"
+load_bearing = "unmeasured"  # provider is experimental and not connected to default coding-agent enforcement
 eval_scenarios = []
 
 [[policies]]

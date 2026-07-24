@@ -10,6 +10,8 @@ import {
 	createAgentSessionServices,
 } from "../../src/core/agent-session-runtime.ts";
 import { AuthStorage } from "../../src/core/auth-storage.ts";
+import { createMagentaCredentialStore } from "../../src/core/external-credential-adapter.ts";
+import { ModelRuntime } from "../../src/core/model-runtime.ts";
 import { SessionManager } from "../../src/core/session-manager.ts";
 import type {
 	ExtensionAPI,
@@ -34,6 +36,15 @@ describe("AgentSessionRuntime characterization", () => {
 			await cleanups.pop()?.();
 		}
 	});
+
+	function createOfflineModelRuntime(authStorage: AuthStorage, agentDir: string): Promise<ModelRuntime> {
+		return ModelRuntime.create({
+			credentials: createMagentaCredentialStore(authStorage),
+			modelsPath: join(agentDir, "models.json"),
+			modelsStorePath: join(agentDir, "models-store.json"),
+			allowModelNetwork: false,
+		});
+	}
 
 	async function createRuntimeForTest(
 		extensionFactory: ExtensionFactory,
@@ -85,10 +96,18 @@ describe("AgentSessionRuntime characterization", () => {
 				noThemes: true,
 			},
 		};
+		let nextCreationError: Error | undefined;
 		const createRuntime: CreateAgentSessionRuntimeFactory = async ({ cwd, sessionManager, sessionStartEvent }) => {
+			if (nextCreationError) {
+				const error = nextCreationError;
+				nextCreationError = undefined;
+				throw error;
+			}
+			const modelRuntime = await createOfflineModelRuntime(authStorage, tempDir);
 			const services = await createAgentSessionServices({
 				...runtimeOptions,
 				cwd,
+				modelRuntime,
 			});
 			return {
 				...(await createAgentSessionFromServices({
@@ -117,7 +136,14 @@ describe("AgentSessionRuntime characterization", () => {
 			}
 		});
 
-		return { runtime, faux, tempDir };
+		return {
+			runtime,
+			faux,
+			tempDir,
+			failNextCreation(message = "replacement creation failed") {
+				nextCreationError = new Error(message);
+			},
+		};
 	}
 
 	it("persists message_end assistant replacements to the session manager", async () => {
@@ -204,6 +230,27 @@ describe("AgentSessionRuntime characterization", () => {
 			{ type: "session_shutdown", reason: "resume", targetSessionFile: originalSessionFile },
 			{ type: "session_start", reason: "resume", previousSessionFile: secondSessionFile },
 		]);
+	});
+
+	it("keeps the current session usable when replacement creation fails", async () => {
+		const shutdownEvents: SessionShutdownEvent[] = [];
+		const { runtime, failNextCreation } = await createRuntimeForTest((pi: ExtensionAPI) => {
+			pi.on("session_shutdown", (event) => {
+				shutdownEvents.push(event);
+			});
+		});
+		const originalSession = runtime.session;
+		const originalSessionFile = originalSession.sessionFile;
+
+		failNextCreation();
+		await expect(runtime.newSession()).rejects.toThrow("replacement creation failed");
+
+		expect(runtime.session).toBe(originalSession);
+		expect(runtime.session.sessionFile).toBe(originalSessionFile);
+		expect(shutdownEvents).toEqual([]);
+
+		await runtime.session.prompt("still usable");
+		expect(runtime.session.messages.some((message) => message.role === "assistant")).toBe(true);
 	});
 
 	it("honors session_before_switch cancellation for new and resume", async () => {
@@ -376,9 +423,11 @@ describe("AgentSessionRuntime characterization", () => {
 			},
 		};
 		const createRuntime: CreateAgentSessionRuntimeFactory = async ({ cwd, sessionManager, sessionStartEvent }) => {
+			const modelRuntime = await createOfflineModelRuntime(authStorage, tempDir);
 			const services = await createAgentSessionServices({
 				...runtimeOptions,
 				cwd,
+				modelRuntime,
 			});
 			return {
 				...(await createAgentSessionFromServices({
@@ -489,9 +538,11 @@ describe("AgentSessionRuntime characterization", () => {
 			sessionManager,
 			sessionStartEvent,
 		}) => {
+			const modelRuntime = await createOfflineModelRuntime(otherAuthStorage, tempDir);
 			const services = await createAgentSessionServices({
 				...otherRuntimeOptions,
 				cwd,
+				modelRuntime,
 			});
 			return {
 				...(await createAgentSessionFromServices({
@@ -562,9 +613,11 @@ describe("AgentSessionRuntime characterization", () => {
 			sessionManager,
 			sessionStartEvent,
 		}) => {
+			const modelRuntime = await createOfflineModelRuntime(otherAuthStorage, tempDir);
 			const services = await createAgentSessionServices({
 				...otherRuntimeOptions,
 				cwd,
+				modelRuntime,
 			});
 			return {
 				...(await createAgentSessionFromServices({

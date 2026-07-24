@@ -7,15 +7,8 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import {
-	type AssistantMessage,
-	getProviders,
-	type ImageContent,
-	type Message,
-	type Model,
-	type OAuthProviderId,
-	type OAuthSelectPrompt,
-} from "@earendil-works/pi-ai/compat";
+import type { AuthEvent, AuthInteraction, AuthPrompt } from "@earendil-works/pi-ai";
+import type { AssistantMessage, ImageContent, Message, Model } from "@earendil-works/pi-ai/compat";
 import type {
 	AutocompleteItem,
 	AutocompleteProvider,
@@ -110,7 +103,6 @@ import { createCompactionSummaryMessage } from "../../core/messages.ts";
 import { defaultModelPerProvider, findExactModelReferenceMatch, resolveModelScope } from "../../core/model-resolver.ts";
 import { DefaultPackageManager } from "../../core/package-manager.ts";
 import { PendingImageController } from "../../core/pending-images.ts";
-import { BUILT_IN_PROVIDER_DISPLAY_NAMES } from "../../core/provider-display-names.ts";
 import type { ResourceDiagnostic } from "../../core/resource-loader.ts";
 import { formatMissingSessionCwdPrompt, MissingSessionCwdError } from "../../core/session-cwd.ts";
 import { type SessionEntry, SessionManager, sessionEntryToContextMessages } from "../../core/session-manager.ts";
@@ -355,22 +347,6 @@ function hasDefaultModelProvider(providerId: string): providerId is keyof typeof
 }
 
 const BEDROCK_PROVIDER_ID = "amazon-bedrock";
-
-const BUILT_IN_MODEL_PROVIDERS = new Set<string>(getProviders());
-
-export function isApiKeyLoginProvider(
-	providerId: string,
-	oauthProviderIds: ReadonlySet<string>,
-	builtInProviderIds: ReadonlySet<string> = BUILT_IN_MODEL_PROVIDERS,
-): boolean {
-	if (BUILT_IN_PROVIDER_DISPLAY_NAMES[providerId]) {
-		return true;
-	}
-	if (builtInProviderIds.has(providerId)) {
-		return false;
-	}
-	return !oauthProviderIds.has(providerId);
-}
 
 /**
  * Options for InteractiveMode initialization.
@@ -7694,25 +7670,15 @@ export class InteractiveMode {
 	}
 
 	private getLoginProviderOptions(authType?: "oauth" | "api_key"): AuthSelectorProvider[] {
-		const authStorage = this.session.authStorage;
-		const oauthProviders = authStorage.getOAuthProviders();
-		const oauthProviderIds = new Set(oauthProviders.map((provider) => provider.id));
-		const options: AuthSelectorProvider[] = oauthProviders.map((provider) => ({
-			id: provider.id,
-			name: provider.name,
-			authType: "oauth",
-		}));
-
-		const modelProviders = new Set(this.session.modelRegistry.getAll().map((model) => model.provider));
-		for (const providerId of modelProviders) {
-			if (!isApiKeyLoginProvider(providerId, oauthProviderIds)) {
-				continue;
+		const options: AuthSelectorProvider[] = [];
+		for (const provider of this.session.modelRuntime.getProviders()) {
+			const name = this.session.modelRegistry.getProviderDisplayName(provider.id);
+			if (provider.auth.oauth) {
+				options.push({ id: provider.id, name, authType: "oauth" });
 			}
-			options.push({
-				id: providerId,
-				name: this.session.modelRegistry.getProviderDisplayName(providerId),
-				authType: "api_key",
-			});
+			if (provider.auth.apiKey?.login) {
+				options.push({ id: provider.id, name, authType: "api_key" });
+			}
 		}
 
 		const filteredOptions = authType ? options.filter((option) => option.authType === authType) : options;
@@ -7919,11 +7885,6 @@ export class InteractiveMode {
 		authType: "oauth" | "api_key",
 		previousModel: Model<any> | undefined,
 	): Promise<void> {
-		// Full refresh, not just availability: the legacy authStorage login path bypasses
-		// runtime.login(), and the provider's remote catalog is only fetched once a
-		// credential exists (upstream refreshes inside ModelRuntime.login).
-		await this.session.modelRuntime.refresh();
-
 		const actionLabel = authType === "oauth" ? `Logged in to ${providerName}` : `Saved API key for ${providerName}`;
 
 		let selectedModel: Model<any> | undefined;
@@ -8022,18 +7983,7 @@ export class InteractiveMode {
 		};
 
 		try {
-			const apiKey = (await dialog.showPrompt("Enter API key:")).trim();
-			if (!apiKey) {
-				throw new Error("API key cannot be empty.");
-			}
-
-			// Persist under the auth-file lock before reporting success.
-			await this.session.authStorage.modify(providerId, async () => ({ type: "api_key", key: apiKey }));
-			const persistErrors = this.session.authStorage.drainErrors();
-			if (persistErrors.length > 0) {
-				throw new Error(persistErrors.map((error) => error.message).join("; "));
-			}
-
+			await this.session.modelRuntime.login(providerId, "api_key", this.createLoginInteraction(dialog));
 			restoreEditor();
 			await this.completeProviderAuthentication(providerId, providerName, "api_key", previousModel);
 		} catch (error: unknown) {
@@ -8045,7 +7995,10 @@ export class InteractiveMode {
 		}
 	}
 
-	private showOAuthLoginSelect(dialog: LoginDialogComponent, prompt: OAuthSelectPrompt): Promise<string | undefined> {
+	private showOAuthLoginSelect(
+		dialog: LoginDialogComponent,
+		prompt: Extract<AuthPrompt, { type: "select" }>,
+	): Promise<string | undefined> {
 		return new Promise((resolve) => {
 			const restoreDialog = () => {
 				this.editorContainer.clear();
@@ -8073,12 +8026,54 @@ export class InteractiveMode {
 		});
 	}
 
-	private async showLoginDialog(providerId: string, providerName: string): Promise<void> {
-		const providerInfo = this.session.authStorage.getOAuthProviders().find((provider) => provider.id === providerId);
-		const previousModel = this.session.model;
+	private createLoginInteraction(dialog: LoginDialogComponent): AuthInteraction {
+		return {
+			signal: dialog.signal,
+			prompt: async (prompt) => {
+				if (dialog.signal.aborted || prompt.signal?.aborted) {
+					throw new Error("Login cancelled");
+				}
+				if (prompt.type === "select") {
+					const selected = await this.showOAuthLoginSelect(dialog, prompt);
+					if (!selected) throw new Error("Login cancelled");
+					return selected;
+				}
+				if (prompt.type === "manual_code") {
+					return dialog.showManualInput(prompt.message);
+				}
+				const value = await dialog.showPrompt(prompt.message, prompt.placeholder);
+				if (prompt.type === "secret") {
+					const secret = value.trim();
+					if (!secret) throw new Error("API key cannot be empty.");
+					return secret;
+				}
+				return value;
+			},
+			notify: (event: AuthEvent) => {
+				switch (event.type) {
+					case "auth_url":
+						dialog.showAuth(event.url, event.instructions);
+						break;
+					case "device_code":
+						dialog.showDeviceCode(event);
+						dialog.showWaiting("Waiting for authentication...");
+						break;
+					case "progress":
+						dialog.showProgress(event.message);
+						break;
+					case "info":
+						dialog.showInfo([
+							event.message,
+							...(event.links ?? []).map((link) => `${link.label ? `${link.label}: ` : ""}${link.url}`),
+						]);
+						break;
+				}
+			},
+		};
+	}
 
-		// Providers that use callback servers (can paste redirect URL)
-		const usesCallbackServer = providerInfo?.usesCallbackServer ?? false;
+	private async showLoginDialog(providerId: string, providerName: string): Promise<void> {
+		const previousModel = this.session.model;
 
 		// Create login dialog component
 		const dialog = new LoginDialogComponent(
@@ -8096,14 +8091,6 @@ export class InteractiveMode {
 		this.ui.setFocus(dialog);
 		this.ui.requestRender();
 
-		// Promise for manual code input (racing with callback server)
-		let manualCodeResolve: ((code: string) => void) | undefined;
-		let manualCodeReject: ((err: Error) => void) | undefined;
-		const manualCodePromise = new Promise<string>((resolve, reject) => {
-			manualCodeResolve = resolve;
-			manualCodeReject = reject;
-		});
-
 		// Restore editor helper
 		const restoreEditor = () => {
 			this.editorContainer.clear();
@@ -8113,49 +8100,7 @@ export class InteractiveMode {
 		};
 
 		try {
-			await this.session.authStorage.login(providerId as OAuthProviderId, {
-				onAuth: (info: { url: string; instructions?: string }) => {
-					dialog.showAuth(info.url, info.instructions);
-
-					if (usesCallbackServer) {
-						// Show input for manual paste, racing with callback
-						dialog
-							.showManualInput("Paste redirect URL below, or complete login in browser:")
-							.then((value) => {
-								if (value && manualCodeResolve) {
-									manualCodeResolve(value);
-									manualCodeResolve = undefined;
-								}
-							})
-							.catch(() => {
-								if (manualCodeReject) {
-									manualCodeReject(new Error("Login cancelled"));
-									manualCodeReject = undefined;
-								}
-							});
-					}
-					// For Anthropic: onPrompt is called immediately after
-				},
-
-				onDeviceCode: (info) => {
-					dialog.showDeviceCode(info);
-					dialog.showWaiting("Waiting for authentication...");
-				},
-
-				onPrompt: async (prompt: { message: string; placeholder?: string }) => {
-					return dialog.showPrompt(prompt.message, prompt.placeholder);
-				},
-
-				onProgress: (message: string) => {
-					dialog.showProgress(message);
-				},
-
-				onSelect: (prompt: OAuthSelectPrompt) => this.showOAuthLoginSelect(dialog, prompt),
-
-				onManualCodeInput: () => manualCodePromise,
-
-				signal: dialog.signal,
-			});
+			await this.session.modelRuntime.login(providerId, "oauth", this.createLoginInteraction(dialog));
 
 			// Success
 			restoreEditor();

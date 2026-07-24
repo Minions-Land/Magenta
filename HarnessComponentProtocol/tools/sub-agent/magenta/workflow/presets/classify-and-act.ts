@@ -20,17 +20,29 @@ export default async function classifyAndAct(args: unknown, ctx: any) {
 			...req.classifier,
 			label: "classify",
 			guard: ctx.guards.classifier,
-			schema: { type: "object", properties: { label: { type: "string", enum: labels } }, required: ["label"] },
+			schema: { type: "object", properties: { label: { type: "string" } }, required: ["label"] },
 		},
 	);
 
-	const rawLabel = (classified.structured as { label?: string } | undefined)?.label ?? classified.text.trim();
-	const label = labels.find((l) => rawLabel === l || rawLabel.includes(l));
+	if (!classified.success) return { outcome: classified, terminatedBy: "budget" };
+
+	const rawLabel = (classified.structured as { label?: unknown } | undefined)?.label;
+	const label = typeof rawLabel === "string" && labels.includes(rawLabel) ? rawLabel : undefined;
 	const handlerSlot = label ? req.handlers[label] : req.fallback;
 	if (!handlerSlot) {
-		return { outcome: classified, terminatedBy: "completed" };
+		return {
+			outcome: {
+				...classified,
+				success: false,
+				error:
+					typeof rawLabel === "string"
+						? `classifier returned unknown label ${JSON.stringify(rawLabel)}`
+						: "classifier did not return a structured label",
+			},
+			terminatedBy: "budget",
+		};
 	}
 
 	const handler = await ctx.agent(`${handlerSlot.task}\n\nInput:\n${req.input}`, { ...handlerSlot, label: "handle" });
-	return { outcome: handler, terminatedBy: "completed" };
+	return { outcome: handler, terminatedBy: handler.success ? "completed" : "budget" };
 }

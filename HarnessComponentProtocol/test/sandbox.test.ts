@@ -78,7 +78,12 @@ describe("sandbox provider", () => {
 		});
 		await expect(hcp.dispatch({ target: "capability:sandbox", op: "describe" })).resolves.toMatchObject({
 			target: "capability:sandbox",
-			metadata: { source: "magenta" },
+			metadata: {
+				source: "magenta",
+				portable_guard_runtime: "runtime:process",
+				os_enforced: false,
+				universal_native_tool_enforcement: false,
+			},
 		});
 		await expect(hcp.dispatch({ target: "hook://sandbox-select", op: "describe" })).resolves.toMatchObject({
 			target: "hook://sandbox-select",

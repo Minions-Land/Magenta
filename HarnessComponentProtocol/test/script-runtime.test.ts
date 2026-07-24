@@ -26,6 +26,19 @@ async function assembleRuntime(): Promise<HcpClient> {
 }
 
 describe("script runtime provider", () => {
+	it("describes the portable guard scope without claiming OS or native-tool enforcement", async () => {
+		const hcp = await assembleRuntime();
+
+		expect(hcp.describeAll().find(({ target }) => target === "capability:runtime:process")).toMatchObject({
+			metadata: {
+				osEnforcement: false,
+				consumerScope: "explicit-runtime:process-callers",
+				universalNativeToolEnforcement: false,
+			},
+		});
+		await hcp.dispose();
+	});
+
 	it("discovers and describes Magenta1 runtime wrappers", async () => {
 		const provider = new ScriptRuntimeProvider(async () => {
 			throw new Error("not used by discovery");

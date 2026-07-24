@@ -73,3 +73,19 @@ test("checks dependency workspace output used through package symlinks", () => {
 		rmSync(paths.root, { recursive: true, force: true });
 	}
 });
+
+test("reports a missing dist directory with the build command", () => {
+	const root = mkdtempSync(join(tmpdir(), "magenta-clean-dist-missing-"));
+	try {
+		mkdirSync(join(root, "pi/ai/src"), { recursive: true });
+		writeFileSync(join(root, "pi/ai/src/index.ts"), "export const current = true;\n");
+
+		assert.deepEqual(inspectCompiledDist(root).missing, ["pi/ai/dist"]);
+		assert.throws(
+			() => assertCleanCompiledDist(root),
+			/missing outputs.*pi\/ai\/dist.*Run npm run clean && npm run build/u,
+		);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});

@@ -13,3 +13,10 @@ declared filesystem read/write checks, and network tag/allowlist checks.
 The current policy report explicitly returns `os_enforced: false`. OS-level
 backends such as `sandbox-exec` and `bwrap` are not implemented, so portable
 guards must not be documented as equivalent to an operating-system sandbox.
+
+The guards run only for callers that explicitly resolve `runtime:process` (and,
+where applicable, a `sandbox` profile). Current product consumers are HCP
+process-backed tools, stdio MCP servers, package process tools, and
+script-runtime wrappers. Native pi tool implementations and other direct child
+processes are not automatically routed through this provider, so this Module is
+not a universal coding-agent command-enforcement layer.

@@ -149,6 +149,7 @@ describe("SideChatManager", () => {
 		const ctx = createContext(session, { select: vi.fn(async () => NEW_CONVERSATION), custom });
 		const manager = new SideChatManager({
 			toolProgress,
+			completeSimple: completeSimpleMock,
 			appendEntry: (customType, data) => session.appendCustomEntry(customType, data),
 			createConversationId: () => "side-new-1",
 			copyText: vi.fn(async () => {}),

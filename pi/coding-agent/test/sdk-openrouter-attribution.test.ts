@@ -77,6 +77,7 @@ describe("createAgentSession provider attribution headers", () => {
 			stopReason: "stop",
 			timestamp: Date.now(),
 		};
+		stream.push({ type: "done", reason: "stop", message });
 		stream.end(message);
 		return stream;
 	}
@@ -98,21 +99,32 @@ describe("createAgentSession provider attribution headers", () => {
 		const authStorage = AuthStorage.create(join(agentDir, "auth.json"));
 		authStorage.setRuntimeApiKey(model.provider, "test-api-key");
 		const modelRegistry = await createTestModelRegistry(authStorage, join(agentDir, "models.json"));
-		const registeredProviders = ["capture-provider"];
 		let capturedOptions: SimpleStreamOptions | undefined;
 
-		modelRegistry.registerProvider("capture-provider", {
-			api: "openai-completions",
+		modelRegistry.registerProvider(model.provider, {
+			api: model.api,
+			baseUrl: model.baseUrl,
+			headers: options.providerHeaders,
+			models: [
+				{
+					id: model.id,
+					name: model.name,
+					api: model.api,
+					baseUrl: model.baseUrl,
+					reasoning: model.reasoning,
+					thinkingLevelMap: model.thinkingLevelMap,
+					input: [...model.input],
+					cost: model.cost,
+					contextWindow: model.contextWindow,
+					maxTokens: model.maxTokens,
+					compat: model.compat,
+				},
+			],
 			streamSimple: (_model, _context, providerOptions) => {
 				capturedOptions = providerOptions;
 				return createDoneStream();
 			},
 		});
-
-		if (options.providerHeaders) {
-			modelRegistry.registerProvider(model.provider, { headers: options.providerHeaders });
-			registeredProviders.push(model.provider);
-		}
 
 		const sessionManager = SessionManager.inMemory(cwd);
 		if (options.sessionId) {
@@ -130,7 +142,7 @@ describe("createAgentSession provider attribution headers", () => {
 		});
 
 		try {
-			await session.agent.streamFn(
+			const stream = await session.agent.streamFn(
 				model,
 				{ messages: [] },
 				{
@@ -138,12 +150,11 @@ describe("createAgentSession provider attribution headers", () => {
 					...(options.requestHeaders ? { headers: options.requestHeaders } : {}),
 				},
 			);
+			await stream.result();
 			return capturedOptions?.headers;
 		} finally {
 			await session.dispose();
-			for (const provider of registeredProviders.reverse()) {
-				modelRegistry.unregisterProvider(provider);
-			}
+			modelRegistry.unregisterProvider(model.provider);
 		}
 	}
 

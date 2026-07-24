@@ -3,6 +3,28 @@ import { DEFAULT_LOG_MAX_BYTES } from "../../_magenta/log-retention.ts";
 import { NODE_MAX_TIMEOUT_MS } from "../../_magenta/timeout.ts";
 import { currentDepth, sanitizeWorkerTools, spawnWorker } from "../../tools/sub-agent/magenta/workflow/worker.ts";
 
+const successfulRunEnd = {
+	type: "run_end",
+	protocolVersion: 1,
+	status: "success",
+	exitCode: 0,
+};
+
+function assistantMessage(text: string): object {
+	return {
+		type: "message_end",
+		message: { role: "assistant", content: [{ type: "text", text }] },
+	};
+}
+
+function emitFixture(records: Array<object | string>, trailer?: string): string {
+	return [
+		`const records = ${JSON.stringify(records)};`,
+		'for (const record of records) process.stdout.write((typeof record === "string" ? record : JSON.stringify(record)) + "\\n");',
+		trailer ?? "",
+	].join("\n");
+}
+
 /**
  * Safety guards for worker spawning. These invariants keep a workflow worker
  * from gaining orchestration, background-delegation, teammate-control, or peer
@@ -102,6 +124,132 @@ describe("worker timeout guard", () => {
 	);
 });
 
+describe("worker terminal contract", () => {
+	const original = process.env.PI_MAORCH_DEPTH;
+	afterEach(() => {
+		if (original === undefined) delete process.env.PI_MAORCH_DEPTH;
+		else process.env.PI_MAORCH_DEPTH = original;
+	});
+
+	it("accepts one successful run_end with an assistant terminal result", async () => {
+		delete process.env.PI_MAORCH_DEPTH;
+		const result = await spawnWorker({ workerId: "complete", prompt: "anything" }, undefined, () => ({
+			command: process.execPath,
+			args: ["-e", emitFixture([assistantMessage("done"), successfulRunEnd])],
+		}));
+
+		expect(result).toMatchObject({ success: true, text: "done", error: undefined });
+	});
+
+	it("rejects malformed non-empty NDJSON", async () => {
+		delete process.env.PI_MAORCH_DEPTH;
+		const result = await spawnWorker({ workerId: "malformed", prompt: "anything" }, undefined, () => ({
+			command: process.execPath,
+			args: ["-e", emitFixture(["not-json", successfulRunEnd])],
+		}));
+
+		expect(result).toMatchObject({ success: false, error: "workflow worker emitted malformed NDJSON" });
+	});
+
+	it("rejects success without an assistant terminal result", async () => {
+		delete process.env.PI_MAORCH_DEPTH;
+		const result = await spawnWorker({ workerId: "no-assistant", prompt: "anything" }, undefined, () => ({
+			command: process.execPath,
+			args: ["-e", emitFixture([successfulRunEnd])],
+		}));
+
+		expect(result).toMatchObject({
+			success: false,
+			error: "workflow worker exited without an assistant message_end result",
+		});
+	});
+
+	it("propagates a non-success run_end diagnostic", async () => {
+		delete process.env.PI_MAORCH_DEPTH;
+		const failedRunEnd = {
+			type: "run_end",
+			protocolVersion: 1,
+			status: "error",
+			exitCode: 1,
+			error: "provider failed",
+		};
+		const result = await spawnWorker({ workerId: "failed-run", prompt: "anything" }, undefined, () => ({
+			command: process.execPath,
+			args: ["-e", emitFixture([assistantMessage("partial"), failedRunEnd], "process.exitCode = 1;")],
+		}));
+
+		expect(result).toMatchObject({ success: false, error: "provider failed" });
+	});
+
+	it("rejects an otherwise clean exit without run_end", async () => {
+		delete process.env.PI_MAORCH_DEPTH;
+		const result = await spawnWorker({ workerId: "no-run-end", prompt: "anything" }, undefined, () => ({
+			command: process.execPath,
+			args: ["-e", emitFixture([assistantMessage("done")])],
+		}));
+
+		expect(result).toMatchObject({
+			success: false,
+			error: "workflow worker exited without a run_end record",
+		});
+	});
+
+	it.skipIf(process.platform === "win32")("rejects signal termination", async () => {
+		delete process.env.PI_MAORCH_DEPTH;
+		const result = await spawnWorker({ workerId: "signalled", prompt: "anything" }, undefined, () => ({
+			command: process.execPath,
+			args: ["-e", 'process.kill(process.pid, "SIGTERM");'],
+		}));
+
+		expect(result.success).toBe(false);
+		expect(result.error).toContain("signal SIGTERM");
+	});
+
+	it("reports external abort as cancelled", async () => {
+		delete process.env.PI_MAORCH_DEPTH;
+		const abort = new AbortController();
+		const pending = spawnWorker(
+			{ workerId: "cancelled", prompt: "anything", timeoutMs: 5_000 },
+			abort.signal,
+			() => ({ command: process.execPath, args: ["-e", "setInterval(() => {}, 1000);"] }),
+		);
+		setTimeout(() => abort.abort(), 25);
+
+		await expect(pending).resolves.toMatchObject({ success: false, error: "cancelled" });
+	});
+
+	it("reports a hard deadline as timeout", async () => {
+		delete process.env.PI_MAORCH_DEPTH;
+		const result = await spawnWorker({ workerId: "timed-out", prompt: "anything", timeoutMs: 25 }, undefined, () => ({
+			command: process.execPath,
+			args: ["-e", "setInterval(() => {}, 1000);"],
+		}));
+
+		expect(result).toMatchObject({ success: false, error: "worker timed out after 25ms" });
+	});
+
+	it("validates parsed structured output against the supplied JSON Schema", async () => {
+		delete process.env.PI_MAORCH_DEPTH;
+		const schema = {
+			type: "object",
+			properties: { score: { type: "number" } },
+			required: ["score"],
+		};
+		const valid = await spawnWorker({ workerId: "valid-schema", prompt: "anything", schema }, undefined, () => ({
+			command: process.execPath,
+			args: ["-e", emitFixture([assistantMessage('{"score":7}'), successfulRunEnd])],
+		}));
+		const invalid = await spawnWorker({ workerId: "invalid-schema", prompt: "anything", schema }, undefined, () => ({
+			command: process.execPath,
+			args: ["-e", emitFixture([assistantMessage('{"score":"high"}'), successfulRunEnd])],
+		}));
+
+		expect(valid).toMatchObject({ success: true, structured: { score: 7 } });
+		expect(invalid.success).toBe(false);
+		expect(invalid.error).toContain("failed schema validation");
+	});
+});
+
 describe("worker output collector bounds", () => {
 	const original = process.env.PI_MAORCH_DEPTH;
 	afterEach(() => {
@@ -185,6 +333,7 @@ describe("worker host invocation", () => {
 			'message: { role: "assistant", content: [{ type: "text", text: "worker-ok" }], usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, totalTokens: 15, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0, unknown: true } } },',
 			"};",
 			'process.stdout.write(JSON.stringify(event) + "\\n");',
+			`process.stdout.write(JSON.stringify(${JSON.stringify(successfulRunEnd)}) + "\\n");`,
 		].join("\n");
 
 		const result = await spawnWorker(

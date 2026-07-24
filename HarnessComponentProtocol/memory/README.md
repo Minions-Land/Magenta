@@ -3,8 +3,10 @@
 This directory contains two related surfaces with separate build ownership:
 
 - `magenta/` is the Harness `memory` Source. Its `HcpMagnet` builds the
-  session-grounding capability, and the parent `@magenta/harness` workspace
-  compiles it together with `HcpServer.ts`.
+  experimental session-grounding capability, and the parent
+  `@magenta/harness` workspace compiles it together with `HcpServer.ts`. This
+  capability is not autoloaded and the default coding-agent turn/context path
+  does not consume it.
 - `pi/` is the source of the independent `@magenta/memory` npm workspace. It
   provides an in-memory semantic store and embedding utilities and compiles to
   `dist/pi/`.
@@ -150,17 +152,21 @@ name = "memory"
 path = "memory/memory.toml"
 ```
 
-The TOML selects the `magenta` Source for the session-grounding capability. The
-generated HCP arrays and runtime routing remain owned by `HcpClient`; memory has
-no parallel selection or assembly state.
+The TOML selects the `magenta` Source for the session-grounding capability but
+marks it non-autoload. A host must explicitly select the `memory` Module and
+connect its output to a context consumer. The generated HCP arrays and runtime
+routing remain owned by `HcpClient`; memory has no parallel selection or
+assembly state.
 
 ## Dependencies
 
 - `@earendil-works/pi-ai` — Base `Models` surface extended by host embedding adapters
 
-## Use Cases
+## Potential Harness Use Cases
 
-1. **/remember command** — Store user preferences and context
+These are integration targets, not features of the default coding-agent path:
+
+1. **Remember command** — Store user preferences and context
 2. **Long-term context** — Persist information across sessions
 3. **Knowledge retrieval** — Find relevant past conversations
 4. **Preference learning** — Learn user's coding style and preferences

@@ -17,6 +17,7 @@ interface ScriptedResponse {
 	text?: string;
 	structured?: unknown;
 	success?: boolean;
+	error?: string;
 }
 
 function makeRunner(respond: (opts: SpawnWorkerOptions, callIndex: number) => ScriptedResponse): {
@@ -36,6 +37,7 @@ function makeRunner(respond: (opts: SpawnWorkerOptions, callIndex: number) => Sc
 			structured: r.structured,
 			durationMs: 1,
 			success: r.success ?? true,
+			error: r.error,
 		};
 	};
 
@@ -90,7 +92,7 @@ describe("classify_and_act skeleton", () => {
 		expect(result.outcome?.text).toBe("fallback ran");
 	});
 
-	it("stops at the classifier when no handler and no fallback match", async () => {
+	it("fails when no exact handler and no fallback match", async () => {
 		const { runner, calls } = makeRunner(() => ({ structured: { label: "nope" } }));
 		const orch = new MultiAgentOrchestrator({ runner });
 		const result = await orch.orchestrate({
@@ -100,7 +102,38 @@ describe("classify_and_act skeleton", () => {
 			handlers: { bug: { task: "fix" } },
 		});
 		expect(calls).toHaveLength(1); // only the classifier ran
-		expect(result.terminatedBy).toBe("completed");
+		expect(result.terminatedBy).toBe("budget");
+		expect(result.outcome).toMatchObject({ success: false, error: expect.stringContaining("unknown label") });
+	});
+
+	it("does not use substring matching when labels overlap", async () => {
+		const { runner, calls } = makeRunner((opts) => {
+			if (opts.workerId.startsWith("classify")) return { structured: { label: "debug" } };
+			return { text: opts.prompt };
+		});
+		const orch = new MultiAgentOrchestrator({ runner });
+		await orch.orchestrate({
+			pattern: "classify_and_act",
+			input: "x",
+			classifier: { task: "classify" },
+			handlers: { bug: { task: "bug handler" }, debug: { task: "debug handler" } },
+		});
+
+		expect(calls[1].prompt).toMatch(/^debug handler\n/);
+	});
+
+	it("does not treat classifier prose as a label", async () => {
+		const { runner, calls } = makeRunner(() => ({ text: "bug" }));
+		const orch = new MultiAgentOrchestrator({ runner });
+		const result = await orch.orchestrate({
+			pattern: "classify_and_act",
+			input: "x",
+			classifier: { task: "classify" },
+			handlers: { bug: { task: "fix" } },
+		});
+
+		expect(calls).toHaveLength(1);
+		expect(result).toMatchObject({ terminatedBy: "budget", outcome: { success: false } });
 	});
 });
 
@@ -165,6 +198,35 @@ describe("generate_and_filter skeleton", () => {
 		expect(result.outcome?.text).toBe("candidate-1");
 		expect(result.terminatedBy).toBe("completed");
 	});
+
+	it("excludes invalid evaluations and fails when none has a valid score", async () => {
+		const { runner } = makeRunner((opts, idx) => {
+			if (opts.workerId.startsWith("gen")) return { text: `candidate-${idx}` };
+			return { structured: idx === 4 ? { score: 5 } : { reason: "missing" } };
+		});
+		const orch = new MultiAgentOrchestrator({ runner });
+		const partial = await orch.orchestrate({
+			pattern: "generate_and_filter",
+			generator: { task: "generate" },
+			count: 3,
+			evaluator: { task: "score" },
+		});
+		expect(partial.outcome?.text).toBe("candidate-1");
+
+		const { runner: invalidRunner } = makeRunner((opts, idx) =>
+			opts.workerId.startsWith("gen") ? { text: `candidate-${idx}` } : { structured: { reason: "missing" } },
+		);
+		const failed = await new MultiAgentOrchestrator({ runner: invalidRunner }).orchestrate({
+			pattern: "generate_and_filter",
+			generator: { task: "generate" },
+			count: 2,
+			evaluator: { task: "score" },
+		});
+		expect(failed).toMatchObject({
+			terminatedBy: "budget",
+			outcome: { success: false, error: "no evaluator returned a valid score" },
+		});
+	});
 });
 
 describe("tournament skeleton", () => {
@@ -185,6 +247,23 @@ describe("tournament skeleton", () => {
 		// Winner always index 0 -> first approach "approach-0" survives.
 		expect(result.outcome?.text).toBe("approach-0");
 		expect(result.terminatedBy).toBe("completed");
+	});
+
+	it("fails instead of advancing candidate zero on an invalid judge choice", async () => {
+		const { runner, calls } = makeRunner((opts, idx) =>
+			opts.workerId.startsWith("appr") ? { text: `approach-${idx}` } : { structured: { winner: 2 } },
+		);
+		const result = await new MultiAgentOrchestrator({ runner }).orchestrate({
+			pattern: "tournament",
+			approaches: [{ task: "a" }, { task: "b" }, { task: "c" }],
+			judge: { task: "compare" },
+		});
+
+		expect(calls.filter((call) => call.workerId.startsWith("judge"))).toHaveLength(1);
+		expect(result).toMatchObject({
+			terminatedBy: "budget",
+			outcome: { success: false, error: "tournament judge did not return winner 0 or 1" },
+		});
 	});
 
 	it("carries a bye when the field is odd", async () => {
@@ -218,6 +297,22 @@ describe("loop_until_done skeleton", () => {
 		expect(calls).toHaveLength(3);
 		expect(result.iterations).toBe(3);
 		expect(result.terminatedBy).toBe("completed");
+	});
+
+	it("propagates a failed refine worker instead of reporting completion", async () => {
+		const { runner, calls } = makeRunner(() => ({ success: false, error: "refine failed" }));
+		const result = await new MultiAgentOrchestrator({ runner }).orchestrate({
+			pattern: "loop_until_done",
+			initial: "start",
+			refine: { task: "find more" },
+		});
+
+		expect(calls).toHaveLength(1);
+		expect(result).toMatchObject({
+			iterations: 1,
+			terminatedBy: "budget",
+			outcome: { success: false, error: "refine failed" },
+		});
 	});
 
 	it("feeds prior findings back into each round's prompt", async () => {
@@ -271,6 +366,41 @@ describe("fan_out_synthesize skeleton", () => {
 		expect(synthCall?.prompt).toContain("result-w2");
 		expect(synthCall?.prompt).toContain("result-w3");
 		expect(result.outcome?.text).toBe("merged");
+	});
+
+	it("synthesizes partial successes while preserving failed worker diagnostics", async () => {
+		const { runner, calls } = makeRunner((opts) => {
+			if (opts.workerId.startsWith("fanout") && opts.prompt === "bad") {
+				return { success: false, error: "worker failed" };
+			}
+			if (opts.workerId.startsWith("synth")) return { text: "partial merge" };
+			return { text: "usable" };
+		});
+		const result = await new MultiAgentOrchestrator({ runner }).orchestrate({
+			pattern: "fan_out_synthesize",
+			workers: [{ task: "bad" }, { task: "good" }],
+			synthesizer: { task: "merge" },
+		});
+
+		expect(calls).toHaveLength(3);
+		expect(calls[2].prompt).toContain("worker failed");
+		expect(result).toMatchObject({ terminatedBy: "completed", outcome: { success: true, text: "partial merge" } });
+		expect(result.workers).toEqual(expect.arrayContaining([expect.objectContaining({ success: false })]));
+	});
+
+	it("does not invoke the synthesizer when every fan-out worker fails", async () => {
+		const { runner, calls } = makeRunner(() => ({ success: false, error: "worker failed" }));
+		const result = await new MultiAgentOrchestrator({ runner }).orchestrate({
+			pattern: "fan_out_synthesize",
+			workers: [{ task: "a" }, { task: "b" }],
+			synthesizer: { task: "merge" },
+		});
+
+		expect(calls).toHaveLength(2);
+		expect(result).toMatchObject({
+			terminatedBy: "budget",
+			outcome: { success: false, error: "worker failed" },
+		});
 	});
 
 	it("passes workflow package defaults and per-slot overrides to workers", async () => {

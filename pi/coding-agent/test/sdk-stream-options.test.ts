@@ -68,6 +68,7 @@ describe("createAgentSession stream options", () => {
 			stopReason: "stop",
 			timestamp: Date.now(),
 		};
+		stream.push({ type: "done", reason: "stop", message });
 		stream.end(message);
 		return stream;
 	}
@@ -105,7 +106,8 @@ describe("createAgentSession stream options", () => {
 		});
 
 		try {
-			await session.agent.streamFn(model, { messages: [] }, requestOptions);
+			const stream = await session.agent.streamFn(model, { messages: [] }, requestOptions);
+			await stream.result();
 			return capturedOptions;
 		} finally {
 			await session.dispose();

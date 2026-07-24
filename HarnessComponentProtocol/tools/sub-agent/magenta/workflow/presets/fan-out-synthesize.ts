@@ -15,6 +15,18 @@ export default async function fanOutSynthesize(args: unknown, ctx: any) {
 		req.workers.map((w: any, i: number) => () => ctx.agent(w.task, { ...w, label: `fanout-${i}` })),
 		req.maxConcurrent,
 	);
+	if (!results.some((result: any) => result.success)) {
+		return {
+			outcome: results[0] ?? {
+				workerId: "fanout",
+				text: "",
+				durationMs: 0,
+				success: false,
+				error: "fan-out had no successful workers",
+			},
+			terminatedBy: "budget",
+		};
+	}
 
 	const merged = results
 		.map(
@@ -28,5 +40,5 @@ export default async function fanOutSynthesize(args: unknown, ctx: any) {
 		guard: ctx.guards.synthesizer,
 	});
 
-	return { outcome, terminatedBy: "completed" };
+	return { outcome, terminatedBy: outcome.success ? "completed" : "budget" };
 }

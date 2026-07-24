@@ -3,7 +3,7 @@ product = "capability"
 slot = "sandbox"
 autoload = true
 name = "sandbox"
-description = "Sandbox profile catalog and selection provider migrated from Magenta1 general-harness."
+description = "Sandbox profiles for HCP process-backed tools, stdio MCP, and package process execution."
 source = "magenta"
 bundles = ["runtime:magenta"]
 origin = "magenta1-general-harness"
@@ -13,13 +13,14 @@ profiles = ["magenta/readonly-fs.toml", "magenta/restricted.toml", "magenta/work
 targets = ["sandbox://readonly-fs", "sandbox://restricted", "sandbox://workspace-write", "sandbox://network-read", "sandbox://trusted", "hook://sandbox-select"]
 
 [assumption]
-compensates = "Safety boundary: the model cannot be trusted to self-limit filesystem/network reach, so sandbox profiles constrain execution regardless of model capability. A more capable model does not remove this need."
+compensates = "For execution paths that explicitly resolve sandbox and runtime:process, selected profiles feed deterministic portable filesystem, environment, timeout, and network guards instead of relying on model self-restraint."
 rationale = "stated"  # profile catalog + selection provider in magenta/sandbox.ts
 calibrated_for = ["any"]
 review_trigger = "never"
-load_bearing = "verified"  # boundary is load-bearing by definition; note OS enforcement is not-ported (see [runtime])
+load_bearing = "verified"  # verified only for consumers routed through runtime:process; this is not an OS sandbox
 eval_scenarios = []
 
 [runtime]
-enforcement = "not-ported"
-notes = "This pack provides profile management and selection. Runtime portable guards / OS sandbox enforcement remain a separate runtime provider migration."
+profile_enforcement = "runtime:process-portable-guards"
+os_enforcement = "not-ported"
+notes = "This Module selects profiles but does not isolate processes. Native pi tool execution and other paths that do not resolve these HCP capabilities are outside its enforcement scope."

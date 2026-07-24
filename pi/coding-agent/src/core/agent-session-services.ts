@@ -156,7 +156,6 @@ export async function createAgentSessionServices(
 			credentials: createMagentaCredentialStore(authStorage),
 			modelsPath: join(agentDir, "models.json"),
 			modelsStorePath: join(agentDir, "models-store.json"),
-			allowModelNetwork: true,
 		}));
 	const modelRegistry = new ModelRegistry(modelRuntime);
 	const resourceLoader = new DefaultResourceLoader({

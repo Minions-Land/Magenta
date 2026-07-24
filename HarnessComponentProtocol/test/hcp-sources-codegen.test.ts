@@ -319,11 +319,15 @@ path = ".HCP/transport/transport.toml"
 		expect(selectedTools).toContainEqual({ name: "lsp", source: "magenta", autoload: false });
 		expect(selectedTools).toContainEqual({ name: "web-search", source: "magenta", autoload: true });
 		expect(selectedTools).toContainEqual({ name: "web-fetch", source: "magenta", autoload: true });
-		expect(
-			collected.entries
-				.filter(({ product, selected }) => product !== "tool" && selected)
-				.every(({ autoload }) => autoload),
-		).toBe(true);
+		const selectedCapabilities = collected.entries.filter(
+			({ product, selected }) => product === "capability" && selected,
+		);
+		for (const name of ["hooks", "memory", "policy"]) {
+			expect(selectedCapabilities.find((entry) => entry.name === name)?.autoload, name).toBe(false);
+		}
+		for (const name of ["process", "sandbox", "script-runtimes"]) {
+			expect(selectedCapabilities.find((entry) => entry.name === name)?.autoload, name).toBe(true);
+		}
 		expect(
 			collected.entries
 				.filter(({ product, source }) => product === "resource" && source === "descriptor")

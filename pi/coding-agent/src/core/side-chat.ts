@@ -1,5 +1,5 @@
-import type { AssistantMessage, Message, TextContent, UserMessage } from "@earendil-works/pi-ai";
-import { completeSimple } from "@earendil-works/pi-ai/compat";
+import type { AssistantMessage, Message, Models, TextContent, UserMessage } from "@earendil-works/pi-ai";
+import { completeSimple as compatCompleteSimple } from "@earendil-works/pi-ai/compat";
 import { uuidv7 } from "@magenta/harness";
 import { CENTER_FLOATING_OVERLAY } from "../modes/interactive/components/floating-window.ts";
 import {
@@ -95,6 +95,8 @@ export type SideChatConversation = {
 
 type SideChatManagerOptions = {
 	toolProgress: ToolProgressTracker;
+	/** Session-owned completion path. Defaults to compat for external callers during migration. */
+	completeSimple?: Models["completeSimple"];
 	appendEntry?: (customType: string, data: SideChatPersistenceEvent) => void;
 	enqueueHumanHandoff?: (
 		request: SideChatHandoffRequest,
@@ -250,6 +252,7 @@ export function buildSideChatHandoffSnapshot(
 
 export class SideChatManager {
 	private readonly toolProgress: ToolProgressTracker;
+	private readonly completeSimple: Models["completeSimple"];
 	private readonly appendEntry?: SideChatManagerOptions["appendEntry"];
 	private readonly enqueueHumanHandoff?: SideChatManagerOptions["enqueueHumanHandoff"];
 	private readonly copyText: (text: string) => Promise<void>;
@@ -257,6 +260,7 @@ export class SideChatManager {
 
 	constructor(options: SideChatManagerOptions) {
 		this.toolProgress = options.toolProgress;
+		this.completeSimple = options.completeSimple ?? compatCompleteSimple;
 		this.appendEntry = options.appendEntry;
 		this.enqueueHumanHandoff = options.enqueueHumanHandoff;
 		this.copyText = options.copyText ?? copyToClipboard;
@@ -396,7 +400,7 @@ export class SideChatManager {
 			} as UserMessage);
 			this.appendMessage(conversation, "user", persistedQuestion);
 
-			const response = await completeSimple(
+			const response = await this.completeSimple(
 				model,
 				{ systemPrompt: SYSTEM_PROMPT, messages },
 				{ apiKey: auth.apiKey, headers: auth.headers, env: auth.env, signal },

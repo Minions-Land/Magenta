@@ -266,7 +266,9 @@ source = "missing"
 			expect(assembly.hcp.resolveCapability("sandbox")).toBeInstanceOf(SandboxProvider);
 			expect(assembly.hcp.resolveCapability("runtime:process")).toBeInstanceOf(ProcessRuntimeProvider);
 			expect(assembly.hcp.resolveCapability("runtime:script-runtimes")).toBeInstanceOf(ScriptRuntimeProvider);
-			expect(assembly.hcp.resolveCapability("hook")).toBeDefined();
+			expect(assembly.hcp.resolveCapability("hook")).toBeUndefined();
+			expect(assembly.hcp.resolveCapability("memory")).toBeUndefined();
+			expect(assembly.hcp.resolveCapability("policy")).toBeUndefined();
 		} finally {
 			await assembly?.hcp.dispose();
 			await rm(packagesRoot, { recursive: true, force: true });

@@ -42,6 +42,7 @@ describe("multiagent orchestrator", () => {
 			'message: { role: "assistant", content: [{ type: "text", text: "worker-ok" }] },',
 			"};",
 			'process.stdout.write(JSON.stringify(event) + "\\n");',
+			'process.stdout.write(JSON.stringify({ type: "run_end", protocolVersion: 1, status: "success", exitCode: 0 }) + "\\n");',
 		].join("\n");
 		const provider = new MultiAgentOrchestrator({
 			resolveWorkerInvocation: (args: string[]) => {

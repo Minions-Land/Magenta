@@ -3,7 +3,7 @@ import type { HcpServerDescription, HcpServerRequest } from "../.HCP/HcpServerTy
 
 export class HcpServer {
 	readonly moduleName = "sandbox";
-	readonly description = "Sandbox profile selection and policy enforcement.";
+	readonly description = "Sandbox profile selection for runtime:process portable guards; no OS isolation.";
 
 	private binding(magnet: { toCapability?(): unknown }): HcpMagnetBinding<SandboxProvider> {
 		return magnet.toCapability?.() as HcpMagnetBinding<SandboxProvider>;
@@ -18,13 +18,16 @@ export class HcpServer {
 			target: "capability:sandbox",
 			kind: binding.kind,
 			ops: ["discover", "list", "describe", "get", "resolve"],
-			description: "Sandbox profile provider migrated from Magenta1 general-harness.",
+			description: "Profiles consumed by explicit runtime:process paths; this Module does not isolate processes.",
 			metadata: {
 				name: binding.name,
 				implementation: "native-ts",
 				source: binding.source,
 				origin: "magenta1-general-harness",
 				enforcement: "not-ported",
+				portable_guard_runtime: "runtime:process",
+				os_enforced: false,
+				universal_native_tool_enforcement: false,
 				hotSwappable: magnet.hotSwappable ?? false,
 			},
 		};
@@ -95,10 +98,13 @@ export class HcpServer {
 			target: "sandbox://profiles",
 			kind: "sandbox",
 			ops: ["discover", "list", "describe", "get", "resolve"],
-			description: "Discover and resolve available sandbox profiles.",
+			description: "Discover profiles for explicit runtime:process portable-guard consumers.",
 			metadata: {
 				implementation: "native-ts",
 				enforcement: "not-ported",
+				portable_guard_runtime: "runtime:process",
+				os_enforced: false,
+				universal_native_tool_enforcement: false,
 			},
 		};
 	}
@@ -108,7 +114,7 @@ export class HcpServer {
 			target: "hook://sandbox-select",
 			kind: "hook",
 			ops: ["run", "call", "select", "describe"],
-			description: "Select a sandbox profile for a tool descriptor.",
+			description: "Select a profile for a tool descriptor; selection alone does not enforce it.",
 			metadata: {
 				implementation: "native-ts",
 				source,

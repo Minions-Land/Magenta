@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { Agent, type AgentMessage, type ThinkingLevel } from "@earendil-works/pi-agent-core";
-import { type Message, type Model, streamSimple } from "@earendil-works/pi-ai/compat";
+import type { Message, Model } from "@earendil-works/pi-ai/compat";
 import type { SshTarget } from "@magenta/harness";
 import { getAgentDir } from "../config.ts";
 import { resolvePath } from "../utils/paths.ts";
@@ -206,7 +206,6 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		(await ModelRuntime.create({
 			credentials: createMagentaCredentialStore(authStorage),
 			modelsPath: modelsPath ?? null,
-			allowModelNetwork: true,
 		}));
 	const modelRegistry = options.modelRegistry ?? new ModelRegistry(modelRuntime);
 
@@ -385,11 +384,6 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		streamFn: async (model, context, options) => {
 			const effectiveSessionId = options?.sessionId ?? sessionManager.getSessionId();
 			const cacheRequest = cacheTelemetry?.start(model, effectiveSessionId);
-			const auth = await modelRegistry.getApiKeyAndHeaders(model);
-			if (!auth.ok) {
-				throw new Error(auth.error);
-			}
-			const env = auth.env || options?.env ? { ...(auth.env ?? {}), ...(options?.env ?? {}) } : undefined;
 			const providerRetrySettings = settingsManager.getProviderRetrySettings();
 			const httpIdleTimeoutMs = settingsManager.getHttpIdleTimeoutMs();
 			// Keep transport idleness separate from a whole-request deadline. Reusing
@@ -410,27 +404,25 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			// before dispatch. Header names are matched case-insensitively when merged
 			// by mergeProviderAttributionHeaders; the extension hook mutates the
 			// resolved object in place (null deletes a header).
-			const attributedHeaders = mergeProviderAttributionHeaders(
-				model,
-				settingsManager,
-				effectiveSessionId,
-				auth.headers,
-				options?.headers,
-			);
 			const headerRunner = extensionRunnerRef.current;
-			const resolvedHeaders = headerRunner?.hasHandlers("before_provider_headers")
-				? await headerRunner.emitBeforeProviderHeaders(attributedHeaders ?? {})
-				: attributedHeaders;
-			const providerStream = streamSimple(model, context, {
+			const providerStream = modelRuntime.streamSimple(model, context, {
 				...options,
-				apiKey: auth.apiKey,
-				env,
 				sessionId: effectiveSessionId,
 				timeoutMs,
 				websocketConnectTimeoutMs,
 				maxRetries: options?.maxRetries ?? providerRetrySettings.maxRetries,
 				maxRetryDelayMs: options?.maxRetryDelayMs ?? providerRetrySettings.maxRetryDelayMs,
-				headers: resolvedHeaders,
+				transformHeaders: async (resolvedHeaders) => {
+					const attributedHeaders = mergeProviderAttributionHeaders(
+						model,
+						settingsManager,
+						effectiveSessionId,
+						resolvedHeaders,
+					);
+					return headerRunner?.hasHandlers("before_provider_headers")
+						? headerRunner.emitBeforeProviderHeaders(attributedHeaders ?? {})
+						: (attributedHeaders ?? {});
+				},
 				onPayload: cacheRequest
 					? async (payload, requestModel) => {
 							const replacement = await options?.onPayload?.(payload, requestModel);

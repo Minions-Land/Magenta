@@ -97,6 +97,14 @@ test("release builds are pinned, offline, and receipt-bound", () => {
 	assert.match(rootPackage.scripts["check:release"], /generate-macos-release-trust\.mjs --check/u);
 	assert.match(codingPackage.scripts["build:release-all"], /\.\.\/ai run build:offline/u);
 	assert.doesNotMatch(codingPackage.scripts["build:release-all"], /\.\.\/ai run build &&/u);
+	const requiredReleaseCopy = codingPackage.scripts["build:release-all"].slice(
+		codingPackage.scripts["build:release-all"].lastIndexOf("&& shx cp -r "),
+	);
+	assert.match(
+		requiredReleaseCopy,
+		/shx cp -r .*dist\/photon_rs_bg\.wasm dist\/release\//u,
+	);
+	assert.doesNotMatch(requiredReleaseCopy, /(?:2>\/dev\/null|\|\|\s*true)/u);
 	assert.match(codingPackage.scripts.clean, /clean-coding-agent-build\.mjs/u);
 	assert.match(codingPackage.scripts["build:binary"], /run-bun-compile\.mjs build --compile/u);
 	assert.equal(codingPackage.scripts["build:release-all"].match(/run-bun-compile\.mjs build --compile/gu)?.length, 4);

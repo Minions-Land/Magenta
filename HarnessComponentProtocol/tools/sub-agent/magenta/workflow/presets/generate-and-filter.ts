@@ -40,10 +40,14 @@ export default async function generateAndFilter(args: unknown, ctx: any) {
 		),
 		req.maxConcurrent,
 	);
+	const successfulCandidates = candidates.filter((candidate: any) => candidate.success);
+	if (successfulCandidates.length === 0) {
+		return { outcome: candidates[0], terminatedBy: "budget" };
+	}
 
 	// Score each candidate by explicit criteria (evaluator returns a number).
 	const evaluations = await ctx.parallelAgents(
-		candidates.map(
+		successfulCandidates.map(
 			(c: any, i: number) => () =>
 				ctx.agent(`${req.evaluator.task}\n\nCandidate to score:\n${c.text}`, {
 					...req.evaluator,
@@ -56,9 +60,22 @@ export default async function generateAndFilter(args: unknown, ctx: any) {
 	);
 
 	// Rank by score, keep top-K. Ranking is deterministic in the skeleton.
-	const ranked = candidates
-		.map((candidate: any, i: number) => ({ candidate, score: readNumberField(evaluations[i], "score") ?? -Infinity }))
+	const ranked = successfulCandidates
+		.flatMap((candidate: any, i: number) => {
+			const evaluation = evaluations[i];
+			const score = evaluation?.success ? readNumberField(evaluation, "score") : undefined;
+			return score === undefined ? [] : [{ candidate, score }];
+		})
 		.sort((a: any, b: any) => b.score - a.score);
+	if (ranked.length === 0) {
+		const evaluation = evaluations[0];
+		return {
+			outcome: evaluation?.success
+				? { ...evaluation, success: false, error: "no evaluator returned a valid score" }
+				: evaluation,
+			terminatedBy: "budget",
+		};
+	}
 	const keepTop = Math.max(1, req.keepTop ?? 1);
 	const finalists = ranked.slice(0, keepTop).map((r: any) => r.candidate);
 	const winner = finalists[0];

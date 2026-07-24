@@ -4,7 +4,7 @@ import type { SandboxProfile } from "../sandbox/HcpServer.ts";
 
 export class HcpServer {
 	readonly moduleName = "runtime";
-	readonly description = "Process and script runtime execution.";
+	readonly description = "Portable-guarded process and script execution for explicit HCP consumers.";
 
 	private binding(magnet: {
 		toCapability?(): unknown;
@@ -22,13 +22,15 @@ export class HcpServer {
 				target: `capability:${selector}`,
 				kind: binding.kind,
 				ops: ["discover", "exec", "call", "policy", "status", "health"],
-				description: "Spawn a local process with Magenta portable sandbox guardrails.",
+				description: "Spawn a local process with portable guards; no OS-level sandbox is installed.",
 				metadata: {
 					name: binding.name,
 					implementation: "native-ts",
 					source: binding.source,
 					origin: "magenta1-general-harness",
 					osEnforcement: false,
+					consumerScope: "explicit-runtime:process-callers",
+					universalNativeToolEnforcement: false,
 					hotSwappable: magnet.hotSwappable ?? false,
 				},
 			};

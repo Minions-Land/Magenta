@@ -36,7 +36,10 @@ export default async function loopUntilDone(args: unknown, ctx: any) {
 
 		const newFinding = result.text.trim();
 		// "No new findings" is the stop condition, observed by the skeleton.
-		if (!result.success || newFinding.length === 0) {
+		if (!result.success) {
+			return { outcome: result, iterations, terminatedBy: "budget" };
+		}
+		if (newFinding.length === 0) {
 			terminatedBy = "completed";
 			break;
 		}
